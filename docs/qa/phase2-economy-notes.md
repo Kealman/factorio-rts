@@ -29,15 +29,37 @@ Plan: `docs/PHASE2.md`. Prototypes: `docs/qa/phase2-prototypes-notes.md`. Barrac
 
   | Resource | Size | Centre (player side) | Tiles |
   |---|---|---|---|
-  | iron-ore | 12×12 | (-30, 0) | 124 |
-  | copper-ore | 8×8 | (-32, -16) | 52 |
+  | iron-ore | 12×12 | (-43, 10) | 124 |
+  | copper-ore | 8×8 | (-43, -10) | 52 |
   | stone | 6×6 | (-32, 16) | 32 |
   | coal | 6×6 | (-24, 16) | 32 |
 
+  The iron and copper centres are 16 tiles from the nearest CC stockpile (relative (3.5, ±1.5)). They moved in from
+  about 26 tiles on 2026-10-15, so the first extractor-to-stockpile loop fits the starting belts. They sit off the x
+  axis, so the starting army, 14 tiles straight ahead of the CC, does not stand on them.
+
   The enemy side mirrors these in x. The data is `match.ORE_PATCHES` and `match.ORE_AMOUNT`.
-- **Starting stock** follows the PHASE2 table plus one factory, which the lead decided on 2026-10-15: without it the
-  player can never make more buildings. The stock is 200 iron plate, 100 copper plate, 2 extractors, 2 smelters,
-  1 barracks, 1 factory, 20 belts, 10 fast inserters and 10 medium poles. The data is `match.STARTING_STOCK`.
+- **Starting stock** is the PHASE2 table, extended by lead decisions on 2026-10-15. One factory was added, because
+  without it the player can never make more buildings. Two stockpiles and more belts, inserters and poles were added,
+  so the first extractor → belt → smelter → inserter → stockpile loop can be closed from the stock. The stock is now:
+
+  | Item | Count |
+  |---|---|
+  | iron-plate | 200 |
+  | copper-plate | 100 |
+  | rts-extractor | 2 |
+  | rts-smelter | 2 |
+  | rts-barracks | 1 |
+  | rts-factory | 1 |
+  | rts-stockpile | 2 |
+  | transport-belt | 60 |
+  | fast-inserter | 16 |
+  | medium-electric-pole | 16 |
+
+  The data is `match.STARTING_STOCK`.
+- **Stockpile recipe.** `rts-stockpile` now has a factory recipe in `prototypes/recipes.lua`: 20 iron plate and
+  5 copper plate, 4 s, category `rts-buildings`, order "b". The HUD enables a build button when such a recipe exists,
+  so the stockpile button is no longer greyed. The factory panel now lists 12 recipes.
 - **Both sides start with the same plates**, 200 iron and 100 copper, from `match.START_PLATES`. The enemy gets them
   through the template: match.lua sets `basetemplate.STOCK` from `match.START_PLATES` when the module loads. The
   stockpile contents of each side right after placement are kept in `storage.match.start_plates`.
@@ -288,8 +310,9 @@ Space Age, quality and elevated-rails.
 The economy part starts at tick 120, before the Phase 1 part. It checks the following, in order:
 
 1. **Match-start state.**
-   - `eco_cc_composite`, `eco_starting_stock` (the whole table, factory included) and `eco_starting_plates_parity`
-     (200/100 in both sides' stockpiles at match start).
+   - `eco_cc_composite`, `eco_starting_stock` (every entry of `match.STARTING_STOCK` in the network, stockpiles, factory
+     and the larger belt, inserter and pole counts included) and `eco_starting_plates_parity` (200/100 in both sides'
+     stockpiles at match start).
    - `eco_bots` (20 + 10) and `eco_cc_buffer_precharged`.
    - `eco_ore_patches`, `eco_enemy_template` (cc 1, barracks 1, extractor 3, smelter 4, solar 2, stockpile 8) and
      `eco_enemy_barracks_recipe`.
@@ -299,7 +322,8 @@ The economy part starts at tick 120, before the Phase 1 part. It checks the foll
    - `/rts-build-template` (`eco_player_template`).
    - `/rts-give iron-plate 400` and `copper-plate 100` (`eco_give`).
    - 2 factories and 1 turret created with `raise_built` (`eco_registered_by_event`).
-   - `set_recipe(factory, "rts-walker-kit")` is rejected (`eco_wrong_category_rejected`). The factories are then set to
+   - `set_recipe(factory, "rts-walker-kit")` is rejected (`eco_wrong_category_rejected`). `rts-stockpile` exists in
+     `rts-buildings` and the factory accepts it (`eco_stockpile_recipe`). The factories are then set to
      `rts-extractor` and `rts-ammo`.
    - `/rts-rally -40 10` (`eco_rally_set`).
 4. **Within 150 s:**
@@ -329,13 +353,12 @@ The Phase 1 part was adapted in these ways:
 
 | Run | Checks | Errors | Log |
 |---|---|---|---|
-| Space Age, quality and elevated-rails on (`build/p2-eco/`) | 64/64 | 0 (data, create and server stages) | `build/p2-eco-server.log` |
-| Base only (`build/p2-eco-nosa/`) | 64/64 | 0 | `build/p2-eco-nosa-server.log` |
+| Space Age, quality and elevated-rails on (`build/p2-eco/`) | 65/65 | 0 (data, create and server stages) | `build/p2-eco-server.log` |
+| Base only (`build/p2-eco-nosa/`) | 65/65 | 0 | `build/p2-eco-nosa-server.log` |
 
-Both runs last 220 s, so they continue for about a minute after the summary line. They use a copy of `mods/` taken
-after this module's last change. That copy also holds the other agent's in-progress `cursor.lua`, `orders.lua`,
-`selection.lua` and `prototypes/styles.lua` as they were at copy time. Only `hud.lua` changed in `mods/` after the copy.
-The base-only run again ended in a defeat, at tick 11820, and kept running without errors afterwards.
+Both runs last 220 s, so they continue for about a minute after the summary line. They use a copy of `mods/` that
+was identical to `mods/` when the runs finished, so it includes the HUD, selection and orders work. An earlier
+base-only run ended in a defeat, at tick 11820, and kept running without errors afterwards.
 
 Excerpt from the Space Age run:
 
@@ -348,7 +371,7 @@ Excerpt from the Space Age run:
 [rts] autotest check eco_brownout: PASS solar only: rts-player: ... power 1.24 / 0.80 MW, satisfaction 52%
 [rts] autotest eco: kit-to-unit latency over 23 player kits: min 0, max 0, avg 0.00 ticks
 [rts] match: enemy wave 1: group #800 with 10 units from (45.4, -1.3) -> attack_area (-43.8, 1.8)
-[rts] autotest summary 64/64 (all passed)
+[rts] autotest summary 65/65 (all passed)
 ```
 
 **The defeat path ran in an earlier base-only run.** The wave of 16 enemy walkers killed the player army. It then

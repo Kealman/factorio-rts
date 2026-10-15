@@ -10,7 +10,7 @@ Plan: `docs/PHASE2.md` ("Economic model", "Data stage additions"). Barracks patt
 | `prototypes/categories.lua` | Recipe categories `rts-units` and `rts-buildings`. Item group `rts` with the subgroups `rts-economy`, `rts-military`, `rts-units` and `rts-defense`. |
 | `prototypes/buildings.lua` | Ten entities: the Command Center composite (3) and seven buildings. All are `table.deepcopy` clones of vanilla with vanilla graphics. |
 | `prototypes/items.lua` | Eight building items and two unit kits |
-| `prototypes/recipes.lua` | Twelve recipes. It also enables vanilla `steel-plate` from the start. |
+| `prototypes/recipes.lua` | Thirteen recipes, counting the later `rts-stockpile` recipe. It also enables vanilla `steel-plate` from the start. |
 | `data.lua` | Requires the four files after `prototypes.units`, in this order: categories, buildings, items, recipes. Items read their name and icon from the entity. |
 
 No other file was touched. The locale file belongs to someone else. Every name and description therefore uses `{"?", {"entity-name.rts-x"}, "English fallback"}`. Once a locale key exists it wins, so adding `entity-name.*`, `entity-description.*`, `item-name.rts-walker-kit`, `item-name.rts-walker-heavy-kit` and `item-group-name.rts` to `locale/en/factorio-rts.cfg` takes over without code changes.
@@ -41,7 +41,7 @@ Map colours: the CC and core parts are cyan (0.2, 0.85, 1.0). The stockpile is l
 | Item | Places | Stack | Subgroup | Craftable |
 |---|---|---|---|---|
 | `rts-command-center` | `rts-command-center` | 1 | rts-economy | no (match start only) |
-| `rts-stockpile` | `rts-stockpile` | 50 | rts-economy | no (not in the PHASE2 recipe list) |
+| `rts-stockpile` | `rts-stockpile` | 50 | rts-economy | factory (recipe added 2026-10-15) |
 | `rts-extractor` | `rts-extractor` | 50 | rts-economy | factory |
 | `rts-smelter` | `rts-smelter` | 50 | rts-economy | factory |
 | `rts-solar-array` | `rts-solar-array` | 50 | rts-economy | factory |
@@ -61,6 +61,7 @@ All recipes are `enabled = true`, `hide_from_player_crafting = true` and `auto_r
 |---|---|---|---|---|
 | `rts-walker-kit` | rts-units | 3 s | 10 iron plate, 2 copper plate | 1 `rts-walker-kit` |
 | `rts-walker-heavy-kit` | rts-units | 8 s | 30 iron plate, 10 copper plate, 5 steel plate | 1 `rts-walker-heavy-kit` |
+| `rts-stockpile` | rts-buildings | 4 s | 20 iron plate, 5 copper plate | 1 `rts-stockpile` (added 2026-10-15, see the economy notes) |
 | `rts-extractor` | rts-buildings | 5 s | 20 iron plate, 5 copper plate | 1 `rts-extractor` |
 | `rts-smelter` | rts-buildings | 5 s | 20 iron plate, 10 stone | 1 `rts-smelter` |
 | `rts-solar-array` | rts-buildings | 4 s | 15 copper plate, 10 iron plate | 1 `rts-solar-array` |
@@ -124,5 +125,5 @@ The runtime probe is a throwaway copy whose `control.lua` is replaced by a test 
 ## Open items
 
 - **Visuals are not checked in a GUI run.** This covers the invisible core pole's wire attach point, the tinted icons and the RTS tab in the factory recipe picker.
-- **The stockpile has no recipe.** PHASE2's factory list does not include one. Add one if players should be able to build more storage.
+- **Stockpile recipe: done.** It was added on 2026-10-15 (20 iron plate, 5 copper plate, 4 s). See `docs/qa/phase2-economy-notes.md`.
 - **The probe copies can be deleted.** `build/p2-probe/` and `build/p2-probe-nosa/` contain the probe `control.lua` and five extra test solar prototypes in `data.lua`. They are not part of the mod.

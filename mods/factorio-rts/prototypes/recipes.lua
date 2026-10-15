@@ -39,6 +39,8 @@ data:extend({
           cost = {["iron-plate"] = 30, ["copper-plate"] = 10, ["steel-plate"] = 5}}),
 
   -- Factory: economy
+  recipe({name = "rts-stockpile", category = B, subgroup = "rts-economy", order = "b", time = 4,
+          cost = {["iron-plate"] = 20, ["copper-plate"] = 5}}),
   recipe({name = "rts-extractor", category = B, subgroup = "rts-economy", order = "c", time = 5,
           cost = {["iron-plate"] = 20, ["copper-plate"] = 5}}),
   recipe({name = "rts-smelter", category = B, subgroup = "rts-economy", order = "d", time = 5,

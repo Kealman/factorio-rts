@@ -53,11 +53,14 @@ match.DEFAULT_CONFIG = {first_wave_ticks = 3 * 60 * 60, wave_period_ticks = 2 * 
 -- Starting plates, the same for both sides: the player gets them with match.STARTING_STOCK, the enemy with the
 -- template (basetemplate.STOCK is set from this table below, so the two cannot drift apart).
 match.START_PLATES = {{"iron-plate", 200}, {"copper-plate", 100}}
--- docs/PHASE2.md "Starting stock" plus one factory (lead decision 2026-10-15: without it the player can never make
--- more buildings), inserted into the player's CC stockpiles.
+-- docs/PHASE2.md "Starting stock", extended by lead decisions on 2026-10-15: one factory (without it the player can
+-- never make more buildings), and 2 stockpiles, 60 belts, 16 inserters and 16 poles (enough to close the first
+-- extractor -> belt -> smelter -> inserter -> stockpile loop on the iron patch). Inserted into the player's CC
+-- stockpiles.
 match.STARTING_STOCK = {
   match.START_PLATES[1], match.START_PLATES[2], {"rts-extractor", 2}, {"rts-smelter", 2}, {"rts-barracks", 1},
-  {"rts-factory", 1}, {"transport-belt", 20}, {"fast-inserter", 10}, {"medium-electric-pole", 10},
+  {"rts-factory", 1}, {"rts-stockpile", 2}, {"transport-belt", 60}, {"fast-inserter", 16},
+  {"medium-electric-pole", 16},
 }
 do
   local plates = {}
@@ -67,11 +70,12 @@ end
 match.ENEMY_BARRACKS_RECIPE = "rts-walker-kit"
 
 -- Ore patches per side, relative to the CC centre for the side facing +x (dx is flipped for the other side):
--- {resource, dx, dy, width, height}. Iron: a 12x12 blob 30 tiles towards the arena centre.
+-- {resource, dx, dy, width, height}. Iron and copper centres are 16 tiles from the nearest CC stockpile
+-- (3.5, +-1.5), off the x axis so the starting army (ARMY_OFFSET tiles straight ahead) does not stand on them.
 match.ORE_AMOUNT = 1500
 match.ORE_PATCHES = {
-  {"iron-ore", 30, 0, 12, 12},
-  {"copper-ore", 28, -16, 8, 8},
+  {"iron-ore", 17, 10, 12, 12},
+  {"copper-ore", 17, -10, 8, 8},
   {"stone", 28, 16, 6, 6},
   {"coal", 36, 16, 6, 6},
 }

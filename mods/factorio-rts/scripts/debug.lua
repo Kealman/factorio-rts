@@ -391,6 +391,11 @@ local function eco_setup()
         check("eco_wrong_category_rejected", production.set_recipe(f, "rts-walker-kit") == false
           and f.get_recipe() == nil, "factory recipe after set_recipe(rts-walker-kit): %s",
           f.get_recipe() and f.get_recipe().name or "none")
+        local proto = prototypes.recipe["rts-stockpile"]
+        local ok = production.set_recipe(f, "rts-stockpile")
+        check("eco_stockpile_recipe", proto ~= nil and proto.category == "rts-buildings" and ok,
+          "rts-stockpile recipe category=%s, factory accepts it=%s", proto and proto.category or "missing",
+          tostring(ok))
       end
       production.set_recipe(f, spec.recipe)
     end
