@@ -18,8 +18,9 @@
 --      y-2.5  .  .  .  N2o .  .  .  .  .  .  .  N1o [E1 smelter] .  .
 --      y-1.5 W1f W1i [W1 smelter] W1o SP [  CC  ] SP E1o         E1i E1f
 --      y+1.5 W2f W2i [W2 smelter] W2o SP [      ] SP E2o [E2 sm] E2i E2f
---             (S1/S2 mirror N1/N2 in y; N1d/S1d etc. are direct slots on the N1/S1 inserter tile, E1d/E2d on the
---             E1o/E2o tile; N1c/N2c/S1c/S2c are steel chains: N1/N2 plus a second smelter and inserter further out)
+--             (S1/S2 mirror N1/N2 in y. Direct slots N1d/S1d/N2d/S2d sit on the N/S inserter tiles and E1d/E2d/
+--             W1d/W2d on the E/W ones. Steel chains N1c/N2c/S1c/S2c/E1c/E2c/W1c/W2c are a smelter slot plus a
+--             second smelter and inserter further out. Every slot type exists on all four sides.)
 --
 -- Mining line. An ore patch gets a straight "spine" belt through it towards the CC with extractors on both sides
 -- (pairs around a one-tile gap that holds a medium pole: D g D . D g D ...), then an A* belt route from the spine's
@@ -44,6 +45,9 @@ layout.MIN_DRILL_ORE = 6      -- ore tiles a drill's 5x5 mining area must cover
 layout.PATCH_SEARCH = 100     -- resources are searched within this many tiles of the CC
 layout.HOSTILE_RADIUS = 45    -- a patch this close to another force's spawn belongs to that force
 layout.ROUTE_MARGIN = 14      -- A* box = start/goal box grown by this many tiles
+layout.LINK_EXPAND = 20000    -- state cap for a link between two hub slots (short; a failed search is the costly one)
+layout.SLOT_TRIES = 6         -- hub slots tried per slot entry
+layout.MAX_ATTEMPTS = 4       -- line plans tried with a different first slot when the main belt cannot reach it
 layout.ROUTE_MAX_EXPAND = 60000
 layout.TURN_COST = 1.5
 layout.ORE_COST = 2           -- extra cost of a belt on an ore tile (keeps patches free for drills)
@@ -153,6 +157,11 @@ local HUB_BASE = {
   N1d = {stock = {3.5, -1.5}, inp = {3.5, -2.5}, feed = {3.5, -3.5}},
   N2d = {stock = {-3.5, -1.5}, inp = {-3.5, -2.5}, feed = {-3.5, -3.5}},
   E1d = {stock = {3.5, -1.5}, inp = {4.5, -1.5}, feed = {5.5, -1.5}},
+  W1d = {stock = {-3.5, -1.5}, inp = {-4.5, -1.5}, feed = {-5.5, -1.5}},
+  E1c = {stock = {3.5, -1.5}, out = {4.5, -1.5}, smelter = {6.5, -1.5}, mid = {8.5, -1.5}, smelter2 = {10.5, -1.5},
+         inp = {12.5, -1.5}, feed = {13.5, -1.5}},
+  W1c = {stock = {-3.5, -1.5}, out = {-4.5, -1.5}, smelter = {-6.5, -1.5}, mid = {-8.5, -1.5},
+         smelter2 = {-10.5, -1.5}, inp = {-12.5, -1.5}, feed = {-13.5, -1.5}},
   -- chain (steel): feed -> inserter -> smelter A (iron plates) -> inserter -> smelter B (steel) -> inserter -> stock
   N1c = {stock = {3.5, -1.5}, out = {3.5, -2.5}, smelter = {3.5, -4.5}, mid = {3.5, -6.5}, smelter2 = {3.5, -8.5},
          inp = {3.5, -10.5}, feed = {3.5, -11.5}},
@@ -160,7 +169,7 @@ local HUB_BASE = {
          smelter2 = {-3.5, -8.5}, inp = {-3.5, -10.5}, feed = {-3.5, -11.5}},
 }
 local MIRROR_NAME = {E1 = "E2", N1 = "S1", W1 = "W2", N2 = "S2", N1d = "S1d", N2d = "S2d", N1c = "S1c",
-                     N2c = "S2c", E1d = "E2d"}
+                     N2c = "S2c", E1d = "E2d", W1d = "W2d", E1c = "E2c", W1c = "W2c"}
 layout.HUB = {}
 layout.SLOT_FLIP = {}
 for name, s in pairs(HUB_BASE) do
@@ -172,7 +181,17 @@ for name, s in pairs(HUB_BASE) do
   layout.SLOT_FLIP[MIRROR_NAME[name]] = name
 end
 layout.HUB_ORDER = {"E1", "E2", "N1", "S1", "W1", "W2", "N2", "S2", "N1d", "S1d", "N2d", "S2d", "N1c", "S1c",
-                    "N2c", "S2c", "E1d", "E2d"}
+                    "N2c", "S2c", "E1d", "E2d", "W1d", "W2d", "E1c", "E2c", "W1c", "W2c"}
+
+--- Type of a hub slot name, or of an abstract slot entry: "smelter" | "chain" | "direct" (nil for "X").
+function layout.slot_type(name)
+  if name == "smelter" or name == "chain" or name == "direct" then return name end
+  if not layout.HUB[name] then return nil end
+  local last = string.sub(name, -1)
+  if last == "c" then return "chain" end
+  if last == "d" then return "direct" end
+  return "smelter"
+end
 
 --- Entity specs of a hub slot in world coordinates: {{name, x, y, dir, part, pickup?}, ...} in build order.
 --- part = "inp" | "smelter2" | "mid" | "out" | "smelter". Also returns the feed tile (tx, ty).
@@ -811,13 +830,18 @@ function layout.plan_line(C, ctx, line_name, spec, hostile)
     plan.gap_poles[g] = {x = p.x, y = p.y}
   end
 
-  -- Hub slots: spec.slots is written for a patch on spec.side ("north" or "south" of the CC); for a patch on the
-  -- other side the names are mirrored in y (N <-> S, 1 <-> 2). The short links between consecutive slots' feed
-  -- tiles are routed first, then the main belt from the spine to the first slot routes around them: otherwise the
-  -- main belt may arrive at slot 1 over the tile the link to slot 2 needs (seen: a 40-tile detour around the CC).
+  -- Hub slots. Each spec.slots entry is a hub slot name, an abstract type ("smelter", "chain", "direct") or "X" (a
+  -- satellite). A named slot is written for a patch on spec.side ("north" or "south" of the CC) and is mirrored in y
+  -- (N <-> S, 1 <-> 2) for a patch on the other side; it is the first choice. When it is taken, or its belt link
+  -- fails, any free hub slot of the same type is tried, nearest to the previous feed tile (or to the spine) first.
+  -- When no hub slot of a smelter type fits, a satellite on that side takes the line's next smelters ("stacked").
+  -- So two lines whose patches lie on the same side of the CC (the rotated ore layout) both find slots.
+  -- The short links between consecutive slots' feed tiles are routed first; then the main belt from the spine to
+  -- the first slot routes around them (otherwise the main belt may arrive at slot 1 over the tile the link to slot
+  -- 2 needs). When that main route fails, the line is planned again without that first slot (MAX_ATTEMPTS).
   local patch_side = (patch.cy > ctx.frame.cy + 0.5 and "south") or (patch.cy < ctx.frame.cy - 0.5 and "north")
     or nil
-  local south = patch_side ~= nil and patch_side ~= (spec.side or "north")
+  local flip = patch_side ~= nil and patch_side ~= (spec.side or "north")
   local path = {} -- full belt path: spine, main route, links
   for _, t in ipairs(spine.tiles) do path[#path + 1] = {t[1], t[2], seg = 0} end
   local blocked_extra = {}
@@ -834,16 +858,24 @@ function layout.plan_line(C, ctx, line_name, spec, hostile)
       blocked_extra[tkey(t[1], t[2])] = true
     end
   end
-  local before = layout.snapshot_hub(C, ctx.frame)
-  local slots, feeds, links = {}, {}, {}
-  local satellite, sat_used = nil, 0
-  for _, slot_name in ipairs(spec.slots) do
-    local name = south and layout.SLOT_FLIP[slot_name] or slot_name
-    if slot_name == "X" then
-      -- satellite slot: the first "X" places the satellite (both slots and links), the second uses its other slot.
-      -- As a line's first slot it is placed for a route from the spine's end (the main route replaces link 1).
+  local spine_end = spine.tiles[#spine.tiles]
+
+  -- One attempt at choosing slots and links. Returns slots, feeds, links.
+  local function choose(exclude_first)
+    local slots, feeds, links = {}, {}, {}
+    local satellite, sat_used = nil, 0
+    local function push(name, specs, ftx, fty, link)
+      slots[#slots + 1] = {name = name, specs = specs}
+      feeds[#feeds + 1] = {ftx, fty}
+      if link and #slots > 1 then
+        links[#slots] = link
+        for i = 2, #link - 1 do blocked_extra[tkey(link[i][1], link[i][2])] = true end
+      end
+    end
+    -- the next slot of the line's satellite (placed on first use); false when there is none
+    local function use_satellite()
       if not satellite and sat_used == 0 then
-        local from = feeds[#feeds] or spine.tiles[#spine.tiles]
+        local from = feeds[#feeds] or spine_end
         satellite = layout.plan_satellite(ctx, from, blocked, line_name, #slots == 0)
         if not satellite then
           sat_used = -1
@@ -851,50 +883,82 @@ function layout.plan_line(C, ctx, line_name, spec, hostile)
             line_name, slots[#slots] and ("hub slot " .. slots[#slots].name) or "the spine")
         end
       end
-      if satellite and sat_used < 2 then
-        sat_used = sat_used + 1
-        local sl = satellite.slots[sat_used]
-        local specs = {}
-        if sat_used == 1 then specs[1] = satellite.stock end
-        for _, sp in ipairs(sl.specs) do specs[#specs + 1] = sp end
-        local link = satellite.links[sat_used]
-        local first = #slots == 0 -- then the main route from the spine replaces link 1
-        slots[#slots + 1] = {name = "X" .. sat_used, specs = specs}
-        feeds[#feeds + 1] = {sl.ftx, sl.fty}
-        if not first then
-          links[#slots] = link
-          for i = 2, #link - 1 do blocked_extra[tkey(link[i][1], link[i][2])] = true end
-        end
-      end
-    elseif C.hub[name] == "free" then
-      local specs, ftx, fty = layout.slot_specs(ctx.frame, name)
-      -- claim first: the slots it kills free their tiles, which a route may need (a direct slot's feed tile is
-      -- boxed in by the smelter slot it replaces)
-      local snap = layout.snapshot_hub(C, ctx.frame)
-      layout.claim_slot(C, ctx.frame, name, line_name)
-      local link
-      if #slots > 0 then
-        local prev = feeds[#feeds]
-        link = layout.route(ctx, prev[1], prev[2], nil, ftx, fty, blocked)
-      end
-      if #slots == 0 or link then
-        slots[#slots + 1] = {name = name, specs = specs}
-        feeds[#feeds + 1] = {ftx, fty}
-        if link then
-          links[#slots] = link
-          for i = 2, #link - 1 do blocked_extra[tkey(link[i][1], link[i][2])] = true end
-        end
+      if not (satellite and sat_used >= 0 and sat_used < 2) then return false end
+      sat_used = sat_used + 1
+      local sl = satellite.slots[sat_used]
+      local specs = {}
+      if sat_used == 1 then specs[1] = satellite.stock end
+      for _, sp in ipairs(sl.specs) do specs[#specs + 1] = sp end
+      push("X" .. sat_used, specs, sl.ftx, sl.fty, satellite.links[sat_used])
+      return true
+    end
+    for _, entry in ipairs(spec.slots) do
+      if entry == "X" then
+        use_satellite()
       else
-        layout.restore_hub(C, snap)
-        util.log("ai layout: %s line %s: no belt link from hub slot %s to %s", C.force, line_name,
-          slots[#slots].name, name)
+        local stype = layout.slot_type(entry)
+        local preferred = layout.HUB[entry] and (flip and layout.SLOT_FLIP[entry] or entry) or nil
+        local ref = feeds[#feeds] or spine_end
+        local cands = {}
+        if preferred then cands[1] = {name = preferred, d = -1} end
+        for _, name in ipairs(layout.HUB_ORDER) do
+          if name ~= preferred and C.hub[name] == "free" and layout.slot_type(name) == stype then
+            local _, ftx, fty = layout.slot_specs(ctx.frame, name)
+            cands[#cands + 1] = {name = name, d = math.abs(ftx - ref[1]) + math.abs(fty - ref[2])}
+          end
+        end
+        table.sort(cands, function(a, b)
+          if a.d ~= b.d then return a.d < b.d end
+          return a.name < b.name
+        end)
+        local placed, tried = false, 0
+        for _, cand in ipairs(cands) do
+          local name = cand.name
+          if C.hub[name] == "free" and not (#slots == 0 and exclude_first[name]) then
+            tried = tried + 1
+            if tried > layout.SLOT_TRIES then break end
+            local specs, ftx, fty = layout.slot_specs(ctx.frame, name)
+            -- claim first: the slots it kills free their tiles, which a route may need (a direct slot's feed tile
+            -- is boxed in by the smelter slot it replaces)
+            local snap = layout.snapshot_hub(C, ctx.frame)
+            layout.claim_slot(C, ctx.frame, name, line_name)
+            local link
+            if #slots > 0 then
+              local prev = feeds[#feeds]
+              link = layout.route(ctx, prev[1], prev[2], nil, ftx, fty, blocked, layout.LINK_EXPAND)
+            end
+            if #slots == 0 or link then
+              push(name, specs, ftx, fty, link)
+              placed = true
+              break
+            end
+            layout.restore_hub(C, snap)
+          end
+        end
+        if not placed and not (stype == "smelter" and use_satellite()) then
+          util.log("ai layout: %s line %s: no hub slot of type %s for %s", C.force, line_name, tostring(stype), entry)
+        end
       end
     end
+    return slots, feeds, links
   end
-  local cur = spine.tiles[#spine.tiles]
+
+  local base_hub, base_reserved = {}, {}
+  for k, v in pairs(C.hub) do base_hub[k] = v end
+  for k, v in pairs(C.reserved) do base_reserved[k] = v end
+  local function restore()
+    for k in pairs(C.hub) do C.hub[k] = nil end
+    for k, v in pairs(base_hub) do C.hub[k] = v end
+    for k in pairs(C.reserved) do C.reserved[k] = nil end
+    for k, v in pairs(base_reserved) do C.reserved[k] = v end
+    for k in pairs(blocked_extra) do blocked_extra[k] = nil end
+  end
   local cur_dir = idx_of(spine.along[1], spine.along[2])
-  if #slots > 0 then
-    local main = layout.route(ctx, cur[1], cur[2], cur_dir, feeds[1][1], feeds[1][2], blocked)
+  local exclude_first = {}
+  for attempt = 1, layout.MAX_ATTEMPTS do
+    local slots, feeds, links = choose(exclude_first)
+    if #slots == 0 then break end
+    local main = layout.route(ctx, spine_end[1], spine_end[2], cur_dir, feeds[1][1], feeds[1][2], blocked)
     if main then
       take(main, 1)
       plan.slots[1] = {name = slots[1].name, specs = slots[1].specs, seg = 1}
@@ -902,11 +966,13 @@ function layout.plan_line(C, ctx, line_name, spec, hostile)
         take(links[k], k)
         plan.slots[k] = {name = slots[k].name, specs = slots[k].specs, seg = k}
       end
-    else
-      util.log("ai layout: %s line %s: no belt route to hub slot %s (%d tiles expanded)", C.force, line_name,
-        slots[1].name, ctx.last_expanded or 0)
-      layout.restore_hub(C, before)
+      break
     end
+    util.log("ai layout: %s line %s: no belt route to hub slot %s (%d tiles expanded, attempt %d)", C.force,
+      line_name, slots[1].name, ctx.last_expanded or 0, attempt)
+    restore()
+    if slots[1].name:sub(1, 1) == "X" then break end
+    exclude_first[slots[1].name] = true
   end
   -- belt directions: each tile faces the next one; the end tile goes straight unless that feeds another belt
   for i, t in ipairs(path) do

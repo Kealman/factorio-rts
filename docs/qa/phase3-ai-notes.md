@@ -8,7 +8,11 @@ Date: 2026-10-15. Factorio 2.0.77 (mac-arm64, Steam). Plan: `docs/PHASE3.md` ("A
 
 - **Round 1 is committed (a843594).** That covers the commanders, build orders, ghost construction, production, army,
   scouting, the AI-vs-AI autotest, and the wiring into `control.lua`, `match.lua` and `debug.lua`.
-- **Round 2 (this document) is the tuning round, inside `scripts/ai/` only:**
+- **Round 3 (latest) generalizes the hub for the rotated ore layout.** Slot types now exist on all four sides of the
+  CC. Each line takes its first-choice slot, then the nearest free slot of the same type, then a satellite
+  ("stacked" lines). See "Choosing slots" and "Round 3 validation". With `match.ORE_LAYOUT = "rotated"`, every AI
+  in 1v2 and 1v3 builds iron and copper lines. The facing layout is unchanged and passes.
+- **Round 2 is the tuning round, inside `scripts/ai/` only:**
   - difficulty pacing for human opponents;
   - heavy kits;
   - partial defence;
@@ -41,11 +45,11 @@ Date: 2026-10-15. Factorio 2.0.77 (mac-arm64, Steam). Plan: `docs/PHASE3.md` ("A
 | `commander.lua` | 390 | Per-force state, start-up, the run sequence, barracks recipes (heavy alternation), the factory (feasible recipe first, ammo budget), the dump lines |
 | `orders_data.lua` | 181 | Data: the difficulty table, the mining lines, the three build orders, factory recipes, target priorities |
 | `build_order.lua` | 363 | Step interpreter, line planning and bookkeeping |
-| `layout.lua` | 1116 | Geometry: hub slots, satellites, ore patches, mining spines, the A* belt router, pole chains, free spots with a second ring, the ASCII map |
+| `layout.lua` | 1182 | Geometry: hub slots on all four sides and how lines choose them, satellites, ore patches, mining spines, the A* belt router, pole chains, free spots with a second ring, the ASCII map |
 | `construction.lua` | 258 | Plan entries, ghosts, paced revive with item debit, give-up rules, repair, network item counts |
 | `army.lua` | 339 | Rally, attacks, reinforcements, retreat, partial defence, finishing, re-targeting |
 | `scout.lua` | 190 | Known enemy buildings, spawn guesses, sight checks, beaten enemies, target choice |
-| `autotest.lua` | 215 | Headless AI-vs-AI test for every match force: minute reports, checks, performance lines, the summary |
+| `autotest.lua` | 324 | Headless AI-vs-AI test for every match force: the planner check, minute reports, checks (incl. iron and copper lines per force), performance lines, the summary |
 
 ## Running it
 
@@ -133,16 +137,43 @@ gates use stone and time, not iron: once the barracks run, iron rarely sits in t
 **Arena bounds.** The arena is `[-arena_half, arena_half)²` from `storage.match.arena_half`, as agreed with
 match.lua (`layout.arena_half()`, fallback 80). Nothing is planned outside it, and ore outside it is ignored.
 
-**Hub.** Each of the four CC stockpiles takes inserters on its free sides. `layout.HUB` defines 18 slots in the CC
-frame, mirrored for the other side:
+**Hub.** Each of the four CC stockpiles takes inserters on its free sides. `layout.HUB` defines 24 slots in the CC
+frame, mirrored for the other side. Every type exists on all four sides (round 3 added the east and west direct
+and chain slots):
 
 | Slot type | Names | Chain |
 |---|---|---|
-| Smelter | E, N, W, S 1–2 | Feed belt tile → inserter → `rts-smelter` → inserter → stockpile |
-| Direct | `N1d`, `S1d`, `N2d`, `S2d`, `E1d`, `E2d` | Feed tile → inserter → stockpile. Used for stone. |
-| Steel chain | `N1c`, `N2c`, `S1c`, `S2c` | Feed → inserter → smelter A (iron plates) → inserter → smelter B (steel) → inserter → stockpile |
+| Smelter | `E1`/`E2`, `N1`/`N2`, `W1`/`W2`, `S1`/`S2` | Feed belt tile → inserter → `rts-smelter` → inserter → stockpile |
+| Direct | `N1d`, `N2d`, `S1d`, `S2d`, `E1d`, `E2d`, `W1d`, `W2d` | Feed tile → inserter → stockpile. Used for stone. |
+| Steel chain | `N1c`, `N2c`, `S1c`, `S2c`, `E1c`, `E2c`, `W1c`, `W2c` | Feed → inserter → smelter A (iron plates) → inserter → smelter B (steel) → inserter → stockpile |
 
-Slots that share tiles exclude each other. All slot tiles are reserved from the start.
+Slots that share tiles exclude each other: claiming one kills the others and frees their tiles. All slot tiles are
+reserved from the start.
+
+**Choosing slots** (round 3). A line's `slots` list (orders_data.LINES) holds hub slot names, the abstract types
+`"smelter"`, `"chain"` and `"direct"`, or `"X"` for a satellite. Each entry is tried in this order:
+
+1. **The named slot.** It is written for a patch on the line's `side` and mirrored in y when the patch lies on the
+   other side. The calibrated facing layout keeps exactly these choices.
+2. **Any free hub slot of the same type,** nearest to the previous slot's feed tile (or to the spine) first, up to
+   6 slots. Each is claimed, then its belt link from the previous feed is routed (capped at 20 000 states).
+3. **For a smelter: the line's satellite,** placed on first use. This is how two lines on the same side of the CC
+   stack.
+
+When the main belt from the spine cannot reach the chosen first slot, the whole line is planned again without that
+slot, up to 4 attempts. The hub and the reserved tiles are restored between attempts.
+
+**Rotated ore** (`match.ORE_LAYOUT = "rotated"`) puts iron and copper on the same side of an off-axis AI's CC.
+Planned lines, 12-second smoke runs:
+
+| Run | Force | Iron slots | Copper slots | Stone slot |
+|---|---|---|---|---|
+| Rotated 1v2 | `rts-ai-1` | `S1 S2 W2 W1 N2c X1 X2` | `E1 N1` (41 belts) | `E2d` |
+| | `rts-ai-2` | `N1 N2 W1 W2 S2c X1 X2` | `E2 S1` (93 belts) | `E1d` |
+| Rotated 1v3 | `rts-ai-1` | `S1 S2 W2 W1 N2c X1 X2` | `E1 N1` (87 belts) | `E2d` |
+| | `rts-ai-3` | `N1 N2 W1 W2 S2c X1 X2` | `E2 S1` (48 belts) | `E1d` |
+
+Before round 3, these copper lines failed with "no hub slot reachable". The facing layout plans exactly as before.
 
 **Satellites** (slot name `X`, new). A satellite is an `rts-stockpile` with a smelter slot on each side, north and
 south of it or west and east. It sits anywhere within 15 tiles of the CC where both smelters get the core pole's
@@ -329,6 +360,39 @@ one barracks, then stone, a second iron smelter, a second extractor, and one tur
 - the expansion at 5 min.
 
 ## Validation and measured timings
+
+### Round 3 validation (hub slots on all sides)
+
+Each copy is the current `mods/` with only `AUTOTEST_MATCH.opponents` and, for the rotated runs,
+`match.ORE_LAYOUT = "rotated"` changed. The new check `lines_<force>` requires that iron and copper each had a
+built drill and a built hub slot at some point (a force that lost its CC first is excused).
+
+| Run | Copy | Checks | `lines_*` for every force | Result | Errors |
+|---|---|---|---|---|---|
+| Facing 1v1 | `build/p3-ai3` | 14/14 | iron + copper running at 133–134 s | both alive at 6 min | 0 |
+| Facing 1v3 | `build/p3-ai3-f3` | 24/24 | all 4 forces by 134 s | `rts-ai-1` and `rts-ai-2` out by minute 5 | 0 |
+| Rotated 1v2 | `build/p3-ai3-r2` | 19/19 | player 134 s, `rts-ai-1` 149 s, `rts-ai-2` 190 s | the AIs win at 284 s | 0 |
+| Rotated 1v3 | `build/p3-ai3-r3` | 24/24 | all 4 forces by 165 s | `rts-ai-1` and `rts-ai-2` out by minute 7 | 0 |
+
+All runs held 60 UPS (59 9xx – 60 03x ms of wall clock per 3600 ticks, four servers at once).
+
+Meanwhile, other agents changed `prototypes/buildings.lua` and `prototypes/units.lua` in `mods/`. A rerun on a fresh
+copy of that `mods/` with these AI files also passed, with zero errors:
+
+| Run | Copy | Checks |
+|---|---|---|
+| Facing 1v1 | `build/p3-ai3b` | 14/14 |
+| Rotated 1v3 | `build/p3-ai3b-r3` | 24/24 |
+
+| Commanders | AI time per 3600 ticks |
+|---|---|
+| 2 | 126–216 ms |
+| 3 | 215–252 ms |
+| 4 | 285–598 ms; 598 was the minute in which expansions were planned |
+
+Planning the three start lines takes 21–40 ms per force; the longest are the rotated copper lines.
+
+### Round 2 runs
 
 **Planner check** (`autotest.planner_check`, run at the start of every AI autotest):
 - It plans the iron and copper lines with the real planner on a scratch surface, deleted afterwards.

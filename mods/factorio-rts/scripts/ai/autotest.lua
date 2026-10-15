@@ -7,7 +7,8 @@
 --   [rts] ai perf minute N: ticks T, AI runs R, AI time <profiler>, wall clock <profiler>
 --   [rts] ai autotest check <name>: PASS|FAIL ...
 --   [rts] ai autotest summary <passed>/<total> ... result=...
--- Checks: planner_arena_half and planner_vertical_iron / _copper (autotest.planner_check: a base whose ore lies north
+-- Checks: lines_<force> (iron and copper lines each have a built drill and a built hub slot at some point, unless
+-- the force lost its CC first), planner_arena_half and planner_vertical_iron / _copper (autotest.planner_check: a base whose ore lies north
 -- and south of the CC, as rotated spawns put it), build_3min (each force has an extractor, a smelter and a barracks by 3 min), produce (kits made in every
 -- minute from minute 3 on while the force still has a barracks and a CC), attack (each force launched an attack by the end,
 -- unless the match ended first or the force lost its CC first), outcome (the match ended, or at least two forces
@@ -24,6 +25,7 @@ local ai = require("scripts.ai.init")
 local commander = require("scripts.ai.commander")
 local layout = require("scripts.ai.layout")
 local data = require("scripts.ai.orders_data")
+local build_order = require("scripts.ai.build_order")
 
 local autotest = {}
 
@@ -123,7 +125,7 @@ end
 
 function autotest.start()
   local s = {started = game.tick, minute = 0, pass = 0, fail = 0, kits = {}, per_minute = {}, built_at = {},
-             produced_ok = {}, done = false}
+             lines_at = {}, produced_ok = {}, done = false}
   storage.ai_autotest = s
   autotest.planner_check()
   local cfg = storage.match and storage.match.config
@@ -198,6 +200,20 @@ local function minute_report(s, n)
   ai.reset_perf()
 end
 
+--- True when the force's commander has built at least one drill and one hub slot on its iron and copper lines.
+function autotest.lines_running(f)
+  local C = ai.get(f)
+  if not C then return false end
+  for _, name in ipairs({"iron", "copper"}) do
+    local L = C.lines[name]
+    if not (L and L.status == "ok" and build_order.line_drills_built(C, L) > 0
+            and build_order.line_slots_built(C, L) > 0) then
+      return false
+    end
+  end
+  return true
+end
+
 local function has_all(f)
   return buildings.count(f, "extractor") > 0 and buildings.count(f, "smelter") > 0
     and buildings.count(f, "barracks") > 0
@@ -233,6 +249,16 @@ local function finish(s, why)
       table.concat(s.per_minute[f], " "))
     check("no_bad_spam_" .. f, (C and C.stats.bad or 0) < 20, "%s gave up on %d construction entries", f,
       C and C.stats.bad or 0)
+    local lp = {}
+    for _, name in ipairs({"iron", "copper"}) do
+      local L = C and C.lines[name]
+      lp[#lp + 1] = L and (L.status == "ok" and string.format("%s drills %d slots %d", name,
+        build_order.line_drills_built(C, L), build_order.line_slots_built(C, L))
+        or (name .. " unavailable: " .. tostring(L.reason))) or (name .. " not planned")
+    end
+    check("lines_" .. f, s.lines_at[f] ~= nil or knocked_out, "%s: %s; %s", f, s.lines_at[f]
+      and string.format("iron and copper lines running at %.0fs", s.lines_at[f] / 60)
+      or (knocked_out and "lost its CC first" or "not both running"), table.concat(lp, ", "))
   end
   local last = s.minute
   local producing = autotest.producing(s)
@@ -253,6 +279,11 @@ function autotest.tick(tick)
     if not s.built_at[f] and has_all(f) then
       s.built_at[f] = age
       util.log("ai autotest: %s has an extractor, a smelter and a barracks at %.0fs", f, age / 60)
+    end
+    if not s.lines_at[f] and autotest.lines_running(f) then
+      s.lines_at[f] = age
+      util.log("ai autotest: %s runs an iron line and a copper line (a drill and a hub slot each) at %.0fs", f,
+        age / 60)
     end
   end
   if age >= autotest.BUILD_DEADLINE and not s.build_checked then
