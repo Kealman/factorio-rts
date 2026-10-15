@@ -104,8 +104,8 @@ local RESOURCE_LOG_TICKS = 5 * 60  -- the "hud resources" QA line is written at 
 -- The selection panel is wide and low: the console (chat) has no GameViewSettings switch and its last line ends
 -- about 135 GUI units above the bottom of the screen, so the panel's top (PANEL_HEIGHT + MARGIN) stays below it.
 -- Phase 4: 126 high (unit cards with HP bars, the factory's 2 x 14 recipe grid); its top, 134 units above the bottom,
--- is still below the console. 520 wide: the abilities frame (scripts/abilitygui.lua) takes the bottom centre from
--- x 400 px at 1280x800 and UI scale 0.75, and this panel ends at x 396.
+-- is still below the console. 520 wide: the ability bar (scripts/abilitygui.lua) centres between this panel and the
+-- build menu. Its HUD_LEFT / HUD_RIGHT copy MARGIN, PANEL_WIDTH and BUILD_WIDTH: change them together.
 local MARGIN = 8
 local FRAME_PADDING_X = 16         -- rts_hud_frame: 8 left + 8 right
 local PANEL_WIDTH, PANEL_HEIGHT = 520, 126
@@ -264,6 +264,9 @@ P4.ALERT_STYLE = {
   ["commander-ready"] = {icons = {"entity/rts-commander", "utility/check_mark_green"}, color = "green"},
 }
 P4.ALERT_DEFAULT_STYLE = {icons = {"utility/warning_icon"}, color = "white"}
+-- A text that overrides its kind's style: the ruin's previous owner gets kind "ruin-captured" with this text.
+P4.ALERT_TEXT_STYLE = {["rts.alert-ruin-lost"] = {icons = {"item/steel-plate", "utility/danger_icon"}, color = "red",
+                                                 sound = "utility/alert_destroyed"}}
 P4.PING_KINDS = {["base-attacked"] = true, ["hauler-lost"] = true, ["commander-down"] = true}
 P4.PING_SIGNALS = {"signal-alert", "signal-red", "signal-dot"} -- the first that exists
 
@@ -1548,7 +1551,9 @@ end
 ---------------------------------------------------------------------------
 -- Refresh: alert lines and kill feed (Phase 4)
 ---------------------------------------------------------------------------
-local function alert_style(kind) return P4.ALERT_STYLE[kind] or P4.ALERT_DEFAULT_STYLE end
+local function alert_style(a)
+  return P4.ALERT_TEXT_STYLE[a.text] or P4.ALERT_STYLE[a.kind] or P4.ALERT_DEFAULT_STYLE
+end
 
 --- The alert's text as a localised string: {entry.text, params...} (supply.alert / logistics.alert format).
 local function alert_text(entry)
@@ -1587,7 +1592,7 @@ local function update_alerts(player, h)
     local a = shown[i]
     line.visible = a ~= nil
     if a then
-      local st = alert_style(a.kind)
+      local st = alert_style(a)
       local icon = first_sprite(st.icons)
       local age = game.tick - a.tick
       line.caption = {"", icon and ("[img=" .. icon .. "] ") or "", alert_text(a), "   ",
@@ -1606,7 +1611,7 @@ local function update_alerts(player, h)
   if seen and newest and newest > seen then
     for _, a in ipairs(shown) do
       if a.tick > seen then
-        local sound = alert_style(a.kind).sound
+        local sound = alert_style(a).sound
         if sound and helpers.is_valid_sound_path(sound) then
           player.play_sound({path = sound})
           break

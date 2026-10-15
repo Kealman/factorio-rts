@@ -252,8 +252,10 @@ wall segment is a registered building, so wall damage raises `base-attacked` and
 
 From the `hud: layout` line: panel (6, 699) 390×95 (126 GUI units high, was 114), build menu (1043, 710) 231×84,
 strip (370, 6) 540×72 (720 GUI units wide, was 600), minimap (1106, 9) 165×165, alert lines (445, 81) 390 wide,
-kill feed (6, 6) 195 wide. The abilities bar (`scripts/abilitygui.lua`) sits at x 475–805, clear of the panel
-(ends at x 396) and the build menu. Nothing overlaps or clips in the English and Russian screenshots.
+kill feed (6, 6) 195 wide. The ability bar (`scripts/abilitygui.lua`) centres between the panel and the build menu:
+x 461–820 at scale 0.75 and x 536–856 at scale 1.0, where the panel spans x 8–528 and the build menu starts at x 964.
+Its `HUD_LEFT` / `HUD_RIGHT` copy `MARGIN`, `PANEL_WIDTH` and `BUILD_WIDTH` from hud.lua, so change them together.
+Nothing overlaps or clips in the English and Russian screenshots.
 
 | Element | Centre (px) |
 |---|---|
@@ -293,7 +295,8 @@ kill feed (6, 6) 195 wide. The abilities bar (`scripts/abilitygui.lua`) sits at 
 - **Strip.** Supply turns yellow from 90 % and red at the cap. `supply.get` is cached per force and tick.
 - **Alerts.** Every `storage.alerts` writer is shown: `hauler-lost`, `supply-blocked`, `unit-locked`,
   `research-complete`, `patch-depleted`, `ruin-captured`, `commander-down`, `commander-ready` and `base-attacked`. Lines
-  live 15 s and fade over the last 3 s. F3 goes to the newest alert with a position; F3 again within 5 s goes to the
+  live 15 s and fade over the last 3 s. The ruin's previous owner gets kind `ruin-captured` with text
+  `rts.alert-ruin-lost`; that text is styled red with a sound instead of the kind's green. F3 goes to the newest alert with a position; F3 again within 5 s goes to the
   next older one. `base-attacked` and `hauler-lost` play `utility/alert_destroyed`. Those two and `commander-down` add
   a chart tag (minimap ping) for 10 s.
 - **base-attacked.** Written by hud.lua through `supply.alert` when an own registered building takes damage from
@@ -349,5 +352,3 @@ Self-test steps (setup-relative ticks, between the match-flow menu at 1320 and t
 - **Alert fade** was not captured: the screenshots are within 3 s of the alerts.
 - **`economy.snapshot` power capacity** counts CC cores and solar arrays only, so steam plants and accumulators do not
   show in the strip's MW. `economy.lua` is not this agent's file.
-- **`match.label`** builds a Lua pattern from `match.AI_PREFIX` (`rts-ai-`), where `-` is a quantifier, so it returns
-  the raw force name for AI forces. The kill feed uses its own plain prefix test.
