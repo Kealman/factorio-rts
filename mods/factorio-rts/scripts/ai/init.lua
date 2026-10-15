@@ -128,6 +128,7 @@ events.on_nth_tick(ai.TICK, ai.tick)
 events.on(defines.events.on_entity_damaged, function(e)
   local entity = e.entity
   if not (entity and entity.valid) then return end
+  if not buildings.KIND_BY_NAME[entity.name] then return end -- only RTS buildings are base threats (shared filter)
   local C = storage.ai and storage.ai[entity.force.name]
   if not C then return end
   local cause = e.cause
