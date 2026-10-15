@@ -18,13 +18,19 @@ local modules = {
   require("scripts.basetemplate"),
   require("scripts.match"),
   require("scripts.ai.init"),  -- Phase 3 AI commanders; after match (ai.init reads storage.match.config)
+  require("scripts.supply"),   -- Phase 4 supply cap (production's kit gate, HUD strip)
+  require("scripts.research"), -- Phase 4 labs, technologies, kit gate; after ai.init (it re-sets the AI's
+                               -- on_entity_damaged filter with the armored unit names added)
   require("scripts.fog"),      -- Phase 3 fog of war (charts around own units and buildings)
   require("scripts.camera"),   -- also requires scripts.cursor
   require("scripts.cursor"),
   require("scripts.selection"),
   require("scripts.orders"),
+  require("scripts.logistics"), -- Phase 4: hubs, stockpile policies, haulers (after orders: right-click hook)
+  require("scripts.hubgui"),    -- Phase 4: hub and hauler panels
   require("scripts.hud"),
   require("scripts.lobby"),    -- Phase 3 start dialog, menu, results; match start / restart
+  require("scripts.techgui"),  -- Phase 4 research panel (T)
   require("scripts.debug"),
 }
 

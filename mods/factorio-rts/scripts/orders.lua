@@ -425,7 +425,20 @@ end
 -- What a plain right click at `position` means: with a building selected (and no units) the rally point,
 -- else attack-move when armed, attack when it hit an enemy, otherwise move. Returns the order name and the
 -- number of units (or buildings) ordered.
+-- Phase 4 hooks (logistics.lua: haulers take route orders). fn(player_index, position, entities, alt) returns an
+-- order name and a count when it consumed the right click, or nil to let the decision below run. Load time only.
+local right_click_hooks = {}
+function orders.on_right_click(fn) right_click_hooks[#right_click_hooks + 1] = fn end
+local function run_right_click_hooks(player_index, position, entities, alt)
+  for i = 1, #right_click_hooks do
+    local order, n = right_click_hooks[i](player_index, position, entities, alt)
+    if order then return order, n end
+  end
+end
+
 local function right_click_order(player_index, position, entities)
+  local hooked, hooked_n = run_right_click_hooks(player_index, position, entities, false)
+  if hooked then return hooked, hooked_n end
   if selection.count(player_index) == 0 and selection.get_building(player_index) then
     disarm(player_index, "a building is selected")
     return orders.set_rally(player_index, position)
@@ -454,6 +467,8 @@ function orders.handle_reverse_area(player_index, entities, area, alt)
   end
   o.stats.area_orders = o.stats.area_orders + 1
   if alt then
+    local hooked, hooked_n = run_right_click_hooks(player_index, center, entities, true)
+    if hooked then return hooked, hooked_n end
     disarm(player_index, "shift + right click")
     return "attack_move", orders.attack_move(player_index, center)
   end

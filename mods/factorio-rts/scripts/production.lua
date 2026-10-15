@@ -39,7 +39,17 @@ production.RALLY_SPREAD = 2.5        -- tiles between units sent to the same ral
 production.KITS = {
   ["rts-walker-kit"] = {unit = "rts-walker", kind = "walker"},
   ["rts-walker-heavy-kit"] = {unit = "rts-walker-heavy", kind = "heavy"},
+  -- Phase 4 (balance.lua units[*].kit; mk2 tiers keep the kind of their base unit)
+  ["rts-drone-kit"] = {unit = "rts-drone", kind = "drone"},
+  ["rts-raider-kit"] = {unit = "rts-raider", kind = "raider"},
+  ["rts-artillery-kit"] = {unit = "rts-artillery", kind = "artillery"},
+  ["rts-walker-mk2-kit"] = {unit = "rts-walker-mk2", kind = "walker"},
+  ["rts-heavy-mk2-kit"] = {unit = "rts-heavy-mk2", kind = "heavy"},
 }
+
+-- Phase 4: fn(barracks_record, kit_name, KITS entry) -> {unit, kind} to spawn, or nil to keep the kit in the output.
+-- Set by scripts/research.lua (research.gate); nil = every kit becomes its KITS unit.
+production.kit_gate = nil
 
 local spawned_callbacks = {}
 
@@ -88,6 +98,13 @@ function production.set_recipe(target, recipe_name)
     or (target and target.valid and buildings.get(target.unit_number))
   if not rec or (rec.kind ~= "barracks" and rec.kind ~= "factory") then return false end
   local e = rec.entity
+  -- Phase 4: LuaEntity.set_recipe accepts a recipe the force has disabled (research locks, scripts/research.lua)
+  local force_recipe = recipe_name and e.force.recipes[recipe_name]
+  if force_recipe and not force_recipe.enabled then
+    util.log("production: %s #%d (%s) rejected recipe %s (locked for the force)", rec.kind, e.unit_number, rec.force,
+      recipe_name)
+    return false
+  end
   local ok, removed = pcall(e.set_recipe, recipe_name)
   if ok and removed and #removed > 0 then
     -- ingredients / products taken out of the machine by the recipe change go back to the pool
@@ -274,7 +291,10 @@ local function check_barracks(rec)
     for kit, def in pairs(production.KITS) do
       local n = out.get_item_count(kit)
       for _ = 1, n do
-        if not spawn_from_kit(rec, kit, def) then break end -- no room: the kit waits for the next check
+        -- Phase 4 gate (research.lua): unit locked by research, mk2 swap after Armor I, supply cap; nil = keep the kit
+        local spawn = def
+        if production.kit_gate then spawn = production.kit_gate(rec, kit, def) end
+        if not (spawn and spawn_from_kit(rec, kit, spawn)) then break end -- no room / gated: the kit waits
         out.remove({name = kit, count = 1})
       end
     end
@@ -304,7 +324,7 @@ local function hand_off(rec)
   if not network then return end -- stays in the output until a network covers the factory
   for _, item in pairs(out.get_contents()) do
     local stack = {name = item.name, count = item.count, quality = item.quality}
-    local moved = network.insert(stack)
+    local moved = item.name ~= "rts-hauler-kit" and network.insert(stack) or 0 -- Phase 4: logistics.lua deploys these
     if moved > 0 then
       out.remove({name = item.name, count = moved, quality = item.quality})
       stats.items = stats.items + moved
