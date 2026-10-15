@@ -14,6 +14,9 @@ Two configurations were run, and every logged number matched across them:
 
 No errors appeared in either run. The scripts ran with no players at all and `auto_pause=false`.
 
+None of the logs contain the write-dir lock error (`Couldn't acquire exclusive lock`).
+The final run used the updated runner with an isolated write dir under `build/runs/economy/` and reproduced every number below.
+
 ## Verdicts
 
 | Spike | Verdict |
@@ -63,10 +66,10 @@ A per-tick observer of `products_finished` recorded the exact completion tick fo
 
 Note 1: the 180-tick craft is a multiple of the 10-tick poll period, so the phase locked at the worst case. In general, latency with an N-tick poll is uniform over 0..N-1.
 
-Per-poll cost was measured with `helpers.create_profiler` over 90 extra barracks, 30 polls per variant, across 3 runs:
+Per-poll cost was measured with `helpers.create_profiler` over 90 extra barracks, 30 polls per variant, across 4 runs:
 
-- **Variant A** reads the output inventory every time: 0.516–0.537 ms per poll of 90, about **5.8 µs per barracks per poll**.
-- **Variant B** first compares `products_finished` and opens the inventory only on change: 0.457–0.517 ms, about **5.5 µs per barracks**.
+- **Variant A** reads the output inventory every time: 0.507–0.537 ms per poll of 90, about **5.8 µs per barracks per poll**.
+- **Variant B** first compares `products_finished` and opens the inventory only on change: 0.452–0.517 ms, about **5.4 µs per barracks**.
   The saving is within noise. The cost is the Lua-to-engine call itself, not inventory access.
 - With 100 barracks polled every 10 ticks, the average is about 0.06 ms per tick, 0.35% of the 16.7 ms tick budget.
 
@@ -174,7 +177,7 @@ At rt=4800 I cloned the running base's area, 15×17 tiles, to x−80 with `desti
 - The clone copies everything: resources (29), ghosts (the unrevived accumulator), inventories (39 plates, 41 coal), wires, and machine progress.
 - It runs as a deterministic replica. The clone's chest matched the original tick for tick: 44, 50, 55, 61.
 - `rts-ai-2` produced 23 plates in 2400 ticks, about 34.5/min.
-- Cost was 6.6–7.6 ms for 51 entities in one call: fine at match start, too heavy for routine per-tick use.
+- Cost was 6.6–7.6 ms for 51 entities in one call, over three runs: fine at match start, too heavy for routine per-tick use.
 
 ## API gotchas: names and behaviour that differed from expectations
 
