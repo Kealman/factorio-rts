@@ -191,12 +191,14 @@ autotest check attack_released: PASS target gone, all attackers idle again after
 6. **A lone strafer dodges most projectiles.** Six walkers took 8 s to more than 20 s to kill one, at about 1 hit in 6 shots. This is a balance note for `prototypes/units.lua`. The autotest therefore checks that the target is hit, and kills it by script 8 s after the first hit to test the target-gone path.
 7. **The attack-move arming text cannot be checked in a screenshot.** `create_local_flying_text{create_at_cursor = true}` puts it at the cursor. Screenshots have no cursor, so it showed up at the top-left corner.
 
-## For the lead
+## Follow-ups (resolved)
 
-- **PHASE1 text still names A and S.** The acceptance checklist line "A then right-click = attack-move; S stops" now means F and X. Only the input table was edited, as instructed. A one-sentence note above the table explains the WASD reason.
-- **Two "Orders" bullets in PHASE1 describe the old behaviour.** The `attack` and `attack_move` bullets do not match what is built; see the deviations above.
-- **hud.lua's self-test is not gated by the new switch.** `HUD_SELFTEST = true` still runs the synthetic minimap click, the camera jump and a group 1 assignment for every player. For clean QA runs it should check `camera.selftest_enabled()`.
+- **PHASE1.** The integration agent updated the text: F, X and H, plus the attack and attack-move behaviour as built.
+- **HUD self-test.** All HUD dev steps now run only when `camera.selftest_enabled()` is true. The HUD agent checked this with GUI runs, once with the switch off and once with it on.
 - **The self-test is still available.** Run `/rts-selftest on` in game, or copy the mod with `SELFTEST_DEFAULT = true` as in `build/rts-selftest`.
+- **Later changes by the integration agent are not covered by the validation above.** They own `mods/factorio-rts/` from here on.
+  - **Log lines.** They added QA log lines to selection.lua and orders.lua and changed the group-set line to `group set N n=M player=P`.
+  - **Reset.** They added `/rts-qa-reset` and `orders.reset()`.
 
 ## Open items for interactive QA
 
