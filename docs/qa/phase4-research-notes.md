@@ -138,17 +138,18 @@ is logged on change. A lab outside every CC and hub network gets nothing.
 ## Supply (`scripts/supply.lua`)
 
 ```
-cap  = 40 if the force has a live CC (balance.buildings["rts-command-center"].supply_provided)
-     + 10 per live hub (buildings kind "hub")
+cap  = 40 if the force has a live CC  (balance.buildings["rts-command-center"].supply_cap)
+     + 10 per live hub (buildings kind "hub"; balance.buildings["rts-hub"].supply_cap)
      + research bonus (Supply I and II: +10 each)
 used = sum of supply.cost(unit name) over the force's live registered units
 ```
 
 `supply.cost` reads `balance.units[name].supply`: walker 1, drone 1, heavy 3, raider 2, artillery 4, commander 0, and
 mk2 the same as its tier 1. Without `balance.lua` it uses a fallback table with the same numbers. A name in neither
-place costs the cost of its `-mk2` base, else 1. That covers haulers, which logistics registers in `storage.units` with
-kind `"hauler"` and which have no balance entry, so a hauler costs 1 today. `balance.lua` is loaded with
-`pcall(require, "balance")`.
+place costs the cost of its `-mk2` base, else 1. Haulers are registered units (kind `"hauler"`) with
+`balance.units["rts-hauler"].supply = 0`, so they are free. `balance.lua` is loaded with `pcall(require, "balance")`.
+The two caps fall back to 40 and 10 without it. `supply.init` logs where they came from, for example
+`supply: CC cap 40 (balance), hub cap 10 (balance)`, in the map-creation log.
 
 The cap applies to every force, the AI included. Units that already exist are never removed. A cap that drops because
 a hub dies only stops new units.
@@ -291,6 +292,17 @@ The six researched technologies (four tier 1 and two tier 2, 115 kits) took abou
 115 × 10 s / 8 = 144 s. Neither the legacy run nor the
 AI run logged a single supply refusal.
 
+**Last probe run (supply caps from `balance.lua`).** By then, the wave B agents' work in `mods/` failed to load. The
+`hud.lua` main chunk hit "too many local variables (limit is 200)" at line 1981, which is not a research file. The last
+probe therefore ran on the snapshot of `build/p4-ab-t1`, with these changes:
+
+- the current `scripts/supply.lua`;
+- `balance.lua` patched to `supply_cap` for the CC and the hub;
+- `research.lua` and `techgui.lua` identical to `mods/`.
+
+The result was `research probe summary 21/21 (all passed)`, 0 errors, and `supply: CC cap 40 (balance), hub cap 10
+(balance)`.
+
 **Legacy variance.** The 65/65 legacy autotest does not use research. Two runs with the all-units filter scored
 64/65 and failed `eco_shared_pool`. The autotest's own Phase 1 attack-move destroyed the enemy barracks and CC, at 73 s
 and 98 s. The match then ended in a victory, and the autotest's `/rts-qa-reset` started a new match. That match had no
@@ -352,8 +364,7 @@ The name column is 190 px wide. The first Russian run with 150 px clipped "Вм�
 - **Heavy walkers are locked behind Unlock Heavy for human players.** `balance.lua` has no `unlock` flag on the heavy,
   but the tree in docs/PHASE4.md and the lead's brief have the technology. The gate does the locking, so no recipe
   changes.
-- **Haulers cost 1 supply.** They are registered units without a balance entry. Add
-  `balance.units["rts-hauler"] = {supply = 0}` or another number if haulers should be free.
+- **Haulers are free.** `balance.units["rts-hauler"].supply = 0` (content agent).
 - **HUD (B2).** The HUD needs:
   - the supply strip (`supply.get`);
   - the alert line for `storage.alerts`, whose entries may carry `params`;

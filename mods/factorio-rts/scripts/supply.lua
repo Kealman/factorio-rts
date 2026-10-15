@@ -2,6 +2,7 @@
 --
 --   cap  = CC_CAP when the force has a live Command Center
 --        + HUB_CAP per live hub (buildings kind "hub", registered by the logistics module)
+--   CC_CAP and HUB_CAP come from balance.buildings["rts-command-center" / "rts-hub"].supply_cap (40 / 10 without it)
 --        + research bonus (storage.research.supply_bonus[force], written by scripts/research.lua: Supply I/II)
 --   used = sum of supply.cost(name) over the force's live registered units (storage.units)
 --
@@ -20,7 +21,7 @@ local buildings = require("scripts.buildings")
 
 local supply = {}
 
-supply.CC_CAP = 40 -- balance.buildings["rts-command-center"].supply_provided when present
+supply.CC_CAP = 40 -- fallbacks; balance.buildings[name].supply_cap wins (below)
 supply.HUB_CAP = 10
 supply.DEFAULT_COST = 1
 supply.ALERTS_MAX = 100 -- logistics.MAX_ALERTS
@@ -44,8 +45,11 @@ do
 end
 supply.has_balance = balance ~= nil
 do
-  local cc = balance and balance.buildings and balance.buildings["rts-command-center"]
-  if cc and type(cc.supply_provided) == "number" then supply.CC_CAP = cc.supply_provided end
+  local b = balance and balance.buildings or {}
+  local cc, hub = b["rts-command-center"], b["rts-hub"]
+  supply.CAP_SOURCE = {cc = "fallback", hub = "fallback"}
+  if cc and type(cc.supply_cap) == "number" then supply.CC_CAP, supply.CAP_SOURCE.cc = cc.supply_cap, "balance" end
+  if hub and type(hub.supply_cap) == "number" then supply.HUB_CAP, supply.CAP_SOURCE.hub = hub.supply_cap, "balance" end
 end
 
 local cost_cache = {} -- derived from static data only, identical on every client
@@ -73,6 +77,8 @@ function supply.init()
   storage.supply = storage.supply or {}
   storage.supply.last_alert = storage.supply.last_alert or {}
   storage.alerts = storage.alerts or {}
+  util.log("supply: CC cap %d (%s), hub cap %d (%s)", supply.CC_CAP, supply.CAP_SOURCE.cc, supply.HUB_CAP,
+    supply.CAP_SOURCE.hub)
 end
 
 --- Supply used by the force's live units.
