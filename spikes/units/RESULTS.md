@@ -7,11 +7,12 @@ Factorio 2.0.77 (mac-arm64), headless, 2026-10-15. Mod: `spikes/units/rts-spike-
 ## How to run
 
 ```sh
-spikes/units/run-headless.sh 125                                   # Space Age enabled (spikes/units/mod-list.json)
-spikes/units/run-headless.sh 125 '\[rts-units' build/units-nosa 34212   # no Space Age (mod copy + mod-list.json in build/)
+tools/headless-run.sh 125 '\[rts-units' spikes/units      # Space Age enabled (spikes/units/mod-list.json)
+tools/headless-run.sh 125 '\[rts-units' build/units-nosa  # no Space Age: copy of the mod plus a mod-list.json with
+                                                         # space-age, quality and elevated-rails disabled
 ```
 
-`run-headless.sh` is `tools/headless-run.sh` plus an isolated write-data dir and UDP port (see gotcha 1). The scenario is a phase machine in `control.lua`, about 108 s of game time:
+The scenario is a phase machine in `control.lua`, about 108 s of game time:
 
 | Phase | Game time | What happens |
 |---|---|---|
@@ -34,6 +35,9 @@ The logs are in `build/`, which is git-ignored, so the excerpts below are the re
 | 4 | **final code**, Space Age | `build/units-server-run4-full.log` |
 | nosa | final code, Space Age / quality / elevated-rails disabled | `build/units-nosa-server.log` |
 | bench | `--benchmark` of a fresh final-code save, per-tick timings | `build/units-benchmark.txt`, `build/units-nosa-benchmark.txt` |
+| rerun | final code through the updated `tools/headless-run.sh`, SA and no-SA in parallel | `build/units-official-stdout.txt`, `build/units-nosa-official-stdout.txt` |
+
+Runs 1–4, nosa and bench used a private copy of the runner with its own write-data dir and port, so none of them hit the write-data lock. The rerun through the shared tool reproduced the results: all moves succeeded, groups worked with `ai_controllable=false`, `set_multi_command` returned 8, the fight resolved in 26–26.5 s, and the scale phase held 60 UPS with both servers running at once.
 
 ## Prototypes built
 
@@ -113,11 +117,12 @@ hold t=20s swarm/stop         n=6 drift_from_hold_point max=0.00 mean=0.00 over_
 ```
 
 - The 2–3 tiles a spider-unit moves after `stop` is coasting toward the destination, not wandering. It brings the unit nearer the ordered point.
-- With the default `distraction=by_enemy`, a stopped unit still fights back. In the idle phase the red survivors on `stop` beat the blue survivors that were still attack-moving into them:
+- With the default `distraction=by_enemy`, a stopped unit still fights back. In run 4 the red survivors on `stop` beat the blue survivors that were still attack-moving into them. In the rerun they lost 0 to 15, so holding is not an advantage in itself:
   ```
   idle: red: 65 units given `stop`; blue: 61 units left without new orders (attack-move loop off)
   idle FINAL t=20.0s | red alive=11 in_group=0 groups_created=0 commands={stop = 11} | blue alive=4 ... commands={attack_area = 4}
   ```
+- In the rerun, the blue survivors finished their last `attack_area` and the engine immediately gave them `wander` (13 of 15). That is more evidence that idle units always get a wander order.
 - **Recommendation:** issue `stop` from `on_ai_command_completed` whenever a unit finishes an order. Never leave an RTS unit without a command. A compound command was not needed.
 
 ## (d) Unit groups and the `ai_controllable` requirement: **not required in 2.0.77.**
@@ -217,7 +222,7 @@ multi: set_multi_command(... ) force=rts-blue ai_controllable=true -> ok=true re
 
 ## (i) Gotchas
 
-1. **Concurrent headless runs collide on the write-data lock.** `tools/headless-run.sh` failed with `Couldn't acquire exclusive lock` while another spike's server ran. `spikes/units/run-headless.sh` passes `--config <build/...-write/config/config.ini>` with its own `write-data` and `--port`. Consider adding this to the shared tool.
+1. **Concurrent headless runs collide on the write-data lock.** The old `tools/headless-run.sh` failed with `Couldn't acquire exclusive lock` while another spike's server ran. The shared tool now gives each mods dir its own write dir and UDP port, and two of these servers ran in parallel without trouble. Any other Factorio command, such as `--benchmark` or `--check-unused-prototype-data`, needs the same `-c <config>` with a private `write-data` dir.
 2. **The headless server saves on SIGTERM** into the save it was started from, so `build/<id>-headless.zip` holds the end state. A `--benchmark` of that file measures an empty, finished game; create a fresh save with `--create` first.
 3. **`on_init` runs in the `--create` process**, so its log lines land in `build/<id>-create.log`. `on_nth_tick(30)` first fires at tick 0 of the server run, which is where the scenario does its setup.
 4. **Pentapod copies inherit enemy behaviour** that must be overridden:
