@@ -15,6 +15,7 @@ local match = require("scripts.match")
 local camera = require("scripts.camera")
 local selection = require("scripts.selection")
 local orders = require("scripts.orders")
+local cursor = require("scripts.cursor")
 
 local debug_tools = {}
 
@@ -30,6 +31,9 @@ local STAGE_TIMEOUT = 20 * 60
 local ENGAGE_GRACE = 8 * 60         -- attack stage: ticks after the first hit before the script kills the target
 local HOLD_TICKS = 3 * 60
 local AUTOTEST_REPORT_PERIOD = 10 * 60
+-- /rts-qa-reset check: once the last autotest stage runs, after the match ends or this long after the start.
+local QA_RESET_CHECK_AFTER = 65 * 60
+local ARMY_SIZE = 24 -- units per side after match.spawn_armies()
 
 function debug_tools.init()
   storage.debug = storage.debug or {}
@@ -476,6 +480,37 @@ local function autotest_tick(tick)
   end
 end
 
+-- /rts-qa-reset through the console-command path: everything it promises, then a reset with waves on.
+local function qa_reset_check()
+  local P = AUTOTEST_PLAYER
+  util.log("autotest: /rts-qa-reset check at tick %d (match phase=%s wave=%d, player=%d enemy=%d)", game.tick,
+    tostring(storage.match.phase), storage.match.wave or 0, units.count(PLAYER), units.count(ENEMY))
+  selection.select_all(P)
+  selection.group_set(P, 1)
+  orders.arm_attack_move(P, true)
+  debug_tools.run_command("rts-qa-reset", "nowaves")
+  local m = storage.match
+  check("qa_reset_armies", units.count(PLAYER) == ARMY_SIZE and units.count(ENEMY) == ARMY_SIZE,
+    "player=%d enemy=%d expected %d each", units.count(PLAYER), units.count(ENEMY), ARMY_SIZE)
+  local home_p, home_e = units.centroid(PLAYER), units.centroid(ENEMY)
+  check("qa_reset_at_spawns", home_p and home_e and util.distance(home_p, match.home(PLAYER)) < 8
+    and util.distance(home_e, match.home(ENEMY)) < 8, "player centroid %s (home %s), enemy centroid %s (home %s)",
+    util.pos_str(home_p), util.pos_str(match.home(PLAYER)), util.pos_str(home_e), util.pos_str(match.home(ENEMY)))
+  check("qa_reset_cleared", selection.count(P) == 0 and selection.box_count(P) == 0 and selection.group_count(P, 1) == 0
+    and not orders.is_armed(P), "selected=%d boxes=%d group1=%d armed=%s", selection.count(P), selection.box_count(P),
+    selection.group_count(P, 1), tostring(orders.is_armed(P)))
+  check("qa_reset_nowaves", m.phase == "running" and m.wave == 0 and m.enemy_next_wave == nil and m.waves_off == true
+    and not (m.enemy_group and m.enemy_group.valid), "phase=%s wave=%s next_wave=%s waves_off=%s", tostring(m.phase),
+    tostring(m.wave), tostring(m.enemy_next_wave), tostring(m.waves_off))
+  debug_tools.run_command("rts-qa-reset", "")
+  check("qa_reset_waves_on", m.waves_off == nil and m.enemy_next_wave ~= nil and m.enemy_next_wave > game.tick
+    and units.count(PLAYER) == ARMY_SIZE and units.count(ENEMY) == ARMY_SIZE,
+    "next wave in %ss, player=%d enemy=%d", m.enemy_next_wave and string.format("%.0f", (m.enemy_next_wave - game.tick) / 60)
+    or "nil", units.count(PLAYER), units.count(ENEMY))
+  util.log("autotest: finished, checks pass=%d fail=%d", storage.debug.checks.pass, storage.debug.checks.fail)
+  debug_tools.run_command("rts-qa-end", "") -- exercises the command; nothing waits for the marker headless
+end
+
 -- One-off diagnostic: what rts-player has charted / sees around both spawns (chunks (-2,0) and (1,0)).
 local CHART_PROBE_TICK = 600
 local function chart_probe()
@@ -498,6 +533,11 @@ events.on_nth_tick(60, function(e)
     if d.autotest then debug_tools.start_autotest() end
   end
   if d.autotest and d.stage then autotest_tick(e.tick) end
+  if d.autotest and d.started and not d.qa_reset_checked and (d.stage == "attack_move" or d.stage == "done")
+     and (storage.match.phase == "ended" or e.tick - d.started >= QA_RESET_CHECK_AFTER) then
+    d.qa_reset_checked = true
+    qa_reset_check()
+  end
 end)
 
 -- Runs after orders.lua's handler (control.lua order), so a finished move/attack is already "idle" here.
@@ -560,6 +600,12 @@ camera.add_selftest_step(270, "order_move", function(player)
   orders.arm_attack_move(player.index, false)
 end)
 
+-- Runs /rts-qa-reset as the real player (admin check included). After the camera's last screenshot (900)
+-- and before RTS_GUI_READY (960).
+camera.add_selftest_step(930, "qa_reset", function(player)
+  debug_tools.run_command("rts-qa-reset", "", player.index)
+end)
+
 ---------------------------------------------------------------------------
 -- Console commands
 ---------------------------------------------------------------------------
@@ -606,6 +652,40 @@ local COMMANDS = {
       for _, line in pairs(debug_tools.dump_lines()) do reply(cmd, line) end
     end,
   },
+  ["rts-qa-reset"] = {
+    help = "[nowaves] - QA: re-spawn both armies at their spawns, clear selections, control groups and "
+      .. "armed attack-moves, camera home. nowaves: no enemy waves until the next plain /rts-qa-reset",
+    run = function(cmd)
+      if not admin_only(cmd) then return end
+      local waves = not string.find(string.lower(cmd.parameter or ""), "nowaves", 1, true)
+      local d = storage.debug
+      if d.autotest and d.stage and d.stage ~= "done" then set_stage("done") end -- its units are about to go
+      orders.reset()
+      local cleared = 0
+      for index in pairs(storage.players or {}) do
+        selection.reset(index)
+        cleared = cleared + 1
+      end
+      local removed, corpses = match.reset(waves)
+      for _, player in pairs(game.connected_players) do
+        camera.home(player)
+        cursor.ensure(player, true, "qa-reset")
+      end
+      local m = storage.match
+      reply(cmd, string.format("qa-reset by %s: removed %d units and %d corpses, spawned player=%d enemy=%d, "
+        .. "cleared %d selections; enemy waves %s", cmd.player_index and ("player=" .. cmd.player_index) or "script",
+        removed, corpses, units.count(PLAYER), units.count(ENEMY), cleared,
+        m.waves_off and "off" or string.format("on, next in %.0fs", (m.enemy_next_wave - game.tick) / 60)))
+    end,
+  },
+  ["rts-qa-end"] = {
+    help = "- QA: write the state summary and the QA end marker to the log (tools/gui-run.sh can stop on it)",
+    run = function(cmd)
+      for _, line in pairs(debug_tools.dump_lines()) do reply(cmd, line) end
+      util.log("RTS_QA_END by %s at tick %d", cmd.player_index and ("player=" .. cmd.player_index) or "script",
+        game.tick)
+    end,
+  },
   ["rts-autotest"] = {
     help = "- start the scripted autotest (selection and orders through fake player index 0)",
     run = function(cmd)
@@ -620,9 +700,10 @@ for name, def in pairs(COMMANDS) do
   commands.add_command(name, def.help, def.run)
 end
 
---- Run one of the /rts-* commands from script (as the server console), e.g. from the autotest.
-function debug_tools.run_command(name, parameter)
-  COMMANDS[name].run({name = name, parameter = parameter, tick = game.tick})
+--- Run one of the /rts-* commands from script, e.g. from the autotest: as the server console, or as the
+--- player `player_index` when given.
+function debug_tools.run_command(name, parameter, player_index)
+  COMMANDS[name].run({name = name, parameter = parameter, tick = game.tick, player_index = player_index})
 end
 
 return debug_tools

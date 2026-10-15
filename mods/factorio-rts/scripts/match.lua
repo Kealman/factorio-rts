@@ -8,6 +8,7 @@
 --   enemy_group      LuaCommandable? (current wave group), enemy_group_id = its unique_id
 --   winner           force name, once phase == "ended"
 --   charted          true once the arena was charted for rts-player
+--   waves_off        true after `/rts-qa-reset nowaves`: no enemy waves (enemy_next_wave is nil)
 local util = require("scripts.util")
 local events = require("scripts.events")
 local units = require("scripts.units")
@@ -237,6 +238,26 @@ local function check_winner()
     alive_player, alive_enemy)
 end
 
+--- QA reset (/rts-qa-reset): drop the wave group, destroy every unit and the corpses in the arena, spawn
+--- both armies again at their spawns and restart the match clock. With waves = false no enemy wave comes
+--- until the next reset with waves on. Returns the number of units and corpses removed.
+function match.reset(waves)
+  local m = storage.match
+  drop_group()
+  local removed = units.despawn_all()
+  local h = ARENA_HALF
+  local corpses = 0
+  for _, e in pairs(util.surface().find_entities_filtered({area = {{-h, -h}, {h, h}}, type = "corpse"})) do
+    e.destroy()
+    corpses = corpses + 1
+  end
+  m.wave = 0
+  match.spawn_armies()
+  m.waves_off = not waves or nil
+  if m.waves_off then m.enemy_next_wave = nil end
+  return removed, corpses
+end
+
 -- Chart the arena for the player force. A chart requested in on_init of `--create` never happens (it
 -- is not processed without ticks), so it runs on the first second of a ticking session instead.
 local function chart_arena(m)
@@ -255,7 +276,7 @@ events.on_nth_tick(60, function(e)
     m.enemy_group, m.enemy_group_id = nil, nil
     release_orphans()
   end
-  if e.tick >= m.enemy_next_wave then
+  if m.enemy_next_wave and e.tick >= m.enemy_next_wave then
     m.enemy_next_wave = e.tick + WAVE_PERIOD_TICKS
     launch_wave()
   end

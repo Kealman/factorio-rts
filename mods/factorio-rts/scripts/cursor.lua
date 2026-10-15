@@ -17,7 +17,8 @@ local giving = false
 --- Make sure the player holds the RTS cursor. Does nothing for character/spectator controllers.
 --- With force_replace, anything else in the cursor is cleared first; otherwise a non-empty cursor
 --- (something the player picked on purpose) is left alone. Returns true if the cursor holds the tool.
-function cursor.ensure(player, force_replace)
+--- `reason` only labels the QA log line "cursor given player=N reason=..." written when the tool is put back.
+function cursor.ensure(player, force_replace, reason)
   if not (player and player.valid and CONTROLLERS_WITH_CURSOR[player.controller_type]) then return false end
   local stack = player.cursor_stack
   if not stack then return false end
@@ -28,20 +29,23 @@ function cursor.ensure(player, force_replace)
   if occupied then player.clear_cursor() end
   local ok = stack.set_stack({name = util.CURSOR_ITEM, count = 1})
   giving = false
+  util.log("cursor given player=%d reason=%s ok=%s", player.index, reason or "setup", tostring(ok))
   return ok
 end
 
 events.on(defines.events.on_player_cursor_stack_changed, function(e)
-  cursor.ensure(game.get_player(e.player_index))
+  cursor.ensure(game.get_player(e.player_index), false, "cursor emptied")
 end)
 
 -- set_controller{god} creates a fresh controller with an empty cursor and no cursor event (spike #1 gotcha 6).
 events.on(defines.events.on_player_controller_changed, function(e)
-  cursor.ensure(game.get_player(e.player_index))
+  cursor.ensure(game.get_player(e.player_index), false, "controller changed")
 end)
 
 events.on("rts-give-cursor", function(e)
-  cursor.ensure(game.get_player(e.player_index), true)
+  local player = game.get_player(e.player_index)
+  local ok = cursor.ensure(player, true, "F1")
+  util.log("cursor F1 player=%d tool_in_hand=%s", e.player_index, tostring(ok))
 end)
 
 return cursor

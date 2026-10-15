@@ -22,15 +22,17 @@ local hud = {}
 
 local PLAYER, ENEMY = util.PLAYER_FORCE, util.ENEMY_FORCE
 
--- Dev only (tools/gui-run.sh), at fixed game ticks. Turn off before a release or a human QA session.
---   HUD_DEBUG_SHOT  screenshots rts-hud-<tick>.png at ticks 600, 720 and 3000, then "RTS_HUD_DONE" (harmless)
---   HUD_SELFTEST    tick 540 presses "Select all" through the button path and assigns control group 1;
---                   tick 660 sends a synthetic minimap click at the enemy spawn (the camera jumps there);
---                   tick 780 jumps home again
---   HUD_CALIBRATE   tick 180 adds chart tags A, B, C at (-64,-64), (64,-64), (-64,64) and O at (0,0), to
---                   measure the minimap scale from a screenshot (docs/qa/phase1-hud-notes.md)
-local HUD_DEBUG_SHOT = true
-local HUD_SELFTEST = true
+-- Dev only. The HUD self-test steps are camera self-test steps (camera.add_selftest_step), so they run
+-- only while camera.selftest_enabled() is true: off by default, `/rts-selftest on` turns it on and restarts
+-- the steps for connected players. Ticks are counted from the player's camera setup:
+--   540   presses "Select all" through the button path and assigns control group 1
+--   600   screenshot rts-hud-<tick>.png
+--   660   synthetic minimap click at the enemy spawn (the camera jumps there)
+--   720   screenshot
+--   780   camera home
+--   3000  screenshot, then the "RTS_HUD_DONE" marker
+-- HUD_CALIBRATE (a load-time constant): at setup + 180 adds chart tags A, B, C at (-64,-64), (64,-64),
+-- (-64,64) and O at (0,0), to measure the minimap scale from a screenshot (docs/qa/phase1-hud-notes.md).
 local HUD_CALIBRATE = false
 
 local REFRESH_PERIOD = 30          -- ticks; fallback refresh (counts, dead units, timer)
@@ -72,7 +74,7 @@ local COLOR = {
 -- Command buttons. Each calls the first of module[fns[i]](player_index) that exists at click time.
 local COMMANDS = {
   {action = "attack_move", caption = "Attack-move", key = "F", module = "scripts.orders",
-   fns = {"attack_move_pending", "arm_attack_move"},
+   fns = {"arm_attack_move"},
    tooltip = "Attack-move: the next right click sends the selection there, fighting every enemy on the way."},
   {action = "stop", caption = "Stop", key = "X", module = "scripts.orders", fns = {"stop"},
    tooltip = "Stop: cancel the current orders. Units still return fire."},
@@ -406,6 +408,7 @@ local function match_message(m, own)
     return string.format("Enemy wave %d in %s", (m.wave or 0) + 1, clock((m.enemy_next_wave - game.tick) / 60)),
       COLOR.yellow
   end
+  if m.waves_off then return "Enemy waves off (/rts-qa-reset nowaves)", COLOR.yellow end
   return "Destroy the enemy army.", COLOR.yellow
 end
 
@@ -489,17 +492,25 @@ end
 
 function hud.init()
   storage.hud = storage.hud or {wave_seen = storage.match and storage.match.wave or 0}
+  -- Every module is loaded by now: confirm the package.loaded lookups the buttons depend on.
+  local found = {}
+  for _, c in ipairs(COMMANDS) do
+    found[#found + 1] = string.format("%s=%s", c.action, optional_fn(c.module, c.fns) and "ok" or "MISSING")
+  end
+  found[#found + 1] = "is_armed=" .. (optional_fn("scripts.orders", {"is_armed"}) and "ok" or "MISSING")
+  found[#found + 1] = "group_recall=" .. (optional_fn("scripts.selection", {"group_recall"}) and "ok" or "MISSING")
+  util.log("hud: module lookup %s", table.concat(found, " "))
   for _, player in pairs(game.players) do hud.build(player) end
 end
 
 ---------------------------------------------------------------------------
 -- Clicks
 ---------------------------------------------------------------------------
-local function minimap_click(player, h, e, why)
+local function minimap_click(player, h, e, source)
   local world, dx, dy = minimap_to_world(player, h, e.cursor_display_location)
   local loc = h.minimap.location
-  util.log("hud: minimap %s player %d button=%s display=(%d, %d) minimap at (%d, %d) "
-    .. "offset from centre=(%.1f, %.1f) px -> world %s", why, player.index,
+  util.log("hud click minimap player=%d source=%s button=%s display=(%d, %d) minimap at (%d, %d) "
+    .. "offset from centre=(%.1f, %.1f) px -> world %s", player.index, source,
     util.define_name(defines.mouse_button_type, e.button), e.cursor_display_location.x,
     e.cursor_display_location.y, loc.x, loc.y, dx, dy, util.pos_str(world))
   camera.jump_to(player, world)
@@ -515,7 +526,9 @@ local function run_command(player, action)
     util.log("hud: button %s: %s missing", action, wanted)
     return
   end
-  fn(player.index)
+  local result = fn(player.index)
+  -- QA log line, one per button: "hud click attack-move|stop|hold|select-all player=N result=..."
+  util.log("hud click %s player=%d result=%s", string.gsub(action, "_", "-"), player.index, tostring(result))
 end
 
 local function recall_group(player, n)
@@ -524,7 +537,8 @@ local function recall_group(player, n)
     player.print(string.format("[RTS] Control group %d: press %d to recall it.", n, n))
     return
   end
-  fn(player.index, n)
+  local selected = fn(player.index, n)
+  util.log("hud click group %d player=%d selected=%s", n, player.index, tostring(selected))
 end
 
 local function on_click(e)
@@ -535,7 +549,7 @@ local function on_click(e)
   local h = get_hud(player)
   if not (action and h) then return end
   if action == "minimap" then
-    minimap_click(player, h, e, "click")
+    minimap_click(player, h, e, "mouse")
     return
   elseif action == "group" then
     recall_group(player, element.tags.group)
@@ -578,7 +592,7 @@ events.on_nth_tick(REFRESH_PERIOD, function()
 end)
 
 ---------------------------------------------------------------------------
--- Dev-only checks (see HUD_DEBUG_SHOT, HUD_SELFTEST, HUD_CALIBRATE at the top)
+-- Dev-only checks (self-test steps and HUD_CALIBRATE, see the top of this file)
 ---------------------------------------------------------------------------
 local function screenshot(player)
   local path = string.format("rts-hud-%d.png", game.tick)
@@ -612,40 +626,29 @@ local function synthetic_click(player)
   local target = {x = 50, y = 0}
   local display = world_to_minimap(player, h, target)
   local world = minimap_click(player, h, {player_index = player.index, button = defines.mouse_button_type.left,
-                                           cursor_display_location = display}, "synthetic click")
+                                           cursor_display_location = display}, "synthetic")
   util.log("hud: synthetic click aimed at %s, round trip error %.2f tiles", util.pos_str(target),
     util.distance(world, target))
 end
 
--- [tick] = {enabled, run(player) for each connected player, or run() once when global}
-local DEBUG_STEPS = {
-  [180] = {on = HUD_CALIBRATE, global = true, run = add_calibration_tags},
-  [540] = {on = HUD_SELFTEST, run = function(player)
-    run_command(player, "select_all")
-    local group_set = optional_fn("scripts.selection", {"group_set"}) -- group 1 indicator: "1: 24", toggled
-    if group_set then group_set(player.index, 1) end
-    hud.refresh(player.index)
-  end},
-  [600] = {on = HUD_DEBUG_SHOT, run = screenshot},
-  [660] = {on = HUD_SELFTEST, run = synthetic_click},
-  [720] = {on = HUD_DEBUG_SHOT, run = screenshot},
-  [780] = {on = HUD_SELFTEST, run = function(player) camera.home(player) end},
-  [3000] = {on = HUD_DEBUG_SHOT, run = function(player) -- 5 s into the first enemy wave
-    screenshot(player)
-    util.log("RTS_HUD_DONE player %d", player.index)
-  end},
-}
-
-if HUD_DEBUG_SHOT or HUD_SELFTEST or HUD_CALIBRATE then
-  events.on_nth_tick(60, function(e)
-    local step = DEBUG_STEPS[e.tick]
-    if not (step and step.on) then return end
-    if step.global then
-      step.run()
-      return
-    end
-    for _, player in pairs(game.connected_players) do step.run(player) end
-  end)
+-- Self-test steps: camera.lua runs them `at` ticks after the player's setup, only while the self-test
+-- switch is on (camera.selftest_enabled()). Registered at load time, identically on every load.
+if HUD_CALIBRATE then
+  camera.add_selftest_step(180, "hud_calibrate", function() add_calibration_tags() end)
 end
+camera.add_selftest_step(540, "hud_select_all_group1", function(player)
+  run_command(player, "select_all")
+  local group_set = optional_fn("scripts.selection", {"group_set"}) -- group 1 indicator: "1: 24", toggled
+  if group_set then group_set(player.index, 1) end
+  hud.refresh(player.index)
+end)
+camera.add_selftest_step(600, "hud_screenshot_600", screenshot)
+camera.add_selftest_step(660, "hud_minimap_click", synthetic_click)
+camera.add_selftest_step(720, "hud_screenshot_720", screenshot)
+camera.add_selftest_step(780, "hud_home", function(player) camera.home(player) end)
+camera.add_selftest_step(3000, "hud_done", function(player) -- about 5 s into the first enemy wave
+  screenshot(player)
+  util.log("RTS_HUD_DONE player %d", player.index)
+end)
 
 return hud

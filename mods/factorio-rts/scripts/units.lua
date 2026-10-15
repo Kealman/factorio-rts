@@ -74,6 +74,19 @@ function units.spawn(name, position, force_name, kind, surface)
   return entity, rec
 end
 
+--- Destroy every registered unit (both forces) and drop it from the registry; on_removed callbacks run
+--- for each. Used by /rts-qa-reset. Returns the number of units removed.
+function units.despawn_all()
+  local list = {}
+  for un in pairs(storage.units) do list[#list + 1] = un end
+  for _, un in ipairs(list) do
+    local rec = storage.units[un]
+    if rec and rec.entity.valid then rec.entity.destroy() end
+    remove(un)
+  end
+  return #list
+end
+
 --- Record of a live registered unit, or nil (stale records are dropped).
 function units.get(unit_number)
   local rec = storage.units[unit_number]

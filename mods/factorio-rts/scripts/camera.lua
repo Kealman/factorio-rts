@@ -3,6 +3,7 @@
 --   desired_controller  "remote" (the guard re-applies it whenever the controller changes)
 --   setup_done, setup_tick
 --   last_remote_pos, last_zoom   tracked every 10 ticks, restored after an unwanted exit
+--   qa_pos, qa_zoom, qa_render   last camera state written to the log (QA lines "camera pan|zoom|render_mode")
 --   selftest_step                GUI self-test progress (dev only)
 -- and storage.camera = {pending = {[player_index] = tick}, selftest = nil|true|false}
 -- (deferred re-apply; the self-test switch set by /rts-selftest, nil = SELFTEST_DEFAULT).
@@ -135,6 +136,8 @@ end
 function camera.jump_to(player, position)
   local p = util.pstorage(player.index)
   p.last_remote_pos = {x = position.x or position[1], y = position.y or position[2]}
+  p.qa_pos = p.last_remote_pos -- a jump is not a pan (see the QA tracker below)
+  util.log("camera jump player=%d -> %s", player.index, util.pos_str(p.last_remote_pos))
   if player.controller_type ~= REMOTE then return end -- the guard re-enters remote at last_remote_pos
   local zoom = player.zoom
   enter_remote(player, p.last_remote_pos)
@@ -143,7 +146,9 @@ end
 
 --- Move the camera to the player's home (own spawn point).
 function camera.home(player)
-  camera.jump_to(player, match.home(player.force.name))
+  local home = match.home(player.force.name)
+  util.log("camera home player=%d -> %s", player.index, util.pos_str(home))
+  camera.jump_to(player, home)
 end
 
 --- Full camera setup: remove the character, enter remote view over the army, zoom, hide chrome.
@@ -224,6 +229,35 @@ events.on_nth_tick(10, function()
       local p = util.pstorage(player.index)
       p.last_remote_pos = player.position
       p.last_zoom = player.zoom
+    end
+  end
+end)
+
+-- QA log lines (docs/qa/phase1-protocol.md): camera pans (WASD), zoom changes (wheel) and render mode
+-- changes (M), sampled twice a second. Jumps (minimap, SPACE, double tap) log their own line instead.
+local QA_PAN_TILES = 1
+local QA_ZOOM_RATIO = 0.02
+events.on_nth_tick(30, function()
+  for _, player in pairs(game.connected_players) do
+    local p = storage.players and storage.players[player.index]
+    if p and p.setup_done then
+      local pos, zoom = player.position, player.zoom
+      local mode = util.define_name(defines.render_mode, player.render_mode)
+      if p.qa_pos and util.distance(pos, p.qa_pos) > QA_PAN_TILES then
+        util.log("camera pan player=%d %s -> %s d=(%.1f, %.1f) controller=%s", player.index, util.pos_str(p.qa_pos),
+          util.pos_str(pos), pos.x - p.qa_pos.x, pos.y - p.qa_pos.y,
+          util.define_name(defines.controllers, player.controller_type))
+      end
+      if p.qa_zoom and math.abs(zoom - p.qa_zoom) > QA_ZOOM_RATIO * p.qa_zoom then
+        util.log("camera zoom player=%d %.3f -> %.3f", player.index, p.qa_zoom, zoom)
+      end
+      if p.qa_render and p.qa_render ~= mode then
+        util.log("camera render_mode player=%d %s -> %s controller=%s", player.index, p.qa_render, mode,
+          util.define_name(defines.controllers, player.controller_type))
+      end
+      if not p.qa_pos or util.distance(pos, p.qa_pos) > QA_PAN_TILES then p.qa_pos = {x = pos.x, y = pos.y} end
+      if not p.qa_zoom or math.abs(zoom - p.qa_zoom) > QA_ZOOM_RATIO * p.qa_zoom then p.qa_zoom = zoom end
+      p.qa_render = mode
     end
   end
 end)

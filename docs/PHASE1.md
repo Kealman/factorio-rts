@@ -67,9 +67,10 @@ Selection tool `rts-cursor`: `select` = own controllable entities (mode any-enti
 ## Orders (orders.lua)
 
 - `move(selection, pos)`: `go_to_location` with `distraction = none`, spread targets in a small grid so units do not stack.
-- `attack(selection, entity)`: `attack` command on the entity with `distraction = by_enemy`.
-- `attack_move(selection, pos)`: `attack_area{destination=pos, radius=8}` with `distraction = by_anything`; on completion, re-issue toward the nearest enemy within 30 tiles, else `stop`.
+- `attack(selection, entity)`: `attack_area` centred on the target (radius 4, `distraction = by_enemy`), renewed at the target's current position each time it completes; when the target is gone the units go idle with `stop`. `defines.command.attack` completes on nearly every tick for spider-units, so it is not used (`ATTACK_MODE` in orders.lua switches back).
+- `attack_move(selection, pos)`: `attack_area{destination=slot, radius=8}` per formation slot with `distraction = by_anything`. A distraction ends the command early, so on completion a unit more than 8 tiles from its slot resumes toward the slot; a unit that arrived re-targets the nearest enemy within 30 tiles, else goes idle with `stop`. A 2 s sweep releases arrived units with no enemy in range.
 - `stop(selection)`: `defines.command.stop`.
+- `hold(selection)`: `stop`, and the unit stays claimed as `hold`, so it is re-stopped whenever its command ends.
 - `on_ai_command_completed` → unit state update; idle units get `stop` (they wander otherwise).
 
 ## Rendering
@@ -86,20 +87,20 @@ Bottom-left `screen` frame: selection count + list by kind, command buttons (Mov
 - On init: create forces `rts-player` (humans join it) and `rts-enemy`; mutual enemies; both cease-fire with `enemy` (biters) and keep the surface peaceful or disable enemy bases via map gen settings for the arena. `ai_controllable = false` on both.
 - Flatten a 160×160 area around {0,0} (set_tiles grass), clear trees/rocks/cliffs/water via landfill.
 - Spawn 20 `rts-walker` + 4 `rts-walker-heavy` per side at x = -50 and x = +50. Player camera starts at its army.
-- Enemy brain: every 90 s, group all idle enemy units and `attack_area` the centroid of player units (re-target on completion). Trivial but gives a fight.
+- Enemy brain: first wave 45 s after the armies spawn, then every 90 s; group all idle enemy units and `attack_area` the centroid of player units (re-target on completion). Trivial but gives a fight.
 - Win/lose message when one side has 0 units.
 
 ## Dev loop
 
 - Headless: `tools/headless-run.sh 60 '\[rts' mods` — no players, so match.lua must still run the arena setup and the enemy brain; add a `storage.debug.autotest` that spawns both armies and issues orders via the API to exercise orders.lua without a player.
 - GUI: `tools/gui-run.sh mods 90 'MARKER'` (launched by the lead with the sandbox disabled if it crashes in a sandboxed shell); screenshots via `game.take_screenshot` into the run's `script-output`.
-- Interactive QA: a written protocol in `docs/qa/phase1-protocol.md`, executed by the lead via Codex computer use.
+- Interactive QA: a written protocol in `docs/qa/phase1-protocol.md`, executed by the lead via Codex computer use. `/rts-qa-reset [nowaves]` re-spawns both armies and clears selections; `/rts-selftest on|off` switches the GUI self-test (off by default).
 
 ## Acceptance checklist
 
 1. Join → remote view over own army, no character, vanilla chrome hidden as far as the API allows, cursor tool in hand.
 2. Left-drag selects own walkers only; boxes appear; Shift adds.
-3. Right-click ground moves the selection in a spread; right-click enemy attacks it; A then right-click = attack-move; S stops.
+3. Right-click ground moves the selection in a spread; right-click enemy attacks it; F then right-click = attack-move; X stops; H holds position.
 4. Ctrl+1 / 1 control groups work and do not trigger the quickbar.
 5. Minimap shows both armies; clicking it moves the camera.
 6. Enemy waves come; fights resolve; win/lose message.

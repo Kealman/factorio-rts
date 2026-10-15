@@ -15,6 +15,18 @@ local RTS_AI = {
   size_in_group = 1,
 }
 
+-- Minimap colours (docs/qa/phase1-hud-notes.md gotcha 8): without map_color the own army is not drawn on
+-- the minimap at all; friendly_map_color alone did not help. Own units blue, enemy units red.
+local MAP_COLORS = {
+  map_color = {0.35, 0.65, 1},
+  friendly_map_color = {0.35, 0.65, 1},
+  enemy_map_color = {1, 0.15, 0.1},
+}
+
+local function set_map_colors(proto)
+  for k, v in pairs(MAP_COLORS) do proto[k] = table.deepcopy(v) end
+end
+
 local function merge(a, b)
   local r = table.deepcopy(a)
   for k, v in pairs(b or {}) do r[k] = table.deepcopy(v) end
@@ -129,6 +141,7 @@ local function pentapod_walker(spec)
   leg.lower_leg_dying_trigger_effects = nil
   for _, l in pairs(legs) do l.leg = leg.name end
 
+  set_map_colors(u)
   tint_masks(u.graphics_set)
   tint_masks(leg.graphics_set)
   data:extend({leg, u})
@@ -202,7 +215,7 @@ local function mech_walker(spec)
                      "water_reflection", "render_layer", "base_render_layer"}) do
     torso[k] = gs[k]
   end
-  data:extend({{
+  local unit = {
     type = "spider-unit",
     name = spec.name,
     localised_name = {"entity-name." .. spec.name},
@@ -230,7 +243,9 @@ local function mech_walker(spec)
     dying_explosion = "spidertron-explosion",
     is_military_target = true,
     impact_category = "metal",
-  }})
+  }
+  set_map_colors(unit)
+  data:extend({unit})
 end
 
 local function define_mech_walkers()

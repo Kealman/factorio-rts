@@ -216,13 +216,21 @@ local function feedback(who, target, color, surface)
   })
 end
 
-local function disarm(player_index)
+local function disarm(player_index, why)
   if type(player_index) ~= "number" then return false end
   local armed = ostate().armed
   if not armed[player_index] then return false end
   armed[player_index] = nil
+  util.log("attack-move disarmed player=%d (%s)", player_index, why)
   selection.notify_hud(player_index)
   return true
+end
+
+-- QA log line for an order given to a player's selection: "order <name> n=<units> ... player=<index>".
+-- Orders given to an entity list (scripts) are not logged.
+local function log_order(who, name, n, detail)
+  if type(who) ~= "number" then return end
+  util.log("order %s n=%d %splayer=%d", name, n, detail and (detail .. " ") or "", who)
 end
 
 ---------------------------------------------------------------------------
@@ -233,7 +241,10 @@ end
 --- Move to `position` in formation, ignoring enemies on the way (go_to_location, distraction none).
 function orders.move(who, position)
   local recs = resolve(who)
-  if #recs == 0 then return 0 end
+  if #recs == 0 then
+    log_order(who, "move", 0, "dest=" .. util.pos_str(position))
+    return 0
+  end
   local center = pos_of(position)
   local slots = orders.formation(recs, center)
   for i, rec in ipairs(recs) do
@@ -242,6 +253,7 @@ function orders.move(who, position)
                   distraction = DISTRACTION.none})
   end
   bump(ostate().stats.issued, "move", #recs)
+  log_order(who, "move", #recs, string.format("dest=%s spacing=%.2f", util.pos_str(center), orders.spacing(recs)))
   feedback(who, center, COLORS.move, recs[1].entity.surface)
   return #recs
 end
@@ -251,12 +263,18 @@ end
 function orders.attack(who, target)
   if not (target and target.valid) then return 0 end
   local recs = resolve(who)
-  if #recs == 0 then return 0 end
+  local detail = string.format("target=#%s %s (%s) at %s", tostring(target.unit_number), target.name,
+    target.force.name, util.pos_str(target.position))
+  if #recs == 0 then
+    log_order(who, "attack", 0, detail)
+    return 0
+  end
   for _, rec in ipairs(recs) do
     claim(rec, "attack", nil, target)
     command(rec, attack_command(target))
   end
   bump(ostate().stats.issued, "attack", #recs)
+  log_order(who, "attack", #recs, detail)
   feedback(who, target, COLORS.attack, target.surface)
   return #recs
 end
@@ -266,7 +284,10 @@ end
 --- slot resumes towards it; one that arrived re-targets the nearest enemy within RETARGET_RANGE, or stops.
 function orders.attack_move(who, position)
   local recs = resolve(who)
-  if #recs == 0 then return 0 end
+  if #recs == 0 then
+    log_order(who, "attack-move", 0, "dest=" .. util.pos_str(position))
+    return 0
+  end
   local center = pos_of(position)
   local slots = orders.formation(recs, center)
   for i, rec in ipairs(recs) do
@@ -275,28 +296,31 @@ function orders.attack_move(who, position)
                   distraction = DISTRACTION.by_anything})
   end
   bump(ostate().stats.issued, "attack_move", #recs)
+  log_order(who, "attack-move", #recs, "dest=" .. util.pos_str(center))
   feedback(who, center, COLORS.attack_move, recs[1].entity.surface)
   return #recs
 end
 
 --- Stop: drop the order and stand still (stop still returns fire). Also cancels an armed attack-move.
 function orders.stop(who)
-  disarm(who)
+  disarm(who, "stop")
   local recs = resolve(who)
   for _, rec in ipairs(recs) do release(rec) end
   bump(ostate().stats.issued, "stop", #recs)
+  log_order(who, "stop", #recs)
   return #recs
 end
 
 --- Hold position: stop, and stay claimed as "hold" so the unit is re-stopped whenever its command ends.
 function orders.hold(who)
-  disarm(who)
+  disarm(who, "hold")
   local recs = resolve(who)
   for _, rec in ipairs(recs) do
     claim(rec, "hold", pos_of(rec.entity.position))
     units.stop(rec.entity)
   end
   bump(ostate().stats.issued, "hold", #recs)
+  log_order(who, "hold", #recs)
   return #recs
 end
 
@@ -335,6 +359,7 @@ function orders.arm_attack_move(player_index, on)
   local armed = ostate().armed
   if on == nil then on = armed[player_index] == nil end
   armed[player_index] = on and game.tick or nil
+  util.log("attack-move %s player=%d", on and "armed" or "disarmed (toggle)", player_index)
   local player = selection.real_player(player_index)
   if player then
     player.create_local_flying_text({text = on and "Attack-move: right-click the target" or "Attack-move cancelled",
@@ -367,7 +392,7 @@ end
 -- What a plain right click at `position` means: attack-move when armed, attack when it hit an enemy,
 -- otherwise move. Returns the order name and the number of units ordered.
 local function right_click_order(player_index, position, entities)
-  if disarm(player_index) then return "attack_move", orders.attack_move(player_index, position) end
+  if disarm(player_index, "used by this right click") then return "attack_move", orders.attack_move(player_index, position) end
   local force = game.forces[selection.force_name(player_index)]
   local enemy = pick_enemy(force, entities, position)
   if enemy then return "attack", orders.attack(player_index, enemy) end
@@ -384,7 +409,7 @@ function orders.handle_reverse_area(player_index, entities, area, alt)
   local lt, rb = area.left_top, area.right_bottom
   local center = {x = (lt.x + rb.x) / 2, y = (lt.y + rb.y) / 2}
   if alt then
-    disarm(player_index)
+    disarm(player_index, "shift + right click")
     return "attack_move", orders.attack_move(player_index, center)
   end
   return right_click_order(player_index, center, entities)
@@ -519,6 +544,13 @@ end)
 
 function orders.init()
   ostate()
+end
+
+--- Forget armed attack-moves and pending right clicks of every player (used by /rts-qa-reset).
+function orders.reset()
+  local o = ostate()
+  for index in pairs(o.armed) do disarm(index, "reset") end
+  o.rclick = {}
 end
 
 return orders

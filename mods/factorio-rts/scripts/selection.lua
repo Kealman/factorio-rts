@@ -212,6 +212,15 @@ function selection.clear(player_index)
   local p = state(player_index)
   p.selection = {}
   changed(player_index)
+  util.log("select clear player=%d", player_index)
+end
+
+--- Clear the selection and every control group (used by /rts-qa-reset).
+function selection.reset(player_index)
+  local p = state(player_index)
+  p.groups = {}
+  p.group_recall = nil
+  selection.clear(player_index)
 end
 
 --- Select every living unit of the player's force. Returns the count.
@@ -221,6 +230,7 @@ function selection.select_all(player_index)
   for un in units.for_force(selection.force_name(player_index)) do set[un] = true end
   p.selection = set
   changed(player_index)
+  util.log("select all n=%d player=%d", table_size(set), player_index)
   return table_size(set)
 end
 
@@ -262,7 +272,7 @@ function selection.group_set(player_index, n)
   local p = state(player_index)
   prune(p.selection)
   p.groups[n] = copy_set(p.selection)
-  util.log("selection: player %d assigned group %d (%d units)", player_index, n, table_size(p.groups[n]))
+  util.log("group set %d n=%d player=%d", n, table_size(p.groups[n]), player_index)
   selection.notify_hud(player_index)
   return table_size(p.groups[n])
 end
@@ -283,18 +293,24 @@ function selection.group_recall(player_index, n)
   local p = state(player_index)
   local g = p.groups[n]
   if g then prune(g) end
-  if not g or next(g) == nil then return 0 end
+  if not g or next(g) == nil then
+    util.log("group recall %d empty player=%d (selection kept)", n, player_index)
+    return 0
+  end
   p.selection = copy_set(g)
   changed(player_index)
 
   local last = p.group_recall
   local tick = game.tick
   local player = real_player(player_index)
+  local jumped
   if player and last and last.n == n and tick - last.tick <= DOUBLE_TAP_TICKS then
-    local center = util.centroid(selection.get(player_index))
-    if center then camera.jump_to(player, center) end
+    jumped = util.centroid(selection.get(player_index))
+    if jumped then camera.jump_to(player, jumped) end
   end
   p.group_recall = {n = n, tick = tick}
+  util.log("group recall %d n=%d player=%d%s", n, table_size(p.selection), player_index,
+    jumped and (" double-tap camera -> " .. util.pos_str(jumped)) or "")
   return table_size(p.selection)
 end
 
@@ -303,7 +319,9 @@ end
 function selection.handle_area(player_index, entities, area, add)
   local lt, rb = area.left_top, area.right_bottom
   local own = own_unit_numbers(player_index, entities)
-  if #own > 1 and rb.x - lt.x < CLICK_SIZE and rb.y - lt.y < CLICK_SIZE then
+  local own_in_area = #own
+  local is_click = rb.x - lt.x < CLICK_SIZE and rb.y - lt.y < CLICK_SIZE
+  if #own > 1 and is_click then
     local center = {x = (lt.x + rb.x) / 2, y = (lt.y + rb.y) / 2}
     local best, best_d
     for _, un in pairs(own) do
@@ -319,6 +337,10 @@ function selection.handle_area(player_index, entities, area, add)
     p.selection = set_from_list(own)
   end
   changed(player_index)
+  -- QA log line: "select mode=replace|add drag|click n=<selection size> ..."
+  util.log("select mode=%s %s n=%d own_in_area=%d player=%d area=%s-%s", add and "add" or "replace",
+    is_click and "click" or "drag", table_size(p.selection), own_in_area, player_index, util.pos_str(lt),
+    util.pos_str(rb))
   return table_size(p.selection)
 end
 
@@ -336,6 +358,10 @@ end
 ---------------------------------------------------------------------------
 function selection.init()
   sstate()
+  -- Every module is loaded by now: confirm the package.loaded lookup that HUD refreshes depend on.
+  local hud = hud_module()
+  util.log("selection: hud lookup key=%s found=%s refresh=%s", HUD_KEY, tostring(hud ~= nil),
+    tostring(hud ~= nil and type(hud.refresh) == "function"))
   -- After a mod update the boxes may refer to destroyed render objects; redraw what is missing.
   for index, p in pairs(storage.players or {}) do
     if p.selection then
