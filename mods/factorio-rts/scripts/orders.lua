@@ -427,8 +427,12 @@ end
 -- number of units (or buildings) ordered.
 -- Phase 4 hooks (logistics.lua: haulers take route orders). fn(player_index, position, entities, alt) returns an
 -- order name and a count when it consumed the right click, or nil to let the decision below run. Load time only.
+-- `first` puts the hook ahead of the others: abilities.lua's armed targeted ability (scanner sweep, artillery strike)
+-- takes the next right click before the hauler and Commander hooks see it, like an armed attack-move.
 local right_click_hooks = {}
-function orders.on_right_click(fn) right_click_hooks[#right_click_hooks + 1] = fn end
+function orders.on_right_click(fn, first)
+  if first then table.insert(right_click_hooks, 1, fn) else right_click_hooks[#right_click_hooks + 1] = fn end
+end
 local function run_right_click_hooks(player_index, position, entities, alt)
   for i = 1, #right_click_hooks do
     local order, n = right_click_hooks[i](player_index, position, entities, alt)

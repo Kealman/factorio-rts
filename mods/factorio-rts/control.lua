@@ -28,6 +28,10 @@ local modules = {
   require("scripts.orders"),
   require("scripts.logistics"), -- Phase 4: hubs, stockpile policies, haulers (after orders: right-click hook)
   require("scripts.hubgui"),    -- Phase 4: hub and hauler panels
+  require("scripts.commander"), -- Phase 4: Commander hero (after logistics: its right-click hook follows the haulers')
+  require("scripts.abilities"), -- Phase 4: abilities (after research: adds the Commander to the damage filter; its
+                                -- targeted-ability right-click hook is registered first)
+  require("scripts.abilitygui"), -- Phase 4: ability bar (bottom centre)
   require("scripts.hud"),
   require("scripts.lobby"),    -- Phase 3 start dialog, menu, results; match start / restart
   require("scripts.techgui"),  -- Phase 4 research panel (T)

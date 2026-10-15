@@ -12,3 +12,4 @@ require("prototypes.inputs")
 require("prototypes.styles")
 require("prototypes.controller") -- RTS-paced remote view panning
 require("prototypes.logistics") -- Phase 4: hub composite, hauler, their items and recipes (after cursor)
+require("prototypes.abilities") -- Phase 4: Commander grid equipment and the stim sticker
