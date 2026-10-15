@@ -26,10 +26,10 @@ local units = {}
 
 units.IDLE = "idle"
 
-local KIND_BY_NAME = {
-  ["rts-walker"] = "walker",
-  ["rts-walker-heavy"] = "heavy",
-}
+-- Unit prototype -> kind, from balance.lua (mod root; pure data shared with the data stage). mk2 tiers share the
+-- kind of their base unit: rts-walker-mk2 is a "walker", rts-heavy-mk2 a "heavy".
+local KIND_BY_NAME = {}
+for name, def in pairs(require("balance").units) do KIND_BY_NAME[name] = def.kind end
 
 local removed_callbacks = {}
 

@@ -4,6 +4,10 @@
 -- Belts, inserters and poles are not cloned: the vanilla transport-belt, fast-inserter and
 -- medium-electric-pole (entities and items) are reused, and the factory crafts their vanilla items.
 -- See docs/PHASE2.md ("Economic model") and docs/qa/phase2-prototypes-notes.md.
+-- Phase 4 adds the laser turret, wall, steam plant, accumulator and radar (docs/qa/phase4-content-notes.md).
+-- Health comes from balance.lua (balance.buildings[name].health).
+local balance = require("balance")
+local RAID_MASK = {"common", balance.raid_target_type} -- "common" is every building's default mask
 
 local ICON_TINT = {r = 1.0, g = 0.8, b = 0.55, a = 1}
 local ENEMY_MAP_COLOR = {r = 0.9, g = 0.2, b = 0.15}
@@ -17,8 +21,9 @@ local function tinted_icons(src)
   return {{icon = src.icon, icon_size = src.icon_size, tint = ICON_TINT}}
 end
 
--- spec: type, source (vanilla name), name, health, map_color,
---       minable (default true: mined into the rts item of the same name).
+-- spec: type, source (vanilla name), name, health (default balance.buildings[name].health), map_color,
+--       minable (default true: mined into the rts item of the same name),
+--       raid_target (true: raiders deal bonus damage to it, see balance.raid_target_type).
 -- Names and descriptions come from the locale (entity-name.<name>, entity-description.<name> in
 -- locale/*/factorio-rts.cfg): both are reset to the defaults so nothing is inherited from the vanilla source.
 local function clone(spec)
@@ -31,13 +36,15 @@ local function clone(spec)
   e.icons = tinted_icons(src)
   e.icon = nil
   e.icon_size = nil
-  e.max_health = spec.health or e.max_health
+  local bal = balance.buildings[spec.name]
+  e.max_health = spec.health or (bal and bal.health) or e.max_health
   e.map_color = spec.map_color
   e.enemy_map_color = ENEMY_MAP_COLOR
   -- Keep RTS buildings out of vanilla upgrade/fast-replace chains (e.g. assembler-2 -> assembler-3).
   e.next_upgrade = nil
   e.fast_replaceable_group = nil
   e.factoriopedia_simulation = nil -- vanilla simulations place the vanilla entity
+  if spec.raid_target then e.trigger_target_mask = table.deepcopy(RAID_MASK) end
   if spec.minable == false then
     e.minable = nil
   else
@@ -64,7 +71,7 @@ local CC_MAP_COLOR = {r = 0.2, g = 0.85, b = 1.0}
 
 local cc = clone({
   type = "roboport", source = "roboport", name = "rts-command-center",
-  health = 3000, map_color = CC_MAP_COLOR,
+  raid_target = true, map_color = CC_MAP_COLOR,
 })
 -- Not markable by the deconstruction or upgrade planner, so bots never take it down by accident.
 cc.flags = {"placeable-player", "player-creation", "not-deconstructable", "not-upgradable"}
@@ -135,14 +142,14 @@ immune(core_pole)
 -------------------------------------------------------------------------------
 local stockpile = clone({
   type = "logistic-container", source = "storage-chest", name = "rts-stockpile",
-  health = 800, map_color = {r = 0.6, g = 0.6, b = 0.85},
+  raid_target = true, map_color = {r = 0.6, g = 0.6, b = 0.85},
 })
 stockpile.logistic_mode = "storage"
 stockpile.inventory_size = 48
 
 local extractor = clone({
   type = "mining-drill", source = "electric-mining-drill", name = "rts-extractor",
-  health = 500, map_color = {r = 0.3, g = 0.65, b = 0.45},
+  raid_target = true, map_color = {r = 0.3, g = 0.65, b = 0.45},
 })
 extractor.mining_speed = 1.0
 extractor.energy_usage = "90kW"
@@ -150,7 +157,7 @@ extractor.module_slots = 0
 
 local smelter = clone({
   type = "furnace", source = "electric-furnace", name = "rts-smelter",
-  health = 600, map_color = {r = 0.8, g = 0.55, b = 0.3},
+  raid_target = true, map_color = {r = 0.8, g = 0.55, b = 0.3},
 })
 smelter.crafting_speed = 2
 smelter.energy_usage = "180kW"
@@ -158,14 +165,14 @@ smelter.module_slots = 0
 
 local solar = clone({
   type = "solar-panel", source = "solar-panel", name = "rts-solar-array",
-  health = 300, map_color = {r = 0.25, g = 0.4, b = 0.7},
+  raid_target = true, map_color = {r = 0.25, g = 0.4, b = 0.7},
 })
 solar.production = "400kW"
 
--- Assembler clones with their own crafting category only, no modules and no fluid boxes.
-local function rts_assembler(spec, category)
+-- Assembler clones with their own crafting categories only, no modules and no fluid boxes.
+local function rts_assembler(spec, categories)
   local a = clone(spec)
-  a.crafting_categories = {category}
+  a.crafting_categories = categories
   a.crafting_speed = 1
   a.module_slots = 0
   a.fluid_boxes = nil
@@ -175,21 +182,21 @@ end
 
 local factory = rts_assembler({
   type = "assembling-machine", source = "assembling-machine-2", name = "rts-factory",
-  health = 1000, map_color = {r = 0.45, g = 0.55, b = 0.8},
-}, "rts-buildings")
+  raid_target = true, map_color = {r = 0.45, g = 0.55, b = 0.8},
+}, {"rts-buildings", "rts-intermediates"}) -- Phase 4: gears, cable, circuits, explosives
 
 -------------------------------------------------------------------------------
 -- Military and defense
 -------------------------------------------------------------------------------
 local barracks = rts_assembler({
   type = "assembling-machine", source = "assembling-machine-2", name = "rts-barracks",
-  health = 1500, map_color = {r = 0.9, g = 0.8, b = 0.25},
-}, "rts-units")
+  raid_target = true, map_color = {r = 0.9, g = 0.8, b = 0.25},
+}, {"rts-units"})
 barracks.is_military_target = true
 
 local turret = clone({
   type = "ammo-turret", source = "gun-turret", name = "rts-turret",
-  health = 1200, map_color = {r = 0.95, g = 0.55, b = 0.15},
+  map_color = {r = 0.95, g = 0.55, b = 0.15},
 })
 turret.is_military_target = true
 -- Balance (2026-10-15, docs/qa/phase2-prototypes-notes.md "Turret balance"): ammo_category stays "bullet" (vanilla
@@ -199,4 +206,73 @@ turret.is_military_target = true
 turret.attack_parameters.cooldown = 36
 turret.attack_parameters.damage_modifier = 5
 
-data:extend({cc, core_power, core_pole, stockpile, extractor, smelter, solar, factory, barracks, turret})
+-------------------------------------------------------------------------------
+-- Phase 4: defence and power
+-------------------------------------------------------------------------------
+-- Laser turret: power-hungry (800 kJ per shot, 2 MW peak input, 24 kW drain), no ammo. The vanilla beam deals
+-- 10 laser damage per shot, so damage_modifier = damage / 10.
+local LASER = balance.buildings["rts-laser-turret"]
+local laser = clone({
+  type = "electric-turret", source = "laser-turret", name = "rts-laser-turret",
+  map_color = {r = 0.95, g = 0.3, b = 0.35},
+})
+laser.is_military_target = true
+laser.energy_source = {
+  type = "electric",
+  usage_priority = "primary-input",
+  buffer_capacity = "801kJ", -- one shot
+  input_flow_limit = LASER.power,
+  drain = "24kW",
+}
+laser.attack_parameters.range = LASER.range
+laser.attack_parameters.cooldown = LASER.cooldown
+laser.attack_parameters.damage_modifier = LASER.damage / 10
+laser.attack_parameters.ammo_type.action.action_delivery.max_length = LASER.range + 2
+
+-- Stone wall: 1 brick each (the recipe makes 5 from 5 bricks). No resistances: the vanilla wall's (explosion
+-- decrease 10 / 30 %, physical 3 / 20 %, acid 80 %) made it nearly immune to raiders (0.2 per 8-damage shot) and
+-- heavies; with 500 health a walker breaks a segment in 25 s and artillery in 5 shells.
+local wall = clone({
+  type = "wall", source = "stone-wall", name = "rts-wall",
+  map_color = {r = 0.55, g = 0.55, b = 0.5},
+})
+wall.resistances = nil
+
+-- Steam plant: one burner generator (vanilla hidden burner-generator with steam-engine graphics, 3x5) that burns
+-- coal (any chemical fuel) from its fuel slots and outputs 1.8 MW. Fed by inserter or by script; 1.8 MW at 100 %
+-- effectivity burns 0.45 coal/s.
+local STEAM = balance.buildings["rts-steam-plant"]
+local steam = clone({
+  type = "burner-generator", source = "burner-generator", name = "rts-steam-plant",
+  raid_target = true, map_color = {r = 0.55, g = 0.45, b = 0.35},
+})
+steam.hidden = nil
+steam.hidden_in_factoriopedia = nil
+steam.max_power_output = STEAM.power
+steam.burner.fuel_categories = {"chemical"}
+steam.burner.effectivity = 1
+steam.burner.fuel_inventory_size = 2
+steam.burner.emissions_per_minute = nil -- no pollution cloud (enemies are off; it would only cost UPS)
+steam.energy_source = {type = "electric", usage_priority = "secondary-output"} -- same tier as the CC core
+
+local accumulator = clone({
+  type = "accumulator", source = "accumulator", name = "rts-accumulator",
+  raid_target = true, map_color = {r = 0.4, g = 0.5, b = 0.6},
+})
+
+-- Radar: keeps a square of (2 * reveal_chunks + 1)^2 chunks around it charted and visible; no slow far scan.
+local RADAR = balance.buildings["rts-radar"]
+local radar = clone({
+  type = "radar", source = "radar", name = "rts-radar",
+  raid_target = true, map_color = {r = 0.5, g = 0.75, b = 0.55},
+})
+radar.max_distance_of_nearby_sector_revealed = RADAR.reveal_chunks
+radar.max_distance_of_sector_revealed = RADAR.reveal_chunks
+radar.connects_to_other_radars = false
+radar.is_military_target = true
+
+-- Raiders also deal bonus damage to the vanilla medium electric pole, which the RTS reuses as its pole.
+data.raw["electric-pole"]["medium-electric-pole"].trigger_target_mask = table.deepcopy(RAID_MASK)
+
+data:extend({cc, core_power, core_pole, stockpile, extractor, smelter, solar, factory, barracks, turret,
+             laser, wall, steam, accumulator, radar})
