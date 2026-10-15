@@ -18,6 +18,7 @@
 --   winner           force name or "draw", once phase == "ended" (match.decide_winner)
 --   charted          true once the arena was charted for rts-player
 --   waves_off        true after `/rts-qa-reset nowaves`: no enemy waves (enemy_next_wave is nil)
+--   start_plates     {[force] = {["iron-plate"] = n, ["copper-plate"] = n}} in the stockpiles at match start
 local util = require("scripts.util")
 local events = require("scripts.events")
 local units = require("scripts.units")
@@ -49,11 +50,20 @@ local HEAVY_FRONT = 6 -- tiles from the walker block's front column to the heavi
 -- Copied into storage.match.config at init; the headless autotest shortens it through match.set_wave_timing.
 match.DEFAULT_CONFIG = {first_wave_ticks = 3 * 60 * 60, wave_period_ticks = 2 * 60 * 60}
 
--- docs/PHASE2.md "Starting stock", inserted into the player's CC stockpiles.
+-- Starting plates, the same for both sides: the player gets them with match.STARTING_STOCK, the enemy with the
+-- template (basetemplate.STOCK is set from this table below, so the two cannot drift apart).
+match.START_PLATES = {{"iron-plate", 200}, {"copper-plate", 100}}
+-- docs/PHASE2.md "Starting stock" plus one factory (lead decision 2026-10-15: without it the player can never make
+-- more buildings), inserted into the player's CC stockpiles.
 match.STARTING_STOCK = {
-  {"iron-plate", 200}, {"copper-plate", 100}, {"rts-extractor", 2}, {"rts-smelter", 2}, {"rts-barracks", 1},
-  {"transport-belt", 20}, {"fast-inserter", 10}, {"medium-electric-pole", 10},
+  match.START_PLATES[1], match.START_PLATES[2], {"rts-extractor", 2}, {"rts-smelter", 2}, {"rts-barracks", 1},
+  {"rts-factory", 1}, {"transport-belt", 20}, {"fast-inserter", 10}, {"medium-electric-pole", 10},
 }
+do
+  local plates = {}
+  for _, entry in ipairs(match.START_PLATES) do plates[entry[1]] = entry[2] end
+  basetemplate.STOCK = plates -- module load time, identical on every load: the template is built from it
+end
 match.ENEMY_BARRACKS_RECIPE = "rts-walker-kit"
 
 -- Ore patches per side, relative to the CC centre for the side facing +x (dx is flipped for the other side):
@@ -274,6 +284,17 @@ function match.arm_barracks(force_name, recipe)
   return n
 end
 
+-- Plates in a force's stockpiles right now: {[item] = count} for match.START_PLATES items.
+local function stockpile_plates(force_name)
+  local out = {}
+  for _, entry in ipairs(match.START_PLATES) do out[entry[1]] = 0 end
+  for _, rec in buildings.for_force(force_name, "stockpile") do
+    local inv = rec.entity.get_inventory(defines.inventory.chest)
+    for name in pairs(out) do out[name] = out[name] + inv.get_item_count(name) end
+  end
+  return out
+end
+
 local function place_bases(surface)
   -- Player: the CC composite and the starting stock.
   local cc, parts = buildings.place_cc(surface, SPAWNS[PLAYER], PLAYER)
@@ -285,6 +306,14 @@ local function place_bases(surface)
   basetemplate.clone_to(surface, ENEMY, SPAWNS[ENEMY], FACING[ENEMY])
   match.arm_barracks(ENEMY, match.ENEMY_BARRACKS_RECIPE)
   for _, force_name in pairs({PLAYER, ENEMY}) do place_ore_patches(surface, force_name) end
+  -- Starting plates per side, before anything ran (the autotest compares them).
+  local m = storage.match
+  m.start_plates = {}
+  for _, force_name in pairs({PLAYER, ENEMY}) do
+    local plates = stockpile_plates(force_name)
+    m.start_plates[force_name] = plates
+    util.log("match: %s starting plates: iron=%d copper=%d", force_name, plates["iron-plate"], plates["copper-plate"])
+  end
 end
 
 function match.init()

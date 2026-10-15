@@ -304,6 +304,13 @@ local function eco_start_state()
     if (snap.items[entry[1]] or 0) ~= entry[2] then bad[#bad + 1] = entry[1] end
   end
   check("eco_starting_stock", #bad == 0, "network has %s", table.concat(want, " "))
+  local sp = storage.match.start_plates or {}
+  local pp, ep = sp[PLAYER] or {}, sp[ENEMY] or {}
+  local want_iron, want_copper = match.START_PLATES[1][2], match.START_PLATES[2][2]
+  check("eco_starting_plates_parity", pp["iron-plate"] == want_iron and pp["copper-plate"] == want_copper
+    and ep["iron-plate"] == want_iron and ep["copper-plate"] == want_copper, "at match start: player iron=%s "
+    .. "copper=%s, enemy iron=%s copper=%s (want %d/%d each)", tostring(pp["iron-plate"]), tostring(pp["copper-plate"]),
+    tostring(ep["iron-plate"]), tostring(ep["copper-plate"]), want_iron, want_copper)
   check("eco_bots", snap.construction_total == buildings.CC_BOTS["construction-robot"]
     and snap.logistic_total == buildings.CC_BOTS["logistic-robot"], "construction=%d logistic=%d idle=%d",
     snap.construction_total, snap.logistic_total, snap.bots_idle)

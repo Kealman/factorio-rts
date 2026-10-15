@@ -35,8 +35,12 @@ Plan: `docs/PHASE2.md`. Prototypes: `docs/qa/phase2-prototypes-notes.md`. Barrac
   | coal | 6×6 | (-24, 16) | 32 |
 
   The enemy side mirrors these in x. The data is `match.ORE_PATCHES` and `match.ORE_AMOUNT`.
-- **Starting stock** follows the PHASE2 table: 200 iron plate, 100 copper plate, 2 extractors, 2 smelters, 1 barracks,
-  20 belts, 10 fast inserters and 10 medium poles. The data is `match.STARTING_STOCK`.
+- **Starting stock** follows the PHASE2 table plus one factory, which the lead decided on 2026-10-15: without it the
+  player can never make more buildings. The stock is 200 iron plate, 100 copper plate, 2 extractors, 2 smelters,
+  1 barracks, 1 factory, 20 belts, 10 fast inserters and 10 medium poles. The data is `match.STARTING_STOCK`.
+- **Both sides start with the same plates**, 200 iron and 100 copper, from `match.START_PLATES`. The enemy gets them
+  through the template: match.lua sets `basetemplate.STOCK` from `match.START_PLATES` when the module loads. The
+  stockpile contents of each side right after placement are kept in `storage.match.start_plates`.
 - **`always_day`** is set on the arena, as in Phase 1. The arena is still [-80, 80)².
 - **`match.home(force)`** is now the CC centre, which is where SPACE jumps the camera. The new **`match.army_point(force)`**
   is the army's gathering point, 14 tiles in front of the CC.
@@ -63,7 +67,7 @@ The mirrored variant flips x and swaps east and west.
 
 | Part | Entities and offsets |
 |---|---|
-| CC composite | at (0, 0), as above. 200 iron plate and 100 copper plate go into its stockpiles (`basetemplate.STOCK`). |
+| CC composite | at (0, 0), as above. `basetemplate.STOCK` goes into its stockpiles. match.lua sets it from `match.START_PLATES`: 200 iron plate and 100 copper plate. |
 | Iron line, north | 2 extractors facing north at (-8.5, -6.5) and (-5.5, -6.5), on iron ore placed under their 5×5 mining area. A belt runs east from (-9.5, -8.5) to (2.5, -8.5). 2 inserters at (±1.5, -9.5) feed 2 smelters at (±1.5, -11.5). 2 inserters at (±1.5, -13.5) feed 2 stockpiles at (±1.5, -14.5). |
 | Copper line, south | 1 extractor facing south at (-6.5, 6.5), on copper ore. A belt runs east from (-7.5, 8.5) to (2.5, 8.5). The inserters, 2 smelters and 2 stockpiles mirror the iron line in y. |
 | Power | 6 medium poles at (0.5, ±4.5), (0.5, ±9.5), (-5.5, 0.5) and (5.5, 1.5), all within the 9-tile wire reach of the core pole or of each other. 2 solar arrays at (-7.5, ±1.5). |
@@ -231,7 +235,7 @@ not a usable satisfaction signal, because it charges slowly.
 | `match.decide_winner(player_out, enemy_out)` | Pure rule: nil, a force name, or `"draw"` |
 | `match.result(force)` | `nil` unless `phase == "ended"`, else `"victory"`, `"defeat"` or `"draw"` from that force's view |
 | `match.wave_retarget(position)` | Where a wave goes next: the nearest player entity within 300 tiles, else the army centroid, else the CC |
-| `match.STARTING_STOCK`, `match.ORE_PATCHES`, `match.ORE_AMOUNT` | Starting stock and ore data |
+| `match.START_PLATES`, `match.STARTING_STOCK`, `match.ORE_PATCHES`, `match.ORE_AMOUNT` | Starting plates for both sides, the player's starting stock, and ore data |
 | `match.ENEMY_BARRACKS_RECIPE` | `rts-walker-kit` |
 | `match.arm_barracks(force, recipe)` | Sets the recipe on every barracks of the force that has none |
 
@@ -284,7 +288,9 @@ Space Age, quality and elevated-rails.
 The economy part starts at tick 120, before the Phase 1 part. It checks the following, in order:
 
 1. **Match-start state.**
-   - `eco_cc_composite`, `eco_starting_stock`, `eco_bots` (20 + 10) and `eco_cc_buffer_precharged`.
+   - `eco_cc_composite`, `eco_starting_stock` (the whole table, factory included) and `eco_starting_plates_parity`
+     (200/100 in both sides' stockpiles at match start).
+   - `eco_bots` (20 + 10) and `eco_cc_buffer_precharged`.
    - `eco_ore_patches`, `eco_enemy_template` (cc 1, barracks 1, extractor 3, smelter 4, solar 2, stockpile 8) and
      `eco_enemy_barracks_recipe`.
 2. **CC death.** A throwaway CC composite at (0, 60) is killed with `die()`. `eco_cc_death_cleanup` expects both core
@@ -323,13 +329,13 @@ The Phase 1 part was adapted in these ways:
 
 | Run | Checks | Errors | Log |
 |---|---|---|---|
-| Space Age, quality and elevated-rails on (`build/p2-eco/`) | 63/63 | 0 (data, create and server stages) | `build/p2-eco-server.log` |
-| Base only (`build/p2-eco-nosa/`) | 63/63 | 0 | `build/p2-eco-nosa-server.log` |
+| Space Age, quality and elevated-rails on (`build/p2-eco/`) | 64/64 | 0 (data, create and server stages) | `build/p2-eco-server.log` |
+| Base only (`build/p2-eco-nosa/`) | 64/64 | 0 | `build/p2-eco-nosa-server.log` |
 
-Both runs last 220 s, so they continue for about a minute after the summary line. They were run on this module's
-final files: `control.lua`, `buildings.lua`, `production.lua`, `economy.lua`, `basetemplate.lua`, `match.lua`, `debug.lua`
-and `units.lua`. Another agent was editing `cursor.lua`, `orders.lua`, `selection.lua` and `prototypes/styles.lua` in
-`mods/` at the same time. Those edits are not in the tested copies.
+Both runs last 220 s, so they continue for about a minute after the summary line. They use a copy of `mods/` taken
+after this module's last change. That copy also holds the other agent's in-progress `cursor.lua`, `orders.lua`,
+`selection.lua` and `prototypes/styles.lua` as they were at copy time. Only `hud.lua` changed in `mods/` after the copy.
+The base-only run again ended in a defeat, at tick 11820, and kept running without errors afterwards.
 
 Excerpt from the Space Age run:
 
@@ -342,7 +348,7 @@ Excerpt from the Space Age run:
 [rts] autotest check eco_brownout: PASS solar only: rts-player: ... power 1.24 / 0.80 MW, satisfaction 52%
 [rts] autotest eco: kit-to-unit latency over 23 player kits: min 0, max 0, avg 0.00 ticks
 [rts] match: enemy wave 1: group #800 with 10 units from (45.4, -1.3) -> attack_area (-43.8, 1.8)
-[rts] autotest summary 63/63 (all passed)
+[rts] autotest summary 64/64 (all passed)
 ```
 
 **The defeat path ran in an earlier base-only run.** The wave of 16 enemy walkers killed the player army. It then
@@ -428,14 +434,14 @@ reads and one `find_logistic_network_by_position`. Spike #4 measured about 6 µs
 
 ## Decisions for the lead
 
-- **There is no factory in the starting stock.** The PHASE2 table is followed exactly, but without a factory the player
-  can never make more extractors, smelters, belts or poles than the starting ones. Consider adding `{"rts-factory", 1}`
-  to `match.STARTING_STOCK`. QA can use `/rts-give rts-factory 1` until then.
+- **Factory and plate parity: done.** The player's stock now includes 1 factory. Both sides start with 200 iron and
+  100 copper, as the lead decided on 2026-10-15.
 - **Enemy production versus waves.** The template barracks makes a walker every 3 s while its 200-plate stock lasts:
   about 20 in the first minute. After that, iron limits it to about 7.5 a minute. In the base-only run, with the enemy
   base intact, it had made 37 walkers by 150 s. With the first wave now at 3 min, a player who starts from zero meets
-  roughly 40 barracks walkers plus the 6 starting ones in that wave. Other balance levers are less template stock
-  (`basetemplate.STOCK`) or a production cap. Interactive QA of the economy should still start with
+  roughly 40 barracks walkers plus the 6 starting ones in that wave. The plate parity does not change this. The
+  difference is the enemy's free, working template: its barracks starts at once, and 4 smelters run. Other balance
+  levers are less starting plates (`match.START_PLATES`, which moves both sides) or an enemy production cap. Interactive QA of the economy should still start with
   `/rts-qa-reset nowaves`. Note that `/rts-qa-reset` resets units, not buildings or production.
 - **The template ore under the extractors is extra.** It is 65 tiles at 3000 ore each, close to the CC, in addition to
   the per-side patches. The player has no such ore in a normal start.
