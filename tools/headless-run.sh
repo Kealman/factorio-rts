@@ -8,12 +8,13 @@ SECS="${1:-20}"
 PATTERN="${2:-\\[rts}"
 MODS_DIR="${3:-$RTS_MODS_DIR}"
 RUN_ID="$(basename "$MODS_DIR")"
+CFG="$(factorio_isolated_config "$RUN_ID")"   # own write dir => no .lock clash with other runs
 SAVE="$RTS_BUILD_DIR/$RUN_ID-headless.zip"
 LOG="$RTS_BUILD_DIR/$RUN_ID-server.log"
 rm -f "$SAVE"
-"$FACTORIO_BIN" --mod-directory "$MODS_DIR" --create "$SAVE" > "$RTS_BUILD_DIR/$RUN_ID-create.log" 2>&1 \
+"$FACTORIO_BIN" -c "$CFG" --mod-directory "$MODS_DIR" --create "$SAVE" > "$RTS_BUILD_DIR/$RUN_ID-create.log" 2>&1 \
   || { echo "map creation failed:"; grep -iE "error" "$RTS_BUILD_DIR/$RUN_ID-create.log" | head -20; exit 1; }
-"$FACTORIO_BIN" --mod-directory "$MODS_DIR" --start-server "$SAVE" \
+"$FACTORIO_BIN" -c "$CFG" --mod-directory "$MODS_DIR" --start-server "$SAVE" \
   --server-settings "$RTS_ROOT/tools/server-settings.json" > "$LOG" 2>&1 &
 PID=$!
 sleep "$SECS"

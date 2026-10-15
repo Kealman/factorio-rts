@@ -1,0 +1,9 @@
+{
+  "name": "rts-spike-camera",
+  "version": "0.0.1",
+  "title": "RTS spike: camera and input",
+  "author": "factorio-rts",
+  "factorio_version": "2.0",
+  "dependencies": ["base >= 2.0", "? space-age"],
+  "description": "Phase 0 spikes #1, #2, #6: remote controller without a character, mouse custom inputs and selection-tool events in remote view, on_gui_click on minimap/camera elements. All findings go to the log with the prefix [rts-camera]."
+}
