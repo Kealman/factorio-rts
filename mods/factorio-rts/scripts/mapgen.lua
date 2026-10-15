@@ -2,10 +2,11 @@
 -- telemetry and the ruin capture.
 --
 -- match.start calls, in this order (docs/qa/phase4-mapgen-notes.md):
---   mapgen.plan(spec)            pure planning, no surface: every patch (main, natural, middle), lakes, cliff walls,
+--   mapgen.plan(spec)            pure planning, no surface: every patch (main, natural, middle), water moats, lakes,
 --                                forests and the ruin. Every feature is checked against the keep-out rules below.
 --   mapgen.tile_function(plan)   ground tile per arena tile (grass variation on "chokes"); create_arena uses it
---   mapgen.build(surface, plan)  lakes, cliffs, forests, ore patches and the ruin, before the CCs are placed
+--   mapgen.build(surface, plan)  moats, lakes, forests, ore patches and the ruin, before the CCs are placed; then a
+--                                land connectivity check (every CC, patch, gap and the ruin reachable on land)
 --
 -- Layouts (lobby "Map"): "chokes" (default) = terrain + patches + ruin; "open" = the flat Phase 3 arena with the same
 -- patches and ruin. The legacy map (waves brain) does not use this module.
@@ -20,12 +21,13 @@
 --   * no terrain on or next to an ore patch or the ruin;
 --   * no water within reach of a hauler corridor: the straight lines from each CC to its natural patches, to the
 --     middle patches and to the ruin (haulers walk straight lines and stop at water 10 tiles wide or more);
---   * cliff walls of different spawns stay WALL_SPACING apart, so walls never close a region.
+--   * moats of different spawns stay MOAT_SPACING apart, and every moat keeps its land gap, so no region is closed.
 --
 -- Measured on 2.0.77 (headless probe, notes "Terrain and units"): spider units (walker, heavy, raider, artillery) and
 -- haulers step over cliff lines, rock rows, forests and water up to 8 tiles wide; walkers and heavies go around water
 -- 10-12 wide, everything goes around water 14 or wider; haulers (straight-line autopilot) stop at water 10 or wider.
--- Drones (unit type) go around cliffs and get stuck on rock rows. Walls are therefore cliffs, not rocks.
+-- Drones (unit type) go around cliffs and get stuck on rock rows. Chokes are therefore water moats (16 tiles across,
+-- more than the 14 that stops every unit) with one land gap each; there are no cliffs.
 --
 -- Owns storage.mapgen = {
 --   surface   arena name the data belongs to; layout, size
@@ -33,6 +35,9 @@
 --               remaining, depleted_tick?}}
 --   ruin      {position, cc, chests = {LuaEntity}, owner?, capturing?, progress (ticks), label (LuaRenderObject)}
 --   counts    terrain feature counts of the current arena (log and notes)
+--   moats     {{force, home, front, side, sign, a, len}}: water |a' - a| <= MOAT_WIDTH / 2 and
+--             MOAT_GAP / 2 <= b' * sign <= MOAT_GAP / 2 + len, a' / b' = position along front / side from home
+--   gaps      {{force, position (centre of the land gap), width (measured)}}
 --   next_report  tick of the next "ore remaining" log
 -- }
 local util = require("scripts.util")
@@ -60,17 +65,20 @@ mapgen.MIDDLE = {
 }
 
 -- Per map size: natural_a = distance of the natural pair from its CC along the front; choke_a = distance of the
--- cliff wall; wall_len = tiles of cliff on each side of the gap (before pruning); lake_r = radius range; forests.
+-- moat's centre line; moat_len = water on each side of the gap (before pruning); lake_r = radius range; forests.
+-- The natural pair sits between the base ring and the moat, so on the small map (spawn circle 88) it is only 50 out.
 mapgen.GEOMETRY = {
-  small = {natural_a = 64, choke_a = 76, wall_len = 20, lake_r = {11, 15}, forests = 6},
-  medium = {natural_a = 70, choke_a = 86, wall_len = 28, lake_r = {13, 17}, forests = 8},
-  large = {natural_a = 76, choke_a = 96, wall_len = 36, lake_r = {14, 18}, forests = 10},
+  small = {natural_a = 50, choke_a = 70, moat_len = 24, lake_r = {11, 15}, forests = 6},
+  medium = {natural_a = 70, choke_a = 88, moat_len = 36, lake_r = {13, 17}, forests = 8},
+  large = {natural_a = 76, choke_a = 96, moat_len = 48, lake_r = {14, 18}, forests = 10},
 }
+mapgen.NATURAL_DIST = {48, 84} -- a natural patch centre this far from its own CC
 mapgen.BASE_RING = 60        -- no terrain within this many tiles of a CC
-mapgen.GAP = 12              -- choke width between the two cliff segments of a spawn (measured between collision boxes)
-mapgen.END_TRIM = 3.5        -- a run's end pieces are this much shorter than their two grid cells together (measured)
+mapgen.MOAT_WIDTH = 16       -- water across the front line (14 or more stops every unit, measured)
+mapgen.MOAT_GAP = 14         -- the land gap (the choke) on the front line
+mapgen.MOAT_MIN = 8          -- a moat side shorter than this (on any spawn) means no moats at all (fairness)
 mapgen.HOSTILE = 45          -- = ai/layout.lua HOSTILE_RADIUS: a patch this close to a spawn belongs to that spawn
-mapgen.WALL_SPACING = 12     -- minimum gap between cliff cells of different spawns
+mapgen.MOAT_SPACING = 12     -- minimum land between moats of different spawns
 mapgen.LAKE_SHAPE = 1.3      -- a lake reaches at most this factor of its radius (blob shape)
 mapgen.MAX_LAKES = 3
 mapgen.RUIN_POSITION = {x = 0, y = 0}
@@ -188,18 +196,53 @@ local function patch_free(P, box, gap)
   return true
 end
 
--- A natural patch box is fine: free of patches and the ruin, 3 tiles from cliff cells, 58-84 tiles from its own CC
+-- Distance from a point to a moat side (exact: the side is a rectangle in its spawn's front/side axes).
+local function moat_side_dist(p, m)
+  local dx, dy = p.x - m.home.x, p.y - m.home.y
+  local a = dx * m.f.x + dy * m.f.y
+  local b = (dx * m.s.x + dy * m.s.y) * m.sign
+  local half = mapgen.MOAT_WIDTH / 2
+  local da = math.max(m.a - half - a, 0, a - (m.a + half))
+  local lo = mapgen.MOAT_GAP / 2
+  local db = math.max(lo - b, 0, b - (lo + m.len))
+  return math.sqrt(da * da + db * db)
+end
+
+--- Distance from a point to the nearest planned moat (math.huge without moats).
+local function moat_dist(P, p)
+  local best = math.huge
+  for _, m in ipairs(P.moats) do
+    if m.len > 0 then best = math.min(best, moat_side_dist(p, m)) end
+  end
+  return best
+end
+
+-- Distance from a tile box to the nearest moat, from points every tile along the box outline.
+local function box_moat_dist(P, box)
+  if #P.moats == 0 then return math.huge end
+  local best = math.huge
+  local function try(x, y) best = math.min(best, moat_dist(P, {x = x, y = y})) end
+  for x = box.x0, box.x1 do
+    try(x, box.y0)
+    try(x, box.y1)
+  end
+  for y = box.y0 + 1, box.y1 - 1 do
+    try(box.x0, y)
+    try(box.x1, y)
+  end
+  return best
+end
+
+-- A natural patch box is fine: free of patches and the ruin, 3 tiles from the moats, NATURAL_DIST from its own CC
 -- and out of every other spawn's base ring (so also out of the AI's HOSTILE_RADIUS).
 local function natural_ok(P, spec, force, home, c, box)
   if not patch_free(P, box, 4) then return false end
   local d = dist(c, home)
-  if d < 58 or d > 84 then return false end
+  if d < mapgen.NATURAL_DIST[1] or d > mapgen.NATURAL_DIST[2] then return false end
   for other, sp in pairs(spec.spawns) do
     if other ~= force and dist(c, sp) < math.max(mapgen.HOSTILE + 4, mapgen.BASE_RING + 2) then return false end
   end
-  for _, w in ipairs(P.wall_cells) do
-    if box_gap(box, w.box) < 3 then return false end
-  end
+  if box_moat_dist(P, box) < 3 then return false end
   return true
 end
 
@@ -257,88 +300,66 @@ local function plan_corridors(P, spec)
   end
 end
 
--- Cliff cell (4x4 grid cell) box. we = wall runs west-east (cells along x in row j), else north-south.
-local function cell_box(we, i, j)
-  if we then return {x0 = 4 * i, y0 = 4 * j, x1 = 4 * i + 4, y1 = 4 * j + 4} end
-  return {x0 = 4 * j, y0 = 4 * i, x1 = 4 * j + 4, y1 = 4 * i + 4}
-end
-
-local function wall_cell_ok(P, spec, force, box)
-  if not inside(box, P.half, 4) then return false end
+-- A moat point is fine: inside the arena, out of every base ring, 3 tiles from patches, 4 from the ruin and
+-- MOAT_SPACING from other spawns' moats.
+local function moat_point_ok(P, spec, force, p)
+  local lim = P.half - 4
+  if math.abs(p.x) > lim or math.abs(p.y) > lim then return false end
   for _, sp in pairs(spec.spawns) do
-    if point_box_dist(sp, box) < mapgen.BASE_RING then return false end
+    if dist(p, sp) < mapgen.BASE_RING then return false end
   end
-  for _, p in ipairs(P.patches) do
-    if box_gap(box, p.box) < 3 then return false end
+  for _, pa in ipairs(P.patches) do
+    if point_box_dist(p, pa.box) < 3 then return false end
   end
-  if P.ruin and box_gap(box, ruin_box(P.ruin)) < 6 then return false end
-  for _, w in ipairs(P.wall_cells) do
-    if w.force ~= force and box_gap(box, w.box) < mapgen.WALL_SPACING then return false end
+  if P.ruin and point_box_dist(p, ruin_box(P.ruin)) < 4 then return false end
+  for _, m in ipairs(P.moats) do
+    if m.force ~= force and m.len > 0 and moat_side_dist(p, m) < mapgen.MOAT_SPACING then return false end
   end
   return true
 end
 
--- Two cliff segments per spawn, roughly perpendicular to its front (straight west-east or north-south runs only: the
--- axis nearer to the perpendicular), leaving a gap of about GAP tiles between their collision boxes, centred on the
--- front line (measured 11.5-12.9; logged as "choke widths"). Cells are added from the gap outwards, one per side per
--- round (fair between spawns), and a side stops at its first cell that breaks a keep-out rule.
-local function plan_walls(P, spec, geo)
+-- One water moat per spawn: a band MOAT_WIDTH across, centred choke_a tiles out on its front line and perpendicular
+-- to it, split by a MOAT_GAP land gap on the front line. Each side grows from the gap outwards in 4-tile slices, one
+-- slice per side per round (fair between spawns), and stops at its first slice that breaks a keep-out rule (sample
+-- points every 2 tiles). Every side is then cut to the shortest side's length; if that is under MOAT_MIN, no spawn
+-- gets a moat (crowded maps: 1v2 and 1v3 small).
+local function plan_moats(P, spec, geo)
   local sides = {}
   for _, force in ipairs(spec.forces) do
     local home = spec.spawns[force]
-    local f = axes_of(home)
-    local p = {x = home.x + f.x * geo.choke_a, y = home.y + f.y * geo.choke_a}
-    local we = math.abs(f.y) > math.abs(f.x)
-    local along, across = we and p.x or p.y, we and p.y or p.x
-    -- the cliff row whose cell centre (4j + 2) is nearest the choke line; on a tie the one on the base side, so
-    -- mirrored spawns get mirrored walls
-    local jf = (across - 2) / 4
-    local j0, j1 = math.floor(jf), math.ceil(jf)
-    local d0, d1 = math.abs(4 * j0 + 2 - across), math.abs(4 * j1 + 2 - across)
-    local j
-    if d0 < d1 - 1e-9 then j = j0 elseif d1 < d0 - 1e-9 then j = j1 else j = ((we and f.y or f.x) > 0) and j0 or j1 end
-    -- empty grid cells between the two runs: GAP minus what the end pieces leave open, on the 4-tile grid
-    local cell_gap = 4 * math.max(1, math.floor((mapgen.GAP - mapgen.END_TRIM) / 4 + 0.5))
-    local gap_lo = 4 * math.floor((along - cell_gap / 2) / 4 + 0.5)
-    local left = gap_lo / 4 - 1             -- last cell of the run before the gap
-    local right = (gap_lo + cell_gap) / 4   -- first cell of the run after it
-    sides[#sides + 1] = {force = force, we = we, j = j, i = left, step = -1, cells = {}, alive = true, gap = p}
-    sides[#sides + 1] = {force = force, we = we, j = j, i = right, step = 1, cells = {}, alive = true, gap = p}
-    P.gaps[#P.gaps + 1] = {force = force, position = p}
+    local f, s = axes_of(home)
+    for _, sign in ipairs({1, -1}) do
+      local m = {force = force, home = home, f = f, s = s, a = geo.choke_a, sign = sign, len = 0, alive = true}
+      sides[#sides + 1] = m
+      P.moats[#P.moats + 1] = m
+    end
+    P.gaps[#P.gaps + 1] = {force = force, position = {x = home.x + f.x * geo.choke_a, y = home.y + f.y * geo.choke_a}}
   end
-  local rounds = math.floor(geo.wall_len / 4)
-  for _ = 1, rounds do
-    for _, sd in ipairs(sides) do
-      if sd.alive then
-        local box = cell_box(sd.we, sd.i, sd.j)
-        if wall_cell_ok(P, spec, sd.force, box) then
-          sd.cells[#sd.cells + 1] = sd.i
-          P.wall_cells[#P.wall_cells + 1] = {force = sd.force, box = box}
-          sd.i = sd.i + sd.step
-        else
-          sd.alive = false
+  local half, lo = mapgen.MOAT_WIDTH / 2, mapgen.MOAT_GAP / 2
+  for _ = 1, math.floor(geo.moat_len / 4) do
+    for _, m in ipairs(sides) do
+      if m.alive then
+        local ok = true
+        for da = -half, half, 2 do
+          for _, db in ipairs({m.len, m.len + 2, m.len + 4}) do
+            local a, b = m.a + da, (lo + db) * m.sign
+            local p = {x = m.home.x + m.f.x * a + m.s.x * b, y = m.home.y + m.f.y * a + m.s.y * b}
+            if not moat_point_ok(P, spec, m.force, p) then ok = false break end
+          end
+          if not ok then break end
         end
+        if ok then m.len = m.len + 4 else m.alive = false end
       end
     end
   end
-  -- Fairness: every side is cut to the shortest side's length, so every spawn gets the same choke. If any side has
-  -- room for fewer than 2 cells (crowded maps: 1v3 small), there are no walls at all.
-  local n = rounds
-  for _, sd in ipairs(sides) do n = math.min(n, #sd.cells) end
-  P.wall_cells = {}
-  if n < 2 then
-    P.skipped[#P.skipped + 1] = string.format("cliff walls (a side has room for %d cell%s)", n, n == 1 and "" or "s")
+  local n = math.huge
+  for _, m in ipairs(sides) do n = math.min(n, m.len) end
+  if n < mapgen.MOAT_MIN then
+    P.skipped[#P.skipped + 1] = string.format("moats (a side has room for %d tiles)", n)
+    P.moats = {}
     return
   end
-  for _, sd in ipairs(sides) do
-    local cells = {}
-    for k = 1, n do cells[k] = sd.cells[k] end -- the cells nearest the gap
-    table.sort(cells)
-    P.walls[#P.walls + 1] = {force = sd.force, we = sd.we, j = sd.j, cells = cells}
-    for _, i in ipairs(cells) do
-      P.wall_cells[#P.wall_cells + 1] = {force = sd.force, box = cell_box(sd.we, i, sd.j)}
-    end
-  end
+  for _, m in ipairs(sides) do m.len = n end
 end
 
 local function lake_ok(P, spec, c, r)
@@ -352,9 +373,7 @@ local function lake_ok(P, spec, c, r)
     if point_box_dist(c, p.box) < R + 6 then return false end
   end
   if P.ruin and dist(c, P.ruin) < R + 12 then return false end
-  for _, w in ipairs(P.wall_cells) do
-    if point_box_dist(c, w.box) < R + 4 then return false end
-  end
+  if moat_dist(P, c) < R + 4 then return false end
   for _, g in ipairs(P.gaps) do
     if dist(c, g.position) < R + 10 then return false end
   end
@@ -430,9 +449,7 @@ local function forest_ok(P, spec, c, r)
   for _, l in ipairs(P.lakes) do
     if dist(c, l) < r + l.r * mapgen.LAKE_SHAPE + 3 then return false end
   end
-  for _, w in ipairs(P.wall_cells) do
-    if point_box_dist(c, w.box) < r + 3 then return false end
-  end
+  if moat_dist(P, c) < r + 3 then return false end
   for _, g in ipairs(P.gaps) do
     if dist(c, g.position) < r + 10 then return false end
   end
@@ -461,8 +478,8 @@ function mapgen.plan(spec)
   local geo = mapgen.GEOMETRY[spec.size] or mapgen.GEOMETRY.small
   local rng = game.create_random_generator(mapgen.mix_seed(spec.seed))
   local P = {layout = spec.layout, size = spec.size, half = spec.half, seed = spec.seed, patches = {}, lakes = {},
-             walls = {}, wall_cells = {}, gaps = {}, forests = {}, corridors = {}, skipped = {},
-             ruin = {x = mapgen.RUIN_POSITION.x, y = mapgen.RUIN_POSITION.y}}
+             moats = {}, gaps = {}, forests = {}, corridors = {}, skipped = {},
+             ruin = {x = mapgen.RUIN_POSITION.x, y = mapgen.RUIN_POSITION.y}, spec = spec}
   for _, p in ipairs(spec.main) do
     add_patch(P, "main", p.force, p.name, p.center, p.w, p.h, mapgen.MAIN_TOTALS[p.name] or 3000)
   end
@@ -475,8 +492,8 @@ function mapgen.plan(spec)
       P.skipped[#P.skipped + 1] = "middle " .. name
     end
   end
-  -- Walls before the naturals: the natural solver steps around them; lakes and forests come last.
-  if spec.layout == "chokes" then plan_walls(P, spec, geo) end
+  -- Moats before the naturals: the natural solver steps around them; lakes and forests come last.
+  if spec.layout == "chokes" then plan_moats(P, spec, geo) end
   for _, force in ipairs(spec.forces) do plan_naturals(P, spec, geo, force) end
   plan_corridors(P, spec)
   if spec.layout == "chokes" then
@@ -550,86 +567,153 @@ local function lake_radius(l, t)
   return l.r * (1 + 0.14 * math.sin(2 * t + ph[1]) + 0.09 * math.sin(3 * t + ph[2]) + 0.05 * math.sin(5 * t + ph[3]))
 end
 
-local function build_lakes(surface, P)
-  local tiles, water = {}, 0
-  local shore = tile_ok(mapgen.SHORE_TILE) and mapgen.SHORE_TILE or nil
+local function tkey(x, y) return (x + 4096) * 8192 + (y + 4096) end
+
+-- Moat corners are rounded (cosmetic, only removes water): radius MOAT_END_ROUND at the outer end, 2 at the gap.
+-- da = |a - centre line|, b = along the side from the gap edge region (lo .. lo + len).
+mapgen.MOAT_END_ROUND = 5
+local function in_rounded(da, b, half, lo, len)
+  local function corner(r, bc)
+    local dx, dy = da - (half - r), b - bc
+    return dx <= 0 or (dx * dx + dy * dy) <= r * r
+  end
+  local r1 = mapgen.MOAT_END_ROUND
+  if b > lo + len - r1 and not corner(r1, lo + len - r1) then return false end
+  if b < lo + 2 and not corner(2, lo + 2) then return false end
+  return true
+end
+
+-- Water of the lakes and moats, then a 2-tile sand shore around it, in one set_tiles call. Returns the number of
+-- water tiles, the water set {[tkey] = true} and the water tiles per moat side.
+local function build_water(surface, P)
+  local water = {}
+  local n = 0
+  local function put(x, y, name)
+    local k = tkey(x, y)
+    if not water[k] or name == "deepwater" then
+      if not water[k] then n = n + 1 end
+      water[k] = name
+    end
+  end
   for _, l in ipairs(P.lakes) do
-    local R = math.ceil(l.r * mapgen.LAKE_SHAPE) + 3
+    local R = math.ceil(l.r * mapgen.LAKE_SHAPE) + 1
     for x = l.x - R, l.x + R do
       for y = l.y - R, l.y + R do
         local px, py = x + 0.5 - l.x, y + 0.5 - l.y
         local d = math.sqrt(px * px + py * py)
         local rr = lake_radius(l, math.atan2(py, px))
-        local name
-        if d <= rr * 0.55 then
-          name = "deepwater"
-        elseif d <= rr then
-          name = "water"
-        elseif shore and d <= rr + 2 then
-          name = shore
+        if d <= rr * 0.55 then put(x, y, "deepwater") elseif d <= rr then put(x, y, "water") end
+      end
+    end
+  end
+  local half, lo = mapgen.MOAT_WIDTH / 2, mapgen.MOAT_GAP / 2
+  for _, m in ipairs(P.moats) do
+    m.tiles = 0
+    -- bounding box of the side's four corners
+    local xs, ys = {}, {}
+    for _, a in ipairs({m.a - half, m.a + half}) do
+      for _, b in ipairs({lo * m.sign, (lo + m.len) * m.sign}) do
+        xs[#xs + 1] = m.home.x + m.f.x * a + m.s.x * b
+        ys[#ys + 1] = m.home.y + m.f.y * a + m.s.y * b
+      end
+    end
+    for x = math.floor(math.min(table.unpack(xs))) - 1, math.ceil(math.max(table.unpack(xs))) + 1 do
+      for y = math.floor(math.min(table.unpack(ys))) - 1, math.ceil(math.max(table.unpack(ys))) + 1 do
+        local dx, dy = x + 0.5 - m.home.x, y + 0.5 - m.home.y
+        local a = dx * m.f.x + dy * m.f.y
+        local b = (dx * m.s.x + dy * m.s.y) * m.sign
+        if math.abs(a - m.a) <= half and b >= lo and b <= lo + m.len and in_rounded(math.abs(a - m.a), b, half, lo, m.len) then
+          put(x, y, (math.abs(a - m.a) <= half - 4 and b >= lo + 2 and b <= lo + m.len - 2) and "deepwater" or "water")
+          m.tiles = m.tiles + 1
         end
-        if name then
-          tiles[#tiles + 1] = {name = name, position = {x, y}}
-          if name ~= shore then water = water + 1 end
+      end
+    end
+  end
+  local tiles = {}
+  local shore = tile_ok(mapgen.SHORE_TILE) and mapgen.SHORE_TILE or nil
+  local sand = {}
+  for k, name in pairs(water) do
+    local x, y = math.floor(k / 8192) - 4096, k % 8192 - 4096
+    tiles[#tiles + 1] = {name = name, position = {x, y}}
+    if shore then
+      for ox = -2, 2 do
+        for oy = -2, 2 do
+          local k2 = tkey(x + ox, y + oy)
+          if not water[k2] and not sand[k2] then
+            sand[k2] = true
+            tiles[#tiles + 1] = {name = shore, position = {x + ox, y + oy}}
+          end
         end
       end
     end
   end
   if #tiles > 0 then surface.set_tiles(tiles, true, true, true, false) end
-  return water
+  return n, water
 end
 
-local CLIFF_RUN = {
-  [true] = {first = "none-to-east", mid = "west-to-east", last = "west-to-none"},
-  [false] = {first = "none-to-south", mid = "north-to-south", last = "north-to-none"},
-}
-
-local function build_walls(surface, P)
-  local made, failed = 0, 0
-  for _, w in ipairs(P.walls) do
-    local names = CLIFF_RUN[w.we]
-    w.made = 0
-    w.lo, w.hi = nil, nil -- extent of the built cliffs' collision boxes along the run
-    for k, i in ipairs(w.cells) do
-      local orientation = (k == 1 and names.first) or (k == #w.cells and names.last) or names.mid
-      local x, y
-      if w.we then x, y = 4 * i + 2, 4 * w.j + 2.5 else x, y = 4 * w.j + 2, 4 * i + 2.5 end
-      local e = surface.create_entity({name = "cliff", position = {x, y}, cliff_orientation = orientation})
-      if e then
-        made = made + 1
-        w.made = w.made + 1
-        local bb = e.bounding_box
-        local lo = w.we and bb.left_top.x or bb.left_top.y
-        local hi = w.we and bb.right_bottom.x or bb.right_bottom.y
-        w.lo = math.min(w.lo or lo, lo)
-        w.hi = math.max(w.hi or hi, hi)
-      else
-        failed = failed + 1
-      end
-    end
-  end
-  return made, failed
-end
-
--- Measured choke width per spawn: the distance between the collision boxes of its two walls along the run.
-local function measure_gaps(P)
-  local by_force, out = {}, {}
-  for _, w in ipairs(P.walls) do
-    if w.lo then
-      by_force[w.force] = by_force[w.force] or {}
-      table.insert(by_force[w.force], w)
-    end
-  end
+-- Land width of each spawn's gap, measured on the moat's centre line from the built water.
+local function measure_gaps(P, water)
+  local out = {}
   for _, g in ipairs(P.gaps) do
-    local ws = by_force[g.force]
-    if ws and #ws == 2 then
-      local a, b = ws[1], ws[2]
-      if a.lo > b.lo then a, b = b, a end
-      g.width = b.lo - a.hi
-      out[#out + 1] = string.format("%s %.1f", g.force, g.width)
+    local m
+    for _, side in ipairs(P.moats) do
+      if side.force == g.force then m = side break end
+    end
+    if m then
+      local width = 0
+      for _, sign in ipairs({1, -1}) do
+        local b = 0
+        while b < mapgen.MOAT_GAP + 20 do
+          local x = g.position.x + m.s.x * b * sign
+          local y = g.position.y + m.s.y * b * sign
+          if water[tkey(math.floor(x), math.floor(y))] then break end
+          b = b + 0.25
+        end
+        width = width + b
+      end
+      g.width = width
+      out[#out + 1] = string.format("%s %.1f", g.force, width)
     end
   end
   return table.concat(out, ", ")
+end
+
+-- Land connectivity on a 2-tile grid (a cell with any water is blocked), from the first spawn: every CC, patch,
+-- gap and the ruin must be reachable. Returns the number of unreachable targets and their names.
+local function check_connectivity(P, spec, water)
+  local half = P.half
+  local function blocked(cx, cy)
+    local x, y = cx * 2, cy * 2
+    return water[tkey(x, y)] or water[tkey(x + 1, y)] or water[tkey(x, y + 1)] or water[tkey(x + 1, y + 1)]
+  end
+  local lo, hi = math.floor(-half / 2), math.floor((half - 1) / 2)
+  local function ckey(cx, cy) return (cx + 1024) * 2048 + (cy + 1024) end
+  local start = spec.spawns[spec.forces[1]]
+  local sx, sy = math.floor(start.x / 2), math.floor(start.y / 2)
+  local seen, queue, head = {[ckey(sx, sy)] = true}, {{sx, sy}}, 1
+  while head <= #queue do
+    local c = queue[head]
+    head = head + 1
+    for _, d in ipairs({{1, 0}, {-1, 0}, {0, 1}, {0, -1}}) do
+      local nx, ny = c[1] + d[1], c[2] + d[2]
+      if nx >= lo and nx <= hi and ny >= lo and ny <= hi then
+        local k = ckey(nx, ny)
+        if not seen[k] and not blocked(nx, ny) then
+          seen[k] = true
+          queue[#queue + 1] = {nx, ny}
+        end
+      end
+    end
+  end
+  local bad = {}
+  local function target(name, p)
+    if not seen[ckey(math.floor(p.x / 2), math.floor(p.y / 2))] then bad[#bad + 1] = name end
+  end
+  for _, f in ipairs(spec.forces) do target("CC " .. f, spec.spawns[f]) end
+  for _, pa in ipairs(P.patches) do target(pa.id, pa.center) end
+  for _, g in ipairs(P.gaps) do target("gap " .. g.force, g.position) end
+  if P.ruin then target("ruin", P.ruin) end
+  return #bad, table.concat(bad, ", "), #queue
 end
 
 local function tree_names()
@@ -732,9 +816,9 @@ end
 function mapgen.build(surface, P)
   local prof = helpers.create_profiler()
   local s = {surface = surface.name, layout = P.layout, size = P.size, patches = {}, counts = {}}
-  local water = build_lakes(surface, P)
-  local cliffs, cliff_failed = build_walls(surface, P)
-  local gaps = measure_gaps(P)
+  local water, water_set = build_water(surface, P)
+  local gaps = measure_gaps(P, water_set)
+  local unreachable, unreachable_list, land_cells = check_connectivity(P, P.spec, water_set)
   local trees = build_forests(surface, P)
   local parts = {}
   for _, p in ipairs(P.patches) do
@@ -747,22 +831,32 @@ function mapgen.build(surface, P)
     end
   end
   s.ruin = build_ruin(surface, P)
+  -- moat geometry for other modules (AI, tests): each side is the water band |a - a0| <= MOAT_WIDTH / 2,
+  -- MOAT_GAP / 2 <= b * sign <= MOAT_GAP / 2 + len in the spawn's front / side axes (a along front, b along side)
+  s.moats, s.gaps = {}, {}
+  for _, m in ipairs(P.moats) do
+    s.moats[#s.moats + 1] = {force = m.force, home = m.home, front = m.f, side = m.s, sign = m.sign, a = m.a, len = m.len}
+  end
+  for _, g in ipairs(P.gaps) do
+    if #P.moats > 0 then s.gaps[#s.gaps + 1] = {force = g.force, position = g.position, width = g.width} end
+  end
   prof.stop()
-  s.counts = {lakes = #P.lakes, water_tiles = water, walls = #P.walls, cliffs = cliffs, cliff_failed = cliff_failed,
-              forests = #P.forests, trees = trees, patches = #P.patches, skipped = #P.skipped, chokes = gaps}
+  s.counts = {lakes = #P.lakes, water_tiles = water, moats = #P.moats / 2, forests = #P.forests, trees = trees,
+              patches = #P.patches, skipped = #P.skipped, chokes = gaps, unreachable = unreachable}
   s.next_report = game.tick + mapgen.REPORT_PERIOD
   storage.mapgen = s
-  local lakes, walls = {}, {}
+  local lakes, moats = {}, {}
   for _, l in ipairs(P.lakes) do lakes[#lakes + 1] = string.format("(%d, %d) r%.0f", l.x, l.y, l.r) end
-  for _, w in ipairs(P.walls) do
-    walls[#walls + 1] = string.format("%s %s %d/%d", w.force, w.we and "W-E" or "N-S", w.made or 0, #w.cells)
+  for _, m in ipairs(P.moats) do
+    moats[#moats + 1] = string.format("%s %s %d long %d tiles", m.force, m.sign > 0 and "+" or "-", m.len, m.tiles or 0)
   end
-  log({"", string.format("[rts] mapgen: %s %s on %s: lakes %d (%d water tiles) [%s]; cliff walls %d, cliffs %d "
-    .. "(failed %d) [%s]; forests %d with %d trees; patches %d; ruin at %s with %d stockpiles; skipped [%s]; built in ",
-    P.layout, P.size, surface.name, #P.lakes, water, table.concat(lakes, ", "), #P.walls, cliffs, cliff_failed,
-    table.concat(walls, ", "), #P.forests, trees, #P.patches, util.pos_str(P.ruin), #s.ruin.chests,
-    table.concat(P.skipped, ", ")), prof})
-  util.log("mapgen: choke widths (between the cliff collision boxes): %s", gaps ~= "" and gaps or "none")
+  log({"", string.format("[rts] mapgen: %s %s on %s: moats %d [%s]; lakes %d [%s]; water tiles %d; forests %d with %d "
+    .. "trees; patches %d; ruin at %s with %d stockpiles; skipped [%s]; built in ", P.layout, P.size, surface.name,
+    #P.moats / 2, table.concat(moats, ", "), #P.lakes, table.concat(lakes, ", "), water, #P.forests, trees, #P.patches,
+    util.pos_str(P.ruin), #s.ruin.chests, table.concat(P.skipped, ", ")), prof})
+  util.log("mapgen: moat gaps (land on the moat centre line): %s", gaps ~= "" and gaps or "none")
+  util.log("mapgen: land connectivity from %s: %d cells reachable, %s", P.spec.forces[1], land_cells,
+    unreachable == 0 and "every CC, patch, gap and the ruin reachable" or ("UNREACHABLE: " .. unreachable_list))
   util.log("mapgen: natural and middle patches: %s", table.concat(parts, "; "))
   return s
 end
@@ -1009,7 +1103,7 @@ end)
 -- Dev: whole-arena screenshot (GUI self-test)
 ---------------------------------------------------------------------------
 --- Two screenshots without GUI: the whole arena (script-output/rts-mapgen-<tick>.png) and the middle at zoom 0.35
---- (rts-mapgen-<tick>-middle.png: ruin, middle patches, the nearest cliff walls).
+--- (rts-mapgen-<tick>-middle.png: ruin, middle patches, the nearest moats).
 function mapgen.overview_screenshot(player, resolution)
   local s = storage.mapgen
   local m = storage.match
