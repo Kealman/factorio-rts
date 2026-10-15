@@ -21,6 +21,7 @@ export FACTORIO_SCRIPT_OUTPUT="$HOME/Library/Application Support/factorio/script
 factorio_isolated_config() {
   local id="$1" dir="$RTS_BUILD_DIR/runs/$1"
   mkdir -p "$dir"
-  printf '[path]\nread-data=__PATH__system-read-data__\nwrite-data=%s\n\n[other]\ncheck-updates=false\n' "$dir" > "$dir/config.ini"
+  # [controls]: GRAVE only opens the console on a Latin keyboard layout; F9 works with any input source (QA runs).
+  printf '[path]\nread-data=__PATH__system-read-data__\nwrite-data=%s\n\n[other]\ncheck-updates=false\n\n[controls]\ntoggle-console-alternative=F9\n' "$dir" > "$dir/config.ini"
   echo "$dir/config.ini"
 }
