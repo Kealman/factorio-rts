@@ -41,6 +41,10 @@ for _, input in ipairs(phase2) do inputs[#inputs + 1] = input end
 -- Phase 3: the match menu (lobby.lua). Escape is taken by the remote-view controller guard, hence F10.
 inputs[#inputs + 1] = {name = "rts-menu", key_sequence = "F10", consuming = "game-only"}
 
+-- Phase 4: the research panel (scripts/techgui.lua). T is the vanilla technology screen, which the RTS forces do not
+-- use (their vanilla technologies are disabled), so the input consumes it.
+inputs[#inputs + 1] = {name = "rts-tech", key_sequence = "T", consuming = "game-only"}
+
 for i, input in ipairs(inputs) do
   input.type = "custom-input"
   input.order = string.format("z[rts]-%02d", i)
