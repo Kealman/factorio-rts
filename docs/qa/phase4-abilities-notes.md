@@ -157,12 +157,23 @@ at 200 MJ and 10 MJ drained. A yellow ring marks every turret of the force.
 ## Ability bar (`scripts/abilitygui.lua`)
 
 A `screen` frame named `rts_ability_bar` sits at the bottom centre. It exists only while a match runs and the player's
-force takes part. Its size is 478 × 86 GUI units:
+force takes part.
 
-| UI scale | Size at 1280×800 | Position |
+**Placement.** The bar is centred between the HUD's selection panel and its build menu, bottom aligned. The HUD
+reserves 8 + 520 + 8 GUI units on the left and 8 + 308 + 8 on the right (`HUD_LEFT` and `HUD_RIGHT`, mirroring
+`hud.lua`'s MARGIN, PANEL_WIDTH and BUILD_WIDTH). The full bar is 478 × 86 GUI units. When it does not fit between the
+two, the compact layout (320 units) drops the card's text column. The Commander icon then shows the level as its number
+and carries the rest in its tooltip. A resolution or UI-scale change rebuilds the bar in the right layout.
+
+| Window, UI scale | Layout | Position |
 |---|---|---|
-| 0.75 | 359 × 65 px | x 461–820, y 729–794 |
-| 1.0 | 478 × 86 px | x 401–879, y 706–792 |
+| 1280×800, 0.75 (the automatic scale of `tools/gui-run.sh`) | full, 359 × 65 px | x 461–820, y 729–794 |
+| 1280×800, 1.0 (the owner's config) | compact, 320 × 86 px | x 536–856, y 706–792. HUD panel ends at 528, build menu starts at 964. |
+| 1920×1080, 1.0 | full, 478 × 86 px | centred |
+
+**Guards.** Every refresh first checks the player, `player.gui.screen` and each element. The bar's elements are
+collected into one table, and anything missing or invalid, or a layout change, makes it rebuild instead of raising. No
+`pcall` is used. Style writes go only to flows: a frame style has no `horizontal_spacing` (gotcha 2).
 
 - **Card.** The Commander icon, "Commander · Lv N", a health bar, and "Kills: k / next". It shows "Down: back in N s"
   while the Commander is dead, and "Target: <ability>" in yellow while a targeted ability is armed. The icon's tooltip
@@ -222,6 +233,8 @@ local variables (limit is 200) in main function", hud.lua:2205). Probe copies ad
 | GUI, Russian (system language), `tools/gui-run.sh build/p4-abilities-gui 220 ABILITIES_GUI_DONE` | `build/p4-abilities-gui` | `abilities probe summary 6/6 (all passed)` | 0, no "Unknown key" |
 | GUI, English (scratch copy of `gui-run.sh` that appends `[general] locale=en`) | `build/p4-abilities-gui-en` | 6/6 | 0 |
 | GUI, Russian, with the HUD agent's working-tree `hud.lua` of 00:15 (it loaded again) | `build/p4-abilities-gui-hud` | 6/6. The bar (461–820, 729–794) and the new HUD panel (6–396, 699–794) and build menu (from x 1043) do not overlap. | 0 |
+| GUI smoke after the lead's report (the frame-spacing crash, fixed at 00:02 in `mods/`), plain copy of `mods/` with the live HUD, UI scale 0.75 | `build/p4-abilities-smoke` | 7/7: the six checks above plus `gui_bar_rebuilds`. A button column destroyed by script was rebuilt by the next refresh, with no error. | 0 |
+| The same at UI scale 1.0 (scratch `gui-run.sh` that appends `[interface] automatic-ui-scale=false, custom-ui-scale=1.0`) | `build/p4-abilities-smoke-s1` | 6/6. Compact layout at (536, 706), clear of the HUD (`build/shots-p4-abilities-smoke-s1/rts-p1-1080.png`). | 0 |
 
 **Headless probe checks**, in order. The probe starts its own 1v1 against an easy AI, suppresses the default autotest
 and drives rts-player through the fake player index 0.
@@ -303,8 +316,10 @@ and the English hint reads "Target: …".
    characters, cars and spider-vehicles. Spider-units cannot be sped up by script. This is the reason for the Stim
    choice.
 2. **A frame style has no `horizontal_spacing`.** Setting it on a frame raised "Expected Table or Flow or
-   HorizontalFlow style type but was Frame" in the first GUI run. The spacing comes from the frame style's
-   `horizontal_flow_style`.
+   HorizontalFlow style type but was Frame" in the first GUI run. The error came from the 15-tick refresh, so it took
+   down every GUI client. It was fixed in `mods/` at 00:02, and the HUD agent's report came from a copy taken before
+   that. The spacing now comes from the frame style's `horizontal_flow_style`, and the bar's code is guarded (see
+   "Guards").
 3. **Only one `on_entity_damaged` filter per mod.** Read it with `script.get_event_filter` and extend it; do not
    replace it. See the research notes, gotcha 5.
 4. **`LuaEntity.damage` without a cause** kills with `cause = nil`. The Commander's death log then says

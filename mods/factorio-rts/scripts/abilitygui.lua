@@ -10,7 +10,11 @@
 -- Ability buttons: a click is the hotkey (abilities.activate). Greyed (disabled) while unavailable: no research, nothing
 -- selected for Stim, no Commander for Shield, no artillery walker, on cooldown. The armed targeted ability's button is
 -- green. The tooltip names the ability, its hotkey, what it does and why it is unavailable.
--- Refresh: every REFRESH ticks for connected players, and at once when an ability is armed or used.
+-- Placement: centred between the HUD's selection panel (left) and build menu (right), bottom aligned. When the full bar
+-- does not fit between them (UI scale 1.0 on a 1280-wide window), the compact layout drops the card's text column: the
+-- icon then carries the level as its number and the rest in its tooltip.
+-- Refresh: every REFRESH ticks for connected players, and at once when an ability is armed or used. Every element is
+-- looked up and checked before use; anything missing or invalid makes the bar rebuild itself instead of raising.
 -- Element names start with "rts_ability_"; clicks carry tags.rts_ability = ability name or "commander".
 -- Owns no storage: the frame is rebuilt from abilities.lua / commander.lua state.
 local util = require("scripts.util")
@@ -23,10 +27,15 @@ local abilitygui = {}
 
 abilitygui.FRAME = "rts_ability_bar"
 local PREFIX = "rts_ability_"
-local WIDTH, HEIGHT = 478, 86  -- GUI units (x player.display_scale on screen): 359x65 px at 0.75, 478x86 at 1.0
+-- GUI units (x player.display_scale on screen). Full: 359x65 px at 0.75. Compact (no card text): 320 wide.
+local WIDTH, COMPACT_WIDTH, HEIGHT = 478, 320, 86
 local MARGIN = 8               -- GUI units above the bottom edge
 local INFO_WIDTH = 150         -- card text column; the health bar has the same width
 local REFRESH = 15
+-- Space the HUD (scripts/hud.lua) uses at the bottom corners, in GUI units: its MARGIN (8) + PANEL_WIDTH (520) + a gap
+-- on the left, and MARGIN + BUILD_WIDTH (308) + a gap on the right.
+local HUD_LEFT = 8 + 520 + 8
+local HUD_RIGHT = 8 + 308 + 8
 
 local TEXT = {  -- short button captions are icons; the tooltip names them
   stim = {"rts.ability-stim"}, shield = {"rts.ability-shield"}, scanner = {"rts.ability-scanner"},
@@ -46,11 +55,17 @@ local function wanted(player)
     and match.is_participant(player.force.name)
 end
 
-local function place(player, frame)
+--- Layout for a player's screen: mode ("full" | "compact"), x, y, width in pixels.
+local function layout(player)
   local res, s = player.display_resolution, player.display_scale
-  local w, h = px(WIDTH, s), px(HEIGHT, s)
-  frame.location = {math.floor((res.width - w) / 2 + 0.5), res.height - h - px(MARGIN, s)}
+  local lo, hi = px(HUD_LEFT, s), res.width - px(HUD_RIGHT, s)
+  local mode = px(WIDTH, s) <= hi - lo and "full" or "compact"
+  local w = px(mode == "full" and WIDTH or COMPACT_WIDTH, s)
+  local x = math.floor((res.width - w) / 2 + 0.5)
+  x = math.max(0, math.max(lo, math.min(x, hi - w)))
+  return mode, x, res.height - px(HEIGHT, s) - px(MARGIN, s), w
 end
+abilitygui.layout = layout
 
 local function description(name)
   local d = abilities.DEF[name]
@@ -62,11 +77,41 @@ local function description(name)
   return ""
 end
 
-local function build(player)
-  local screen = player.gui.screen
-  if screen[abilitygui.FRAME] then screen[abilitygui.FRAME].destroy() end
-  local frame = screen.add({type = "frame", name = abilitygui.FRAME, style = "rts_hud_frame", direction = "horizontal"})
-  frame.style.width = WIDTH
+local function valid(el) return el ~= nil and el.valid end
+
+-- The bar's elements as a flat table, or nil when anything is missing or invalid (or the layout changed): the caller
+-- rebuilds then.
+local function collect(frame, mode)
+  if not valid(frame) then return nil end
+  local tags = frame.tags
+  if not (tags and tags.rts_ability_layout == mode) then return nil end
+  local card, row = frame.card, frame.buttons
+  if not (valid(card) and valid(row)) then return nil end
+  local parts = {mode = mode, icon = card[PREFIX .. "commander"], cols = {}}
+  if not valid(parts.icon) then return nil end
+  if mode == "full" then
+    local info = card.info
+    if not valid(info) then return nil end
+    parts.title, parts.hp, parts.line = info.title, info.hp, info.line
+    if not (valid(parts.title) and valid(parts.hp) and valid(parts.line)) then return nil end
+  end
+  for _, name in ipairs(abilities.LIST) do
+    local col = row[name]
+    if not valid(col) then return nil end
+    local c = {button = col[PREFIX .. name], bar = col.bar, key = col.key}
+    if not (valid(c.button) and valid(c.bar) and valid(c.key)) then return nil end
+    parts.cols[name] = c
+  end
+  return parts
+end
+
+local function build(player, screen, mode)
+  local old = screen[abilitygui.FRAME]
+  if old and old.valid then old.destroy() end
+  local _, x, y, w = layout(player)
+  local frame = screen.add({type = "frame", name = abilitygui.FRAME, style = "rts_hud_frame", direction = "horizontal",
+                            tags = {rts_ability_layout = mode}})
+  frame.style.width = mode == "full" and WIDTH or COMPACT_WIDTH
   frame.style.height = HEIGHT -- rts_hud_frame's horizontal flow style puts 8 between the card and the buttons
 
   local card = frame.add({type = "flow", name = "card", direction = "horizontal"})
@@ -74,15 +119,17 @@ local function build(player)
   card.style.horizontal_spacing = 6
   card.add({type = "sprite-button", name = PREFIX .. "commander", style = "rts_ability_button",
             sprite = sprite_or("entity/rts-commander", "item/spidertron"), tags = {rts_ability = "commander"}})
-  local info = card.add({type = "flow", name = "info", direction = "vertical"})
-  info.style.vertical_spacing = 2
-  info.style.width = INFO_WIDTH
-  local title = info.add({type = "label", name = "title", style = "rts_hud_heading_label", caption = ""})
-  title.style.maximal_width = INFO_WIDTH
-  local hp = info.add({type = "progressbar", name = "hp", style = "rts_ability_hp_bar", value = 1})
-  hp.style.width = INFO_WIDTH
-  local line = info.add({type = "label", name = "line", style = "rts_hud_dim_label", caption = ""})
-  line.style.maximal_width = INFO_WIDTH
+  if mode == "full" then
+    local info = card.add({type = "flow", name = "info", direction = "vertical"})
+    info.style.vertical_spacing = 2
+    info.style.width = INFO_WIDTH
+    local title = info.add({type = "label", name = "title", style = "rts_hud_heading_label", caption = ""})
+    title.style.maximal_width = INFO_WIDTH
+    local hp = info.add({type = "progressbar", name = "hp", style = "rts_ability_hp_bar", value = 1})
+    hp.style.width = INFO_WIDTH
+    local line = info.add({type = "label", name = "line", style = "rts_hud_dim_label", caption = ""})
+    line.style.maximal_width = INFO_WIDTH
+  end
 
   local row = frame.add({type = "flow", name = "buttons", direction = "horizontal"})
   row.style.horizontal_spacing = 6
@@ -95,71 +142,73 @@ local function build(player)
     col.add({type = "progressbar", name = "bar", style = "rts_ability_cooldown_bar", value = 1})
     col.add({type = "label", name = "key", style = "rts_ability_key_label", caption = def.key or "–"})
   end
-  place(player, frame)
-  util.log("abilitygui: built for player %d at (%d, %d), %dx%d px (scale %.2f)", player.index,
-    frame.location.x, frame.location.y, px(WIDTH, player.display_scale), px(HEIGHT, player.display_scale),
+  frame.location = {x, y}
+  util.log("abilitygui: built for player %d (%s) at (%d, %d), %dx%d px (display %dx%d, scale %.2f)", player.index, mode,
+    x, y, w, px(HEIGHT, player.display_scale), player.display_resolution.width, player.display_resolution.height,
     player.display_scale)
   return frame
 end
 
-local function refresh_card(player, frame)
-  local info = frame.card.info
-  local icon = frame.card[PREFIX .. "commander"]
+local function refresh_card(player, parts)
+  local icon = parts.icon
   local c = commander.card(player.force.name)
   local armed = abilities.armed(player.index)
+  local title, value, line, tip
   if not c then
-    info.title.caption = {"rts.commander-card-title", 1}
-    info.hp.value = 0
-    info.line.caption = {"rts.commander-none"}
+    title, value, line, tip = {"rts.commander-card-title", 1}, 0, {"rts.commander-none"}, {"rts.commander-none"}
     icon.enabled = false
-    icon.tooltip = {"rts.commander-none"}
   else
-    info.title.caption = {"rts.commander-card-title", c.level}
+    title = {"rts.commander-card-title", c.level}
     icon.enabled = c.alive
-    if c.alive then
-      info.hp.value = c.max_health > 0 and c.health / c.max_health or 0
-      icon.tooltip = {"rts.commander-card-tooltip", math.floor(c.health + 0.5), math.floor(c.max_health + 0.5),
-                      math.floor(c.shield + 0.5), math.floor(c.max_shield + 0.5), c.kills}
-    else
-      info.hp.value = 0
-      icon.tooltip = c.waiting and {"rts.commander-waiting"} or {"rts.commander-respawn", c.respawn_in or 0}
-    end
     if not c.alive then
-      info.line.caption = c.waiting and {"rts.commander-waiting"} or {"rts.commander-respawn", c.respawn_in or 0}
-    elseif c.next_kills then
-      info.line.caption = {"rts.commander-kills", c.kills, c.next_kills}
+      value = 0
+      line = c.waiting and {"rts.commander-waiting"} or {"rts.commander-respawn", c.respawn_in or 0}
+      tip = line
     else
-      info.line.caption = {"rts.commander-kills-max", c.kills}
+      value = c.max_health > 0 and c.health / c.max_health or 0
+      line = c.next_kills and {"rts.commander-kills", c.kills, c.next_kills} or {"rts.commander-kills-max", c.kills}
+      tip = {"rts.commander-card-tooltip", math.floor(c.health + 0.5), math.floor(c.max_health + 0.5),
+             math.floor(c.shield + 0.5), math.floor(c.max_shield + 0.5), c.kills}
     end
   end
-  if armed then
-    info.line.caption = {"rts.ability-armed-hint", TEXT[armed]}
-    info.line.style.font_color = {1, 0.85, 0.3}
+  if armed then line = {"rts.ability-armed-hint", TEXT[armed]} end
+  if parts.mode == "full" then
+    parts.title.caption = title
+    parts.hp.value = value
+    parts.line.caption = line
+    parts.line.style.font_color = armed and {1, 0.85, 0.3} or {0.72, 0.72, 0.72}
+    icon.tooltip = tip
   else
-    info.line.style.font_color = {0.72, 0.72, 0.72}
+    -- compact: the level is the icon's number, everything else is in its tooltip
+    icon.number = c and c.level or nil
+    icon.tooltip = {"", "[font=default-bold]", title, "[/font]\n", line, tip ~= line and "\n" or "",
+                    tip ~= line and tip or ""}
   end
 end
 
-local function refresh_buttons(player, frame)
+local function refresh_buttons(player, parts)
   local armed = abilities.armed(player.index)
   local force_name = player.force.name
   for _, name in ipairs(abilities.LIST) do
     local def = abilities.DEF[name]
-    local col = frame.buttons[name]
-    local button = col[PREFIX .. name]
+    local c = parts.cols[name]
+    local button = c.button
     local ok, reason = abilities.available(player.index, name)
     local left = abilities.cooldown_left(force_name, name)
     local is_armed = armed == name
     button.enabled = ok or is_armed
     local style = is_armed and "rts_ability_button_armed" or "rts_ability_button"
     if button.style.name ~= style then button.style = style end
-    col.bar.value = left > 0 and (1 - left / def.cooldown) or 1
-    col.key.caption = left > 0 and {"rts.ability-cooldown", math.ceil(left / 60)} or (def.key or "–")
+    c.bar.value = left > 0 and (1 - left / def.cooldown) or 1
+    c.key.caption = left > 0 and {"rts.ability-cooldown", math.ceil(left / 60)} or (def.key or "–")
     local tip = {"", "[font=default-bold]", TEXT[name], "[/font]  ",
                  def.key and {"rts.ability-tooltip-hotkey", def.key} or {"rts.ability-tooltip-button-only"},
                  "\n", description(name),
                  "\n", {"rts.ability-tooltip-cooldown-total", def.cooldown / 60}}
-    if def.tech then tip[#tip + 1] = "\n" tip[#tip + 1] = {"rts.ability-tooltip-needs", {"technology-name." .. def.tech}} end
+    if def.tech then
+      tip[#tip + 1] = "\n"
+      tip[#tip + 1] = {"rts.ability-tooltip-needs", {"technology-name." .. def.tech}}
+    end
     if is_armed then
       tip[#tip + 1] = "\n"
       tip[#tip + 1] = {"rts.ability-armed-hint", TEXT[name]}
@@ -172,22 +221,38 @@ local function refresh_buttons(player, frame)
   end
 end
 
---- Build, refresh or remove a player's ability bar.
+local function screen_of(player)
+  if not (player and player.valid and player.connected) then return nil end
+  local gui = player.gui
+  local screen = gui and gui.screen
+  if screen and screen.valid then return screen end
+  return nil
+end
+
+--- Build, refresh or remove a player's ability bar. Never raises on a missing or invalid element: it rebuilds instead.
 function abilitygui.refresh(player)
-  if not (player and player.valid) then return end
-  local frame = player.gui.screen[abilitygui.FRAME]
+  local screen = screen_of(player)
+  if not screen then return end
+  local frame = screen[abilitygui.FRAME]
+  if frame and not frame.valid then frame = nil end
   if not wanted(player) then
     if frame then frame.destroy() end
     return
   end
-  if not (frame and frame.valid and frame.card and frame.buttons) then frame = build(player) end
-  refresh_card(player, frame)
-  refresh_buttons(player, frame)
+  local mode = layout(player)
+  local parts = frame and collect(frame, mode)
+  if not parts then
+    parts = collect(build(player, screen, mode), mode)
+    if not parts then return end
+  end
+  refresh_card(player, parts)
+  refresh_buttons(player, parts)
 end
 
 --- True while the player sees the bar.
 function abilitygui.is_shown(player)
-  local frame = player.gui.screen[abilitygui.FRAME]
+  local screen = screen_of(player)
+  local frame = screen and screen[abilitygui.FRAME]
   return frame ~= nil and frame.valid
 end
 
@@ -211,14 +276,18 @@ events.on(defines.events.on_gui_click, function(e)
     util.log("abilitygui: click %s player=%d", what, e.player_index)
     abilities.activate(e.player_index, what)
   end
-  local player = game.get_player(e.player_index)
-  if player then abilitygui.refresh(player) end
+  abilitygui.refresh(game.get_player(e.player_index))
 end)
 
+-- A new resolution or UI scale may change the layout: rebuild (refresh builds the right one).
 local function reposition(e)
   local player = game.get_player(e.player_index)
-  local frame = player and player.gui.screen[abilitygui.FRAME]
-  if frame and frame.valid then place(player, frame) end
+  local screen = screen_of(player)
+  local frame = screen and screen[abilitygui.FRAME]
+  if frame and frame.valid then
+    frame.destroy()
+    abilitygui.refresh(player)
+  end
 end
 events.on(defines.events.on_player_display_resolution_changed, reposition)
 events.on(defines.events.on_player_display_scale_changed, reposition)
@@ -226,8 +295,9 @@ events.on(defines.events.on_player_display_scale_changed, reposition)
 function abilitygui.init()
   -- the frame layout may have changed with a mod update: rebuild on the next refresh
   for _, player in pairs(game.players) do
-    local frame = player.gui.screen[abilitygui.FRAME]
-    if frame then frame.destroy() end
+    local screen = player.valid and player.gui and player.gui.screen
+    local frame = screen and screen.valid and screen[abilitygui.FRAME]
+    if frame and frame.valid then frame.destroy() end
   end
 end
 
