@@ -220,6 +220,8 @@ Constants: `HUB_STOCKPILES`, `HUB_BOTS`, `BONUS_BOT`, `BASE_SLOTS`, `DEFAULT_CC`
   `export_above` on the CC, which defaults to 100 for plates.
 - **Haulers.**
   - Make them with the factory recipe `rts-hauler-kit`, or call `logistics.spawn_hauler` directly.
+  - `balance.units["rts-hauler"]` has `made_by = "factory"`. Lists of barracks kits built from `balance.units` must
+    skip entries that set `made_by`.
   - Then `set_home` for auto service, or `set_pickup` and `set_dropoff` for a route.
   - `logistics.haulers_of(force)` lists them; `logistics.stats(force)` counts trips and losses.
 - **Exclude haulers from the army.** They are in `storage.units`, so `units.for_force` and `units.count` include
@@ -236,8 +238,8 @@ Constants: `HUB_STOCKPILES`, `HUB_BOTS`, `BONUS_BOT`, `BASE_SLOTS`, `DEFAULT_CC`
   `rts-hauler-kit`.
 - **Labels.** The keys `rts.kind-hauler` ("Hauler") and `rts.order-haul` ("Hauling") exist for `KIND_KEYS` and
   `ORDER_KEYS`. Today the unit page shows the raw strings `hauler` and `haul`.
-- **Counts.** The army count (`units.count`) and the supply strip include haulers. supply.lua counts them on
-  purpose, 1 each.
+- **Counts.** The army count (`units.count`) includes haulers. Supply does not charge for them:
+  `balance.units["rts-hauler"].supply = 0`, which supply.lua reads.
 - **Alerts.** `storage.alerts` entries `hauler-lost` carry a position for the jump key.
 - **Strip.** The resource strip shows the CC networks only (`economy.snapshot`). Hub networks are separate pools;
   `logistics.networks(force)` has their contents.
@@ -327,7 +329,12 @@ Excerpt from the 10/10 logistics run (`build/p4-logistics-run3-server.log`):
 [rts] logistics autotest summary 10/10 (all passed)
 ```
 
-The create log confirms the cursor filter: `logistics: rts-cursor select type filters: spider-unit spider-vehicle unit`.
+The create log confirms the cursor filter and the raid masks:
+
+```
+[rts] logistics: rts-cursor select type filters: spider-unit spider-vehicle unit
+[rts] logistics: trigger target masks rts-hub=[common rts-raid-target] rts-hauler=[common rts-raid-target]
+```
 
 ### GUI self-test
 
@@ -397,7 +404,8 @@ The first Russian GUI run kept going a few seconds past the marker, and its log 
   `rts-hub`. That file belongs to the HUD agent. Until then a hub can only be placed by script, for example
   `surface.create_entity{name = "rts-hub", position = ..., force = ..., raise_built = true}`.
 - **Haulers count as units.**
-  - `units.count` includes them, so the HUD army number counts them. supply.lua counts them on purpose, 1 each.
+  - `units.count` includes them, so the HUD army number counts them. Supply charges 0 for them
+    (`balance.units["rts-hauler"]`).
   - `match.is_out` sees a force with only haulers left as still in the game.
   - The AI army should filter them (see "What the AI agent needs").
 - **Not tested with real input.** These still need an interactive QA pass:

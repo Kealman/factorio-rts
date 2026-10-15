@@ -52,8 +52,8 @@ no engine `effects`: `scripts/research.lua` applies everything (see Effects). Ic
 | `rts-hauler-capacity-1` | 1, basic | 15 | | `storage.research.hauler_slots[force]` = 10 |
 | `rts-attack-2` | 2, advanced | 25 | Attack I | Another +15 % (30 % in total) |
 | `rts-attack-3` | 2, advanced | 40 | Attack II | Another +15 % (45 % in total) |
-| `rts-armor-2` | 2, advanced | 25 | Armor I | Armored units take 10 % less damage |
-| `rts-armor-3` | 2, advanced | 40 | Armor II | Armored units take 20 % less damage in total |
+| `rts-armor-2` | 2, advanced | 25 | Armor I | Every unit takes 10 % less damage |
+| `rts-armor-3` | 2, advanced | 40 | Armor II | Every unit takes 20 % less damage in total |
 | `rts-unlock-artillery` | 2, advanced | 30 | Unlock Heavy | Artillery kits become units |
 | `rts-unlock-laser` | 2, advanced | 25 | | Enables the `rts-laser-turret` recipe |
 | `rts-steam-power` | 2, advanced | 20 | | Enables the `rts-steam-plant` recipe; flag `steam` |
@@ -82,9 +82,10 @@ suffix as a level and looks up `technology-name.rts-attack`.
   `-mk2` name. The mk2 kit recipes start disabled (`prototypes/recipes.lua`) and stay disabled. The kit, its cost and
   the unit's kind stay the same, so counts, HUD kinds and AI logic see a walker. `research.MK2_AUTO = false` switches
   the swap off.
-- **Armor II/III.** An `on_entity_damaged` handler heals back 10 % or 20 % of `final_damage_amount` for armored units
-  of a force with the technology. A killing blow (`final_health == 0`) is not reduced. See "The damage filter" below
-  for why the armored set is the mk2 units only.
+- **Armor II/III.** An `on_entity_damaged` handler heals back 10 % or 20 % of `final_damage_amount` for every unit of
+  a force with the technology. The armored units are every `rts-*` spider-unit and unit prototype: walker, heavy,
+  drone, raider, artillery and both mk2 units. Haulers and the commander are vehicles and are not included. A killing
+  blow (`final_health == 0`) is not reduced. See "The damage filter" below.
 - **Mining, logistics.** Force modifiers as listed. Mining is productivity: extra ore without draining the patch faster.
   The engine has no force-wide mining speed or belt speed modifier.
 - **Supply.** `storage.research.supply_bonus[force]`, which `supply.cap` reads.
@@ -205,34 +206,37 @@ Element names start with `rts_tech_`. Clicks carry `tags.rts_tech` = `research`,
 - Call `research.queue`.
 - Build labs and kits.
 - Set `research.AI_IGNORES_LOCKS = false`.
-- Mind the damage filter below once AI forces have mk2 units.
+- Keep the guard at the top of the AI's damage handler. The shared filter carries unit names, see below.
 
 ### The damage filter (Armor II/III)
 
-`script.set_event_filter` holds one filter per event per mod. `scripts/ai/init.lua` sets the `on_entity_damaged`
-filter to the RTS building names. Its handler then treats every damaged entity of an AI force as a threat to the base,
-through `army.on_damage` and its defend logic. `scripts/research.lua` loads after `ai.init` and re-sets the filter
-to this union:
+`script.set_event_filter` holds one filter per event per mod. `scripts/ai/init.lua` registers its handler and sets the
+`on_entity_damaged` filter to the RTS building names. That handler now starts with a guard,
+`if not buildings.KIND_BY_NAME[entity.name] then return end` (`scripts/ai/init.lua:131`, added by the AI owner on
+2026-10-15). Only damage to buildings feeds the AI's base-threat and defend logic.
+
+`scripts/research.lua` loads after `ai.init` and re-sets the filter to this union:
 
 - the building registry's names, including the lab;
 - every `balance.buildings` name and `rts-hub`, so modules that load later are covered;
-- the armored unit names.
+- the armored unit names (`research.ARMORED_NAMES`).
 
-The armored set is the mk2 units only (`research.ARMORED_NAMES`: `rts-heavy-mk2`, `rts-walker-mk2`). Only forces that
-research have mk2 units, and the AI does not research. The AI handler therefore never sees a unit of its own. Two
-consequences follow:
+The switch is one constant, `research.ARMOR_ALL_UNITS`:
 
-- **Armor II/III reduce damage for mk2 units only.** Units made before Armor I keep full damage.
-- **A guard is needed to widen it.** For Armor II/III on all units, the AI handler needs one guard line,
-  `if not buildings.KIND_BY_NAME[entity.name] then return end`, and then `research.ARMOR_ALL_UNITS = true`.
-- **B1 needs the same guard** before AI forces get mk2 units.
+| Value | Armored units | When |
+|---|---|---|
+| `true` (current) | Every `rts-*` spider-unit and unit | The AI handler has the guard |
+| `false` | The mk2 units only | Fallback for a handler that treats every damaged entity of an AI force as a base threat. Only researching forces have mk2 units, so the AI handler never sees its own units. |
+
+Every unit hit of every force now raises the event. For a force without Armor II/III the handler returns after one
+table lookup, and the AI handler returns at its guard.
 
 The handler cost, measured in the probe as 10 000 direct calls:
 
 | Path | Per call |
 |---|---|
-| Heal path | about 1.1–1.6 µs |
-| Early exit: a force without armor, or a non-armored entity | about 0.9–1.0 µs |
+| Heal path | about 1.1–2.7 µs |
+| Early exit: a force without Armor II/III, as every AI force today | about 0.9–1.0 µs |
 
 Only mk2 units and buildings raise the event at all.
 
@@ -247,9 +251,9 @@ build copies only: `build/p4-research/factorio-rts/scripts/research_probe.lua`.
 | Run | Copy | Result | Errors |
 |---|---|---|---|
 | `--check-unused-prototype-data --create` | `build/p4-research-check.log` | 0 warnings | 0 |
-| Headless probe, 300 s, `tools/headless-run.sh 300 '\[rts\] research probe' build/p4-research` | `build/p4-research` | `research probe summary 21/21 (all passed)` | 0 |
-| Legacy Phase 1/2 autotest, 240 s, `AUTOTEST_MATCH` set to `size = "legacy", enemy_brain = "waves"` | `build/p4-research-legacy` | `autotest summary 65/65 (all passed)` | 0 |
-| AI autotest, 420 s, unchanged copy | `build/p4-research-ai` | `ai autotest summary 14/14 (all passed), result=both alive (time)`; armies stayed under 40 supply, so no kit was refused | 0 |
+| Headless probe, 300 s, `tools/headless-run.sh 300 '\[rts\] research probe' build/p4-research`, final code (`ARMOR_ALL_UNITS = true`) | `build/p4-research` | `research probe summary 21/21 (all passed)` | 0 |
+| Legacy Phase 1/2 autotest, 240 s, `AUTOTEST_MATCH` set to `size = "legacy", enemy_brain = "waves"` | `build/p4-research-legacy`, `-legacy2`, `-legacy3`, `build/p4-ab-t1`, `-t2`, `-f1`, `-f2` | 65/65 in 6 of 8 runs (the first, mk2-only filter, in a copy since overwritten). See "Legacy variance" below. | 0 |
+| AI autotest, 420 s, unchanged copy, final code | `build/p4-research-ai` | `ai autotest summary 14/14 (all passed), result=both alive (time)` in both runs (mk2-only filter and all-units filter); armies stayed under 40 supply, so no kit was refused | 0 |
 | GUI, Russian (system language), `tools/gui-run.sh build/p4-research-gui 160 RESEARCH_GUI_DONE` | `build/p4-research-gui` | 14 probe checks passed before the marker, panel opened through the T handler path, a scripted click queued Mining I | 0, no "Unknown key" |
 | GUI, English (scratch copy of `gui-run.sh` that appends `[general] locale=en`) | `build/p4-research-gui-en` | Same | 0 |
 
@@ -276,8 +280,9 @@ build copies only: `build/p4-research/factorio-rts/scripts/research_probe.lua`.
 11. `supply1_cap`: the cap is 50. Filling it with 40 walkers gives 50/50, and a walker kit then waits
     (`supply_blocked`), with a `supply-blocked` alert in `storage.alerts`. After one walker dies, the kit becomes an mk2
     walker within 3 s (`supply_released`).
-12. `armor2_damage`: an mk2 walker loses 90.00 of 100 physical damage with Armor II, and 100.00 without the share. A
-    base walker, which is not armored, loses 100.00.
+12. `armor2_damage`: with Armor II, an mk2 walker and a tier-1 walker each lose 90.00 of 100 physical damage, against
+    100.00 without the share. An `rts-ai-1` walker (no research) loses 100.00. The armored names are `rts-artillery`,
+    `rts-drone`, `rts-heavy-mk2`, `rts-raider`, `rts-walker`, `rts-walker-heavy` and `rts-walker-mk2`.
 13. `laser_unlocked`: after Unlock Laser, the recipe is enabled and `set_recipe` accepts it.
 14. `match_reset`: `lobby.start_match` for match 2. In the same tick: 0 technologies researched, every modifier back to
     0.00, cap 40, the laser recipe disabled and the queue empty.
@@ -286,11 +291,20 @@ The six researched technologies (four tier 1 and two tier 2, 115 kits) took abou
 115 × 10 s / 8 = 144 s. Neither the legacy run nor the
 AI run logged a single supply refusal.
 
+**Legacy variance.** The 65/65 legacy autotest does not use research. Two runs with the all-units filter scored
+64/65 and failed `eco_shared_pool`. The autotest's own Phase 1 attack-move destroyed the enemy barracks and CC, at 73 s
+and 98 s. The match then ended in a victory, and the autotest's `/rts-qa-reset` started a new match. That match had no
+economy base, so the 75–150 s window saw no progress. Economy notes gotcha 8 describes the same attack-move razing the
+enemy base. Then 4 runs of one identical copy, 2 with `ARMOR_ALL_UNITS = true` and 2 with `false`, all passed 65/65 with
+no early victory. A third `false` run passed too. With research unused, both damage handlers return on their first
+check, so the filter cannot change combat. The test is sensitive to combat strength. `balance.lua` and
+`prototypes/units.lua` changed at 23:20–23:33, between the first passing run and the failing ones.
+
 **Measured costs** (probe, Space Age, 10 000 or 1 000 direct calls):
 
 | Call | Cost |
 |---|---|
-| `research.on_damaged`, heal path | 1.1–1.6 µs |
+| `research.on_damaged`, heal path | 1.1–2.7 µs (four runs, 3–4 servers in parallel) |
 | `research.on_damaged`, early exit | 0.9 µs |
 | `supply.can_spawn` with 48 own and 56 registered units | 33 µs. It walks the unit registry once. At 400 units, expect about 0.25 ms. The barracks gate calls it once per finished kit. If the HUD shows supply every refresh, cache `supply.get` per tick or per 30 ticks. |
 
@@ -331,8 +345,8 @@ The name column is 190 px wide. The first Russian run with 150 px clipped "Вм�
 
 ## Decisions and open items for the lead
 
-- **Armor II/III scope.** They apply to the mk2 units only until the AI's damage handler ignores units. That needs the
-  one-line guard in `scripts/ai/init.lua`, then `research.ARMOR_ALL_UNITS = true`. The lead was asked to decide.
+- **Armor II/III scope: decided.** All units (option 1). The guard is in `scripts/ai/init.lua:131`, and
+  `research.ARMOR_ALL_UNITS = true`. Setting it to `false` is the mk2-only fallback.
 - **The AI is exempt from unit locks** (`research.AI_IGNORES_LOCKS`). It still has the supply cap. B1 should switch the
   exemption off when the AI researches.
 - **Heavy walkers are locked behind Unlock Heavy for human players.** `balance.lua` has no `unlock` flag on the heavy,

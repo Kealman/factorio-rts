@@ -128,18 +128,24 @@ balance.raid_target_type                 -- "rts-raid-target"
 balance.units[name]  = {kind, tier, base?, role, supply, kit?, cost?, time?, unlock?, health, speed,
                         range, min_range?, cooldown, damage, damage_type?, damage_modifier?, splash?,
                         raid_multiplier?, ammo_category, ammo?, strong = {kinds}, weak = {kinds}}
-balance.buildings[name] = {kind, cost?, time?, count?, health, unlock?, supply_provided?, power?, ...}
+balance.buildings[name] = {kind, cost?, time?, count?, health?, unlock?, supply_cap?, power?, ...}
 balance.intermediates[recipe] = {result, count, cost, time}
 balance.smelting[vanilla recipe] = {cost, time}
 ```
 
 - **`kind`.** For units this is the `scripts/units.lua` kind. Mk2 tiers share the base kind and set `tier = 2` and `base`.
   - Supply: `balance.units[entity.name].supply`, for example walker 1, drone 1, raider 2, heavy 3, artillery 4, commander 0.
-  - Kit to unit: `for name, u in pairs(balance.units) do if u.kit then ... end end`.
+  - Barracks kit to unit: `for name, u in pairs(balance.units) do if u.kit and not u.made_by then ... end end`. The hauler's kit has `made_by = "factory"`: the factory makes it and `scripts/logistics.lua` turns it into a hauler next to the factory. It must not appear in barracks kit lists, AI kit choices or HUD barracks buttons. `production.KITS` is a static table, so it is not affected today.
 - **`unlock`** names the research that unlocks the unit or building, matching `scripts/research.lua` `EFFECTS`. For units it is informational only.
 - **`strong` and `weak`** hold unit kinds plus `building`, `turret`, `laser-turret`, `hauler` and `wall`.
 - **`balance.buildings[name].kind`** matches the `scripts/buildings.lua` registry for Phase 2 buildings. For the new buildings it is a proposal: `laser-turret`, `wall`, `steam-plant`, `accumulator` and `radar`.
-- **`supply_provided`** is set only for the CC (40, from PHASE4). The hub and research bonuses belong to their owners.
+- **`supply_cap`** is the command capacity one live building adds: `rts-command-center` 40 and `rts-hub` 10 (PHASE4 section 1, added at the lead's request). `scripts/supply.lua` should read it instead of its hard-coded 40 and `HUB_CAP`. Today it reads the older field name `supply_provided` and falls back to 40, so nothing breaks in the meantime. Research bonuses stay in `scripts/research.lua`.
+- **Entries for other agents' prototypes** carry only what this table is the source of.
+  - `units["rts-hauler"]` = `{kind = "hauler", role = "hauler", supply = 0, kit = "rts-hauler-kit", made_by = "factory"}`, so supply never charges for haulers. It has no combat numbers.
+  - The logistics agent sets the raid mask on `rts-hub` and `rts-hauler`. Its `logistics.init` logs `trigger target masks rts-hub=[common rts-raid-target] rts-hauler=[common rts-raid-target]`.
+  - `buildings["rts-hub"]` = `{kind = "hub", supply_cap = 10}`. Its cost and health stay in `prototypes/logistics.lua`.
+  - The commander's supply is 0.
+- **Consumers that loop over `balance.units`** must expect partial entries, such as the hauler, which has no `ammo_category` or `health`.
 - **The prototypes read costs, times, health and the combat numbers from this table.** Change a value here and restart.
   - Exceptions: leg speeds, the Space Age heavy's acid range of 10, the artillery's projectile speed and the strafe settings live in `prototypes/units.lua`.
   - Leg speeds are tuned per variant against the measured walker. Speed is not linear in leg speed: the Space Age raider needed leg speed 1.8 for ×1.29.
@@ -222,7 +228,7 @@ The probe replaces `control.lua` in a throwaway copy. It builds independent aren
   - The barracks recipe grid lists every recipe in the category, including the disabled mk2 kits.
 - **Research: resolved.** `research.mk2_of` now maps through `balance.units[mk2].base`, so `rts-walker-heavy` upgrades to `rts-heavy-mk2` (working tree of `scripts/research.lua`).
 - **Commit state.** Commit e9d1d67 ("Phase 4 logistics") already contains this agent's `data.lua` requires, the `production.lua` kit entries and `content.cfg`. `balance.lua`, `prototypes/intermediates.lua` and the prototype changes are not committed yet, so HEAD alone fails at the data stage until they are.
-- **Logistics.** The raid mask on `rts-hub` and `rts-hauler`, as above.
+- **Logistics: resolved.** The hub and hauler carry the raid mask (see the balance API section).
 - **Abilities and commander.** Spawn with `surface.create_entity{name = "rts-commander", force = ...}`. Set `entity.color`. Insert `rts-commander-rocket`; it uses about one per 0.5 s while fighting. Grid power is not decided yet.
 - **Balance pass.**
   - Drone against walker differs by variant: Space Age drones win, base-only walkers win.

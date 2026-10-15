@@ -24,10 +24,11 @@
 -- Recipes: a recipe named in an unlock list whose prototype starts disabled (laser turret, steam plant) is enabled
 -- per force when the technology is researched (and disabled again by a reset). Tier-1 kit recipes stay enabled.
 --
--- Armor II/III: an on_entity_damaged handler heals back ARMOR share of the damage taken by ARMORED units of a force
--- with those technologies. The event filter is shared with scripts/ai/init.lua, whose handler treats every damaged
--- entity of an AI force as a base threat, so ARMORED is the mk2 unit names only (only researching forces have mk2
--- units) unless ARMOR_ALL_UNITS is switched on after that handler ignores units.
+-- Armor II/III: an on_entity_damaged handler heals back the armor share of the damage taken by the armored units of a
+-- force with those technologies. The event filter is shared with scripts/ai/init.lua; its handler ignores everything
+-- that is not in buildings.KIND_BY_NAME (the guard at its top), so the filter may carry unit names. ARMOR_ALL_UNITS:
+-- true = every rts-* spider-unit / unit prototype is armored; false = the mk2 units only (the fallback for a handler
+-- that treats damaged units as base threats).
 --
 -- Owns storage.research:
 --   version, match_id (match the forces were last reset for)
@@ -69,7 +70,7 @@ research.SYNC_PERIOD = 60
 research.ATTACK_STEP = 0.15   -- per attack level: ammo damage of the units' categories and turret attack
 research.AI_IGNORES_LOCKS = true
 research.MK2_AUTO = true      -- Armor I: tier-1 kits deploy mk2 units
-research.ARMOR_ALL_UNITS = false
+research.ARMOR_ALL_UNITS = true -- see the header (Armor II/III)
 research.LOCK_ALERT_PERIOD = 30 * 60
 
 -- The lab is a building of kind "lab" (scripts/buildings.lua registers by this table on every build event).
