@@ -6,8 +6,8 @@ elevated-rails enabled because a fresh mods directory turns them on by default.
 | Spike | Question | Verdict |
 |---|---|---|
 | #1 | Can a player stay in the `remote` controller with no character? Does respawn logic interfere? | **CONFIRMED** (GUI run with one player, 62 s session) |
-| #2 | Do `custom-input` mouse buttons and selection-tool area events fire in remote view, with correct positions? | **READY FOR HUMAN TEST.** The selection tool can be held in the remote cursor (confirmed). The events need real mouse input. |
-| #6 | Does `on_gui_click` fire on `minimap` / `camera` elements? | **READY FOR HUMAN TEST.** Both elements render and update in a `screen` frame while in remote view (confirmed by screenshot). Clicks need real mouse input. |
+| #2 | Do `custom-input` mouse buttons and selection-tool area events fire in remote view, with correct positions? | **CONFIRMED** by a Codex computer-use run, see `CODEX-HUMAN-TEST.md` and `docs/research/spikes.md` decisions 10–13. |
+| #6 | Does `on_gui_click` fire on `minimap` / `camera` elements? | **CONFIRMED** by the same run: left/right clicks on minimap, camera and button all arrive in `on_gui_click`. |
 
 ## How it was tested
 
