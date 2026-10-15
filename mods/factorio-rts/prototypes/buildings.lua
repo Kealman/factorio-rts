@@ -205,6 +205,8 @@ turret.is_military_target = true
 -- (25 per round, ~42 damage/s): 8 rounds kill a 200 hp walker (~4.2 s), 24 rounds a 600 hp heavy (~14 s).
 turret.attack_parameters.cooldown = 36
 turret.attack_parameters.damage_modifier = 5
+-- Balance pass (docs/qa/phase4-balance-notes.md): range 21 (vanilla 18), so walkers (range 20) cannot outrange it.
+turret.attack_parameters.range = balance.buildings["rts-turret"].range
 
 -------------------------------------------------------------------------------
 -- Phase 4: defence and power

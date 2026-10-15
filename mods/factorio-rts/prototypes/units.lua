@@ -1,34 +1,24 @@
--- RTS unit prototypes. Numbers (health, damage, range, cooldown) come from balance.lua.
+-- RTS unit prototypes. Every number (health, damage, range, cooldown, armour, collision size) comes from balance.lua.
 --
 --   rts-walker, rts-walker-mk2        ranged line unit (spider-unit)
---   rts-walker-heavy, rts-heavy-mk2   slow brawler (spider-unit)
---   rts-raider                        fast, short range, x3 damage against raid targets (spider-unit)
---   rts-artillery                     slow siege unit: range 40, min range 8, 4-tile splash (spider-unit)
+--   rts-walker-heavy, rts-heavy-mk2   armoured brawler with splash (spider-unit)
+--   rts-raider                        fast, short range, bonus damage against raid targets (spider-unit)
+--   rts-artillery                     slow siege unit: range 40, min range 8, 4-tile splash, bonus vs armour
 --   rts-drone                         cheap fast melee swarm (unit, medium-biter sprites, neutral tint)
 --   rts-commander                     hero spidertron (spider-vehicle), spawned by script; own guns and rockets
 --
--- With Space Age loaded the spider-units are copies of the Gleba pentapods (walker / heavy: small strafer / stomper,
+-- With Space Age loaded the spider-units use the Gleba pentapod graphics (walker: small strafer, heavy: small stomper,
 -- raider: medium strafer, artillery: medium stomper); without it they are built from the base-game spidertron
 -- graphics, so Space Age stays an optional dependency. The drone and the commander use base-game assets only.
--- Ported from spikes/units (spike #3); see docs/research/spikes.md decisions 2, 3 and 9 and
--- docs/qa/phase4-content-notes.md.
+--
+-- Balance pass (docs/qa/phase4-balance-notes.md): a role behaves the same in both variants. Attack, damage type,
+-- strafe settings, collision box, armour and trigger masks come from one place (role()); only the graphics, the legs
+-- and the walker / raider projectile visuals differ. Ported from spikes/units (spike #3); see
+-- docs/research/spikes.md decisions 2, 3 and 9 and docs/qa/phase4-content-notes.md.
 local util = require("util")
 local balance = require("balance")
 local B = balance.units
-local RAID = balance.raid_target_type
-
--- Vision covers the attack range, so a unit acquires targets as far as it can shoot (artillery: 42). It stays below
--- 50: UnitPrototype documents self-grouping of units at vision_distance >= 50.
-local function vision(stats) return math.max(30, stats.range + 2) end
-
--- Spider legs forward the damage they take to the torso, after their own resistances (probe, 2026-10-15).
---  * Base-game mech units: their legs stand 1-3 tiles from the torso, so a 4-tile artillery shell hit one unit once
---    per leg in range (3 hits of 100). Their legs ignore explosions like the vanilla spidertron legs; every other
---    type (drone bites) passes in full. Their own hitscan attacks hit the torso directly.
---  * Pentapods: legs stand 4-8 tiles out and the strafer projectile mostly lands on a leg, so legs must pass
---    explosions on. They get no resistances at all (the originals carry the creature's: drones biting a strafer leg
---    did 7.2 instead of 10).
-local MECH_LEG_RESISTANCES = {{type = "explosion", percent = 100}}
+local TT = balance.target_types
 
 -- AI settings for player-like units. The vanilla Gleba settings enable destroy_when_commands_fail and
 -- allow_try_return_to_spawner, both wrong for RTS units.
@@ -39,6 +29,20 @@ local RTS_AI = {
   join_attacks = false, -- never get pulled into engine-made attack groups
   path_resolution_modifier = 0,
   size_in_group = 1,
+}
+
+-- Strafing while attacking: the unit circles its target at about ideal_distance (inside its range). The same for
+-- both variants (the base-game units had none, the pentapods the Gleba values).
+local function strafe(ideal, max, tolerance, importance)
+  return {max_distance = max, ideal_distance = ideal, ideal_distance_tolerance = tolerance, ideal_distance_variance = 1,
+          ideal_distance_importance = importance or 0.25, ideal_distance_importance_variance = 0.1, face_target = true}
+end
+local STRAFE = {
+  walker = strafe(16, 22, 2),
+  heavy = strafe(13, 18, 2),
+  raider = strafe(14, 20, 2),
+  -- artillery: none. It stands where it fired from (34-40 tiles, min_attack_distance); an orbit (32 +- 4, or 34 +- 3
+  -- with importance 0.75) drifted it inside the range of the turret it was shelling.
 }
 
 -- Minimap colours (docs/qa/phase1-hud-notes.md gotcha 8): without map_color the own army is not drawn on
@@ -83,84 +87,119 @@ local function tint_masks(t)
   return n
 end
 
--- Strip trigger effects that spawn wrigglers or apply stickers; optionally override damage amounts.
-local function clean_effects(t, damage)
+-- Set every damage amount in a trigger tree (the commander's rocket).
+local function set_damage(t, damage)
   if type(t) ~= "table" then return end
-  for _, key in pairs({"target_effects", "source_effects"}) do
-    local eff = t[key]
-    if type(eff) == "table" then
-      if eff.type then eff = {eff}; t[key] = eff end
-      for i = #eff, 1, -1 do
-        local e = eff[i]
-        if (e.type == "create-entity" and tostring(e.entity_name):find("wriggler", 1, true))
-          or e.type == "create-sticker" then
-          table.remove(eff, i)
-        elseif e.type == "damage" and damage then
-          e.damage.amount = damage
-        end
-      end
+  if t.type == "damage" and type(t.damage) == "table" then t.damage.amount = damage end
+  for _, v in pairs(t) do set_damage(v, damage) end
+end
+
+-------------------------------------------------------------------------------
+-- Shared role settings
+-------------------------------------------------------------------------------
+-- Vision covers the attack range, so a unit acquires targets as far as it can shoot (artillery: 46). It stays below
+-- 50: UnitPrototype documents self-grouping of units at vision_distance >= 50.
+local function vision(stats) return math.max(30, stats.range + 2) end
+
+local function resistances(stats, extra)
+  local r = {}
+  for damage_type, percent in pairs(stats.resist or {}) do r[#r + 1] = {type = damage_type, percent = percent} end
+  for _, e in pairs(extra or {}) do
+    local found
+    for _, x in pairs(r) do if x.type == e.type then x.percent = e.percent; found = true end end
+    if not found then r[#r + 1] = table.deepcopy(e) end
+  end
+  table.sort(r, function(a, b) return a.type < b.type end)
+  return #r > 0 and r or nil
+end
+
+-- Spider legs pass the damage they take on to the torso, after the leg's own resistances (probe, 2026-10-15): a
+-- 4-tile shell hit a base-game mech once per leg in range, and drones biting a strafer leg did 7.2 instead of 10.
+-- Every unit attack damages the targeted entity directly, so legs only meet melee bites (impact, which they pass on
+-- through the torso's armour) and area damage (explosions, which they ignore: an area attack counts once).
+local LEG_EXPLOSION = {{type = "explosion", percent = 100}}
+
+local function role(u, stats)
+  u.max_health = stats.health
+  u.healing_per_tick = 0
+  u.resistances = resistances(stats)
+  local mask = {"common"}
+  for _, tag in ipairs(stats.tags or {}) do mask[#mask + 1] = assert(TT[tag], "unknown target type " .. tag) end
+  u.trigger_target_mask = #mask > 1 and mask or nil
+  if stats.size then
+    u.collision_box = {{-stats.size, -stats.size}, {stats.size, stats.size}}
+  end
+  u.vision_distance = vision(stats)
+  u.radar_range = 1 -- chunks charted around the unit for its force
+  -- How soon a unit may pick a new target. The stompers had 300 ticks, the strafers and the base mechs 30: with 300,
+  -- stomper-based heavies first fired 3-5 s into a fight instead of 0.3-1 s, and artillery fired one volley per 5 s.
+  u.distraction_cooldown = 30
+  u.min_pursue_time = 600
+  u.max_pursue_distance = 50
+  u.order = "z[rts]-" .. u.name
+  u.ai_settings = merge(RTS_AI, {strafe_settings = STRAFE[stats.kind]})
+  set_map_colors(u)
+end
+
+-- Bonus damage (stats.bonus): extra damage that only entities carrying a target type take, so the total against them
+-- is damage * multiplier. An "area" trigger nested in the hit, radius 0.5 around the target: a "direct" trigger
+-- ignores trigger_target_mask (probe). Sorted, so the prototype data is the same on every load.
+local function bonus_effects(stats, effects)
+  local keys = {}
+  for key in pairs(stats.bonus or {}) do keys[#keys + 1] = key end
+  table.sort(keys)
+  for _, key in ipairs(keys) do
+    local mult = stats.bonus[key]
+    if mult > 1 then
+      effects[#effects + 1] = {type = "nested-result", action = {
+        type = "area", radius = 0.5, force = "enemy", ignore_collision_condition = true,
+        trigger_target_mask = {(assert(TT[key], "unknown target type " .. key))},
+        action_delivery = {type = "instant", target_effects = {{type = "damage",
+          damage = {amount = stats.damage * (mult - 1), type = stats.damage_type}}}},
+      }}
     end
   end
-  for _, v in pairs(t) do
-    if type(v) == "table" then clean_effects(v, damage) end
+  return effects
+end
+
+-- Heavies: splash_damage to every enemy within `splash` of the target (the target included), also a nested area.
+local function hit_effects(stats, visual)
+  local effects = {
+    {type = "create-entity", entity_name = visual, offset_deviation = {{-0.3, -0.3}, {0.3, 0.3}}},
+    {type = "damage", damage = {amount = stats.damage, type = stats.damage_type}},
+  }
+  bonus_effects(stats, effects)
+  if stats.splash and stats.splash_damage then
+    effects[#effects + 1] = {type = "nested-result", action = {
+      type = "area", radius = stats.splash, force = "enemy",
+      action_delivery = {type = "instant", target_effects = {{type = "damage",
+        damage = {amount = stats.splash_damage, type = stats.damage_type}}}},
+    }}
   end
+  return effects
 end
 
--- A trigger (or list of triggers) as a list.
-local function as_list(action)
-  if action.type then return {action} end
-  return action
-end
-
--- Extra damage that only entities with the raid trigger target type take. Added next to the normal damage, so the
--- total against a raid target is damage * raid_multiplier. It is an "area" trigger around the hit position (radius
--- 1 for projectiles, which explode next to the target; 0.5 for hitscan, which hits its centre): a "direct" trigger
--- ignores trigger_target_mask (probe: walkers and turrets took the bonus too).
-local function raid_bonus(spec, damage_type, radius)
-  local bonus = spec.damage * ((spec.raid_multiplier or 1) - 1)
-  if bonus <= 0 then return nil end
-  return {
-    type = "area",
-    radius = radius,
-    force = "enemy",
-    ignore_collision_condition = true,
-    trigger_target_mask = {RAID},
-    action_delivery = {
-      type = "instant",
-      target_effects = {{type = "damage", damage = {amount = bonus, type = damage_type}}},
-    },
-  }
-end
-
--- Hitscan ranged attack built from base-game effects only (no Space Age assets).
-local function hitscan_attack(spec, damage_type)
-  local target_effects = {
-    {type = "create-entity", entity_name = "explosion-hit", offsets = {{0, 1}},
-     offset_deviation = {{-0.5, -0.5}, {0.5, 0.5}}},
-    {type = "damage", damage = {amount = spec.damage, type = damage_type}},
-  }
-  local bonus = raid_bonus(spec, damage_type, 0.5)
-  if bonus then target_effects[#target_effects + 1] = {type = "nested-result", action = bonus} end
-  local action = {
-    type = "direct",
-    action_delivery = {
-      type = "instant",
-      source_effects = {{type = "create-explosion", entity_name = "explosion-gunshot"}},
-      target_effects = target_effects,
-    },
-  }
+-- Hitscan attack (base-game effects only): the damage lands on the attacked entity in the same tick.
+local function direct_attack(stats, visual)
   return {
     type = "projectile",
-    ammo_category = spec.ammo_category,
-    cooldown = spec.cooldown,
-    range = spec.range,
-    ammo_type = {action = action},
+    ammo_category = stats.ammo_category,
+    cooldown = stats.cooldown,
+    range = stats.range,
+    ammo_type = {action = {
+      type = "direct",
+      action_delivery = {
+        type = "instant",
+        source_effects = {{type = "create-explosion", entity_name = "explosion-gunshot"}},
+        target_effects = hit_effects(stats, visual),
+      },
+    }},
   }
 end
 
 -------------------------------------------------------------------------------
--- Artillery shell (both variants): a grenade-style projectile thrown at the target's position, 4-tile splash that
--- spares its own force.
+-- Artillery shell (both variants): a grenade-style projectile thrown at the target's position. `splash` radius that
+-- spares its own force; bonus x damage to tagged targets (armored: heavies) within `bonus_radius` of the impact.
 -------------------------------------------------------------------------------
 local function define_artillery_shell()
   local spec = B["rts-artillery"]
@@ -169,6 +208,21 @@ local function define_artillery_shell()
   shell.name = "rts-artillery-shell"
   shell.localised_name = nil
   shell.acceleration = 0.005
+  local function area(damage, mask)
+    return {
+      type = "area",
+      radius = mask and spec.bonus_radius or spec.splash,
+      force = "not-same", -- no friendly fire
+      trigger_target_mask = mask,
+      action_delivery = {
+        type = "instant",
+        target_effects = {
+          {type = "damage", damage = {amount = damage, type = spec.damage_type}},
+          not mask and {type = "create-entity", entity_name = "explosion"} or nil,
+        },
+      },
+    }
+  end
   shell.action = {
     {
       type = "direct",
@@ -181,19 +235,16 @@ local function define_artillery_shell()
         },
       },
     },
-    {
-      type = "area",
-      radius = spec.splash,
-      force = "not-same", -- no friendly fire
-      action_delivery = {
-        type = "instant",
-        target_effects = {
-          {type = "damage", damage = {amount = spec.damage, type = spec.damage_type}},
-          {type = "create-entity", entity_name = "explosion"},
-        },
-      },
-    },
+    area(spec.damage),
   }
+  local keys = {}
+  for key in pairs(spec.bonus or {}) do keys[#keys + 1] = key end
+  table.sort(keys)
+  for _, key in ipairs(keys) do
+    if spec.bonus[key] > 1 then
+      shell.action[#shell.action + 1] = area(spec.damage * (spec.bonus[key] - 1), {TT[key]})
+    end
+  end
   data:extend({shell})
 end
 
@@ -205,7 +256,11 @@ local function artillery_attack(spec)
     cooldown = spec.cooldown,
     range = spec.range,
     min_range = spec.min_range,           -- never fires at targets closer than this; the unit backs off instead
-    min_attack_distance = spec.range - 6, -- attacks from 34-40 tiles
+    -- Picks a firing distance between attack_from and range (32-44 tiles) when it closes in, so it shells a gun turret
+    -- (21) from outside its range: closest 30-36 tiles in the simulator. With 24-40 and the old slow shell it drifted
+    -- to 17-22 tiles over a long siege and took hits (balance notes).
+    min_attack_distance = spec.attack_from,
+    lead_target_for_projectile_speed = 2, -- aims where a moving target will be when the shell lands
     sound = cannon and cannon.attack_parameters and table.deepcopy(cannon.attack_parameters.sound) or nil,
     ammo_type = {
       action = {
@@ -213,7 +268,7 @@ local function artillery_attack(spec)
         action_delivery = {
           type = "projectile",
           projectile = "rts-artillery-shell",
-          starting_speed = 0.6,
+          starting_speed = 2, -- 40 tiles in 20 ticks: a heavy moves under 2 tiles meanwhile, a drone about 5
           max_range = spec.range + 10,
         },
       },
@@ -221,18 +276,42 @@ local function artillery_attack(spec)
   }
 end
 
-local ARTILLERY_STRAFE = {
-  max_distance = 40, ideal_distance = 32, ideal_distance_tolerance = 4, ideal_distance_variance = 2,
-  ideal_distance_importance = 0.5, ideal_distance_importance_variance = 0.1, face_target = true,
-}
-local RAIDER_STRAFE = {
-  max_distance = 14, ideal_distance = 9, ideal_distance_tolerance = 2, ideal_distance_variance = 1,
-  ideal_distance_importance = 0.25, ideal_distance_importance_variance = 0.1, face_target = true,
-}
+-- The attack of a role, shared by both variants (the pentapod walker and raider swap in a projectile visual).
+local function attack_of(name)
+  local stats = B[name]
+  if stats.kind == "artillery" then return artillery_attack(stats) end
+  if stats.kind == "heavy" then return direct_attack(stats, "explosion") end
+  return direct_attack(stats, "explosion-hit")
+end
 
 -------------------------------------------------------------------------------
--- Variant A (Space Age present): copies of the Gleba pentapods.
+-- Variant A (Space Age present): Gleba pentapod graphics.
 -------------------------------------------------------------------------------
+-- Walker and raider keep the strafer's projectile as the visible shot. It damages the targeted entity directly:
+-- the vanilla one fired along the torso's facing (use_shooter_direction), turned at 0.002 per tick and exploded in a
+-- 1-tile area wherever it collided, so most shots landed beside the target or on a leg (27 impacts, 10 hits on a
+-- target that never moved). This one flies straight at the target, homes at 0.05 per tick, collides with nothing on
+-- the way (empty hit_collision_mask) and applies hit_effects() to the target it was fired at.
+local function pentapod_projectile_attack(name, source)
+  local stats = B[name]
+  local proj = table.deepcopy(data.raw.projectile[source])
+  assert(proj, "factorio-rts: missing vanilla projectile " .. source)
+  proj.name = name .. "-projectile"
+  proj.turn_speed = 0.05
+  proj.hit_collision_mask = {layers = {}}
+  proj.action = {type = "direct",
+                 action_delivery = {type = "instant", target_effects = hit_effects(stats, "explosion-hit")}}
+  data:extend({proj})
+  local ap = direct_attack(stats, "explosion-hit")
+  ap.ammo_type.action.action_delivery = {
+    type = "projectile",
+    projectile = proj.name,
+    starting_speed = 1, -- the vanilla max speed: 20 tiles in 20 ticks, close to the base-game hitscan
+    max_range = stats.range + 10,
+  }
+  return ap
+end
+
 local function pentapod_walker(spec)
   local src = data.raw["spider-unit"][spec.source]
   assert(src, "factorio-rts: missing vanilla spider-unit " .. spec.source)
@@ -241,28 +320,11 @@ local function pentapod_walker(spec)
   u.name = spec.name
   u.localised_name = {"entity-name." .. spec.name}
   u.localised_description = nil
-  u.max_health = stats.health
-  u.healing_per_tick = 0
   u.factoriopedia_simulation = nil
   u.absorptions_to_join_attack = nil -- spore-based attack joining; irrelevant for scripted units
   u.dying_trigger_effect = nil       -- vanilla spawns wrigglers / stomper shells on death
-  -- Full damage from every type, like the base-game variant. The Gleba originals carry physical resistance
-  -- (strafer: decrease 2 and 10 %, stomper: decrease 2 and 50 %) plus laser / impact, which turned the turret's
-  -- 5-damage bullets into 2.7 / 1.5 per round. The units' own attacks deal explosion / acid damage, so unit-vs-unit
-  -- fights are not affected.
-  u.resistances = nil
-  u.vision_distance = vision(stats)
-  u.radar_range = 1                  -- chunks charted around the unit for its force
-  u.order = "z[rts]-" .. spec.name
-  u.ai_settings = merge(RTS_AI, {
-    strafe_settings = spec.strafe_settings or (src.ai_settings and src.ai_settings.strafe_settings),
-  })
-  if spec.attack then
-    u.attack_parameters = spec.attack
-  else
-    spec.adjust_attack(u.attack_parameters, stats)
-    u.attack_parameters.ammo_category = stats.ammo_category
-  end
+  role(u, stats)
+  u.attack_parameters = spec.attack
 
   -- Own leg prototype so the walking speed can be tuned: spider-units have no movement_speed, speed
   -- comes from SpiderLegPrototype.initial_movement_speed / movement_acceleration.
@@ -276,96 +338,42 @@ local function pentapod_walker(spec)
   -- Leg death particles were the main per-tick cost at 400 units (spike #3, particleUpdate up to 3.3 ms).
   leg.upper_leg_dying_trigger_effects = nil
   leg.lower_leg_dying_trigger_effects = nil
-  leg.resistances = nil -- the originals carry the creature's resistances (see MECH_LEG_RESISTANCES)
+  leg.resistances = resistances(stats, LEG_EXPLOSION)
+  -- Legs carry the torso's target types: a drone biting a raider's leg gets its bonus against "light" (the bonus is
+  -- an area around the bitten entity). Area bonuses that are explosions (artillery) cannot multiply through the legs,
+  -- which ignore explosions.
+  leg.trigger_target_mask = u.trigger_target_mask
   for _, l in pairs(legs) do
     l.leg = leg.name
-    -- Stompers damage everything under a foot while attacking (small 43.75 impact, medium 87.5). The heavy keeps
-    -- its stomp (docs/PHASE4.md "splash stomp"); the artillery must not, or it crushes what its min range spares.
-    if spec.no_stomp then l.leg_hit_the_ground_when_attacking_trigger = nil end
+    -- Long pentapod legs (the medium strafer's and the stompers' stand 6-8 tiles out) give drones far more to bite
+    -- than the base-game mechs' 1-3 tiles: Space Age raiders lost to drones that base-game raiders beat. reach < 1
+    -- pulls the feet in.
+    if spec.reach then
+      local g = l.ground_position
+      l.ground_position = {(g[1] or g.x) * spec.reach, (g[2] or g.y) * spec.reach}
+    end
+    -- Stompers damage everything under a foot while attacking (small 43.75 impact, medium 87.5): no unit keeps it,
+    -- so the heavy splash is the same in both variants and the artillery cannot crush what its min range spares.
+    l.leg_hit_the_ground_when_attacking_trigger = nil
   end
 
-  set_map_colors(u)
   tint_masks(u.graphics_set)
   tint_masks(leg.graphics_set)
   data:extend({leg, u})
 end
 
--- Copy of a pentapod projectile without the wriggler spawn / slowdown sticker, with the given damage.
-local function pentapod_projectile(name, source, stats)
-  local proj = table.deepcopy(data.raw.projectile[source])
-  assert(proj, "factorio-rts: missing vanilla projectile " .. source)
-  proj.name = name
-  clean_effects(proj.action, stats.damage)
-  local bonus = raid_bonus(stats, "explosion", 1)
-  if bonus then
-    local action = as_list(proj.action)
-    action[#action + 1] = bonus
-    proj.action = action
-  end
-  data:extend({proj})
-end
-
-local WALKER_STRAFE = {
-  max_distance = 22, ideal_distance = 16, ideal_distance_tolerance = 2, ideal_distance_variance = 1,
-  ideal_distance_importance = 0.25, ideal_distance_importance_variance = 0.1, face_target = true,
-}
-
-local function strafer_attack(projectile)
-  return function(ap, stats)
-    ap.range = stats.range
-    ap.cooldown = stats.cooldown
-    local delivery = ap.ammo_type.action.action_delivery
-    delivery.projectile = projectile
-    delivery.max_range = stats.range + 10
-  end
-end
-
-local function stomper_attack(ap, stats)
-  ap.range = 10                         -- acid stream; vanilla small stomper ~5.85
-  ap.damage_modifier = stats.damage_modifier -- vanilla small stomper 0.5
-end
-
 local function define_pentapod_units()
-  -- Projectiles without the wriggler spawn / slowdown sticker of the vanilla strafer projectiles.
-  pentapod_projectile("rts-walker-projectile", "small-strafer-projectile", B["rts-walker"])
-  pentapod_projectile("rts-walker-mk2-projectile", "small-strafer-projectile", B["rts-walker-mk2"])
-  pentapod_projectile("rts-raider-projectile", "medium-strafer-projectile", B["rts-raider"])
-
-  pentapod_walker({
-    name = "rts-walker", source = "small-strafer-pentapod",
-    leg_speed = 1.2, -- small strafer uses 3.75
-    strafe_settings = WALKER_STRAFE,
-    adjust_attack = strafer_attack("rts-walker-projectile"),
-  })
-  pentapod_walker({
-    name = "rts-walker-mk2", source = "small-strafer-pentapod",
-    leg_speed = 1.2,
-    strafe_settings = WALKER_STRAFE,
-    adjust_attack = strafer_attack("rts-walker-mk2-projectile"),
-  })
-  pentapod_walker({
-    name = "rts-walker-heavy", source = "small-stomper-pentapod",
-    leg_speed = 0.6, -- small stomper uses 1.8
-    adjust_attack = stomper_attack,
-  })
-  pentapod_walker({
-    name = "rts-heavy-mk2", source = "small-stomper-pentapod",
-    leg_speed = 0.6,
-    adjust_attack = stomper_attack,
-  })
-  pentapod_walker({
-    name = "rts-raider", source = "medium-strafer-pentapod",
-    leg_speed = 1.8, -- medium strafer uses 4.5; tuned for walker x1.3 (notes)
-    strafe_settings = RAIDER_STRAFE,
-    adjust_attack = strafer_attack("rts-raider-projectile"),
-  })
-  pentapod_walker({
-    name = "rts-artillery", source = "medium-stomper-pentapod",
-    leg_speed = 0.35, -- medium stomper uses 2.3; tuned for walker x0.6 (notes)
-    no_stomp = true,
-    strafe_settings = ARTILLERY_STRAFE,
-    attack = artillery_attack(B["rts-artillery"]),
-  })
+  local function unit(name, source, leg_speed, projectile, reach)
+    pentapod_walker({name = name, source = source, leg_speed = leg_speed, reach = reach,
+                     attack = projectile and pentapod_projectile_attack(name, projectile) or attack_of(name)})
+  end
+  -- leg_speed is tuned per unit against the measured walker (docs/qa/phase4-content-notes.md "Speeds").
+  unit("rts-walker", "small-strafer-pentapod", 1.3, "small-strafer-projectile")         -- small strafer uses 3.75
+  unit("rts-walker-mk2", "small-strafer-pentapod", 1.3, "small-strafer-projectile")
+  unit("rts-walker-heavy", "small-stomper-pentapod", 0.28, nil, 0.5)                     -- small stomper uses 1.8
+  unit("rts-heavy-mk2", "small-stomper-pentapod", 0.28, nil, 0.5)
+  unit("rts-raider", "medium-strafer-pentapod", 1.95, "medium-strafer-projectile", 0.5) -- medium strafer uses 4.5
+  unit("rts-artillery", "medium-stomper-pentapod", 0.33, nil, 0.5)                       -- medium stomper uses 2.3
 end
 
 -------------------------------------------------------------------------------
@@ -383,9 +391,10 @@ local function mech_walker(spec)
     "factorio-rts: base spidertron helpers not available")
   local stats = B[spec.name]
   local scale = spec.scale
-  local legs = {}
+  local legs, legs_protos = {}, {}
   for i, l in ipairs(SPIDERTRON_LEG_LAYOUT) do
-    local leg = make_spidertron_leg(spec.name, scale, 1, spec.leg_speed, i, MECH_LEG_RESISTANCES)
+    local leg = make_spidertron_leg(spec.name, scale, 1, spec.leg_speed, i, resistances(stats, LEG_EXPLOSION))
+    legs_protos[i] = leg
     data:extend({leg})
     legs[i] = {
       leg = leg.name,
@@ -407,8 +416,6 @@ local function mech_walker(spec)
     icon = "__base__/graphics/icons/spidertron.png",
     flags = {"placeable-player", "placeable-enemy", "placeable-off-grid", "breaths-air", "not-repairable"},
     subgroup = "enemies",
-    order = "z[rts]-" .. spec.name,
-    max_health = stats.health,
     collision_box = {{-1 * scale, -1 * scale}, {1 * scale, 1 * scale}},
     selection_box = {{-1 * scale, -1 * scale}, {1 * scale, 1 * scale}},
     sticker_box = {{-1.5 * scale, -1.5 * scale}, {1.5 * scale, 1.5 * scale}},
@@ -418,10 +425,7 @@ local function mech_walker(spec)
     distraction_cooldown = 30,
     min_pursue_time = 600,
     max_pursue_distance = 50,
-    vision_distance = vision(stats),
-    radar_range = 1,
-    ai_settings = merge(RTS_AI, {strafe_settings = spec.strafe_settings}),
-    attack_parameters = spec.attack or hitscan_attack(stats, spec.damage_type),
+    attack_parameters = attack_of(spec.name),
     graphics_set = torso, -- spidertron mask layers already use apply_runtime_tint = true
     spider_engine = {legs = legs},
     corpse = "spidertron-remnants",
@@ -429,21 +433,20 @@ local function mech_walker(spec)
     is_military_target = true,
     impact_category = "metal",
   }
-  set_map_colors(unit)
+  role(unit, stats)
+  for _, leg in pairs(legs_protos) do leg.trigger_target_mask = unit.trigger_target_mask end -- see pentapod_walker
   data:extend({unit})
 end
 
 local function define_mech_units()
-  mech_walker({name = "rts-walker", scale = 0.5, leg_speed = 1.2, damage_type = "physical"})
-  mech_walker({name = "rts-walker-mk2", scale = 0.5, leg_speed = 1.2, damage_type = "physical"})
   -- leg_speed is tuned per variant against the measured walker (docs/qa/phase4-content-notes.md "Speeds"). The heavy
-  -- was 0.8, which made it x0.95 of the walker here; 0.5 aims at the Space Age heavy's x0.75.
-  mech_walker({name = "rts-walker-heavy", scale = 0.8, leg_speed = 0.5, damage_type = "explosion"})
-  mech_walker({name = "rts-heavy-mk2", scale = 0.8, leg_speed = 0.5, damage_type = "explosion"})
-  mech_walker({name = "rts-raider", scale = 0.6, leg_speed = 2.2, damage_type = "physical",
-               strafe_settings = RAIDER_STRAFE})
-  mech_walker({name = "rts-artillery", scale = 1.0, leg_speed = 0.27, strafe_settings = ARTILLERY_STRAFE,
-               attack = artillery_attack(B["rts-artillery"])})
+  -- was 0.8, which made it x0.95 of the walker here; 0.5 matches the Space Age heavy's x0.75.
+  mech_walker({name = "rts-walker", scale = 0.5, leg_speed = 1.2})
+  mech_walker({name = "rts-walker-mk2", scale = 0.5, leg_speed = 1.2})
+  mech_walker({name = "rts-walker-heavy", scale = 0.8, leg_speed = 0.24})
+  mech_walker({name = "rts-heavy-mk2", scale = 0.8, leg_speed = 0.24})
+  mech_walker({name = "rts-raider", scale = 0.6, leg_speed = 2.2})
+  mech_walker({name = "rts-artillery", scale = 1.0, leg_speed = 0.28})
 end
 
 -------------------------------------------------------------------------------
@@ -501,7 +504,8 @@ local function define_drone()
       type = "direct",
       action_delivery = {
         type = "instant",
-        target_effects = {type = "damage", damage = {amount = stats.damage, type = stats.damage_type}},
+        target_effects = bonus_effects(stats,
+          {{type = "damage", damage = {amount = stats.damage, type = stats.damage_type}}}),
       },
     },
   }
@@ -535,7 +539,7 @@ local function define_commander()
   -- Rockets: the vanilla rocket with this unit's damage and ammo category.
   local proj = table.deepcopy(data.raw.projectile["rocket"])
   proj.name = "rts-commander-rocket"
-  clean_effects(proj.action, stats.damage)
+  set_damage(proj.action, stats.damage)
   local ammo = table.deepcopy(data.raw.ammo["rocket"])
   ammo.name = "rts-commander-rocket"
   ammo.localised_name = nil

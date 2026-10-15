@@ -24,10 +24,13 @@ data:extend({
   {type = "item-subgroup", name = "rts-defense", group = "rts", order = "d"},
   {type = "item-subgroup", name = "rts-intermediates", group = "rts", order = "f"},
 
-  -- Raiders deal bonus damage to entities whose trigger_target_mask contains this type
-  -- (docs/qa/phase4-content-notes.md).
-  {type = "trigger-target-type", name = balance.raid_target_type},
 })
+
+-- Target types for bonus damage (balance.target_types: raid, armored, light; docs/qa/phase4-balance-notes.md).
+local tt = {}
+for _, name in pairs(balance.target_types) do tt[#tt + 1] = name end
+table.sort(tt)
+for _, name in ipairs(tt) do data:extend({{type = "trigger-target-type", name = name}}) end
 
 -- One ammo category per unit role, so research can scale each role with force.set_ammo_damage_modifier(category, x)
 -- (docs/PHASE4.md section 3). Unit attacks use no ammo items; the commander's rockets are the exception.

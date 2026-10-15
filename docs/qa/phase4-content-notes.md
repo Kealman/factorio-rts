@@ -4,6 +4,9 @@ Date: 2026-10-15. Factorio 2.0.77 (mac-arm64, Steam). Mod: `mods/factorio-rts/`.
 Plan: `docs/PHASE4.md` sections 2.5 (chains), 3 (units and counters) and 4 (technology names).
 Conventions follow `docs/qa/phase2-prototypes-notes.md`.
 
+> **Balance pass, 2026-10-16:** `docs/qa/phase4-balance-notes.md` supersedes the unit and turret numbers, the raider and
+> artillery kit costs, and the raid-bonus API in this file. Current values live in `balance.lua`.
+
 ## Files
 
 | File | Change |
@@ -39,8 +42,8 @@ All recipes are hidden from hand crafting and have `auto_recycle = false`.
 | Recipe | Machine | Time | Cost | Result | Enabled at start |
 |---|---|---|---|---|---|
 | `rts-drone-kit` | barracks | 2 s | 6 iron | 1 | yes |
-| `rts-raider-kit` | barracks | 5 s | 15 iron, 8 circuit | 1 | yes (research gate in the barracks) |
-| `rts-artillery-kit` | barracks | 12 s | 40 iron, 10 steel, 10 explosives | 1 | yes (research gate in the barracks) |
+| `rts-raider-kit` | barracks | 5 s | 8 iron, 2 circuit (balance pass; was 15 iron, 8 circuit) | 1 | yes (research gate in the barracks) |
+| `rts-artillery-kit` | barracks | 12 s | 40 iron, 5 steel, 10 explosives (balance pass; was 10 steel) | 1 | yes (research gate in the barracks) |
 | `rts-walker-mk2-kit` | barracks | 3 s | 10 iron, 2 copper, 5 steel | 1 | **no** |
 | `rts-heavy-mk2-kit` | barracks | 8 s | 30 iron, 10 copper, 10 steel | 1 | **no** |
 | `rts-laser-turret` | factory | 8 s | 20 iron, 10 circuit | 1 | **no** (`rts-unlock-laser`) |
@@ -65,6 +68,9 @@ The Phase 2 recipes keep their costs. Steel now follows `docs/PHASE4.md` 2.5 ("2
 - **`LuaEntity.set_recipe` accepts a disabled recipe.** The probe set `rts-walker-mk2-kit` on a barracks successfully. The HUD and production code must not offer disabled recipes.
 
 ## Units
+
+The table below is the content pass. The balance pass changed health, damage, range, speed, armour and bonuses: see
+`docs/qa/phase4-balance-notes.md` ("Balance changes").
 
 Speed is the design target relative to the walker. "Measured" is the average speed between 1 s and 5 s into a 120-tile `go_to_location`. The first figure is Space Age, the second base-only. The final probe values are under "Speeds".
 
@@ -139,7 +145,7 @@ balance.smelting[vanilla recipe] = {cost, time}
 - **`unlock`** names the research that unlocks the unit or building, matching `scripts/research.lua` `EFFECTS`. For units it is informational only.
 - **`strong` and `weak`** hold unit kinds plus `building`, `turret`, `laser-turret`, `hauler` and `wall`.
 - **`balance.buildings[name].kind`** matches the `scripts/buildings.lua` registry for Phase 2 buildings. For the new buildings it is a proposal: `laser-turret`, `wall`, `steam-plant`, `accumulator` and `radar`.
-- **`supply_cap`** is the command capacity one live building adds: `rts-command-center` 40 and `rts-hub` 10 (PHASE4 section 1, added at the lead's request). `scripts/supply.lua` should read it instead of its hard-coded 40 and `HUB_CAP`. Today it reads the older field name `supply_provided` and falls back to 40, so nothing breaks in the meantime. Research bonuses stay in `scripts/research.lua`.
+- **`supply_cap`** is the command capacity one live building adds: `rts-command-center` 40 and `rts-hub` 10 (PHASE4 section 1, added at the lead's request). `scripts/supply.lua` reads both. Map creation logs `supply: CC cap 40 (balance), hub cap 10 (balance)`. Research bonuses stay in `scripts/research.lua`.
 - **Entries for other agents' prototypes** carry only what this table is the source of.
   - `units["rts-hauler"]` = `{kind = "hauler", role = "hauler", supply = 0, kit = "rts-hauler-kit", made_by = "factory"}`, so supply never charges for haulers. It has no combat numbers.
   - The logistics agent sets the raid mask on `rts-hub` and `rts-hauler`. Its `logistics.init` logs `trigger target masks rts-hub=[common rts-raid-target] rts-hauler=[common rts-raid-target]`.

@@ -21,15 +21,19 @@
 --                  Kit recipes of tier-1 units are always enabled: the barracks gate in scripts/research.lua refuses
 --                  locked units. mk2 kit recipes start disabled (research deploys mk2 units from tier-1 kits).
 --   health         max health
---   speed          design target, relative to the walker (drone >= 1.4, raider 1.3, artillery 0.6); the commander's
---                  is relative to the vanilla spidertron. Measured speeds are in the notes.
+--   speed          relative to the walker (11.5 tiles/s), as measured in both variants: drone 1.45, raider 1.35,
+--                  artillery 0.65, heavy 0.55; the commander's is relative to the vanilla spidertron. Informational:
+--                  prototypes/units.lua sets the leg speeds that produce these (docs/qa/phase4-balance-notes.md).
 --   size           collision box half-size in tiles, the same in both variants (the drone keeps the medium biter's)
 --   range, min_range, cooldown (ticks), damage (per hit), damage_type, splash (radius, tiles), splash_damage (heavy:
 --                  extra damage to every enemy within `splash` of the target, the target included)
+--   attack_from    artillery: it fires from between attack_from and range (min_attack_distance)
 --   resist         {damage type = percent}: armour of the torso and the legs
---   armored        true: carries balance.armored_target_type; artillery deals armored_multiplier x damage to it
---   raid_target    true: carries balance.raid_target_type (raiders deal raid_multiplier x damage to it)
---   raid_multiplier  raider only: total damage multiplier against `balance.raid_target_type` entities
+--   tags           target types the unit carries (keys of balance.target_types): heavy "armored", raider "light",
+--                  artillery "siege"
+--   bonus          {[target type key] = multiplier}: total damage against entities carrying that type (raider x2.5 vs
+--                  raid targets and x1.65 vs siege, artillery x9 vs armored, drone x3 vs light)
+--   bonus_radius   artillery: the bonus applies within this radius of the impact (the plain damage within `splash`)
 --   ammo_category  the attack's ammo category: force.set_ammo_damage_modifier(category, x) scales it
 --   strong, weak   counter wheel (docs/PHASE4.md section 3): kinds plus "building", "turret", "laser-turret",
 --                  "hauler", "wall"
@@ -48,12 +52,15 @@
 
 local balance = {}
 
--- Trigger target type of everything raiders deal bonus damage to (economy buildings, poles, haulers, hubs).
--- An entity prototype opts in with trigger_target_mask = {"common", balance.raid_target_type}.
-balance.raid_target_type = "rts-raid-target"
-
--- Trigger target type of heavy armour: artillery shells deal armored_multiplier x damage to it (balance pass).
-balance.armored_target_type = "rts-armored"
+-- Trigger target types (prototypes/categories.lua defines them). An entity carries one through its
+-- trigger_target_mask, e.g. {"common", balance.target_types.raid}; an attack with bonus[key] = m deals m x damage
+-- to it (an "area" trigger with that mask nested in the hit, prototypes/units.lua).
+--   raid     economy buildings, poles, hubs, haulers (raiders)
+--   armored  heavies (artillery)
+--   light    raiders (drones)
+--   siege    artillery (raiders)
+balance.target_types = {raid = "rts-raid-target", armored = "rts-armored", light = "rts-light", siege = "rts-siege"}
+balance.raid_target_type = balance.target_types.raid -- prototypes/buildings.lua and prototypes/logistics.lua
 
 balance.units = {
   ["rts-walker"] = {
@@ -69,9 +76,9 @@ balance.units = {
     kind = "heavy", tier = 1, role = "tank", supply = 3,
     kit = "rts-walker-heavy-kit", cost = {["iron-plate"] = 30, ["copper-plate"] = 10, ["steel-plate"] = 5}, time = 8,
     unlock = "rts-unlock-heavy",
-    health = 650, speed = 0.75, size = 1.1,
-    range = 12, cooldown = 60, damage = 45, damage_type = "explosion", splash = 2.5, splash_damage = 15,
-    resist = {physical = 35}, armored = true,
+    health = 800, speed = 0.55, size = 1.1,
+    range = 16, cooldown = 60, damage = 50, damage_type = "explosion", splash = 2.5, splash_damage = 12,
+    resist = {physical = 60}, tags = {"armored"},
     ammo_category = "rts-heavy",
     counters = {"walker", "drone"},
     strong = {"walker", "drone"}, weak = {"artillery", "laser-turret"},
@@ -79,29 +86,32 @@ balance.units = {
   ["rts-drone"] = {
     kind = "drone", tier = 1, role = "swarm", supply = 1,
     kit = "rts-drone-kit", cost = {["iron-plate"] = 6}, time = 2,
-    health = 90, speed = 1.5,
-    range = 1, cooldown = 30, damage = 12, damage_type = "physical",
+    health = 85, speed = 1.45,
+    range = 1, cooldown = 30, damage = 11, damage_type = "impact", -- heavy armour (physical) does not stop bites
+    bonus = {light = 3},
     ammo_category = "rts-drone",
     counters = {"artillery", "raider"},
     strong = {"artillery", "hauler", "raider"}, weak = {"turret", "walker"},
   },
   ["rts-raider"] = {
     kind = "raider", tier = 1, role = "raid", supply = 2,
-    kit = "rts-raider-kit", cost = {["iron-plate"] = 10, ["electronic-circuit"] = 3}, time = 5,
+    kit = "rts-raider-kit", cost = {["iron-plate"] = 8, ["electronic-circuit"] = 2}, time = 5,
     unlock = "rts-unlock-raider",
-    health = 150, speed = 1.3, size = 0.8,
-    range = 14, cooldown = 30, damage = 10, damage_type = "physical", raid_multiplier = 2.5,
+    health = 220, speed = 1.35, size = 0.8,
+    range = 18, cooldown = 30, damage = 12, damage_type = "physical", bonus = {raid = 2.5, siege = 1.65},
+    tags = {"light"},
     ammo_category = "rts-raider",
     counters = {"artillery"},
     strong = {"hauler", "building", "artillery"}, weak = {"walker", "turret", "drone"},
   },
   ["rts-artillery"] = {
     kind = "artillery", tier = 1, role = "siege", supply = 4,
-    kit = "rts-artillery-kit", cost = {["iron-plate"] = 40, ["steel-plate"] = 10, ["rts-explosives"] = 10},
+    kit = "rts-artillery-kit", cost = {["iron-plate"] = 40, ["steel-plate"] = 5, ["rts-explosives"] = 10},
     time = 12, unlock = "rts-unlock-artillery",
-    health = 250, speed = 0.6, size = 1.2,
-    range = 40, min_range = 8, cooldown = 240, damage = 100, damage_type = "explosion", splash = 4,
-    armored_multiplier = 2.5, raid_target = true,
+    health = 450, speed = 0.65, size = 1.2,
+    range = 44, min_range = 8, attack_from = 32, cooldown = 180, damage = 120, damage_type = "explosion", splash = 3.5,
+    bonus = {armored = 9}, bonus_radius = 2, tags = {"siege"},
+    resist = {impact = 25}, -- plated against drone bites (drones are the only impact damage)
     ammo_category = "rts-artillery",
     counters = {"heavy"},
     strong = {"turret", "laser-turret", "heavy", "wall"}, weak = {"drone", "raider"},
@@ -152,7 +162,7 @@ balance.buildings = {
   -- Phase 4 defence and power
   ["rts-laser-turret"] = {kind = "laser-turret", cost = {["iron-plate"] = 20, ["electronic-circuit"] = 10}, time = 8,
                           health = 1000, unlock = "rts-unlock-laser", power = "2MW", -- peak input; 800 kJ per shot
-                          range = 22, cooldown = 40, damage = 30},
+                          range = 22, cooldown = 40, damage = 50},
   ["rts-wall"] = {kind = "wall", cost = {["stone-brick"] = 5}, count = 5, time = 2, health = 500},
   ["rts-steam-plant"] = {kind = "steam-plant", cost = {["iron-plate"] = 40, ["steel-plate"] = 10}, time = 10,
                          health = 800, unlock = "rts-steam-power", power = "1.8MW", fuel = "coal"},
