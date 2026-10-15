@@ -57,6 +57,11 @@ function build_order.plan_line(C, ctx, name)
     util.log("ai %s: line %s unavailable: %s", C.force, name, reason)
     return L
   end
+  if #plan.slots == 0 then
+    L.status, L.reason = "unavailable", "no hub slot reachable for " .. plan.patch.id
+    util.log("ai %s: line %s unavailable: %s", C.force, name, L.reason)
+    return L
+  end
   L.status, L.patch, L.chained = "ok", plan.patch, plan.chained
   L.belts, L.drills, L.gap_poles, L.chain, L.slots = {}, {}, {}, {}, {}
   for _, b in ipairs(plan.belts) do

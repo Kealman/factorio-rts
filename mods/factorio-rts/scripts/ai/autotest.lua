@@ -8,7 +8,7 @@
 --   [rts] ai autotest check <name>: PASS|FAIL ...
 --   [rts] ai autotest summary <passed>/<total> ... result=...
 -- Checks: build_3min (each force has an extractor, a smelter and a barracks by 3 min), produce (kits made in every
--- minute from minute 3 on while the force still has a barracks), attack (each force launched an attack by the end,
+-- minute from minute 3 on while the force still has a barracks and a CC), attack (each force launched an attack by the end,
 -- unless the match ended first), outcome (the match ended, or both forces still produce at the end; when a side
 -- stopped producing at DURATION, the test waits up to END_GRACE for the match to end), no_bad_spam (fewer than 20
 -- construction entries given up per force).
@@ -123,11 +123,13 @@ function autotest.log_maps() ai.log_maps() end
 
 local function finish(s, why)
   s.done = true
-  autotest.log_maps()
   local m = storage.match
   local ended = m and m.phase == "ended"
   ai.run_command("rts-ai-dump", "") -- the console command path, as the server console
   ai.run_command("rts-ai", "no-such-force normal")
+  ai.run_command("rts-ai-map", "")
+  local enemy_ai = ai.get(util.ENEMY_FORCE)
+  if enemy_ai then ai.run_command("rts-ai", util.ENEMY_FORCE .. " " .. enemy_ai.difficulty) end -- in-place path
   for _, f in ipairs(autotest.FORCES) do
     local C = ai.get(f)
     check("attack_" .. f, (C and C.stats.attacks > 0) or ended, "%s launched %d attacks (%d reinforcements)%s", f,
@@ -173,7 +175,9 @@ function autotest.tick(tick)
     minute_report(s, s.minute)
     if age >= autotest.BUILD_DEADLINE then
       for _, f in ipairs(autotest.FORCES) do
-        if buildings.count(f, "barracks") > 0 and (s.per_minute[f][s.minute] or 0) == 0 then
+        -- a barracks only produces while a CC network feeds it
+        if buildings.count(f, "barracks") > 0 and buildings.count(f, "cc") > 0
+           and (s.per_minute[f][s.minute] or 0) == 0 then
           s.produced_ok[f] = false
         end
       end

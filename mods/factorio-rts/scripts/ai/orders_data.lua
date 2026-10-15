@@ -39,14 +39,17 @@ data.DIFFICULTY = {
 data.DEFAULT_DIFFICULTY = "normal"
 
 -- Mining lines: an ore patch, a belt to the CC hub and the hub slots it feeds, in order (ai/layout.lua HUB). Slot
--- names are for a patch north of the CC or level with it; for a patch south of it, N <-> S and 1 <-> 2 swap.
+-- names are for a patch on `side` of the CC (or level with it); for a patch on the other side N <-> S and 1 <-> 2
+-- swap, so mirrored maps work too.
 -- `rank` = which patch of that ore (1 = the nearest free one, 2 = the next one, used by expansions).
 data.LINES = {
-  -- iron: three smelters, then a steel chain (N2c: smelter A makes plates, smelter B turns them into steel)
-  iron = {ore = "iron-ore", rank = 1, slots = {"E2", "E1", "N1", "N2c"}},
-  copper = {ore = "copper-ore", rank = 1, slots = {"W1", "W2"}},
-  stone = {ore = "stone", rank = 1, slots = {"N1d"}},
-  iron2 = {ore = "iron-ore", rank = 2, slots = {"S2"}},
+  -- iron (match.ORE_PATCHES: 17 tiles forward, 10 to the south): four smelters around the south and west
+  -- stockpiles, then a steel chain in the north-west (N2c: smelter A makes plates, smelter B turns them into steel)
+  iron = {ore = "iron-ore", rank = 1, side = "south", slots = {"S1", "S2", "W2", "W1", "N2c"}},
+  copper = {ore = "copper-ore", rank = 1, side = "north", slots = {"N1", "E1"}},
+  -- stone needs no smelter: a direct slot puts it into the east-south stockpile
+  stone = {ore = "stone", rank = 1, side = "south", slots = {"E2d"}},
+  iron2 = {ore = "iron-ore", rank = 2, side = "south", slots = {"N2", "S2"}},
 }
 -- Lines planned when the commander starts (their tiles are reserved before anything else is placed). Expansion
 -- lines are planned when their step runs.
@@ -92,8 +95,9 @@ B.normal = {
   {kind = "build", name = "rts-smelter", anchor = "iron", count = 3, when = {stone = 10}},
   {kind = "build", name = "rts-turret", anchor = "front", count = 2, when = {time = 150}},
   {kind = "expand", anchor = "iron2", extractors = 2, slots = 1, when = {time = 210}},
+  {kind = "build", name = "rts-smelter", anchor = "iron", count = 4, when = {stone = 10, time = 240}},
   {kind = "build", name = "rts-extractor", anchor = "iron", count = 4, when = {time = 300}},
-  {kind = "build", name = "rts-smelter", anchor = "iron", count = 4, when = {stone = 20, time = 300}}, -- steel
+  {kind = "build", name = "rts-smelter", anchor = "iron", count = 5, when = {stone = 20, time = 300}}, -- steel
 }
 
 -- Hard: the same shape with earlier gates, three turrets and the steel chain at 3 minutes. Its edge is the cheats
@@ -112,8 +116,9 @@ B.hard = {
   {kind = "build", name = "rts-smelter", anchor = "iron", count = 3, when = {stone = 10}},
   {kind = "army", min = 12, action = "attack"},
   {kind = "build", name = "rts-turret", anchor = "front", count = 3, when = {time = 120}},
+  {kind = "build", name = "rts-smelter", anchor = "iron", count = 4, when = {stone = 10}},
   {kind = "build", name = "rts-extractor", anchor = "iron", count = 4, when = {time = 180}},
-  {kind = "build", name = "rts-smelter", anchor = "iron", count = 4, when = {stone = 20, time = 180}}, -- steel
+  {kind = "build", name = "rts-smelter", anchor = "iron", count = 5, when = {stone = 20, time = 180}}, -- steel
   {kind = "expand", anchor = "iron2", extractors = 3, slots = 1, when = {time = 180}},
 }
 data.BUILD_ORDERS = B
@@ -121,6 +126,7 @@ data.BUILD_ORDERS = B
 -- Factory recipe that makes each item the AI builds with (rts-* building items and the vanilla logistics items,
 -- docs/qa/phase2-prototypes-notes.md "Recipes").
 data.FACTORY_RECIPE = {
+  ["rts-stockpile"] = "rts-stockpile",
   ["rts-extractor"] = "rts-extractor",
   ["rts-smelter"] = "rts-smelter",
   ["rts-solar-array"] = "rts-solar-array",

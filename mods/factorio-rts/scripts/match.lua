@@ -48,7 +48,10 @@ local HEAVY_FRONT = 6 -- tiles from the walker block's front column to the heavi
 
 -- Enemy wave timing (Phase 1 QA follow-up 2): first wave 3 minutes after the armies spawn, then every 2 minutes.
 -- Copied into storage.match.config at init; the headless autotest shortens it through match.set_wave_timing.
-match.DEFAULT_CONFIG = {first_wave_ticks = 3 * 60 * 60, wave_period_ticks = 2 * 60 * 60}
+match.DEFAULT_CONFIG = {first_wave_ticks = 3 * 60 * 60, wave_period_ticks = 2 * 60 * 60,
+                       -- Phase 3: "ai" = rts-enemy starts like the player (CC + starting stock) and an AI commander
+                       -- (scripts/ai) plays it; the wave brain is off. "waves" = Phase 2 template base + waves.
+                       enemy_brain = "ai", enemy_difficulty = "normal"}
 
 -- Starting plates, the same for both sides: the player gets them with match.STARTING_STOCK, the enemy with the
 -- template (basetemplate.STOCK is set from this table below, so the two cannot drift apart).
@@ -201,6 +204,11 @@ local function config()
     m.config = {first_wave_ticks = match.DEFAULT_CONFIG.first_wave_ticks,
                 wave_period_ticks = match.DEFAULT_CONFIG.wave_period_ticks}
   end
+  if m.config.enemy_brain == nil then
+    -- saves from before Phase 3 keep the template enemy and the waves
+    m.config.enemy_brain = m.spawns and m.phase ~= "setup" and "waves" or match.DEFAULT_CONFIG.enemy_brain
+  end
+  m.config.enemy_difficulty = m.config.enemy_difficulty or match.DEFAULT_CONFIG.enemy_difficulty
   return m.config
 end
 
@@ -305,10 +313,18 @@ local function place_bases(surface)
   if cc then
     util.log("match: %s starting stock: %s", PLAYER, stock_stockpiles(parts.stockpiles, match.STARTING_STOCK))
   end
-  -- Enemy: the full starter template, facing the arena centre, with its barracks on walker kits.
-  basetemplate.ensure()
-  basetemplate.clone_to(surface, ENEMY, SPAWNS[ENEMY], FACING[ENEMY])
-  match.arm_barracks(ENEMY, match.ENEMY_BARRACKS_RECIPE)
+  if config().enemy_brain == "ai" then
+    -- Enemy played by an AI commander (scripts/ai): the same start as the player.
+    local ecc, eparts = buildings.place_cc(surface, SPAWNS[ENEMY], ENEMY)
+    if ecc then
+      util.log("match: %s starting stock: %s", ENEMY, stock_stockpiles(eparts.stockpiles, match.STARTING_STOCK))
+    end
+  else
+    -- Enemy: the full starter template, facing the arena centre, with its barracks on walker kits.
+    basetemplate.ensure()
+    basetemplate.clone_to(surface, ENEMY, SPAWNS[ENEMY], FACING[ENEMY])
+    match.arm_barracks(ENEMY, match.ENEMY_BARRACKS_RECIPE)
+  end
   for _, force_name in pairs({PLAYER, ENEMY}) do place_ore_patches(surface, force_name) end
   -- Starting plates per side, before anything ran (the autotest compares them).
   local m = storage.match
@@ -483,7 +499,7 @@ events.on_nth_tick(60, function(e)
     m.enemy_group, m.enemy_group_id = nil, nil
     release_orphans()
   end
-  if m.enemy_next_wave and e.tick >= m.enemy_next_wave then
+  if m.enemy_next_wave and e.tick >= m.enemy_next_wave and config().enemy_brain ~= "ai" then
     m.enemy_next_wave = e.tick + config().wave_period_ticks
     launch_wave()
   end

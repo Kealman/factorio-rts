@@ -26,6 +26,7 @@ local buildings = require("scripts.buildings")
 local production = require("scripts.production")
 local economy = require("scripts.economy")
 local basetemplate = require("scripts.basetemplate")
+local ai_autotest = require("scripts.ai.autotest")
 
 local debug_tools = {}
 
@@ -964,7 +965,11 @@ events.on_nth_tick(60, function(e)
     d.autotest = #game.connected_players == 0
     util.log("autotest: %s (%d connected players at tick %d)", d.autotest and "on" or "off",
       #game.connected_players, e.tick)
-    if d.autotest then debug_tools.start_autotest() end
+    if d.autotest then
+      -- Phase 3: with the AI enemy brain both forces are AI commanders (scripts/ai/autotest.lua); the Phase 1/2
+      -- autotest expects the template enemy and the wave brain.
+      if storage.match.config.enemy_brain == "ai" then ai_autotest.start() else debug_tools.start_autotest() end
+    end
   end
   if d.autotest and d.stage then autotest_tick(e.tick) end
   if d.autotest and d.eco then eco_tick(e.tick) end

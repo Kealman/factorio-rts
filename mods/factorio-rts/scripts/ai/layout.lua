@@ -18,7 +18,8 @@
 --      y-2.5  .  .  .  N2o .  .  .  .  .  .  .  N1o [E1 smelter] .  .
 --      y-1.5 W1f W1i [W1 smelter] W1o SP [  CC  ] SP E1o         E1i E1f
 --      y+1.5 W2f W2i [W2 smelter] W2o SP [      ] SP E2o [E2 sm] E2i E2f
---             (S1/S2 mirror N1/N2 in y; N1d/S1d etc. are direct slots on the N1/S1 inserter tile)
+--             (S1/S2 mirror N1/N2 in y; N1d/S1d etc. are direct slots on the N1/S1 inserter tile, E1d/E2d on the
+--             E1o/E2o tile; N1c/N2c/S1c/S2c are steel chains: N1/N2 plus a second smelter and inserter further out)
 --
 -- Mining line. An ore patch gets a straight "spine" belt through it towards the CC with extractors on both sides
 -- (pairs around a one-tile gap that holds a medium pole: D g D . D g D ...), then an A* belt route from the spine's
@@ -144,6 +145,7 @@ local HUB_BASE = {
   N2 = {stock = {-3.5, -1.5}, out = {-3.5, -2.5}, smelter = {-3.5, -4.5}, inp = {-3.5, -6.5}, feed = {-3.5, -7.5}},
   N1d = {stock = {3.5, -1.5}, inp = {3.5, -2.5}, feed = {3.5, -3.5}},
   N2d = {stock = {-3.5, -1.5}, inp = {-3.5, -2.5}, feed = {-3.5, -3.5}},
+  E1d = {stock = {3.5, -1.5}, inp = {4.5, -1.5}, feed = {5.5, -1.5}},
   -- chain (steel): feed -> inserter -> smelter A (iron plates) -> inserter -> smelter B (steel) -> inserter -> stock
   N1c = {stock = {3.5, -1.5}, out = {3.5, -2.5}, smelter = {3.5, -4.5}, mid = {3.5, -6.5}, smelter2 = {3.5, -8.5},
          inp = {3.5, -10.5}, feed = {3.5, -11.5}},
@@ -151,7 +153,7 @@ local HUB_BASE = {
          smelter2 = {-3.5, -8.5}, inp = {-3.5, -10.5}, feed = {-3.5, -11.5}},
 }
 local MIRROR_NAME = {E1 = "E2", N1 = "S1", W1 = "W2", N2 = "S2", N1d = "S1d", N2d = "S2d", N1c = "S1c",
-                     N2c = "S2c"}
+                     N2c = "S2c", E1d = "E2d"}
 layout.HUB = {}
 layout.SLOT_FLIP = {}
 for name, s in pairs(HUB_BASE) do
@@ -163,7 +165,7 @@ for name, s in pairs(HUB_BASE) do
   layout.SLOT_FLIP[MIRROR_NAME[name]] = name
 end
 layout.HUB_ORDER = {"E1", "E2", "N1", "S1", "W1", "W2", "N2", "S2", "N1d", "S1d", "N2d", "S2d", "N1c", "S1c",
-                    "N2c", "S2c"}
+                    "N2c", "S2c", "E1d", "E2d"}
 
 --- Entity specs of a hub slot in world coordinates: {{name, x, y, dir, part, pickup?}, ...} in build order.
 --- part = "inp" | "smelter2" | "mid" | "out" | "smelter". Also returns the feed tile (tx, ty).
@@ -684,10 +686,13 @@ function layout.plan_line(C, ctx, line_name, spec, hostile)
     plan.gap_poles[g] = {x = p.x, y = p.y}
   end
 
-  -- Hub slots (flipped for a patch south of the CC). The short links between consecutive slots' feed tiles are
-  -- routed first, then the main belt from the spine to the first slot routes around them: otherwise the main belt
-  -- may arrive at slot 1 over the tile the link to slot 2 needs (seen: a 40-tile detour around the CC).
-  local south = patch.cy > ctx.frame.cy + 0.5
+  -- Hub slots: spec.slots is written for a patch on spec.side ("north" or "south" of the CC); for a patch on the
+  -- other side the names are mirrored in y (N <-> S, 1 <-> 2). The short links between consecutive slots' feed
+  -- tiles are routed first, then the main belt from the spine to the first slot routes around them: otherwise the
+  -- main belt may arrive at slot 1 over the tile the link to slot 2 needs (seen: a 40-tile detour around the CC).
+  local patch_side = (patch.cy > ctx.frame.cy + 0.5 and "south") or (patch.cy < ctx.frame.cy - 0.5 and "north")
+    or nil
+  local south = patch_side ~= nil and patch_side ~= (spec.side or "north")
   local path = {} -- full belt path: spine, main route, links
   for _, t in ipairs(spine.tiles) do path[#path + 1] = {t[1], t[2], seg = 0} end
   local blocked_extra = {}

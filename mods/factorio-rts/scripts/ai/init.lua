@@ -49,11 +49,17 @@ function ai.get(force_name)
   return storage.ai and storage.ai[force_name]
 end
 
---- Start a commander for `force_name` at `difficulty` (default normal). An existing commander of that force is
---- replaced; its plan is lost but nothing it built is touched. Returns the commander or nil, reason.
+--- Start a commander for `force_name` at `difficulty` (default normal). When the force already has one, only its
+--- difficulty changes (settings and build order; the plan, the base and the army stay; start cheats are not given
+--- again). Returns the commander or nil, reason.
 function ai.init_force(force_name, difficulty)
   ensure_storage()
   if not game.forces[force_name] then return nil, "unknown force " .. tostring(force_name) end
+  local old = storage.ai[force_name]
+  if old then
+    commander.set_difficulty(old, difficulty)
+    return old
+  end
   local C = commander.new(force_name, difficulty)
   -- stagger: commanders of different forces run on different ticks
   local slot = 0

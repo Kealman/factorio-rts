@@ -85,6 +85,14 @@ function commander.new(force_name, difficulty)
   }
 end
 
+--- Switch a running commander to another difficulty: new settings and build order (step progress is re-derived
+--- from what exists), same plan, base and army.
+function commander.set_difficulty(C, difficulty)
+  difficulty = data.DIFFICULTY[difficulty] and difficulty or data.DEFAULT_DIFFICULTY
+  C.difficulty, C.cfg, C.steps, C.current_step = difficulty, copy(data.DIFFICULTY[difficulty]), {}, nil
+  util.log("ai %s: difficulty is now %s", C.force, difficulty)
+end
+
 -- Hard: the extra starting stock and the mining bonus (orders_data.DIFFICULTY).
 local function apply_cheats(C)
   local cfg = C.cfg

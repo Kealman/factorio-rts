@@ -15,6 +15,7 @@ local modules = {
   require("scripts.economy"),
   require("scripts.basetemplate"),
   require("scripts.match"),
+  require("scripts.ai.init"),  -- Phase 3 AI commanders; after match (ai.init reads storage.match.config)
   require("scripts.camera"),   -- also requires scripts.cursor
   require("scripts.cursor"),
   require("scripts.selection"),
