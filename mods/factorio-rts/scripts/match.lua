@@ -1,65 +1,83 @@
--- Skirmish: forces, a flat arena around {0, 0}, a base per side, small starting armies, a trivial enemy brain,
--- win/lose.
--- Phase 2 start (docs/PHASE2.md): the player gets the CC composite at (-60, 0) with the starting stock in its
--- stockpiles; the enemy gets the full starter base template (basetemplate.lua, mirrored) at (+60, 0) with its
--- barracks on walker kits; both sides get ore patches and ARMY_SIZE walkers. A force is out of the match when it
--- has no CC, barracks or factory (buildings.is_alive_force) and no units.
+-- Match flow (docs/PHASE3.md "Match flow"): config, the per-match arena surface, forces, spawn points, starting
+-- bases, ore, starting armies, out / win / lose, per-force counters, and the legacy Phase 2 wave brain.
+--
+-- Lifecycle: a new game sits in the "lobby" phase (no arena; lobby.lua shows the start dialog). match.start(config)
+-- builds the arena surface rts-arena-<n>, the forces rts-player + rts-ai-1..N (free-for-all), a CC with the same
+-- starting stock for every force, ore patches per spawn plus contested ones near the centre, 6 walkers each, and starts
+-- the clock. lobby.lua starts the AI commanders and moves the players' cameras. match.teardown() stops the brains,
+-- removes the match's units and buildings and returns to the lobby; lobby.lua deletes the old surface after moving
+-- the players off it (match.delete_arena). Nauvis is never touched: the players' god bodies sit on the lobby surface
+-- (camera.lua) and the remote view looks at the arena.
+--
+-- A force is out when it has no CC, barracks or factory (buildings.is_alive_force) and no units. An AI that is out
+-- is removed from the AI tick. The match ends for the human force (rts-player): victory when every AI is out,
+-- defeat when rts-player is out, draw when both happen in the same check.
+--
 -- Owns storage.match:
---   phase            "setup" | "running" | "ended"   (the only source of truth for the match result, see
---                    match.result: a winner exists only while phase == "ended")
---   tick_started     tick the armies spawned
---   ended_tick       tick the match ended (phase == "ended")
---   config           {first_wave_ticks, wave_period_ticks}: enemy wave timing (match.DEFAULT_CONFIG; change it with
---                    match.set_wave_timing or /rts-wave-timing)
---   enemy_next_wave  tick of the next enemy wave
---   spawns           {["rts-player"] = MapPosition, ["rts-enemy"] = MapPosition}  CC centres (match.home)
---   wave             number of waves launched so far
---   enemy_group      LuaCommandable? (current wave group), enemy_group_id = its unique_id
---   winner           force name or "draw", once phase == "ended" (match.decide_winner)
---   charted          true once the arena was charted for rts-player
---   waves_off        true after `/rts-qa-reset nowaves`: no enemy waves (enemy_next_wave is nil)
+--   version          3
+--   phase            "lobby" | "setup" | "running" | "ended" (match.result derives the result from it)
+--   match_id         number of matches started in this save (the arena of match n is rts-arena-<n>)
+--   config           {opponents 1-3, difficulty, size, enemy_brain = "ai" | "waves", enemy_difficulty (= difficulty,
+--                    read by ai.init), first_wave_ticks, wave_period_ticks}; match.normalize_config
+--   surface          name of the current arena surface (nil in the lobby); util.surface() returns it
+--   half             arena half size in tiles: the arena is [-half, half)^2 around (0, 0)
+--   forces           participating forces, rts-player first; ai_forces = the AI ones
+--   spawns           {[force] = MapPosition} CC centres (match.home); facing = {[force] = +1 | -1}
+--   out              {[force] = tick the force was out}
+--   stats            {[force] = {units_built, units_lost, buildings_built, buildings_lost}} (match.stats)
+--   tick_started     tick the clock started; ended_tick, winner (force name, "ai" = several AIs left, or "draw")
+--   placing          true while match.start places the starting entities (the counters ignore them)
 --   start_plates     {[force] = {["iron-plate"] = n, ["copper-plate"] = n}} in the stockpiles at match start
+--   Legacy wave brain (config.enemy_brain == "waves", 1 opponent with the Phase 2 template base):
+--   wave, enemy_next_wave, enemy_group (LuaCommandable), enemy_group_id, waves_off
 local util = require("scripts.util")
 local events = require("scripts.events")
 local units = require("scripts.units")
 local buildings = require("scripts.buildings")
 local production = require("scripts.production")
 local basetemplate = require("scripts.basetemplate")
+local ai_layout = require("scripts.ai.layout") -- no events, no requires of match: safe here (arena bounds)
 
 local match = {}
 
 local PLAYER, ENEMY = util.PLAYER_FORCE, util.ENEMY_FORCE
-local ARENA_HALF = 80                       -- arena is [-80, 80)^2 tiles
+match.PLAYER, match.ENEMY = PLAYER, ENEMY
+match.LOBBY_SURFACE = util.LOBBY_SURFACE
+match.ARENA_PREFIX = "rts-arena-"
+match.AI_PREFIX = "rts-ai-"
+match.MAX_OPPONENTS = 3
 local ARENA_TILE = "grass-1"
-local SPAWNS = {[PLAYER] = {x = -60, y = 0}, [ENEMY] = {x = 60, y = 0}} -- CC centres (tile corners)
-local FACING = {[PLAYER] = 1, [ENEMY] = -1} -- +1 = the enemy is east
-match.CC_POSITIONS = SPAWNS
-match.FACING = FACING
 
--- Starting armies, ARMY_OFFSET tiles in front of the CC: ARMY.walkers walkers in ARMY_COLUMNS columns and
--- ARMY.heavies heavies in a column in front of them. Grid spacing per unit (Phase 1 QA follow-up 6: the denser
--- 3-tile grid overlapped visually): 3.5 tiles for walkers, 5 for heavies.
+-- Map sizes: the arena is [-half, half)^2; spawns sit on a circle of `radius` (size / 2 - 40). "legacy" is the
+-- Phase 2 geometry (CCs at +-60 on a 160-tile arena): the waves brain and its autotest use it.
+match.SIZES = {
+  small = {half = 128, radius = 88},
+  medium = {half = 192, radius = 152},
+  legacy = {half = 80, radius = 60},
+}
+match.SIZE_ORDER = {"small", "medium"} -- what the lobby offers
+match.DIFFICULTIES = {"easy", "normal", "hard"}
+-- AI spawn angles in degrees (0 = east, y grows south); the player is at 180. Chosen so that no AI has two
+-- equally near neighbours: the AI commander faces the nearest other spawn along x (ai/commander.lua), and an exact
+-- tie would make its facing depend on table order.
+match.AI_ANGLES = {[1] = {0}, [2] = {-70, 70}, [3] = {-60, 0, 60}}
+
+-- Phase 1 QA follow-up 2 timing for the legacy wave brain; Phase 3 defaults for the match.
+match.DEFAULT_CONFIG = {opponents = 1, difficulty = "normal", size = "small", enemy_brain = "ai",
+                        enemy_difficulty = "normal", first_wave_ticks = 3 * 60 * 60, wave_period_ticks = 2 * 60 * 60}
+
+-- Starting armies, ARMY_OFFSET tiles in front of the CC (along the force's facing): ARMY.walkers walkers in
+-- ARMY_COLUMNS columns and ARMY.heavies heavies in a column in front of them. Grid spacing per unit: 3.5 tiles for
+-- walkers, 5 for heavies (Phase 1 QA follow-up 6).
 match.ARMY = {walkers = 6, heavies = 0}
 match.ARMY_SIZE = match.ARMY.walkers + match.ARMY.heavies
 match.SPACING = {["rts-walker"] = 3.5, ["rts-walker-heavy"] = 5}
 local ARMY_COLUMNS = 2
 local ARMY_OFFSET = 14
-local HEAVY_FRONT = 6 -- tiles from the walker block's front column to the heavies' column
+local HEAVY_FRONT = 6
 
--- Enemy wave timing (Phase 1 QA follow-up 2): first wave 3 minutes after the armies spawn, then every 2 minutes.
--- Copied into storage.match.config at init; the headless autotest shortens it through match.set_wave_timing.
-match.DEFAULT_CONFIG = {first_wave_ticks = 3 * 60 * 60, wave_period_ticks = 2 * 60 * 60,
-                       -- Phase 3: "ai" = rts-enemy starts like the player (CC + starting stock) and an AI commander
-                       -- (scripts/ai) plays it; the wave brain is off. "waves" = Phase 2 template base + waves.
-                       enemy_brain = "ai", enemy_difficulty = "normal"}
-
--- Starting plates, the same for both sides: the player gets them with match.STARTING_STOCK, the enemy with the
--- template (basetemplate.STOCK is set from this table below, so the two cannot drift apart).
+-- Starting plates and stock, the same for every force (lead decisions of 2026-10-15; docs/qa/phase2-economy-notes.md).
 match.START_PLATES = {{"iron-plate", 200}, {"copper-plate", 100}}
--- docs/PHASE2.md "Starting stock", extended by lead decisions on 2026-10-15: one factory (without it the player can
--- never make more buildings), and 2 stockpiles, 60 belts, 16 inserters and 16 poles (enough to close the first
--- extractor -> belt -> smelter -> inserter -> stockpile loop on the iron patch). Inserted into the player's CC
--- stockpiles.
 match.STARTING_STOCK = {
   match.START_PLATES[1], match.START_PLATES[2], {"rts-extractor", 2}, {"rts-smelter", 2}, {"rts-barracks", 1},
   {"rts-factory", 1}, {"rts-stockpile", 2}, {"transport-belt", 60}, {"fast-inserter", 16},
@@ -68,13 +86,13 @@ match.STARTING_STOCK = {
 do
   local plates = {}
   for _, entry in ipairs(match.START_PLATES) do plates[entry[1]] = entry[2] end
-  basetemplate.STOCK = plates -- module load time, identical on every load: the template is built from it
+  basetemplate.STOCK = plates -- the legacy template enemy gets the same plates
 end
 match.ENEMY_BARRACKS_RECIPE = "rts-walker-kit"
 
--- Ore patches per side, relative to the CC centre for the side facing +x (dx is flipped for the other side):
--- {resource, dx, dy, width, height}. Iron and copper centres are 16 tiles from the nearest CC stockpile
--- (3.5, +-1.5), off the x axis so the starting army (ARMY_OFFSET tiles straight ahead) does not stand on them.
+-- Ore patches per spawn, relative to the CC centre for a force facing +x (dx is multiplied by the facing):
+-- {resource, dx, dy, width, height}. The facing is the AI commander's own rule (towards the nearest other spawn
+-- along x), so every force's patches lie in front of its CC exactly as in the calibrated 1v1 layout.
 match.ORE_AMOUNT = 1500
 match.ORE_PATCHES = {
   {"iron-ore", 17, 10, 12, 12},
@@ -82,93 +100,153 @@ match.ORE_PATCHES = {
   {"stone", 28, 16, 6, 6},
   {"coal", 36, 16, 6, 6},
 }
-local FORCE_COLORS = {
+-- Contested patches near the centre, absolute positions (not on the legacy map).
+match.CONTESTED_AMOUNT = 2500
+match.CONTESTED_PATCHES = {
+  {"iron-ore", 0, -24, 14, 14},
+  {"copper-ore", 0, 24, 10, 10},
+}
+-- The AI planner cannot lay a mining line on a patch that lies more north/south of its CC than east/west:
+-- ai/layout.lua spine_candidate reads undefined globals for vertical spines (layout.lua:412) and the game stops with
+-- "attempt to perform arithmetic on local 'perp' (a nil value)" (seen in the 1v2 autotest at 210 s). The AI's only
+-- step that looks beyond its own patches is "expand iron2" (the nearest free iron patch), and in 1v2 / 1v3 the
+-- contested iron patch is north or south of an off-axis AI. Until layout.lua is fixed, those matches get
+-- CONTESTED_SAFE_ORE there instead (the AI never expands to stone). Set AI_VERTICAL_LINES = true once it is fixed.
+match.AI_VERTICAL_LINES = false
+match.CONTESTED_SAFE_ORE = "stone"
+
+match.FORCE_COLORS = {
   [PLAYER] = {r = 0.15, g = 0.45, b = 1.0, a = 1},
-  [ENEMY] = {r = 0.95, g = 0.15, b = 0.1, a = 1},
+  ["rts-ai-1"] = {r = 0.95, g = 0.15, b = 0.1, a = 1},
+  ["rts-ai-2"] = {r = 1.0, g = 0.75, b = 0.1, a = 1},
+  ["rts-ai-3"] = {r = 0.25, g = 0.85, b = 0.3, a = 1},
 }
 local WAVE_RADIUS = 16
 local RETARGET_RANGE = 300
 
+local function ai_force_name(i) return match.AI_PREFIX .. i end
+
+--- Module lookup at call time (ai.init requires ai.commander, which requires this module).
+local function loaded(module_name)
+  local l = package and package.loaded
+  if not l then return nil end
+  return l["__" .. script.mod_name .. "__/" .. string.gsub(module_name, "%.", "/") .. ".lua"] or l[module_name]
+end
+
 ---------------------------------------------------------------------------
--- Setup
+-- Callbacks (registered at load time by lobby.lua, fog.lua)
 ---------------------------------------------------------------------------
-local function setup_forces()
-  local forces = {}
-  for _, name in pairs({PLAYER, ENEMY}) do
-    local f = game.forces[name] or game.create_force(name)
-    f.custom_color = FORCE_COLORS[name]
-    f.ai_controllable = false -- script groups work without it (spike decision 4)
-    forces[#forces + 1] = f
+local ended_callbacks, out_callbacks = {}, {}
+--- fn(storage.match) once the match ended (phase "ended"). Load time only.
+function match.on_ended(fn) ended_callbacks[#ended_callbacks + 1] = fn end
+--- fn(force_name) when a force is out while the match goes on. Load time only.
+function match.on_force_out(fn) out_callbacks[#out_callbacks + 1] = fn end
+
+---------------------------------------------------------------------------
+-- Config
+---------------------------------------------------------------------------
+--- A validated copy of a config table (missing or bad fields take the defaults). The waves brain plays one
+--- opponent on the legacy map.
+function match.normalize_config(c)
+  c = c or {}
+  local d = match.DEFAULT_CONFIG
+  local out = {}
+  local n = math.floor(tonumber(c.opponents) or d.opponents)
+  out.opponents = math.max(1, math.min(match.MAX_OPPONENTS, n))
+  local diff_ok = {easy = true, normal = true, hard = true}
+  out.difficulty = diff_ok[c.difficulty] and c.difficulty or d.difficulty
+  out.size = match.SIZES[c.size] and c.size or d.size
+  out.enemy_brain = c.enemy_brain == "waves" and "waves" or "ai"
+  if out.enemy_brain == "waves" then
+    out.opponents = 1
+    if not c.size then out.size = "legacy" end
   end
-  local a, b = forces[1], forces[2]
-  for _, pair in pairs({{a, b}, {b, a}}) do
-    local f, other = pair[1], pair[2]
-    f.set_friend(other, false)
-    f.set_cease_fire(other, false)
-    -- Keep vanilla forces (biters, the default player force, neutral) out of the fight.
-    for _, vanilla in pairs({"enemy", "player", "neutral"}) do
-      f.set_cease_fire(vanilla, true)
-      game.forces[vanilla].set_cease_fire(f, true)
-    end
-  end
+  out.enemy_difficulty = out.difficulty
+  out.first_wave_ticks = tonumber(c.first_wave_ticks) or d.first_wave_ticks
+  out.wave_period_ticks = tonumber(c.wave_period_ticks) or d.wave_period_ticks
+  return out
 end
 
--- Disable natural enemy bases for chunks generated from now on. Works from the control stage as long as
--- it runs before the chunks are generated (on_init of a new map).
-local function disable_enemy_bases(surface)
-  local mgs = surface.map_gen_settings
-  local controls = mgs.autoplace_controls or {}
-  if controls["enemy-base"] then
-    controls["enemy-base"].size = 0
-    controls["enemy-base"].frequency = 0
-    mgs.autoplace_controls = controls
-    surface.map_gen_settings = mgs
+local function config()
+  local m = storage.match
+  if not m.config then m.config = match.normalize_config(nil) end
+  local c = m.config
+  for k, v in pairs(match.DEFAULT_CONFIG) do
+    if c[k] == nil then c[k] = v end
   end
-  -- The starting chunks are generated before on_init runs, so remove what map gen already placed there.
-  local removed = 0
-  for _, e in pairs(surface.find_entities_filtered({force = "enemy"})) do
-    e.destroy()
-    removed = removed + 1
-  end
-  local read_back = surface.map_gen_settings.autoplace_controls["enemy-base"]
-  util.log("match: enemy-base autoplace size=%s frequency=%s; chunk (0,0) generated before on_init: %s; "
-    .. "%d pre-generated enemy entities removed", read_back and tostring(read_back.size) or "n/a",
-    read_back and tostring(read_back.frequency) or "n/a", tostring(surface.is_chunk_generated({0, 0})), removed)
+  c.enemy_difficulty = c.difficulty
+  return c
+end
+match.config = function() return config() end
+
+--- Current wave timing {first_wave_ticks, wave_period_ticks} (storage.match.config).
+function match.wave_config() return config() end
+
+---------------------------------------------------------------------------
+-- Queries
+---------------------------------------------------------------------------
+--- The current arena surface, or nil (lobby).
+function match.surface()
+  local m = storage.match
+  local s = m and m.surface and game.surfaces[m.surface]
+  return s
 end
 
-local function prepare_arena(surface)
-  local h = ARENA_HALF
-  local area = {{-h, -h}, {h, h}}
-  surface.request_to_generate_chunks({0, 0}, math.ceil(h / 32) + 1)
-  surface.force_generate_chunk_requests()
-
-  local removed = 0
-  for _, e in pairs(surface.find_entities_filtered({area = area})) do
-    if e.valid and e.type ~= "character" then
-      e.destroy()
-      removed = removed + 1
-    end
-  end
-  -- Grass over everything, water included (acts as landfill), then clear decoratives for a clean look.
-  local tiles = {}
-  for x = -h, h - 1 do
-    for y = -h, h - 1 do
-      tiles[#tiles + 1] = {name = ARENA_TILE, position = {x, y}}
-    end
-  end
-  surface.set_tiles(tiles, true, true, true, false)
-  surface.destroy_decoratives({area = area})
-  surface.always_day = true
-
-  local water = surface.count_tiles_filtered({area = area, collision_mask = "water_tile"})
-  util.log("match: arena [%d,%d)^2 ready: %d tiles set to %s, %d entities removed, water tiles left=%d",
-    -h, h, #tiles, ARENA_TILE, removed, water)
+--- Arena half size in tiles (the lobby reports the default map's).
+function match.arena_half()
+  local m = storage.match
+  return (m and m.half) or match.SIZES[match.DEFAULT_CONFIG.size].half
 end
 
---- Where a force's army gathers: ARMY_OFFSET tiles in front of its CC (towards the arena centre).
+function match.phase()
+  return storage.match and storage.match.phase or "lobby"
+end
+
+function match.in_lobby()
+  local m = storage.match
+  return not (m and m.surface)
+end
+
+--- Participating forces (rts-player first) and the AI ones.
+function match.forces() return (storage.match and storage.match.forces) or {PLAYER} end
+function match.ai_forces() return (storage.match and storage.match.ai_forces) or {} end
+
+function match.is_participant(force_name)
+  for _, f in ipairs(match.forces()) do
+    if f == force_name then return true end
+  end
+  return false
+end
+
+--- Live units of every participant other than `force_name`.
+function match.enemy_unit_count(force_name)
+  if not storage.units then return 0 end
+  local n = 0
+  for _, f in ipairs(match.forces()) do
+    if f ~= force_name then n = n + units.count(f) end
+  end
+  return n
+end
+
+--- Home position (CC centre) of a force, or {0, 0}.
+function match.home(force_name)
+  local spawns = storage.match and storage.match.spawns
+  return (spawns and spawns[force_name]) or {x = 0, y = 0}
+end
+
+--- +1 when the force's front (ore, army) is towards +x, else -1.
+function match.facing(force_name)
+  local f = storage.match and storage.match.facing
+  return (f and f[force_name]) or (force_name == PLAYER and 1 or -1)
+end
+-- Read-only views for older callers (debug.lua used match.FACING[force] and match.CC_POSITIONS[force]).
+match.FACING = setmetatable({}, {__index = function(_, k) return match.facing(k) end})
+match.CC_POSITIONS = setmetatable({}, {__index = function(_, k) return match.home(k) end})
+
+--- Where a force's army gathers: ARMY_OFFSET tiles in front of its CC.
 function match.army_point(force_name)
   local home = match.home(force_name)
-  return {x = home.x + (FACING[force_name] or 1) * ARMY_OFFSET, y = home.y}
+  return {x = home.x + match.facing(force_name) * ARMY_OFFSET, y = home.y}
 end
 
 --- Grid spacing for a unit prototype name (match.SPACING; 3.5 for anything not listed).
@@ -176,93 +254,184 @@ function match.spacing(name)
   return match.SPACING[name] or match.SPACING["rts-walker"]
 end
 
---- Spawn the starting army of one force at match.army_point: match.ARMY.walkers walkers in ARMY_COLUMNS columns
---- (the first column faces the enemy, the others extend towards the own CC), match.ARMY.heavies heavies in a
---- column HEAVY_FRONT tiles in front of them.
-local function spawn_army(force_name)
-  local s = match.army_point(force_name)
-  local dir = FACING[force_name]
-  local made = 0
-  local ws, hs = match.spacing("rts-walker"), match.spacing("rts-walker-heavy")
-  local walkers, heavies = match.ARMY.walkers, match.ARMY.heavies
-  local rows = math.ceil(walkers / ARMY_COLUMNS)
-  for i = 0, walkers - 1 do
-    local col, row = i % ARMY_COLUMNS, math.floor(i / ARMY_COLUMNS)
-    local pos = {x = s.x - dir * col * ws, y = s.y + (row - (rows - 1) / 2) * ws}
-    if units.spawn("rts-walker", pos, force_name, "walker") then made = made + 1 end
-  end
-  for i = 0, heavies - 1 do
-    local pos = {x = s.x + dir * HEAVY_FRONT, y = s.y + (i - (heavies - 1) / 2) * hs}
-    if units.spawn("rts-walker-heavy", pos, force_name, "heavy") then made = made + 1 end
-  end
-  return made
-end
-
-local function config()
+--- Per-match counters of a force (zeros for a force that is not in the match).
+function match.stats(force_name)
   local m = storage.match
-  if not m.config then
-    m.config = {first_wave_ticks = match.DEFAULT_CONFIG.first_wave_ticks,
-                wave_period_ticks = match.DEFAULT_CONFIG.wave_period_ticks}
-  end
-  if m.config.enemy_brain == nil then
-    -- saves from before Phase 3 keep the template enemy and the waves
-    m.config.enemy_brain = m.spawns and m.phase ~= "setup" and "waves" or match.DEFAULT_CONFIG.enemy_brain
-  end
-  m.config.enemy_difficulty = m.config.enemy_difficulty or match.DEFAULT_CONFIG.enemy_difficulty
-  return m.config
+  local s = m and m.stats and m.stats[force_name]
+  return s or {units_built = 0, units_lost = 0, buildings_built = 0, buildings_lost = 0}
 end
 
---- Current wave timing {first_wave_ticks, wave_period_ticks} (storage.match.config).
-function match.wave_config()
-  return config()
+--- Localised display name of a force: "You" or "AI 2".
+function match.label(force_name)
+  if force_name == PLAYER then return {"rts.force-player"} end
+  local n = force_name and tonumber(string.match(force_name, "^" .. match.AI_PREFIX .. "(%d+)$"))
+  if n then return {"rts.force-ai", n} end
+  return force_name or "?"
 end
 
---- Change the enemy wave timing (seconds). A first wave that has not come yet is rescheduled to
---- tick_started + first (at the earliest one second from now); later waves use the new period from the next
---- launch on. Waves switched off by /rts-qa-reset nowaves stay off. Debug and autotest use only.
-function match.set_wave_timing(first_seconds, period_seconds)
+--- Seconds of match time so far (or until the end).
+function match.elapsed_seconds()
   local m = storage.match
-  local c = config()
-  c.first_wave_ticks = math.max(60, math.floor(first_seconds * 60))
-  c.wave_period_ticks = math.max(60, math.floor(period_seconds * 60))
-  if m.phase == "running" and (m.wave or 0) == 0 and m.enemy_next_wave and not m.waves_off then
-    m.enemy_next_wave = math.max(game.tick + 60, (m.tick_started or game.tick) + c.first_wave_ticks)
-  end
-  util.log("match: wave timing first=%.0fs period=%.0fs, next wave %s", c.first_wave_ticks / 60,
-    c.wave_period_ticks / 60, m.enemy_next_wave and string.format("in %.0fs", (m.enemy_next_wave - game.tick) / 60)
-    or "not scheduled")
+  if not (m and m.tick_started) then return 0 end
+  local now = (m.phase == "ended" and m.ended_tick) or game.tick
+  return math.max(0, (now - m.tick_started) / 60)
 end
 
---- Spawn both armies (idempotent per force: only spawns a force that has no units) and (re)start the match.
-function match.spawn_armies()
-  local m = storage.match
-  for _, force_name in pairs({PLAYER, ENEMY}) do
-    if units.count(force_name) == 0 then
-      local n = spawn_army(force_name)
-      util.log("match: spawned %d units for %s at %s", n, force_name, util.pos_str(match.army_point(force_name)))
+---------------------------------------------------------------------------
+-- Surfaces
+---------------------------------------------------------------------------
+-- No autoplace at all, lab tiles (cheap; every arena tile is replaced anyway), no cliffs, no enemies.
+local function empty_mgs(half, seed)
+  return {
+    seed = seed, width = half and 2 * half or 0, height = half and 2 * half or 0,
+    default_enable_all_autoplace_controls = false,
+    autoplace_controls = {},
+    autoplace_settings = {
+      entity = {treat_missing_as_default = false, settings = {}},
+      decorative = {treat_missing_as_default = false, settings = {}},
+    },
+    cliff_settings = {name = "cliff", cliff_elevation_0 = 1024, cliff_elevation_interval = 10, richness = 0},
+    no_enemies_mode = true,
+    peaceful_mode = true,
+  }
+end
+
+--- The lobby surface (created once): a 64x64 map paved with out-of-map tiles, so the camera shows black there.
+--- The players' god bodies stay on it for the whole session (camera.lua).
+function match.lobby_surface()
+  local s = game.surfaces[match.LOBBY_SURFACE]
+  if s then return s end
+  s = game.create_surface(match.LOBBY_SURFACE, empty_mgs(32, 1))
+  s.generate_with_lab_tiles = true
+  s.always_day = true
+  s.request_to_generate_chunks({0, 0}, 1)
+  s.force_generate_chunk_requests()
+  local tiles = {}
+  for x = -32, 31 do
+    for y = -32, 31 do tiles[#tiles + 1] = {name = "out-of-map", position = {x, y}} end
+  end
+  s.set_tiles(tiles, false, false, false, false)
+  util.log("match: lobby surface %s created (index %d), tile at (0, 0): %s", s.name, s.index, s.get_tile(0, 0).name)
+  return s
+end
+
+--- The surface the camera shows: the arena while a match exists, else the lobby.
+function match.view_surface()
+  return match.surface() or match.lobby_surface()
+end
+
+local function create_arena(m)
+  local half = m.half
+  local name = match.ARENA_PREFIX .. m.match_id
+  local old = game.surfaces[name]
+  if old then game.delete_surface(old) end -- a leftover from an older save; never the live arena
+  local seed = (game.surfaces.nauvis and game.surfaces.nauvis.map_gen_settings.seed or 1) + m.match_id
+  local surface = game.create_surface(old and (name .. "b") or name, empty_mgs(half, seed % 4294967296))
+  surface.generate_with_lab_tiles = true
+  surface.always_day = true
+  local prof = helpers.create_profiler()
+  surface.request_to_generate_chunks({0, 0}, math.ceil(half / 32))
+  surface.force_generate_chunk_requests()
+  local area = {{-half, -half}, {half, half}}
+  local removed = 0
+  for _, e in pairs(surface.find_entities_filtered({area = area})) do
+    if e.valid and e.type ~= "character" then
+      e.destroy()
+      removed = removed + 1
     end
   end
-  m.phase = "running"
-  m.winner = nil
-  m.ended_tick = nil
-  m.tick_started = game.tick
-  m.enemy_next_wave = game.tick + config().first_wave_ticks
+  -- Grass over everything (no water, no lab tiles), then no decoratives.
+  local tiles = {}
+  for x = -half, half - 1 do
+    for y = -half, half - 1 do tiles[#tiles + 1] = {name = ARENA_TILE, position = {x, y}} end
+  end
+  surface.set_tiles(tiles, true, true, true, false)
+  surface.destroy_decoratives({area = area})
+  prof.stop()
+  local water = surface.count_tiles_filtered({area = area, collision_mask = "water_tile"})
+  log({"", string.format("[rts] match: arena %s (index %d) [%d,%d)^2 ready: %d tiles set to %s, %d entities "
+    .. "removed, water tiles=%d, edge tiles: (%d, 0)=%s (%d, 0)=%s, built in ", surface.name, surface.index, -half,
+    half, #tiles, ARENA_TILE, removed, water, half - 1, surface.get_tile(half - 1, 0).name, half,
+    surface.get_tile(half, 0).name), prof})
+  return surface
 end
 
---- Put a player on the RTS player force (humans always play rts-player in Phase 1).
+--- Delete an old arena surface (deferred by the engine to a later tick). Move every player off it first.
+function match.delete_arena(name)
+  local s = name and game.surfaces[name]
+  if not s then return false end
+  local ok = game.delete_surface(s)
+  util.log("match: arena %s queued for deletion: %s", name, tostring(ok))
+  return ok
+end
+
+---------------------------------------------------------------------------
+-- Forces
+---------------------------------------------------------------------------
+local function ensure_force(name)
+  local f = game.forces[name] or game.create_force(name)
+  f.custom_color = match.FORCE_COLORS[name] or {r = 0.6, g = 0.6, b = 0.6, a = 1}
+  f.ai_controllable = false -- script groups work without it (spike decision 4)
+  f.share_chart = false
+  return f
+end
+
+--- Free-for-all: every RTS force is the enemy of every other; vanilla forces stay out of the fight.
+local function setup_forces(names)
+  local list = {}
+  for _, name in ipairs(names) do list[#list + 1] = ensure_force(name) end
+  for _, f in ipairs(list) do
+    for _, other in ipairs(list) do
+      if f ~= other then
+        f.set_friend(other, false)
+        f.set_cease_fire(other, false)
+      end
+    end
+    for _, vanilla in pairs({"enemy", "player", "neutral"}) do
+      f.set_cease_fire(vanilla, true)
+      game.forces[vanilla].set_cease_fire(f, true)
+    end
+  end
+end
+
+--- Put a player on the RTS player force (humans always play rts-player).
 function match.assign_player(player)
+  ensure_force(PLAYER)
   if player.force.name ~= PLAYER then player.force = PLAYER end
 end
 
---- Home position (spawn point) of a force, or {0, 0}.
-function match.home(force_name)
-  local spawns = storage.match and storage.match.spawns
-  return (spawns and spawns[force_name]) or {x = 0, y = 0}
+---------------------------------------------------------------------------
+-- Spawns, ore, bases, armies
+---------------------------------------------------------------------------
+-- Spawn points on the circle: the player at 180 degrees, the AIs at match.AI_ANGLES.
+local function spawn_points(n, radius)
+  local spawns = {[PLAYER] = {x = -radius, y = 0}}
+  for i, deg in ipairs(match.AI_ANGLES[n]) do
+    local a = math.rad(deg)
+    spawns[ai_force_name(i)] = {x = math.floor(radius * math.cos(a) + 0.5), y = math.floor(radius * math.sin(a) + 0.5)}
+  end
+  return spawns
 end
 
--- Ore patches of one side (match.ORE_PATCHES, flipped in x for the side facing -x).
+-- The AI commander's facing rule (ai/commander.lua): towards the nearest other spawn along x. Forces are visited
+-- in sorted order, so a tie picks the same spawn every time.
+local function facing_of(force_name, spawns)
+  local home = spawns[force_name]
+  local names = {}
+  for name in pairs(spawns) do names[#names + 1] = name end
+  table.sort(names)
+  local best, fx
+  for _, name in ipairs(names) do
+    if name ~= force_name then
+      local d = util.distance(home, spawns[name])
+      if not best or d < best then best, fx = d, (spawns[name].x >= home.x) and 1 or -1 end
+    end
+  end
+  return fx or (home.x <= 0 and 1 or -1)
+end
+
 local function place_ore_patches(surface, force_name)
-  local home, dir = SPAWNS[force_name], FACING[force_name]
+  local home, dir = match.home(force_name), match.facing(force_name)
   local parts = {}
   for _, p in ipairs(match.ORE_PATCHES) do
     local center = {x = home.x + dir * p[2], y = home.y + p[3]}
@@ -270,6 +439,18 @@ local function place_ore_patches(surface, force_name)
     parts[#parts + 1] = string.format("%s %dx%d at %s: %d tiles", p[1], p[4], p[5], util.pos_str(center), n)
   end
   util.log("match: ore for %s: %s", force_name, table.concat(parts, "; "))
+end
+
+local function place_contested(surface)
+  local parts = {}
+  local safe = not match.AI_VERTICAL_LINES and config().opponents >= 2 and config().enemy_brain == "ai"
+  for _, p in ipairs(match.CONTESTED_PATCHES) do
+    local center = {x = p[2], y = p[3]}
+    local ore = (safe and p[1] == "iron-ore") and match.CONTESTED_SAFE_ORE or p[1]
+    local n = basetemplate.place_ore(surface, ore, center, p[4], p[5], match.CONTESTED_AMOUNT, true)
+    parts[#parts + 1] = string.format("%s %dx%d at %s: %d tiles", ore, p[4], p[5], util.pos_str(center), n)
+  end
+  util.log("match: contested ore: %s", table.concat(parts, "; "))
 end
 
 local function stock_stockpiles(stockpiles, items)
@@ -308,57 +489,274 @@ local function stockpile_plates(force_name)
 end
 
 local function place_bases(surface)
-  -- Player: the CC composite and the starting stock.
-  local cc, parts = buildings.place_cc(surface, SPAWNS[PLAYER], PLAYER)
-  if cc then
-    util.log("match: %s starting stock: %s", PLAYER, stock_stockpiles(parts.stockpiles, match.STARTING_STOCK))
-  end
-  if config().enemy_brain == "ai" then
-    -- Enemy played by an AI commander (scripts/ai): the same start as the player.
-    local ecc, eparts = buildings.place_cc(surface, SPAWNS[ENEMY], ENEMY)
-    if ecc then
-      util.log("match: %s starting stock: %s", ENEMY, stock_stockpiles(eparts.stockpiles, match.STARTING_STOCK))
-    end
-  else
-    -- Enemy: the full starter template, facing the arena centre, with its barracks on walker kits.
-    basetemplate.ensure()
-    basetemplate.clone_to(surface, ENEMY, SPAWNS[ENEMY], FACING[ENEMY])
-    match.arm_barracks(ENEMY, match.ENEMY_BARRACKS_RECIPE)
-  end
-  for _, force_name in pairs({PLAYER, ENEMY}) do place_ore_patches(surface, force_name) end
-  -- Starting plates per side, before anything ran (the autotest compares them).
   local m = storage.match
+  local c = config()
+  for _, force_name in ipairs(m.forces) do
+    if force_name == ENEMY and c.enemy_brain == "waves" then
+      -- Legacy: the full starter template, facing the arena centre, barracks on walker kits.
+      basetemplate.ensure()
+      basetemplate.clone_to(surface, ENEMY, match.home(ENEMY), match.facing(ENEMY))
+      match.arm_barracks(ENEMY, match.ENEMY_BARRACKS_RECIPE)
+    else
+      local cc, parts = buildings.place_cc(surface, match.home(force_name), force_name)
+      if cc then
+        util.log("match: %s CC at %s facing %+d, starting stock: %s", force_name, util.pos_str(cc.position),
+          match.facing(force_name), stock_stockpiles(parts.stockpiles, match.STARTING_STOCK))
+      else
+        util.log("match: %s CC could not be placed at %s", force_name, util.pos_str(match.home(force_name)))
+      end
+    end
+  end
+  for _, force_name in ipairs(m.forces) do place_ore_patches(surface, force_name) end
+  if c.size ~= "legacy" then place_contested(surface) end
   m.start_plates = {}
-  for _, force_name in pairs({PLAYER, ENEMY}) do
+  for _, force_name in ipairs(m.forces) do
     local plates = stockpile_plates(force_name)
     m.start_plates[force_name] = plates
     util.log("match: %s starting plates: iron=%d copper=%d", force_name, plates["iron-plate"], plates["copper-plate"])
   end
 end
 
-function match.init()
-  if storage.match then
-    config() -- older saves: add the wave timing config
+--- Spawn one force's starting army at match.army_point: walkers in ARMY_COLUMNS columns (the first column faces
+--- the front, the others extend towards the own CC), heavies in a column HEAVY_FRONT tiles in front of them.
+local function spawn_army(force_name, surface)
+  local s = match.army_point(force_name)
+  local dir = match.facing(force_name)
+  local made = 0
+  local ws, hs = match.spacing("rts-walker"), match.spacing("rts-walker-heavy")
+  local walkers, heavies = match.ARMY.walkers, match.ARMY.heavies
+  local rows = math.ceil(walkers / ARMY_COLUMNS)
+  for i = 0, walkers - 1 do
+    local col, row = i % ARMY_COLUMNS, math.floor(i / ARMY_COLUMNS)
+    local pos = {x = s.x - dir * col * ws, y = s.y + (row - (rows - 1) / 2) * ws}
+    if units.spawn("rts-walker", pos, force_name, "walker", surface) then made = made + 1 end
+  end
+  for i = 0, heavies - 1 do
+    local pos = {x = s.x + dir * HEAVY_FRONT, y = s.y + (i - (heavies - 1) / 2) * hs}
+    if units.spawn("rts-walker-heavy", pos, force_name, "heavy", surface) then made = made + 1 end
+  end
+  return made
+end
+
+--- Spawn the starting army of every participant that has no units, and (re)start the clock.
+function match.spawn_armies()
+  local m = storage.match
+  local surface = util.surface()
+  for _, force_name in ipairs(m.forces or {PLAYER}) do
+    if units.count(force_name) == 0 then
+      local n = spawn_army(force_name, surface)
+      util.log("match: spawned %d units for %s at %s", n, force_name, util.pos_str(match.army_point(force_name)))
+    end
+  end
+  m.phase = "running"
+  m.winner = nil
+  m.ended_tick = nil
+  m.tick_started = game.tick
+  m.out = {}
+  m.enemy_next_wave = config().enemy_brain == "waves" and (game.tick + config().first_wave_ticks) or nil
+end
+
+-- The AI planner's arena bounds (ai/layout.lua plans nothing outside [-ARENA_HALF, ARENA_HALF)^2). A module field:
+-- set again on every load from storage.
+local function sync_ai_bounds()
+  local m = storage.match
+  ai_layout.ARENA_HALF = (m and m.half) or match.SIZES.legacy.half
+end
+
+local function fresh_stats(names)
+  local stats = {}
+  for _, f in ipairs(names) do
+    stats[f] = {units_built = 0, units_lost = 0, buildings_built = 0, buildings_lost = 0}
+  end
+  return stats
+end
+
+--- Build a new match from `cfg` (match.normalize_config): arena surface, forces, CCs and stock, ore, armies, clock.
+--- The previous match must be torn down first (match.teardown). AI commanders, fog and cameras are lobby.lua's job.
+--- Returns the arena surface.
+function match.start(cfg)
+  local m = storage.match
+  assert(not m.surface, "match.start: tear the old match down first")
+  local c = match.normalize_config(cfg)
+  m.config = c
+  local size = match.SIZES[c.size]
+  m.match_id = (m.match_id or 0) + 1
+  m.phase = "setup"
+  m.half = size.half
+  m.forces = {PLAYER}
+  m.ai_forces = {}
+  for i = 1, c.opponents do
+    m.forces[#m.forces + 1] = ai_force_name(i)
+    m.ai_forces[#m.ai_forces + 1] = ai_force_name(i)
+  end
+  m.spawns = spawn_points(c.opponents, size.radius)
+  m.facing = {}
+  for _, f in ipairs(m.forces) do m.facing[f] = facing_of(f, m.spawns) end
+  m.out, m.winner, m.ended_tick, m.tick_started = {}, nil, nil, nil
+  m.wave, m.waves_off, m.enemy_next_wave = 0, nil, nil
+  m.stats = fresh_stats(m.forces)
+  sync_ai_bounds()
+  util.log("match: starting match %d: %d opponent(s), %s, %s (%dx%d), brain %s", m.match_id, c.opponents,
+    c.difficulty, c.size, 2 * size.half, 2 * size.half, c.enemy_brain)
+
+  local surface = create_arena(m)
+  m.surface = surface.name
+  setup_forces(m.forces)
+  m.placing = true
+  place_bases(surface)
+  m.placing = nil
+  match.spawn_armies()
+  local parts = {}
+  for _, f in ipairs(m.forces) do
+    parts[#parts + 1] = string.format("%s CC %s facing %+d", f, util.pos_str(m.spawns[f]), m.facing[f])
+  end
+  util.log("match: match %d running on %s at tick %d: %s", m.match_id, surface.name, game.tick,
+    table.concat(parts, "; "))
+  return surface
+end
+
+local function drop_group()
+  local m = storage.match
+  local g = m.enemy_group
+  m.enemy_group, m.enemy_group_id = nil, nil
+  if g and g.valid then g.destroy() end
+end
+
+--- End the current match and return to the lobby: stop the brains, destroy the match's units and registered
+--- buildings (so nothing of the old match is found by registry queries in this tick), forget the arena. The
+--- surface itself is deleted by match.delete_arena once the players are moved off it. Returns the old surface name.
+function match.teardown(reason)
+  local m = storage.match
+  local old = m.surface
+  local ai = loaded("scripts.ai.init")
+  local stopped = 0
+  for name in pairs(storage.ai or {}) do
+    if ai and ai.stop_force(name) then stopped = stopped + 1 end
+  end
+  drop_group()
+  local removed_units = units.despawn_all()
+  local removed_buildings = 0
+  for un, rec in pairs(storage.buildings or {}) do
+    if rec.entity and rec.entity.valid and (not old or rec.entity.surface.name == old) then
+      for _, part in pairs(rec.parts or {}) do
+        if part.valid then part.destroy() end
+      end
+      rec.entity.destroy()
+      removed_buildings = removed_buildings + 1
+    end
+  end
+  m.phase = "lobby"
+  m.surface = nil
+  m.tick_started, m.ended_tick, m.winner = nil, nil, nil
+  m.wave, m.enemy_next_wave, m.waves_off = 0, nil, nil
+  m.out = {}
+  util.log("match: match %s torn down (%s): %d AI commanders stopped, %d units and %d buildings removed, arena %s",
+    tostring(m.match_id), reason or "-", stopped, removed_units, removed_buildings, tostring(old))
+  return old
+end
+
+--- Switch the legacy enemy waves on or off (/rts-qa-reset nowaves).
+function match.set_waves(on)
+  local m = storage.match
+  if config().enemy_brain ~= "waves" then
+    m.waves_off = nil -- the AI brain sends no waves; nothing to switch
     return
   end
-  local spawns = {}
-  for force_name, pos in pairs(SPAWNS) do spawns[force_name] = {x = pos.x, y = pos.y} end
-  storage.match = {phase = "setup", wave = 0, spawns = spawns}
-  config()
-  local surface = util.surface()
-  disable_enemy_bases(surface)
-  setup_forces()
-  prepare_arena(surface)
-  place_bases(surface)
-  match.spawn_armies()
-  for _, player in pairs(game.players) do match.assign_player(player) end
+  if on then
+    m.waves_off = nil
+    if config().enemy_brain == "waves" and m.phase == "running" and not m.enemy_next_wave then
+      m.enemy_next_wave = game.tick + config().first_wave_ticks
+    end
+  else
+    m.waves_off = true
+    m.enemy_next_wave = nil
+    drop_group()
+  end
+end
+
+--- Change the enemy wave timing (seconds). A first wave that has not come yet is rescheduled to
+--- tick_started + first (at the earliest one second from now). Legacy waves brain, debug and autotest only.
+function match.set_wave_timing(first_seconds, period_seconds)
+  local m = storage.match
+  local c = config()
+  c.first_wave_ticks = math.max(60, math.floor(first_seconds * 60))
+  c.wave_period_ticks = math.max(60, math.floor(period_seconds * 60))
+  if m.phase == "running" and (m.wave or 0) == 0 and m.enemy_next_wave and not m.waves_off then
+    m.enemy_next_wave = math.max(game.tick + 60, (m.tick_started or game.tick) + c.first_wave_ticks)
+  end
+  util.log("match: wave timing first=%.0fs period=%.0fs, next wave %s", c.first_wave_ticks / 60,
+    c.wave_period_ticks / 60, m.enemy_next_wave and string.format("in %.0fs", (m.enemy_next_wave - game.tick) / 60)
+    or "not scheduled")
 end
 
 ---------------------------------------------------------------------------
--- Enemy brain: every config.wave_period_ticks send every enemy unit, as one unit group, to attack the player army
--- (or its CC when the army is gone).
+-- Init
 ---------------------------------------------------------------------------
--- Wave target: the player army, or the player's CC when the army is gone.
+function match.init()
+  local m = storage.match
+  if m and m.version == 3 then
+    config()
+    sync_ai_bounds()
+    match.lobby_surface()
+    return
+  end
+  local legacy = m ~= nil
+  storage.match = {version = 3, phase = "lobby", match_id = 0, wave = 0, forces = {PLAYER}, ai_forces = {},
+                   spawns = {}, facing = {}, out = {}, stats = {}}
+  config()
+  if legacy then
+    -- A Phase 1/2 save: its match lived on nauvis. Its units, buildings and commanders go (they would keep forces
+    -- "alive" in the registries); the rest of nauvis is left as it is, and the save restarts in the lobby.
+    match.teardown("pre-Phase-3 save, phase " .. tostring(m.phase) .. " on nauvis")
+  end
+  sync_ai_bounds()
+  match.lobby_surface()
+  ensure_force(PLAYER)
+  for _, player in pairs(game.players) do match.assign_player(player) end
+end
+
+events.on_load(function()
+  local m = storage.match
+  if m and m.half then ai_layout.ARENA_HALF = m.half end
+end)
+
+---------------------------------------------------------------------------
+-- Per-force counters
+---------------------------------------------------------------------------
+local function counting(force_name)
+  local m = storage.match
+  if not (m and m.phase == "running" and not m.placing and m.stats) then return nil end
+  return m.stats[force_name]
+end
+
+production.on_spawned(function(unit, rec)
+  local s = counting(rec.force)
+  if s then s.units_built = s.units_built + 1 end
+end)
+
+-- A unit leaves the registry while still valid only when it died (despawns and stale records are invalid).
+units.on_removed(function(_, rec)
+  if not (rec.entity and rec.entity.valid) then return end
+  local s = counting(rec.force)
+  if s then s.units_lost = s.units_lost + 1 end
+end)
+
+buildings.on_added(function(_, rec)
+  local s = counting(rec.force)
+  if s then s.buildings_built = s.buildings_built + 1 end
+end)
+
+events.on(defines.events.on_entity_died, function(e)
+  local entity = e.entity
+  if not (entity and entity.valid and buildings.KIND_BY_NAME[entity.name]) then return end
+  local s = counting(entity.force.name)
+  if s then s.buildings_lost = s.buildings_lost + 1 end
+end)
+
+---------------------------------------------------------------------------
+-- Legacy enemy brain (config.enemy_brain == "waves"): every wave_period_ticks send every rts-ai-1 unit, as one
+-- unit group, to attack the player army (or its CC when the army is gone).
+---------------------------------------------------------------------------
 local function wave_target()
   local target = units.centroid(PLAYER)
   if target then return target end
@@ -376,13 +774,7 @@ local function player_target(position)
   end
   return wave_target()
 end
-
-local function drop_group()
-  local m = storage.match
-  local g = m.enemy_group
-  m.enemy_group, m.enemy_group_id = nil, nil
-  if g and g.valid then g.destroy() end
-end
+match.wave_retarget = player_target
 
 local function launch_wave()
   local m = storage.match
@@ -409,7 +801,7 @@ end
 -- Wave members whose group is gone go back to idle (stop), so they do not wander.
 local function release_orphans()
   for _, rec in units.for_force(ENEMY) do
-    if rec.order == "attack_move" then
+    if rec.order == "attack_move" and rec.issuer == nil then
       local c = rec.entity.commandable
       if not (c and c.parent_group) then
         rec.order = units.IDLE
@@ -420,23 +812,25 @@ local function release_orphans()
   end
 end
 
--- Result rules (Phase 1 QA follow-up 4: the banner said Victory at 0 vs 0).
+---------------------------------------------------------------------------
+-- Out, win, lose
+---------------------------------------------------------------------------
 --- A force is out when it has no CC, barracks or factory left (buildings.is_alive_force) and no units.
 function match.is_out(force_name)
   return units.count(force_name) == 0 and not buildings.is_alive_force(force_name)
 end
 
---- Pure winner rule: a side wins only when the other side is out and it is not; both out is a draw; nobody
---- out is no result (nil).
-function match.decide_winner(player_out, enemy_out)
-  if player_out and enemy_out then return "draw" end
-  if enemy_out then return PLAYER end
+--- Pure winner rule from the human force's view: rts-player wins when every enemy is out and it is not; both out
+--- is a draw; rts-player out alone returns ENEMY (rts-ai-1, the 1v1 enemy); nobody out is no result (nil).
+function match.decide_winner(player_out, enemies_out)
+  if player_out and enemies_out then return "draw" end
+  if enemies_out then return PLAYER end
   if player_out then return ENEMY end
   return nil
 end
 
 --- The match result from a force's point of view, derived from storage.match.phase only:
---- nil while the match is not "ended", else "victory" | "defeat" | "draw". The HUD banner should use this.
+--- nil while the match is not "ended", else "victory" | "defeat" | "draw".
 function match.result(force_name)
   local m = storage.match
   if not (m and m.phase == "ended") then return nil end
@@ -444,69 +838,64 @@ function match.result(force_name)
   return m.winner == force_name and "victory" or "defeat"
 end
 
-local function check_winner()
+local function finish(winner)
   local m = storage.match
-  local winner = match.decide_winner(match.is_out(PLAYER), match.is_out(ENEMY))
-  if not winner then return end
   m.phase = "ended"
   m.ended_tick = game.tick
   m.winner = winner
   drop_group()
   release_orphans()
-  local msg = m.winner == PLAYER and "Victory! The enemy base and army are destroyed."
-    or (m.winner == ENEMY and "Defeat. Your base and army are destroyed." or "Draw: both sides are destroyed.")
-  game.print("[RTS] " .. msg)
-  util.log("match: ended at tick %d, winner=%s (player units=%d alive=%s, enemy units=%d alive=%s)", game.tick,
-    m.winner, units.count(PLAYER), tostring(buildings.is_alive_force(PLAYER)), units.count(ENEMY),
-    tostring(buildings.is_alive_force(ENEMY)))
-end
-
---- QA reset (/rts-qa-reset): drop the wave group, destroy every unit and the corpses in the arena, spawn
---- both armies again at their spawns and restart the match clock. With waves = false no enemy wave comes
---- until the next reset with waves on. Returns the number of units and corpses removed.
-function match.reset(waves)
-  local m = storage.match
-  drop_group()
-  local removed = units.despawn_all()
-  local h = ARENA_HALF
-  local corpses = 0
-  for _, e in pairs(util.surface().find_entities_filtered({area = {{-h, -h}, {h, h}}, type = "corpse"})) do
-    e.destroy()
-    corpses = corpses + 1
+  local parts = {}
+  for _, f in ipairs(m.forces) do
+    local s = m.stats[f] or {}
+    parts[#parts + 1] = string.format("%s units=%d built=%s lost=%s buildings=%d built=%s lost=%s out=%s", f,
+      units.count(f), tostring(s.units_built), tostring(s.units_lost), buildings.count(f), tostring(s.buildings_built),
+      tostring(s.buildings_lost), m.out[f] and string.format("%.0fs", (m.out[f] - m.tick_started) / 60) or "no")
   end
-  m.wave = 0
-  match.spawn_armies()
-  m.waves_off = not waves or nil
-  if m.waves_off then m.enemy_next_wave = nil end
-  return removed, corpses
+  util.log("match: ended at tick %d after %.0fs, winner=%s, result for %s=%s | %s", game.tick,
+    match.elapsed_seconds(), tostring(winner), PLAYER, tostring(match.result(PLAYER)), table.concat(parts, " | "))
+  for _, player in pairs(game.players) do
+    local r = match.result(player.force.name) or "draw"
+    player.print({"", "[RTS] ", {"rts.match-" .. r}})
+  end
+  for _, fn in ipairs(ended_callbacks) do fn(m) end
 end
 
--- Chart the arena for the player force. A chart requested in on_init of `--create` never happens (it
--- is not processed without ticks), so it runs on the first second of a ticking session instead.
-local function chart_arena(m)
-  local h = ARENA_HALF + 32
-  game.forces[PLAYER].chart(util.surface(), {{-h, -h}, {h, h}})
-  m.charted = true
+local function check_out()
+  local m = storage.match
+  local ai = loaded("scripts.ai.init")
+  for _, f in ipairs(m.forces) do
+    if not m.out[f] and match.is_out(f) then
+      m.out[f] = game.tick
+      util.log("match: %s is out at %.0fs (no CC, barracks, factory or units)", f, match.elapsed_seconds())
+      if f ~= PLAYER and ai and ai.get(f) then ai.stop_force(f) end
+      for _, fn in ipairs(out_callbacks) do fn(f) end
+    end
+  end
+  local alive = {}
+  for _, f in ipairs(m.ai_forces) do
+    if not m.out[f] then alive[#alive + 1] = f end
+  end
+  local winner = match.decide_winner(m.out[PLAYER] ~= nil, #alive == 0)
+  if not winner then return end
+  if winner == ENEMY then winner = (#alive == 1) and alive[1] or "ai" end
+  finish(winner)
 end
 
 events.on_nth_tick(60, function(e)
   local m = storage.match
-  if not m then return end
-  if not m.charted then chart_arena(m) end
-  if m.phase ~= "running" then return end
+  if not (m and m.phase == "running") then return end
   if m.enemy_group and not m.enemy_group.valid then
     util.log("match: wave group #%s is gone (all members dead or disbanded)", tostring(m.enemy_group_id))
     m.enemy_group, m.enemy_group_id = nil, nil
     release_orphans()
   end
-  if m.enemy_next_wave and e.tick >= m.enemy_next_wave and config().enemy_brain ~= "ai" then
+  if m.enemy_next_wave and e.tick >= m.enemy_next_wave and config().enemy_brain == "waves" then
     m.enemy_next_wave = e.tick + config().wave_period_ticks
     launch_wave()
   end
-  check_winner()
+  check_out()
 end)
-
-match.wave_retarget = player_target
 
 -- Re-target the wave when its attack_area completes: nearest player unit, else the player centroid.
 events.on(defines.events.on_ai_command_completed, function(e)

@@ -3,7 +3,10 @@
 -- Owns storage.debug = {autotest = nil|true|false, stage, started, stage_tick, units = {[unit_number] = true},
 --                       dests, hold_pos, moved, attacked, checks = {pass, fail}, next_report, dummy, eco, ...}
 --
--- Autotest: decided once at tick 120. With no connected players (tools/headless-run.sh) it runs two parts:
+-- Autotest: decided once at tick 120. With no connected players (tools/headless-run.sh) it starts a match with
+-- AUTOTEST_MATCH (or storage.debug.autotest_match) through lobby.start_match. With the default AI brain both sides
+-- are AI commanders (scripts/ai/autotest.lua, every match force). With enemy_brain = "waves" (the legacy map) it
+-- runs the Phase 1/2 autotest in two parts:
 -- * Economy (Phase 2, storage.debug.eco): checks the match-start bases, the CC death cleanup, then clones the
 --   starter template for the player (/rts-build-template), adds stock (/rts-give), two factories and a turret,
 --   sets a rally point (/rts-rally) and watches for ECO_WINDOW ticks: kits produced, walkers spawned and at the
@@ -27,11 +30,17 @@ local production = require("scripts.production")
 local economy = require("scripts.economy")
 local basetemplate = require("scripts.basetemplate")
 local ai_autotest = require("scripts.ai.autotest")
+local lobby = require("scripts.lobby")
+local fog = require("scripts.fog")
 
 local debug_tools = {}
 
 local PLAYER, ENEMY = util.PLAYER_FORCE, util.ENEMY_FORCE
 local AUTOTEST_DECIDE_TICK = 120
+-- The match the headless autotest starts at AUTOTEST_DECIDE_TICK. A test copy may edit this line (1v2:
+-- opponents = 2); storage.debug.autotest_match, when set before tick 120, overrides it. The legacy Phase 1/2
+-- autotest runs with enemy_brain = "waves" (one opponent on the "legacy" 160-tile map with the template enemy).
+local AUTOTEST_MATCH = {opponents = 1, difficulty = "normal", size = "small", enemy_brain = "ai"}
 local AUTOTEST_PLAYER = 0          -- fake player index: selection/orders treat it as an rts-player commander
 local AUTOTEST_WALKERS = 5
 local AUTOTEST_HEAVIES = 1
@@ -43,7 +52,9 @@ local ENGAGE_GRACE = 8 * 60         -- attack stage: ticks after the first hit b
 local HOLD_TICKS = 3 * 60
 local AUTOTEST_REPORT_PERIOD = 10 * 60
 -- /rts-qa-reset check: once the last autotest stage runs, after the match ends or this long after the start.
-local QA_RESET_CHECK_AFTER = 65 * 60
+-- Phase 3: /rts-qa-reset restarts the whole match (new arena), so it waits for the economy window (ECO_WINDOW,
+-- 150 s) to end; the economy checks need the original base.
+local QA_RESET_CHECK_AFTER = 155 * 60
 local ARMY_SIZE = match.ARMY_SIZE -- units per side after match.spawn_armies()
 local AUTOTEST_WAVE_TIMING = "45 90"  -- /rts-wave-timing for the headless run (the 3 min default is too slow)
 
@@ -104,18 +115,26 @@ end
 --- Lines describing the current state (used by /rts-dump and the autotest).
 function debug_tools.dump_lines()
   local m = storage.match or {}
+  local c = m.config or {}
   local lines = {
-    string.format("tick %d, match phase=%s wave=%s next wave in %ss winner=%s (wave timing first %ss, period %ss)",
-      game.tick, tostring(m.phase), tostring(m.wave),
-      m.enemy_next_wave and string.format("%.0f", (m.enemy_next_wave - game.tick) / 60) or "-", tostring(m.winner),
-      m.config and tostring(m.config.first_wave_ticks / 60) or "-",
-      m.config and tostring(m.config.wave_period_ticks / 60) or "-"),
-    force_summary(PLAYER),
-    force_summary(ENEMY),
-    string.format("registry size=%d, enemy group=%s", table_size(storage.units or {}),
-      (m.enemy_group and m.enemy_group.valid) and ("#" .. m.enemy_group.unique_id) or "none"),
-    stats_line(),
+    string.format("tick %d, match %s phase=%s on %s (half %s): %s opponent(s), %s, %s, brain %s; t=%.0fs winner=%s",
+      game.tick, tostring(m.match_id), tostring(m.phase), tostring(m.surface), tostring(m.half),
+      tostring(c.opponents), tostring(c.difficulty), tostring(c.size), tostring(c.enemy_brain),
+      match.elapsed_seconds(), tostring(m.winner)),
+    string.format("waves: wave=%s next wave in %ss (timing first %ss, period %ss)%s", tostring(m.wave),
+      m.enemy_next_wave and string.format("%.0f", (m.enemy_next_wave - game.tick) / 60) or "-",
+      c.first_wave_ticks and tostring(c.first_wave_ticks / 60) or "-",
+      c.wave_period_ticks and tostring(c.wave_period_ticks / 60) or "-", m.waves_off and " off" or ""),
   }
+  for _, f in ipairs(match.forces()) do
+    local st = match.stats(f)
+    lines[#lines + 1] = force_summary(f) .. string.format(" | built units %d lost %d, buildings built %d lost %d%s",
+      st.units_built, st.units_lost, st.buildings_built, st.buildings_lost,
+      (m.out and m.out[f]) and " | OUT" or "")
+  end
+  lines[#lines + 1] = string.format("registry size=%d, enemy group=%s", table_size(storage.units or {}),
+    (m.enemy_group and m.enemy_group.valid) and ("#" .. m.enemy_group.unique_id) or "none")
+  lines[#lines + 1] = stats_line()
   for index, p in pairs(storage.players or {}) do
     local player = selection.real_player(index)
     lines[#lines + 1] = string.format("player %d (%s): desired=%s controller=%s setup_done=%s connected=%s "
@@ -124,7 +143,7 @@ function debug_tools.dump_lines()
       tostring(p.setup_done), tostring(player and player.connected), selection.count(index),
       selection.box_count(index), tostring(orders.is_armed(index)))
   end
-  for _, force_name in pairs({PLAYER, ENEMY}) do
+  for _, force_name in ipairs(match.forces()) do
     lines[#lines + 1] = economy.describe(force_name)
     local st = production.stats(force_name)
     lines[#lines + 1] = string.format("%s production: kits=%d walkers=%d (heavy %d) factory crafts=%d items to "
@@ -269,7 +288,7 @@ end
 ---------------------------------------------------------------------------
 local function rel(offset)
   local home = match.home(PLAYER)
-  local f = match.FACING[PLAYER] or 1
+  local f = match.facing(PLAYER)
   return {x = home.x + f * offset[1], y = home.y + offset[2]}
 end
 
@@ -319,7 +338,7 @@ local function eco_start_state()
   check("eco_cc_buffer_precharged", e ~= nil and e.energy >= 0.9 * e.electric_buffer_size,
     "CC energy %.1f / %.1f MJ at tick %d", e and e.energy / 1e6 or -1, e and e.electric_buffer_size / 1e6 or -1,
     game.tick)
-  local home, f = match.home(PLAYER), match.FACING[PLAYER]
+  local home, f = match.home(PLAYER), match.facing(PLAYER)
   local ore = {}
   local ore_ok = true
   for _, p in ipairs(match.ORE_PATCHES) do
@@ -946,16 +965,25 @@ local function qa_reset_check()
   debug_tools.run_command("rts-qa-end", "") -- exercises the command; nothing waits for the marker headless
 end
 
--- One-off diagnostic: what rts-player has charted / sees around both spawns (chunks (-2,0) and (1,0)).
+-- One-off diagnostic: charted / visible chunks per force (fog.lua) 8 s into the autotest match.
 local CHART_PROBE_TICK = 600
 local function chart_probe()
-  local force, surface = game.forces[PLAYER], util.surface()
-  local parts = {}
-  for _, c in pairs({{-2, 0}, {1, 0}}) do
-    parts[#parts + 1] = string.format("chunk(%d,%d) charted=%s visible=%s", c[1], c[2],
-      tostring(force.is_chunk_charted(surface, c)), tostring(force.is_chunk_visible(surface, c)))
+  if match.surface() then fog.stats_line() end
+end
+
+--- Start the autotest match (AUTOTEST_MATCH, or storage.debug.autotest_match) and the matching autotest.
+local function start_autotest_match()
+  local cfg = storage.debug.autotest_match or AUTOTEST_MATCH
+  lobby.start_match(cfg, "autotest")
+  if storage.match.config.enemy_brain == "ai" then
+    -- every match force is an AI commander (rts-player gets one too)
+    local forces = {}
+    for i, f in ipairs(match.forces()) do forces[i] = f end
+    ai_autotest.FORCES = forces
+    ai_autotest.start()
+  else
+    debug_tools.start_autotest()
   end
-  util.log("debug: chart probe at tick %d for %s: %s", game.tick, PLAYER, table.concat(parts, ", "))
 end
 
 events.on_nth_tick(60, function(e)
@@ -965,11 +993,7 @@ events.on_nth_tick(60, function(e)
     d.autotest = #game.connected_players == 0
     util.log("autotest: %s (%d connected players at tick %d)", d.autotest and "on" or "off",
       #game.connected_players, e.tick)
-    if d.autotest then
-      -- Phase 3: with the AI enemy brain both forces are AI commanders (scripts/ai/autotest.lua); the Phase 1/2
-      -- autotest expects the template enemy and the wave brain.
-      if storage.match.config.enemy_brain == "ai" then ai_autotest.start() else debug_tools.start_autotest() end
-    end
+    if d.autotest then start_autotest_match() end
   end
   if d.autotest and d.stage then autotest_tick(e.tick) end
   if d.autotest and d.eco then eco_tick(e.tick) end
@@ -1054,6 +1078,74 @@ camera.add_selftest_step(930, "qa_reset", function(player)
   debug_tools.run_command("rts-qa-reset", "", player.index)
 end)
 
+-- Phase 3 match flow. The start dialog is up from the join (camera.lua's screenshot at 120 shows it). 150 clicks
+-- Start through the GUI click path; 930 (above) restarts the match through /rts-qa-reset; 1200 screenshot of the
+-- running arena (fog on the minimap); 1260-1320 the in-match menu; 1500 /rts-kill-force ai; 1620 screenshot of the
+-- results frame; 1680 Restart on the results frame (back to the lobby); 1740 screenshot; 1800 RTS_MATCHFLOW_DONE.
+local function find_child(element, name)
+  if element.name == name then return element end
+  for _, child in pairs(element.children) do
+    local found = find_child(child, name)
+    if found then return found end
+  end
+  return nil
+end
+
+local function gui_click(player, frame_name, button_name)
+  local frame = player.gui.screen[frame_name]
+  local el = frame and find_child(frame, button_name)
+  util.log("selftest: click %s/%s for player %d: %s", frame_name, button_name, player.index,
+    el and "found" or "MISSING")
+  if el then lobby.on_click({element = el, player_index = player.index, button = defines.mouse_button_type.left,
+                             tick = game.tick}) end
+  return el ~= nil
+end
+
+local function flow_state(player)
+  local m = storage.match
+  local frames = {}
+  for _, name in ipairs({"rts_lobby", "rts_menu", "rts_results"}) do
+    if player.gui.screen[name] then frames[#frames + 1] = name end
+  end
+  return string.format("match %s phase=%s surface=%s view=%s result=%s frames=[%s]", tostring(m.match_id),
+    tostring(m.phase), tostring(m.surface), player.surface.name, tostring(match.result(player.force.name)),
+    table.concat(frames, ","))
+end
+
+camera.add_selftest_step(150, "lobby_start", function(player)
+  util.log("selftest: before Start: %s", flow_state(player))
+  gui_click(player, "rts_lobby", "rts_lobby_start")
+  util.log("selftest: after Start: %s", flow_state(player))
+end)
+camera.add_selftest_step(1200, "matchflow_screenshot_arena", function(player)
+  if match.surface() then fog.stats_line() end
+  camera.screenshot(player)
+end)
+camera.add_selftest_step(1260, "matchflow_menu_open", function(player)
+  lobby.toggle_menu(player)
+  util.log("selftest: menu: %s", flow_state(player))
+end)
+camera.add_selftest_step(1290, "matchflow_screenshot_menu", function(player) camera.screenshot(player) end)
+camera.add_selftest_step(1320, "matchflow_menu_resume", function(player)
+  gui_click(player, "rts_menu", "rts_lobby_menu_resume")
+  util.log("selftest: after Resume: %s", flow_state(player))
+end)
+camera.add_selftest_step(1500, "matchflow_kill_ai", function(player)
+  debug_tools.run_command("rts-kill-force", "ai", player.index)
+end)
+camera.add_selftest_step(1620, "matchflow_screenshot_results", function(player)
+  util.log("selftest: results: %s", flow_state(player))
+  camera.screenshot(player)
+end)
+camera.add_selftest_step(1680, "matchflow_results_restart", function(player)
+  gui_click(player, "rts_results", "rts_lobby_results_restart")
+  util.log("selftest: after Restart: %s", flow_state(player))
+end)
+camera.add_selftest_step(1740, "matchflow_screenshot_lobby", function(player) camera.screenshot(player) end)
+camera.add_selftest_step(1800, "matchflow_done", function(player)
+  util.log("RTS_MATCHFLOW_DONE player %d: %s", player.index, flow_state(player))
+end)
+
 ---------------------------------------------------------------------------
 -- Console commands
 ---------------------------------------------------------------------------
@@ -1095,7 +1187,7 @@ local COMMANDS = {
       if not center then
         -- no camera: a row starting at the force's army point, on the side facing the arena centre
         local ap = match.army_point(force_name)
-        center = {x = ap.x + (match.FACING[force_name] or 1) * 13.5, y = ap.y}
+        center = {x = ap.x + match.facing(force_name) * 13.5, y = ap.y}
       end
       local made = 0
       local sp = match.spacing(name)
@@ -1113,29 +1205,57 @@ local COMMANDS = {
     end,
   },
   ["rts-qa-reset"] = {
-    help = "[nowaves] - QA: re-spawn both armies at their spawns, clear selections, control groups and "
-      .. "armed attack-moves, camera home. nowaves: no enemy waves until the next plain /rts-qa-reset",
+    help = "[nowaves] - QA: restart the current match with the same settings (new arena, bases, armies, clock), "
+      .. "clear selections, control groups and armed attack-moves, camera to the CC. In the lobby it starts a match "
+      .. "with the dialog's settings. nowaves: legacy wave brain only, no enemy waves until a plain /rts-qa-reset",
     run = function(cmd)
       if not admin_only(cmd) then return end
       local waves = not string.find(string.lower(cmd.parameter or ""), "nowaves", 1, true)
       local d = storage.debug
       if d.autotest and d.stage and d.stage ~= "done" then set_stage("done") end -- its units are about to go
-      orders.reset()
-      local cleared = 0
-      for index in pairs(storage.players or {}) do
-        selection.reset(index)
-        cleared = cleared + 1
+      local cleared = table_size(storage.players or {})
+      local who = cmd.player_index and ("player=" .. cmd.player_index) or "script"
+      local before = storage.match.match_id
+      local cfg = storage.match.config
+      if match.in_lobby() then
+        local p = storage.lobby and storage.lobby.pending or {}
+        cfg = {opponents = p.opponents, difficulty = p.difficulty, size = p.size, enemy_brain = "ai"}
       end
-      local removed, corpses = match.reset(waves)
-      for _, player in pairs(game.connected_players) do
-        camera.home(player)
-        cursor.ensure(player, true, "qa-reset")
-      end
+      lobby.start_match(cfg, "qa-reset " .. who)
+      match.set_waves(waves)
       local m = storage.match
-      reply(cmd, string.format("qa-reset by %s: removed %d units and %d corpses, spawned player=%d enemy=%d, "
-        .. "cleared %d selections; enemy waves %s", cmd.player_index and ("player=" .. cmd.player_index) or "script",
-        removed, corpses, units.count(PLAYER), units.count(ENEMY), cleared,
-        m.waves_off and "off" or string.format("on, next in %.0fs", (m.enemy_next_wave - game.tick) / 60)))
+      local counts = {}
+      for _, f in ipairs(match.forces()) do counts[#counts + 1] = string.format("%s=%d", f, units.count(f)) end
+      reply(cmd, string.format("qa-reset by %s: match %s -> %d on %s, spawned %s, cleared %d selections; enemy "
+        .. "waves %s", who, tostring(before), m.match_id, tostring(m.surface), table.concat(counts, " "), cleared,
+        m.waves_off and "off" or (m.enemy_next_wave and string.format("on, next in %.0fs",
+        (m.enemy_next_wave - game.tick) / 60) or "none (AI brain)")))
+    end,
+  },
+  ["rts-kill-force"] = {
+    help = "<force|ai|all> - debug: destroy every unit and building of a force (ai = every AI force), as if killed",
+    run = function(cmd)
+      if not admin_only(cmd) then return end
+      local arg = string.match(cmd.parameter or "", "%S+") or "ai"
+      local targets = {}
+      for _, f in ipairs(match.forces()) do
+        if arg == "all" or f == arg or (arg == "ai" and f ~= PLAYER) then targets[#targets + 1] = f end
+      end
+      local parts = {}
+      for _, f in ipairs(targets) do
+        local nu, nb = 0, 0
+        local list = {}
+        for _, rec in units.for_force(f) do list[#list + 1] = rec.entity end
+        for _, rec in buildings.for_force(f) do list[#list + 1] = rec.entity end
+        for _, e in ipairs(list) do
+          if e.valid then
+            if buildings.kind_of(e.name) then nb = nb + 1 else nu = nu + 1 end
+            e.die()
+          end
+        end
+        parts[#parts + 1] = string.format("%s: %d units, %d buildings", f, nu, nb)
+      end
+      reply(cmd, "rts-kill-force: " .. (#parts > 0 and table.concat(parts, "; ") or ("no match force " .. arg)))
     end,
   },
   ["rts-qa-end"] = {
@@ -1166,8 +1286,11 @@ local COMMANDS = {
     help = "- print the economy summary (resources, bots, power) and production counters of both forces",
     run = function(cmd)
       local own = command_force(cmd)
-      local other = own == ENEMY and PLAYER or ENEMY
-      for _, force_name in ipairs({own, other}) do
+      local list = {own}
+      for _, f in ipairs(match.forces()) do
+        if f ~= own then list[#list + 1] = f end
+      end
+      for _, force_name in ipairs(list) do
         reply(cmd, economy.describe(force_name))
         local st = production.stats(force_name)
         reply(cmd, string.format("%s production: kits=%d walkers=%d factory crafts=%d items to network=%d "

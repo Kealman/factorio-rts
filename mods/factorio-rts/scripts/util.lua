@@ -2,7 +2,9 @@
 local util = {}
 
 util.PLAYER_FORCE = "rts-player"
-util.ENEMY_FORCE = "rts-enemy"
+-- Phase 3: AI opponents are rts-ai-1 .. rts-ai-3 (match.lua); the first one is the "enemy" of 1v1 code paths.
+util.ENEMY_FORCE = "rts-ai-1"
+util.LOBBY_SURFACE = "rts-lobby"
 util.CURSOR_ITEM = "rts-cursor"
 
 --- log() with the "[rts]" prefix. Arguments are passed to string.format when present.
@@ -26,9 +28,13 @@ function util.pstorage(player_index)
   return p
 end
 
---- The surface the RTS match is played on.
+--- The surface the RTS match is played on: the current match arena (storage.match.surface, created per match by
+--- match.lua), else the lobby surface, else nauvis (only before match.init ran).
 function util.surface()
-  return game.surfaces.nauvis or game.surfaces[1]
+  local m = storage.match
+  local name = m and m.surface
+  return (name and game.surfaces[name]) or game.surfaces[util.LOBBY_SURFACE] or game.surfaces.nauvis
+    or game.surfaces[1]
 end
 
 --- Name of a defines value, for logs: util.define_name(defines.controllers, player.controller_type).

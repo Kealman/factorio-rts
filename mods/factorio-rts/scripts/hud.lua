@@ -108,6 +108,11 @@ local MINIMAP_CENTER = {x = 0, y = 0}
 local MINIMAP_VIEW_TILES = 2 * ARENA_HALF + 16
 local MINIMAP_PX_PER_TILE_AT_ZOOM_1 = 1.0
 local MINIMAP_ZOOM = MINIMAP_SIZE / (MINIMAP_VIEW_TILES * MINIMAP_PX_PER_TILE_AT_ZOOM_1) -- 1.25
+-- Phase 3: the arena size comes from the match config (256 or 384 tiles); the minimap shows the whole arena.
+local function minimap_zoom()
+  local half = match.arena_half and match.arena_half() or ARENA_HALF
+  return MINIMAP_SIZE / ((2 * half + 16) * MINIMAP_PX_PER_TILE_AT_ZOOM_1)
+end
 
 local NAMES = {panel = "rts_hud_panel", strip = "rts_hud_strip", minimap_frame = "rts_hud_minimap_frame",
                minimap = "rts_hud_minimap", build = "rts_hud_build"}
@@ -540,6 +545,14 @@ local function build_strip(screen, h)
   row.add({type = "label", style = "rts_hud_dim_label", caption = {"rts.versus"}})
   el.enemy = row.add({type = "label", style = "rts_hud_mono_label", tooltip = {"rts.enemy-units-tooltip"}})
   el.enemy.style.font_color = COLOR.enemy
+  -- Phase 3: the match menu (lobby.lua); F10 does the same.
+  el.menu = row.add({type = "button", name = PREFIX .. "menu", caption = {"rts.menu-button"},
+                     tooltip = {"rts.menu-button-tooltip"}, tags = {rts_hud = "menu"}})
+  el.menu.style.height = 24
+  el.menu.style.minimal_width = 64
+  el.menu.style.padding = {0, 6}
+  el.menu.style.font = "default-semibold"
+  el.menu.style.left_margin = 12
 
   local res = strip.add({type = "flow", direction = "horizontal", style = "rts_hud_centered_row"})
   h.res = {}
@@ -585,7 +598,7 @@ local function build_minimap(screen, h)
   frame.style.height = MINIMAP_FRAME_SIZE
   h.minimap_frame = frame
   local mm = screen.add({type = "minimap", name = NAMES.minimap, style = "rts_hud_minimap",
-                         position = MINIMAP_CENTER, zoom = MINIMAP_ZOOM, surface_index = util.surface().index,
+                         position = MINIMAP_CENTER, zoom = minimap_zoom(), surface_index = util.surface().index,
                          tags = {rts_hud = "minimap"}})
   mm.style.width = MINIMAP_SIZE
   mm.style.height = MINIMAP_SIZE
@@ -942,6 +955,7 @@ end
 
 local function match_message(m, own)
   if not (m and m.phase) or m.phase == "setup" then return {"rts.match-preparing"}, COLOR.yellow end
+  if m.phase == "lobby" then return {"rts.match-lobby"}, COLOR.yellow end
   local result = result_for(m, own)
   if result == "victory" then return {"rts.match-victory"}, COLOR.green end
   if result == "draw" then return {"rts.match-draw"}, COLOR.yellow end
@@ -983,7 +997,7 @@ local function update_strip(player, h)
   local own = player.force.name
   local enemy = own == ENEMY and PLAYER or ENEMY
   el.own.caption = {"rts.army", count_force(own)}
-  el.enemy.caption = {"rts.enemy-count", count_force(enemy)}
+  el.enemy.caption = {"rts.enemy-count", match.enemy_unit_count and match.enemy_unit_count(own) or count_force(enemy)}
 
   local snap = snapshot(own)
   local res = h.res
@@ -1071,7 +1085,7 @@ function hud.build(player)
   local res = player.display_resolution
   util.log("hud: built for player %d (display %dx%d, scale %.2f, density %.2f; minimap zoom %.4f, "
     .. "%.2f px/tile at scale 1; build menu %d items)", player.index, res.width, res.height, player.display_scale,
-    player.display_density_scale, MINIMAP_ZOOM, MINIMAP_ZOOM * MINIMAP_PX_PER_TILE_AT_ZOOM_1,
+    player.display_density_scale, h.minimap.zoom, h.minimap.zoom * MINIMAP_PX_PER_TILE_AT_ZOOM_1,
     table_size(h.build_buttons))
   return h
 end
@@ -1193,6 +1207,10 @@ local function on_click(e)
     hud.build_click(player, element.tags.item)
   elseif action == "recipe" then
     hud.recipe_click(player, element.tags.recipe)
+  elseif action == "menu" then
+    local toggle = optional_fn("scripts.lobby", {"toggle_menu"})
+    util.log("hud click menu player=%d%s", player.index, toggle and "" or " (lobby.toggle_menu missing)")
+    if toggle then toggle(player) end
   elseif COMMAND_BY_ACTION[action] then
     run_command(player, action)
   end

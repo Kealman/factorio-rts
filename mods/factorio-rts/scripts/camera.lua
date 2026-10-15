@@ -70,8 +70,19 @@ local function army_position(player)
   return units.centroid(player.force.name) or match.home(player.force.name)
 end
 
+-- Phase 3: the view is on the match arena (or the lobby surface before a match), not on the physical surface.
 local function enter_remote(player, position)
-  player.set_controller({type = REMOTE, position = position, surface = player.physical_surface})
+  player.set_controller({type = REMOTE, position = position, surface = match.view_surface()})
+end
+
+-- Phase 3 join flow: the characterless god body lives on the lobby surface, so nauvis is never shown, not even
+-- for the tick between leaving and re-entering the remote view. Teleporting needs the god controller.
+local function park_body(player)
+  local lobby = match.lobby_surface()
+  if player.physical_surface.index == lobby.index then return end
+  if player.controller_type ~= GOD then player.set_controller({type = GOD}) end
+  local ok = player.teleport({0, 0}, lobby)
+  util.log("camera: god body of player %d moved to %s: %s", player.index, lobby.name, tostring(ok))
 end
 
 local function chrome_shown(player)
@@ -163,6 +174,7 @@ function camera.setup(player, reason)
   end
   local ct = player.controller_type
   if ct ~= GOD and ct ~= REMOTE then player.set_controller({type = GOD}) end
+  park_body(player)
 
   local group = ensure_permission_group()
   if group then group.add_player(player) end
