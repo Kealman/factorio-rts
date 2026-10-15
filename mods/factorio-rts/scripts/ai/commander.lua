@@ -12,7 +12,8 @@
 --   lines       {[name] = line}        build_order.lua
 --   plan, queue, pending, need, need_list, next_build      construction.lua
 --   steps       {[i] = {done?, started?, skipped?, retry_at?}}, current_step     build_order.lua
---   unit_recipe nil until the build order enables unit production; heavy_barracks = unit number on heavy kits
+--   unit_recipe nil until the build order enables unit production; last_kit[barracks] = kit it made last,
+--               heavy_wait[barracks] = tick it started waiting for iron for a heavy kit
 --   army        army.lua;  known, guesses   scout.lua
 --   stats       {ghosts, revived, jobs, bad, seen, attacks, reinforcements, retreats, defends, recalls, bonus_units,
 --                bots_removed}
@@ -145,64 +146,142 @@ local function recipe_name(entity)
   return r and r.name or nil
 end
 
+commander.HEAVY_WAIT = 20 * 60   -- a barracks pauses at most this long for iron to gather for a heavy kit
+commander.SWITCH_PROGRESS = 0.15 -- a busy barracks changes recipe only this early in a craft (its ingredients return)
+
+-- Each barracks makes the build order's unit recipe. With cfg.heavy, a heavy kit is due after every walker kit
+-- (C.last_kit, set by init.lua's on_spawned handler). The barracks switches once the network holds HEAVY_STEEL steel
+-- and HEAVY_IRON iron, counting the iron already inside the force's barracks (it goes back to the network on a
+-- recipe change; with a walker barracks running, the network alone rarely holds 40). Short of iron, it pauses
+-- (recipe cleared) at most HEAVY_WAIT ticks, then makes one more walker. Once on heavy kits it keeps the recipe until
+-- the heavy kit is out (the kit's own pull takes the steel below 5 at once), unless it starves for HEAVY_WAIT.
 local function manage_barracks(C)
-  local heavy_ok = C.cfg.heavy and construction.have(C, "steel-plate") >= data.HEAVY_STEEL
-    and construction.have(C, "iron-plate") >= data.HEAVY_IRON
-  local hb = C.heavy_barracks and buildings.get(C.heavy_barracks)
-  if not hb then C.heavy_barracks = nil end
+  local steel = construction.have(C, "steel-plate")
+  local iron = construction.have(C, "iron-plate")
+  for _, rec in buildings.for_force(C.force, "barracks") do
+    local input = rec.entity.get_inventory(defines.inventory.crafter_input)
+    if input then iron = iron + input.get_item_count("iron-plate") end
+  end
+  C.last_kit = C.last_kit or {}
+  C.heavy_wait = C.heavy_wait or {}
+  local tick = game.tick
   for un, rec in buildings.for_force(C.force, "barracks") do
     local rally = C.army.rally
     if rally and not (rec.rally and util.distance(rec.rally, rally) < 1) then buildings.set_rally(un, rally) end
+    local e = rec.entity
+    local cur = recipe_name(e)
     local want = C.unit_recipe
-    if want then
-      if C.heavy_barracks == un then
-        if heavy_ok then want = data.HEAVY_KIT end
-      elseif heavy_ok and not C.heavy_barracks then
-        C.heavy_barracks = un
+    if want and C.cfg.heavy and C.last_kit[un] ~= data.HEAVY_KIT then
+      if cur == data.HEAVY_KIT then
         want = data.HEAVY_KIT
+        if e.is_crafting() then
+          C.heavy_wait[un] = nil
+        else
+          C.heavy_wait[un] = C.heavy_wait[un] or tick
+          if tick - C.heavy_wait[un] >= commander.HEAVY_WAIT then
+            want, C.last_kit[un], C.heavy_wait[un] = C.unit_recipe, data.HEAVY_KIT, nil
+          end
+        end
+      elseif steel >= data.HEAVY_STEEL then
+        if iron >= data.HEAVY_IRON then
+          want, C.heavy_wait[un] = data.HEAVY_KIT, nil
+        else
+          C.heavy_wait[un] = C.heavy_wait[un] or tick
+          if tick - C.heavy_wait[un] < commander.HEAVY_WAIT then
+            want = nil
+          else
+            -- waited long enough: one more walker, then a heavy is due again
+            C.last_kit[un], C.heavy_wait[un] = data.HEAVY_KIT, nil
+          end
+        end
       end
     end
-    local cur = recipe_name(rec.entity)
-    if cur ~= want and (cur == nil or not rec.entity.is_crafting()) then
-      production.set_recipe(rec.entity, want)
-      if want ~= data.HEAVY_KIT and C.heavy_barracks == un then C.heavy_barracks = nil end
+    if cur ~= want and (cur == nil or not e.is_crafting() or e.crafting_progress < commander.SWITCH_PROGRESS) then
+      production.set_recipe(e, want)
     end
   end
 end
 
--- The factory makes whatever the construction queue lacks first; ammo while turrets run low; else it idles so the
--- iron goes to units.
+commander.AMMO_PER_TURRET = 10  -- magazines per turret per minute the factory may make (gun turrets burn about one
+                                 -- a second on a walker that soaks hits; uncapped this took ~200 iron a minute)
+
+-- True when the force produced `item` in the last minute (item production statistics), memoized per tick.
+local function flowing(C, item)
+  if C.flow_tick ~= game.tick then C.flow_tick, C.flow = game.tick, {} end
+  local v = C.flow[item]
+  if v == nil then
+    local stats = game.forces[C.force].get_item_production_statistics(util.surface())
+    v = stats.get_flow_count({name = item, category = "input",
+                              precision_index = defines.flow_precision_index.one_minute}) > 0
+    C.flow[item] = v
+  end
+  return v
+end
+
+-- A factory recipe can run: every ingredient is in the network or being produced.
+local function recipe_feasible(C, recipe_name_)
+  local r = prototypes.recipe[recipe_name_]
+  if not r then return false end
+  for _, ing in pairs(r.ingredients) do
+    if construction.have(C, ing.name) < ing.amount and not flowing(C, ing.name) then return false end
+  end
+  return true
+end
+
+-- The factory makes the first item the construction queue lacks whose recipe can run (so a recipe that needs a
+-- resource the force has run out of does not block the one that would bring it back: easy once waited forever on an
+-- extractor needing copper while its copper smelter was queued behind it); ammo while turrets run low, at most
+-- AMMO_PER_TURRET magazines per turret per minute; else it idles, so the iron goes to units.
 local function manage_factory(C)
   local factory
   for un, rec in buildings.for_force(C.force, "factory") do
     if not factory or un < factory.entity.unit_number then factory = rec end
   end
   if not factory then return end
+  local e = factory.entity
+  local cur = recipe_name(e)
+  local ammo = data.FACTORY_RECIPE["firearm-magazine"]
+  local turrets = buildings.count(C.force, "turret")
+  if cur == ammo and (not C.ammo_pf or e.products_finished > C.ammo_pf) then
+    -- one craft (10 magazines) done: the next one waits its share of the per-minute budget
+    C.ammo_block = game.tick + math.floor(60 * 60 * 10 / (commander.AMMO_PER_TURRET * math.max(1, turrets)))
+    C.ammo_pf = nil
+  end
   local function short(item) return construction.have(C, item) < (C.need[item] or 0) end
-  local want
+  local want, fallback
   for _, item in ipairs(C.need_list) do
     local recipe = data.FACTORY_RECIPE[item]
     if recipe and short(item) then
-      want = recipe
-      break
+      fallback = fallback or recipe
+      if recipe_feasible(C, recipe) then
+        want = recipe
+        break
+      end
     end
   end
-  if not want and buildings.count(C.force, "turret") > 0
-     and construction.have(C, "firearm-magazine") < data.TURRET_MAGAZINES then
-    want = data.FACTORY_RECIPE["firearm-magazine"]
+  want = want or fallback
+  if cur == ammo and C.ammo_pf and not want then return end -- the budgeted ammo craft is still running
+  if not want and turrets > 0 and construction.have(C, "firearm-magazine") < data.TURRET_MAGAZINES
+     and game.tick >= (C.ammo_block or 0) and cur ~= ammo then
+    want = ammo
   end
-  local e = factory.entity
-  local cur = recipe_name(e)
   if cur == want then return end
-  -- keep a recipe that still makes something short, so two shortages do not make it flip every second
-  if cur then
+  -- keep a recipe that still makes something short and can run, so two shortages do not make it flip every second
+  if cur and cur ~= ammo and recipe_feasible(C, cur) then
     for item, recipe in pairs(data.FACTORY_RECIPE) do
-      if recipe == cur and (short(item) or (recipe == "rts-ammo" and want == recipe)) then return end
+      if recipe == cur and short(item) then return end
     end
-    if e.is_crafting() and want == nil then return end
-    if game.tick - (C.factory_set or 0) < commander.FACTORY_DWELL and want ~= nil and e.is_crafting() then return end
   end
-  if production.set_recipe(e, want) then C.factory_set = game.tick end
+  -- let a building craft finish (the factory pulls ingredients for two crafts, so it is nearly always crafting);
+  -- ammo is cut off at once when its budget is spent (its ingredients go back to the network)
+  if cur and cur ~= ammo and e.is_crafting()
+     and (want == nil or game.tick - (C.factory_set or 0) < commander.FACTORY_DWELL) then
+    return
+  end
+  if production.set_recipe(e, want) then
+    C.factory_set = game.tick
+    if want == ammo then C.ammo_pf = e.products_finished end
+  end
 end
 
 local function manage_production(C)
@@ -292,9 +371,8 @@ function commander.dump_lines(C)
     kinds[#kinds + 1] = kind .. "=" .. buildings.count(C.force, kind)
   end
   local st = C.stats
-  lines[#lines + 1] = string.format("ai %s buildings [%s] | ghosts=%d revived=%d jobs=%d bad=%d | recipe=%s heavy=%s",
-    C.force, table.concat(kinds, " "), st.ghosts, st.revived, st.jobs, st.bad, tostring(C.unit_recipe),
-    tostring(C.heavy_barracks))
+  lines[#lines + 1] = string.format("ai %s buildings [%s] | ghosts=%d revived=%d jobs=%d bad=%d | recipe=%s",
+    C.force, table.concat(kinds, " "), st.ghosts, st.revived, st.jobs, st.bad, tostring(C.unit_recipe))
   lines[#lines + 1] = string.format("ai %s army: %s | attacks=%d reinforcements=%d retreats=%d defends=%d recalls=%d",
     C.force, army.describe(C), st.attacks, st.reinforcements, st.retreats, st.defends, st.recalls)
   local kk = {}
@@ -304,7 +382,7 @@ function commander.dump_lines(C)
   for f in pairs(C.guesses) do guesses[#guesses + 1] = f end
   table.sort(guesses)
   lines[#lines + 1] = string.format("ai %s scout: vision=%s visible chunks=%d known enemy buildings %d [%s] seen=%d "
-    .. "guesses [%s]", C.force, C.cfg.vision, scout.visible_chunks(C, util.surface(), 80), table_size(C.known),
+    .. "guesses [%s]", C.force, C.cfg.vision, scout.visible_chunks(C, util.surface(), layout.arena_half()), table_size(C.known),
     table.concat(kk, " "), st.seen, table.concat(guesses, " "))
   return lines
 end

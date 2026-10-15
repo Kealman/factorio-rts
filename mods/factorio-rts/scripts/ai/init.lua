@@ -1,7 +1,7 @@
 -- AI commanders (docs/PHASE3.md "AI architecture"): entry point. control.lua requires this after scripts.match.
 --
---   ai.init()                              on_init / on_configuration_changed: storage, and a commander for
---                                          rts-enemy when storage.match.config.enemy_brain == "ai"
+--   ai.init()                              on_init / on_configuration_changed: storage (lobby.lua starts the
+--                                          commanders of a match; with the older match.lua, rts-enemy's here)
 --   ai.init_force(force_name, difficulty)  start (or restart with another difficulty) a commander for a force
 --   ai.stop_force(force_name)              forget a force's commander (its units and buildings stay)
 --   ai.get(force_name)                     the commander state, or nil
@@ -37,9 +37,12 @@ end
 
 function ai.init()
   ensure_storage()
+  -- The Phase 3 match flow (match.lua with m.ai_forces) starts commanders from lobby.lua when a match starts. Only
+  -- the older single-enemy match.lua relied on this to start the rts-enemy commander.
   local m = storage.match
   local cfg = m and m.config
-  if cfg and cfg.enemy_brain == "ai" and not storage.ai[util.ENEMY_FORCE] then
+  if m and not m.ai_forces and cfg and cfg.enemy_brain == "ai" and game.forces[util.ENEMY_FORCE]
+     and not storage.ai[util.ENEMY_FORCE] then
     ai.init_force(util.ENEMY_FORCE, cfg.enemy_difficulty or data.DEFAULT_DIFFICULTY)
   end
 end
@@ -141,10 +144,14 @@ do
   script.set_event_filter(defines.events.on_entity_damaged, filters)
 end
 
--- Hard: every kit_bonus_every-th unit an AI barracks spawns comes with a free one (production x1.25 at 4).
-production.on_spawned(function(unit, rec)
+-- The last kit each AI barracks made (heavy-kit alternation, commander.lua), and hard's bonus units: every
+-- kit_bonus_every-th unit an AI barracks spawns comes with a free one (production x1.25 at 4).
+production.on_spawned(function(unit, rec, kit)
   local C = storage.ai and storage.ai[rec.force]
-  local every = C and C.cfg.kit_bonus_every
+  if not C then return end
+  C.last_kit = C.last_kit or {}
+  if rec.entity.valid then C.last_kit[rec.entity.unit_number] = kit end
+  local every = C.cfg.kit_bonus_every
   if not every then return end
   C.spawned = (C.spawned or 0) + 1
   if C.spawned % every ~= 0 then return end

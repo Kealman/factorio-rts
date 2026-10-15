@@ -254,7 +254,12 @@ local function execute(C, step, st, surface, get_ctx)
       local have = buildings.count(C.force, buildings.kind_of(step.name)) + (C.pending[step.name] or 0)
       local placed = 0
       for _ = have + 1, count do
-        local pos = layout.find_spot(C, surface, step.name, step.anchor)
+        local pos, pole = layout.find_spot(C, surface, step.name, step.anchor)
+        if pole then
+          construction.queue(C, construction.add(C, {name = layout.POLE, x = pole.x, y = pole.y}))
+          util.log("ai %s: %s goes to %s outside the core supply, with a pole at %s", C.force, step.name,
+            util.pos_str(pos), util.pos_str(pole))
+        end
         if not pos then
           st.retry_at = game.tick + build_order.RETRY_TICKS
           util.log("ai %s: no free spot for %s (%s), retry in %ds", C.force, step.name, step.anchor,

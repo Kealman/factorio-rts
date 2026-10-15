@@ -30,7 +30,7 @@ local buildings = require("scripts.buildings")
 
 local layout = {}
 
-layout.ARENA_HALF = 80        -- match.lua's arena is [-80, 80)^2; nothing is planned outside it
+layout.ARENA_HALF = 80        -- fallback arena half size; the match's storage.match.arena_half wins (layout.arena_half)
 layout.BELT = "transport-belt"
 layout.POLE = "medium-electric-pole"
 layout.INSERTER = "fast-inserter"
@@ -104,8 +104,15 @@ local function each_tile(name, x, y, fn)
 end
 layout.each_tile = each_tile
 
+--- The arena is [-half, half)^2 around (0, 0): storage.match.arena_half (contract with match.lua, set at match
+--- start), else ARENA_HALF. Nothing is planned outside it.
+function layout.arena_half()
+  local m = storage.match
+  return (m and m.arena_half) or layout.ARENA_HALF
+end
+
 local function in_arena(tx, ty)
-  local h = layout.ARENA_HALF
+  local h = layout.arena_half()
   return tx >= -h + 1 and tx < h - 1 and ty >= -h + 1 and ty < h - 1
 end
 
@@ -410,7 +417,7 @@ local function spine_candidate(ctx, patch, horizontal, along_sign, c)
   local lo, hi
   for _, cell in ipairs(patch.cells) do
     local along, perp = cell[1], cell[2]
-    if not horizontal then along, perp = ty, tx end
+    if not horizontal then along, perp = cell[2], cell[1] end
     if math.abs(perp - c) <= 4 then
       if not lo or along < lo then lo = along end
       if not hi or along > hi then hi = along end
@@ -544,8 +551,9 @@ local function heap_pop(h)
 end
 
 --- Route from tile (sx, sy), entered moving in direction index sdir (nil: any first step), to tile (gx, gy). `blocked(tx, ty)` must be
---- false for every tile on the path except the goal. Returns {{tx, ty}, ...} including start and goal, or nil.
-function layout.route(ctx, sx, sy, sdir, gx, gy, blocked)
+--- false for every tile on the path except the goal. A search stops after max_expand states (default
+--- ROUTE_MAX_EXPAND): a failed search costs the most. Returns {{tx, ty}, ...} including start and goal, or nil.
+function layout.route(ctx, sx, sy, sdir, gx, gy, blocked, max_expand)
   local m = layout.ROUTE_MARGIN
   local bx0, bx1 = math.min(sx, gx) - m, math.max(sx, gx) + m
   local by0, by1 = math.min(sy, gy) - m, math.max(sy, gy) + m
@@ -573,7 +581,7 @@ function layout.route(ctx, sx, sy, sdir, gx, gy, blocked)
         break
       end
       expanded = expanded + 1
-      if expanded > layout.ROUTE_MAX_EXPAND then break end
+      if expanded > (max_expand or layout.ROUTE_MAX_EXPAND) then break end
       local back = opposite_idx(d)
       for nd = 1, 4 do
         if nd ~= back then
@@ -633,6 +641,123 @@ function layout.chain_poles(ctx, from, target, owner)
     last = best
   end
   return out, false
+end
+
+---------------------------------------------------------------------------
+-- Satellites: an extra rts-stockpile with a smelter slot on each side (the CC's four stockpiles cap the hub)
+---------------------------------------------------------------------------
+layout.CORE_HALF = 18 -- the hidden core pole supplies a 36x36 area around the CC centre
+
+-- True when the footprint of `name` at (x, y) lies inside the core pole's supply area.
+local function core_powered(frame, name, x, y)
+  local tx0, ty0, w, h = layout.footprint(name, x, y)
+  local H = layout.CORE_HALF
+  return tx0 >= frame.cx - H and tx0 + w <= frame.cx + H and ty0 >= frame.cy - H and ty0 + h <= frame.cy + H
+end
+layout.core_powered = core_powered
+
+--- The two slots of a satellite whose stockpile is on tile (sx, sy), along `axis` ("v": north and south of the
+--- stockpile, "h": west and east). Returns the stockpile spec and {{specs, ftx, fty}, {specs, ftx, fty}}.
+function layout.satellite_slots(sx, sy, axis)
+  local S = {x = sx + 0.5, y = sy + 0.5}
+  local stock = {name = "rts-stockpile", x = S.x, y = S.y, part = "stock"}
+  local slots = {}
+  for _, sign in ipairs({-1, 1}) do
+    local function at(d)
+      if axis == "v" then return {x = S.x, y = S.y + sign * d} end
+      return {x = S.x + sign * d, y = S.y}
+    end
+    local o, sm, i, f = at(1), at(3), at(5), at(6)
+    local ux, uy = S.x - o.x, S.y - o.y -- one tile towards the stockpile
+    slots[#slots + 1] = {
+      specs = {
+        {name = layout.INSERTER, x = i.x, y = i.y, part = "inp", pickup = {f.x, f.y},
+         dir = layout.inserter_dir(f.x - i.x, f.y - i.y)},
+        {name = layout.INSERTER, x = o.x, y = o.y, part = "out", pickup = {o.x - ux, o.y - uy},
+         dir = layout.inserter_dir(-ux, -uy)},
+        {name = layout.SMELTER, x = sm.x, y = sm.y, part = "smelter"},
+      },
+      ftx = math.floor(f.x), fty = math.floor(f.y),
+    }
+  end
+  return stock, slots
+end
+
+-- Every tile of a satellite (stockpile, both slots, both feed tiles). nil when one is blocked (the router's test:
+-- reserved, occupied, or on a belt link planned in this pass) or a machine would be outside the core supply area.
+local function satellite_tiles(ctx, stock, slots, blocked)
+  local tiles = {}
+  local ok = true
+  local function add(name, x, y)
+    each_tile(name, x, y, function(tx, ty)
+      if blocked(tx, ty) then ok = false return false end
+      tiles[#tiles + 1] = {tx, ty}
+    end)
+    if name ~= "rts-stockpile" and not core_powered(ctx.frame, name, x, y) then ok = false end
+  end
+  add(stock.name, stock.x, stock.y)
+  for _, sl in ipairs(slots) do
+    for _, sp in ipairs(sl.specs) do add(sp.name, sp.x, sp.y) end
+    if blocked(sl.ftx, sl.fty) then ok = false end
+    tiles[#tiles + 1] = {sl.ftx, sl.fty}
+  end
+  return ok and tiles or nil
+end
+
+--- Choose a satellite reachable by belt from feed tile `from` (and from its first slot to its second): stockpile
+--- candidates within SATELLITE_HALF tiles of the CC, both axes, nearest to `from` first. Reserves its tiles for
+--- `owner`. Returns {stock, slots (nearer slot first), links = {route to slot 1, route slot 1 -> slot 2}} or nil.
+layout.SATELLITE_HALF = 15
+layout.SATELLITE_TRIES = 8
+layout.SATELLITE_EXPAND = 6000 -- satellite links are short; a capped search keeps a failed candidate cheap
+function layout.plan_satellite(ctx, from, blocked, owner, first)
+  local f = ctx.frame
+  local cands = {}
+  local H = layout.SATELLITE_HALF
+  for ox = -H, H - 1 do
+    for oy = -H, H - 1 do
+      local sx, sy = math.floor(f.cx) + ox, math.floor(f.cy) + oy
+      for _, axis in ipairs({"v", "h"}) do
+        local stock, slots = layout.satellite_slots(sx, sy, axis)
+        local d1 = math.abs(slots[1].ftx - from[1]) + math.abs(slots[1].fty - from[2])
+        local d2 = math.abs(slots[2].ftx - from[1]) + math.abs(slots[2].fty - from[2])
+        if d2 < d1 then slots = {slots[2], slots[1]} end
+        cands[#cands + 1] = {stock = stock, slots = slots, d = math.min(d1, d2), sx = sx, sy = sy, axis = axis}
+      end
+    end
+  end
+  table.sort(cands, function(a, b)
+    if a.d ~= b.d then return a.d < b.d end
+    if a.sx ~= b.sx then return a.sx < b.sx end
+    if a.sy ~= b.sy then return a.sy < b.sy end
+    return a.axis < b.axis
+  end)
+  local tries = 0
+  for _, c in ipairs(cands) do
+    local tiles = satellite_tiles(ctx, c.stock, c.slots, blocked)
+    if tiles then
+      tries = tries + 1
+      for _, t in ipairs(tiles) do reserve(ctx, t[1], t[2], owner) end
+      local s1, s2 = c.slots[1], c.slots[2]
+      -- as a line's first slot, the main route from the spine replaces link 1 (planned later by plan_line)
+      local link1 = first and {{from[1], from[2]}, {s1.ftx, s1.fty}}
+        or layout.route(ctx, from[1], from[2], nil, s1.ftx, s1.fty, blocked, layout.SATELLITE_EXPAND)
+      local link2
+      if link1 then
+        local extra = {}
+        for i = 2, #link1 - 1 do extra[tkey(link1[i][1], link1[i][2])] = true end
+        link2 = layout.route(ctx, s1.ftx, s1.fty, nil, s2.ftx, s2.fty, function(tx, ty)
+          return extra[tkey(tx, ty)] or blocked(tx, ty)
+        end, layout.SATELLITE_EXPAND)
+      end
+      if link1 and link2 then
+        return {stock = c.stock, slots = c.slots, links = {link1, link2}}
+      end
+      for _, t in ipairs(tiles) do ctx.reserved[tkey(t[1], t[2])] = nil end
+      if tries >= layout.SATELLITE_TRIES then break end
+    end
+  end
+  return nil
 end
 
 ---------------------------------------------------------------------------
@@ -711,9 +836,37 @@ function layout.plan_line(C, ctx, line_name, spec, hostile)
   end
   local before = layout.snapshot_hub(C, ctx.frame)
   local slots, feeds, links = {}, {}, {}
+  local satellite, sat_used = nil, 0
   for _, slot_name in ipairs(spec.slots) do
     local name = south and layout.SLOT_FLIP[slot_name] or slot_name
-    if C.hub[name] == "free" then
+    if slot_name == "X" then
+      -- satellite slot: the first "X" places the satellite (both slots and links), the second uses its other slot.
+      -- As a line's first slot it is placed for a route from the spine's end (the main route replaces link 1).
+      if not satellite and sat_used == 0 then
+        local from = feeds[#feeds] or spine.tiles[#spine.tiles]
+        satellite = layout.plan_satellite(ctx, from, blocked, line_name, #slots == 0)
+        if not satellite then
+          sat_used = -1
+          util.log("ai layout: %s line %s: no room for a satellite stockpile reachable from %s", C.force,
+            line_name, slots[#slots] and ("hub slot " .. slots[#slots].name) or "the spine")
+        end
+      end
+      if satellite and sat_used < 2 then
+        sat_used = sat_used + 1
+        local sl = satellite.slots[sat_used]
+        local specs = {}
+        if sat_used == 1 then specs[1] = satellite.stock end
+        for _, sp in ipairs(sl.specs) do specs[#specs + 1] = sp end
+        local link = satellite.links[sat_used]
+        local first = #slots == 0 -- then the main route from the spine replaces link 1
+        slots[#slots + 1] = {name = "X" .. sat_used, specs = specs}
+        feeds[#feeds + 1] = {sl.ftx, sl.fty}
+        if not first then
+          links[#slots] = link
+          for i = 2, #link - 1 do blocked_extra[tkey(link[i][1], link[i][2])] = true end
+        end
+      end
+    elseif C.hub[name] == "free" then
       local specs, ftx, fty = layout.slot_specs(ctx.frame, name)
       -- claim first: the slots it kills free their tiles, which a route may need (a direct slot's feed tile is
       -- boxed in by the smelter slot it replaces)
@@ -797,58 +950,117 @@ local PREFER = {
   ["rts-turret"] = {19, 6},
 }
 
+-- Planned (or built) medium poles of a commander: {{x, y}, ...}.
+local function planned_poles(C)
+  local list = {}
+  for _, e in pairs(C.plan) do
+    if e.name == layout.POLE and e.status ~= "bad" then list[#list + 1] = {x = e.x, y = e.y} end
+  end
+  return list
+end
+
+-- Power for a powered building at pos (w x h) outside the core supply: covered by a planned pole's 7x7 supply area,
+-- or by a new pole on a margin tile that is within wire reach of the CC centre or a planned pole. Returns ok and the
+-- new pole position (nil when an existing pole covers it).
+local function ring_power(C, frame, pos, w, h, tx0, ty0, poles)
+  local sup = 3.5
+  for _, p in ipairs(poles) do
+    if math.abs(p.x - pos.x) < sup + w / 2 and math.abs(p.y - pos.y) < sup + h / 2 then return true, nil end
+  end
+  local cc = {x = frame.cx, y = frame.cy}
+  for tx = tx0 - 1, tx0 + w do
+    for ty = ty0 - 1, ty0 + h do
+      local inside = tx >= tx0 and tx < tx0 + w and ty >= ty0 and ty < ty0 + h
+      if not inside then
+        local q = {x = tx + 0.5, y = ty + 0.5}
+        local linked = util.distance(q, cc) <= layout.CC_WIRE
+        for _, p in ipairs(poles) do
+          if linked then break end
+          if util.distance(q, p) <= layout.CC_WIRE then linked = true end
+        end
+        if linked then return true, q end
+      end
+    end
+  end
+  return false, nil
+end
+
 --- A free position for `name` near the CC (anchor "cc") or towards the enemy (anchor "front"): every footprint tile
---- and a one-tile margin free of entities, ghosts and reserved tiles, and can_place_entity true. Reserves the
---- footprint. Returns the position or nil.
+--- and a one-tile margin free of entities, ghosts, reserved tiles and ore, and can_place_entity true.
+--- "cc" first tries the core pole's supply area (POWER_HALF); when that is full it tries a second ring out to the
+--- edge of the CC logistic area (LOGISTIC_HALF), where a powered building needs a planned pole nearby (lines' gap
+--- and chain poles count, so buildings also go along the belt lines towards the ore) or gets a new pole on its margin.
+--- "front" spots (turrets: no power needed) lie 10..LOGISTIC_HALF tiles towards the nearest enemy spawn.
+--- Reserves the footprint (and the pole tile). Returns the position and the new pole position (or nil), or nil.
 function layout.find_spot(C, surface, name, anchor)
   local frame = C.frame
   local p = prototypes.entity[name]
   local w, h = p.tile_width, p.tile_height
+  local powered = p.electric_energy_source_prototype ~= nil
   local pref = PREFER[name] or {-10, 10}
-  local lo_x, hi_x, half_y = -layout.POWER_HALF, layout.POWER_HALF, layout.POWER_HALF
-  if anchor == "front" then lo_x, hi_x, half_y = 10, layout.LOGISTIC_HALF, layout.LOGISTIC_HALF end
-  local cands = {}
+  local passes
+  if anchor == "front" then
+    passes = {{lo_x = 10, hi_x = layout.LOGISTIC_HALF, half_y = layout.LOGISTIC_HALF}}
+  else
+    passes = {{lo_x = -layout.POWER_HALF, hi_x = layout.POWER_HALF, half_y = layout.POWER_HALF},
+              {lo_x = -layout.LOGISTIC_HALF, hi_x = layout.LOGISTIC_HALF, half_y = layout.LOGISTIC_HALF, ring = true}}
+  end
   local ox_off = (w % 2 == 1) and 0.5 or 0
   local oy_off = (h % 2 == 1) and 0.5 or 0
-  for ox = math.ceil(lo_x), math.floor(hi_x) do
-    for oy = -math.floor(half_y), math.floor(half_y) do
-      local fx, fy = ox + ox_off, oy + oy_off
-      if math.abs(fx) + w / 2 <= hi_x + 1.5 and math.abs(fy) + h / 2 <= half_y + 1.5 then
-        local d1 = (fx - pref[1]) ^ 2 + (fy - pref[2]) ^ 2
-        local d2 = (fx - pref[1]) ^ 2 + (fy + pref[2]) ^ 2
-        cands[#cands + 1] = {fx, fy, math.min(d1, d2)}
-      end
-    end
-  end
-  table.sort(cands, function(a, b)
-    if a[3] ~= b[3] then return a[3] < b[3] end
-    if a[2] ~= b[2] then return a[2] < b[2] end
-    return a[1] < b[1]
-  end)
-  local tested = 0
-  for _, c in ipairs(cands) do
-    local pos = layout.world(frame, c[1], c[2])
-    local tx0, ty0 = layout.footprint(name, pos.x, pos.y)
-    local ok = true
-    for tx = tx0 - 1, tx0 + w do
-      for ty = ty0 - 1, ty0 + h do
-        local k = tkey(tx, ty)
-        if C.reserved[k] ~= nil or C.avoid[k] or not in_arena(tx, ty) then ok = false break end
-      end
-      if not ok then break end
-    end
-    if ok then
-      tested = tested + 1
-      local area = {{tx0 - 1, ty0 - 1}, {tx0 + w + 1, ty0 + h + 1}}
-      if surface.count_entities_filtered({area = area, type = IGNORE_TYPES, invert = true}) == 0
-         and surface.can_place_entity({name = name, position = pos, force = C.force,
-                                       build_check_type = defines.build_check_type.manual}) then
-        for tx = tx0, tx0 + w - 1 do
-          for ty = ty0, ty0 + h - 1 do C.reserved[tkey(tx, ty)] = "building" end
+  local poles
+  for _, pass in ipairs(passes) do
+    local cands = {}
+    for ox = math.ceil(pass.lo_x), math.floor(pass.hi_x) do
+      for oy = -math.floor(pass.half_y), math.floor(pass.half_y) do
+        local fx, fy = ox + ox_off, oy + oy_off
+        local inner = math.abs(fx) <= layout.POWER_HALF and math.abs(fy) <= layout.POWER_HALF
+        if math.abs(fx) + w / 2 <= pass.hi_x + 1.5 and math.abs(fy) + h / 2 <= pass.half_y + 1.5
+           and not (pass.ring and inner) then
+          local d1 = (fx - pref[1]) ^ 2 + (fy - pref[2]) ^ 2
+          local d2 = (fx - pref[1]) ^ 2 + (fy + pref[2]) ^ 2
+          cands[#cands + 1] = {fx, fy, math.min(d1, d2)}
         end
-        return pos
       end
-      if tested > 400 then break end
+    end
+    table.sort(cands, function(a, b)
+      if a[3] ~= b[3] then return a[3] < b[3] end
+      if a[2] ~= b[2] then return a[2] < b[2] end
+      return a[1] < b[1]
+    end)
+    local tested = 0
+    for _, c in ipairs(cands) do
+      local pos = layout.world(frame, c[1], c[2])
+      local tx0, ty0 = layout.footprint(name, pos.x, pos.y)
+      local ok = true
+      for tx = tx0 - 1, tx0 + w do
+        for ty = ty0 - 1, ty0 + h do
+          local k = tkey(tx, ty)
+          if C.reserved[k] ~= nil or C.avoid[k] or not in_arena(tx, ty) then ok = false break end
+        end
+        if not ok then break end
+      end
+      if ok then
+        tested = tested + 1
+        local area = {{tx0 - 1, ty0 - 1}, {tx0 + w + 1, ty0 + h + 1}}
+        local pole
+        if surface.count_entities_filtered({area = area, type = IGNORE_TYPES, invert = true}) == 0
+           and surface.count_entities_filtered({area = {{tx0, ty0}, {tx0 + w, ty0 + h}}, type = "resource"}) == 0
+           and surface.can_place_entity({name = name, position = pos, force = C.force,
+                                         build_check_type = defines.build_check_type.manual}) then
+          if powered and pass.ring and not core_powered(frame, name, pos.x, pos.y) then
+            poles = poles or planned_poles(C)
+            ok, pole = ring_power(C, frame, pos, w, h, tx0, ty0, poles)
+          end
+          if ok then
+            for tx = tx0, tx0 + w - 1 do
+              for ty = ty0, ty0 + h - 1 do C.reserved[tkey(tx, ty)] = "building" end
+            end
+            if pole then C.reserved[tkey(math.floor(pole.x), math.floor(pole.y))] = "building" end
+            return pos, pole
+          end
+        end
+        if tested > 400 then break end
+      end
     end
   end
   return nil

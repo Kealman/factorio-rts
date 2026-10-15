@@ -9,9 +9,10 @@
 --   [rts] ai autotest summary <passed>/<total> ... result=...
 -- Checks: build_3min (each force has an extractor, a smelter and a barracks by 3 min), produce (kits made in every
 -- minute from minute 3 on while the force still has a barracks and a CC), attack (each force launched an attack by the end,
--- unless the match ended first), outcome (the match ended, or both forces still produce at the end; when a side
--- stopped producing at DURATION, the test waits up to END_GRACE for the match to end), no_bad_spam (fewer than 20
--- construction entries given up per force).
+-- unless the match ended first or the force lost its CC first), outcome (the match ended, or at least two forces
+-- still produce at the end; when a force stopped producing at DURATION, the test waits up to END_GRACE for the match
+-- to end), no_bad_spam (fewer than 20 construction entries given up per force). FORCES is every match force (debug.lua
+-- sets it); 1v1 is rts-player vs rts-ai-1.
 local util = require("scripts.util")
 local events = require("scripts.events")
 local units = require("scripts.units")
@@ -23,12 +24,14 @@ local commander = require("scripts.ai.commander")
 
 local autotest = {}
 
-autotest.DURATION = 6 * 60 * 60
+autotest.DURATION = 6 * 60 * 60 -- test copies may set a longer one to see how long a match takes
 autotest.MINUTE = 60 * 60
 autotest.BUILD_DEADLINE = 3 * 60 * 60
 autotest.END_GRACE = 60 * 60 -- at DURATION, a side that stopped producing gets this long for the match to end
 autotest.FORCES = {util.PLAYER_FORCE, util.ENEMY_FORCE}
-autotest.PLAYER_DIFFICULTY = "normal"
+-- The player commander's difficulty; nil = the same as the enemy's (storage.match.config.enemy_difficulty), so
+-- one setting runs easy-vs-easy, normal-vs-normal or hard-vs-hard.
+autotest.PLAYER_DIFFICULTY = nil
 
 -- Module-local wall clock (profilers are not game state).
 local wall
@@ -45,8 +48,10 @@ function autotest.start()
   local s = {started = game.tick, minute = 0, pass = 0, fail = 0, kits = {}, per_minute = {}, built_at = {},
              produced_ok = {}, done = false}
   storage.ai_autotest = s
+  local cfg = storage.match and storage.match.config
+  local difficulty = autotest.PLAYER_DIFFICULTY or (cfg and cfg.enemy_difficulty) or "normal"
   for _, f in ipairs(autotest.FORCES) do
-    if not ai.get(f) then ai.init_force(f, autotest.PLAYER_DIFFICULTY) end
+    if not ai.get(f) then ai.init_force(f, difficulty) end
     s.kits[f] = production.stats(f).kits
     s.per_minute[f] = {}
     s.produced_ok[f] = true
@@ -54,8 +59,9 @@ function autotest.start()
   ai.reset_perf()
   wall = helpers.create_profiler()
   autotest.log_maps()
-  util.log("ai autotest: started at tick %d, %s vs %s, %d minutes", game.tick, autotest.FORCES[1],
-    autotest.FORCES[2], autotest.DURATION / autotest.MINUTE)
+  util.log("ai autotest: started at tick %d, %s (%s) vs %s (%s), %d minutes", game.tick, autotest.FORCES[1],
+    ai.get(autotest.FORCES[1]).difficulty, autotest.FORCES[2], ai.get(autotest.FORCES[2]).difficulty,
+    autotest.DURATION / autotest.MINUTE)
 end
 
 local function kinds(force_name)
@@ -121,6 +127,15 @@ end
 
 function autotest.log_maps() ai.log_maps() end
 
+--- Forces that made a kit in the last reported minute.
+function autotest.producing(s)
+  local n = 0
+  for _, f in ipairs(autotest.FORCES) do
+    if (s.per_minute[f][s.minute] or 0) > 0 then n = n + 1 end
+  end
+  return n
+end
+
 local function finish(s, why)
   s.done = true
   local m = storage.match
@@ -132,21 +147,20 @@ local function finish(s, why)
   if enemy_ai then ai.run_command("rts-ai", util.ENEMY_FORCE .. " " .. enemy_ai.difficulty) end -- in-place path
   for _, f in ipairs(autotest.FORCES) do
     local C = ai.get(f)
-    check("attack_" .. f, (C and C.stats.attacks > 0) or ended, "%s launched %d attacks (%d reinforcements)%s", f,
-      C and C.stats.attacks or 0, C and C.stats.reinforcements or 0, ended and ", match ended" or "")
+    local knocked_out = buildings.count(f, "cc") == 0
+    check("attack_" .. f, (C and C.stats.attacks > 0) or ended or knocked_out,
+      "%s launched %d attacks (%d reinforcements)%s", f, C and C.stats.attacks or 0, C and C.stats.reinforcements or 0,
+      ended and ", match ended" or (knocked_out and ", lost its CC first" or ""))
     check("produce_" .. f, s.produced_ok[f], "%s kits per minute [%s]", f,
       table.concat(s.per_minute[f], " "))
     check("no_bad_spam_" .. f, (C and C.stats.bad or 0) < 20, "%s gave up on %d construction entries", f,
       C and C.stats.bad or 0)
   end
   local last = s.minute
-  local both_produce = true
-  for _, f in ipairs(autotest.FORCES) do
-    if (s.per_minute[f][last] or 0) == 0 then both_produce = false end
-  end
-  check("outcome", ended or both_produce, "%s", ended and string.format("match ended at %.0fs, winner %s",
-    (m.ended_tick - s.started) / 60, tostring(m.winner)) or string.format("both forces still produce at minute %d: %s",
-    last, both_produce and "yes" or "no"))
+  local producing = autotest.producing(s)
+  check("outcome", ended or producing >= 2, "%s", ended and string.format("match ended at %.0fs, winner %s",
+    (m.ended_tick - s.started) / 60, tostring(m.winner)) or string.format("%d of %d forces still produce at minute %d",
+    producing, #autotest.FORCES, last))
   util.log("ai autotest summary %d/%d%s, result=%s (%s)", s.pass, s.pass + s.fail,
     s.fail == 0 and " (all passed)" or string.format(" (%d FAILED)", s.fail),
     ended and ("winner " .. tostring(m.winner)) or "both alive", why)
@@ -184,12 +198,9 @@ function autotest.tick(tick)
     end
   end
   local m = storage.match
-  local both_produce = true
-  for _, f in ipairs(autotest.FORCES) do
-    if (s.per_minute[f][s.minute] or 0) == 0 then both_produce = false end
-  end
+  local all_produce = autotest.producing(s) == #autotest.FORCES
   if age >= autotest.DURATION and not (m and m.phase == "ended")
-     and (both_produce or age >= autotest.DURATION + autotest.END_GRACE) then
+     and (all_produce or age >= autotest.DURATION + autotest.END_GRACE) then
     finish(s, "time")
   elseif m and m.phase == "ended" and not s.ended_at then
     s.ended_at = tick

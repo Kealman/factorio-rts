@@ -99,12 +99,56 @@ function scout.visible_enemy_unit(C, surface, pos, range)
   return nil
 end
 
+--- An enemy force that still has buildings but no CC and no barracks (it can no longer produce units), or nil. Its
+--- remaining buildings are all targets (the lead's rule: finish a beaten side, so a lone factory or stockpile does
+--- not keep it in the match).
+function scout.beaten_enemy(C)
+  local force = game.forces[C.force]
+  if not force then return nil end
+  local state = {}
+  for _, rec in buildings.all() do
+    local f = rec.force
+    if f ~= C.force then
+      local st = state[f]
+      if not st then
+        st = {enemy = is_enemy(force, f), alive = false, any = false}
+        state[f] = st
+      end
+      st.any = true
+      if rec.kind == "cc" or rec.kind == "barracks" then st.alive = true end
+    end
+  end
+  local names = {}
+  for f, st in pairs(state) do
+    if st.enemy and st.any and not st.alive then names[#names + 1] = f end
+  end
+  table.sort(names)
+  return names[1]
+end
+
 --- Best attack target for a group at `from`: the known enemy building with the lowest distance + priority penalty
 --- (orders_data.TARGET_PENALTY: barracks/factory first), else the nearest visible enemy unit, else a spawn guess.
+--- Against a beaten enemy (scout.beaten_enemy) the target is its nearest factory, else stockpile, else building,
+--- known or not.
 --- Returns {position, kind, un?} or nil.
+scout.FINISH_ORDER = {"factory", "stockpile"} -- a factory keeps a side in the match (buildings.is_alive_force)
 function scout.best_target(C, surface, from)
   local best, best_score
   local penalty = data.TARGET_PENALTY
+  local beaten = scout.beaten_enemy(C)
+  if beaten then
+    -- finishing: the nearest factory of the beaten side, else its nearest stockpile, else its nearest building
+    for pass = 1, #scout.FINISH_ORDER + 1 do
+      local kind = scout.FINISH_ORDER[pass]
+      for un, rec in buildings.for_force(beaten, kind) do
+        local d = util.distance(from, rec.position)
+        if not best_score or d < best_score then
+          best, best_score = {position = rec.position, kind = rec.kind, un = un, finishing = true}, d
+        end
+      end
+      if best then return best end
+    end
+  end
   for un, k in pairs(C.known) do
     local score = util.distance(from, k.position) + (penalty[k.kind] or 50)
     if not best_score or score < best_score then

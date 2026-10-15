@@ -14,6 +14,9 @@
 --   threat     {position, tick, damage, since}?  latest damage to an own building (init.lua on_entity_damaged)
 --   last_attack, next_gid
 -- }
+-- Defence sends the nearest half of the idle units (at least DEFEND_MIN; easy at most half) and keeps the rest at
+-- the rally. No attack starts before cfg.first_attack ticks; an enemy without CC and barracks is attacked with
+-- FINISH_MIN units, its remaining buildings all known (scout.best_target).
 -- Stats in C.stats: attacks, reinforcements, retreats, defends, recalls.
 local util = require("scripts.util")
 local units = require("scripts.units")
@@ -31,6 +34,8 @@ army.BASE_RADIUS = 55            -- threats this close to the CC are defended
 army.RECALL_DAMAGE = 400         -- damage within one threat that recalls an attack group when the pool is empty
 army.RETURN_TIMEOUT = 45 * 60    -- a retreating / returning group disbands after this long anyway
 army.REGROUP_TICKS = 30 * 60     -- no new attack this long after a retreat
+army.DEFEND_MIN = 4              -- a defence group takes the nearest half of the idle units, at least this many
+army.FINISH_MIN = 3              -- attack size against an enemy without CC and barracks
 army.RALLY_SHARE = 0.34          -- rally point: this share of the way from the CC to the nearest enemy spawn,
 army.RALLY_MIN, army.RALLY_MAX = 20, 40 -- clamped; two rallies 24 tiles apart (0.4 of 120) saw each other (vision 30)
 
@@ -74,6 +79,19 @@ function army.on_damage(C, entity, cause, damage)
   t.position = {x = pos.x, y = pos.y}
   t.tick = game.tick
   t.damage = t.damage + (damage or 0)
+end
+
+--- How many of `idle` pool units defend: the nearest half, at least DEFEND_MIN (cfg.defend_share caps it: easy
+--- never sends more than half).
+function army.defenders(C, idle)
+  local share = C.cfg.defend_share
+  local n
+  if share then
+    n = math.floor(idle * share)
+  else
+    n = math.max(army.DEFEND_MIN, math.ceil(idle / 2))
+  end
+  return math.min(n, idle)
 end
 
 local function entities_of(G)
@@ -178,15 +196,27 @@ function army.step(C, surface)
       if util.distance(defending.target.position, t.position) > 8 then
         order_attack(C, defending, lists[defending.id], {position = t.position, kind = "threat"})
       end
-    elseif #pool > 0 then
-      local G = form(C, pool, "defend", nil)
-      lists[G.id] = pool
-      order_attack(C, G, pool, {position = t.position, kind = "threat"})
+    elseif #pool > 0 and army.defenders(C, #pool) > 0 then
+      -- the nearest part of the pool defends; the rest keeps rallying
+      local n = army.defenders(C, #pool)
+      local tp = t.position
+      table.sort(pool, function(x, y)
+        local dx, dy = util.distance_sq(x, tp), util.distance_sq(y, tp)
+        if dx ~= dy then return dx < dy end
+        return x.unit_number < y.unit_number
+      end)
+      local sent, rest = {}, {}
+      for i, e in ipairs(pool) do
+        if i <= n then sent[#sent + 1] = e else rest[#rest + 1] = e end
+      end
+      local G = form(C, sent, "defend", nil)
+      lists[G.id] = sent
+      order_attack(C, G, sent, {position = tp, kind = "threat"})
       C.stats.defends = C.stats.defends + 1
-      util.log("ai %s: group #%d (%d units) defends against an attack at %s", C.force, G.id, #pool,
-        util.pos_str(t.position))
-      pool = {}
-    elseif t.damage >= army.RECALL_DAMAGE then
+      util.log("ai %s: group #%d (%d of %d idle units) defends against an attack at %s", C.force, G.id, #sent,
+        #pool, util.pos_str(tp))
+      pool = rest
+    elseif #pool == 0 and t.damage >= army.RECALL_DAMAGE then
       local nearest, nd
       for gid, G in pairs(a.groups) do
         if G.state == "attack" then
@@ -214,9 +244,13 @@ function army.step(C, surface)
   local strength = 0
   for _, e in ipairs(pool) do strength = strength + (e.get_health_ratio() or 1) end
   a.pool_strength = strength
-  if a.min and #pool > 0 and not threat_fresh(C, home) and tick >= (a.hold_until or 0) then
-    local launch = strength >= a.min and tick - a.last_attack >= (C.cfg.attack_interval or 0)
-    local reinforce = attacking and strength >= math.max(3, a.min / 2)
+  -- an enemy without CC and barracks is finished off with whatever is at hand
+  local finishing = scout.beaten_enemy(C) ~= nil
+  local need = finishing and math.min(a.min or 3, army.FINISH_MIN) or a.min
+  -- (a threat does not stop it: the defence above took its share of the pool, the rest may attack)
+  if a.min and #pool > 0 and tick >= (a.hold_until or 0) and tick >= C.started + (C.cfg.first_attack or 0) then
+    local launch = strength >= need and (finishing or tick - a.last_attack >= (C.cfg.attack_interval or 0))
+    local reinforce = attacking and strength >= math.max(3, need / 2)
     if launch or reinforce then
       local target = scout.best_target(C, surface, a.rally)
       if target then
