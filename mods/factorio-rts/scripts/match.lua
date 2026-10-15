@@ -1,31 +1,74 @@
--- Phase 1 skirmish: forces, a flat arena around {0, 0}, two armies, a trivial enemy brain, win/lose.
+-- Skirmish: forces, a flat arena around {0, 0}, a base per side, small starting armies, a trivial enemy brain,
+-- win/lose.
+-- Phase 2 start (docs/PHASE2.md): the player gets the CC composite at (-60, 0) with the starting stock in its
+-- stockpiles; the enemy gets the full starter base template (basetemplate.lua, mirrored) at (+60, 0) with its
+-- barracks on walker kits; both sides get ore patches and ARMY_SIZE walkers. A force is out of the match when it
+-- has no CC, barracks or factory (buildings.is_alive_force) and no units.
 -- Owns storage.match:
---   phase            "running" | "ended"
+--   phase            "setup" | "running" | "ended"   (the only source of truth for the match result, see
+--                    match.result: a winner exists only while phase == "ended")
 --   tick_started     tick the armies spawned
+--   ended_tick       tick the match ended (phase == "ended")
+--   config           {first_wave_ticks, wave_period_ticks}: enemy wave timing (match.DEFAULT_CONFIG; change it with
+--                    match.set_wave_timing or /rts-wave-timing)
 --   enemy_next_wave  tick of the next enemy wave
---   spawns           {["rts-player"] = MapPosition, ["rts-enemy"] = MapPosition}
+--   spawns           {["rts-player"] = MapPosition, ["rts-enemy"] = MapPosition}  CC centres (match.home)
 --   wave             number of waves launched so far
 --   enemy_group      LuaCommandable? (current wave group), enemy_group_id = its unique_id
---   winner           force name, once phase == "ended"
+--   winner           force name or "draw", once phase == "ended" (match.decide_winner)
 --   charted          true once the arena was charted for rts-player
 --   waves_off        true after `/rts-qa-reset nowaves`: no enemy waves (enemy_next_wave is nil)
 local util = require("scripts.util")
 local events = require("scripts.events")
 local units = require("scripts.units")
+local buildings = require("scripts.buildings")
+local production = require("scripts.production")
+local basetemplate = require("scripts.basetemplate")
 
 local match = {}
 
 local PLAYER, ENEMY = util.PLAYER_FORCE, util.ENEMY_FORCE
 local ARENA_HALF = 80                       -- arena is [-80, 80)^2 tiles
 local ARENA_TILE = "grass-1"
-local SPAWNS = {[PLAYER] = {x = -50, y = 0}, [ENEMY] = {x = 50, y = 0}}
+local SPAWNS = {[PLAYER] = {x = -60, y = 0}, [ENEMY] = {x = 60, y = 0}} -- CC centres (tile corners)
 local FACING = {[PLAYER] = 1, [ENEMY] = -1} -- +1 = the enemy is east
+match.CC_POSITIONS = SPAWNS
+match.FACING = FACING
+
+-- Starting armies, ARMY_OFFSET tiles in front of the CC: ARMY.walkers walkers in ARMY_COLUMNS columns and
+-- ARMY.heavies heavies in a column in front of them. Grid spacing per unit (Phase 1 QA follow-up 6: the denser
+-- 3-tile grid overlapped visually): 3.5 tiles for walkers, 5 for heavies.
+match.ARMY = {walkers = 6, heavies = 0}
+match.ARMY_SIZE = match.ARMY.walkers + match.ARMY.heavies
+match.SPACING = {["rts-walker"] = 3.5, ["rts-walker-heavy"] = 5}
+local ARMY_COLUMNS = 2
+local ARMY_OFFSET = 14
+local HEAVY_FRONT = 6 -- tiles from the walker block's front column to the heavies' column
+
+-- Enemy wave timing (Phase 1 QA follow-up 2): first wave 3 minutes after the armies spawn, then every 2 minutes.
+-- Copied into storage.match.config at init; the headless autotest shortens it through match.set_wave_timing.
+match.DEFAULT_CONFIG = {first_wave_ticks = 3 * 60 * 60, wave_period_ticks = 2 * 60 * 60}
+
+-- docs/PHASE2.md "Starting stock", inserted into the player's CC stockpiles.
+match.STARTING_STOCK = {
+  {"iron-plate", 200}, {"copper-plate", 100}, {"rts-extractor", 2}, {"rts-smelter", 2}, {"rts-barracks", 1},
+  {"transport-belt", 20}, {"fast-inserter", 10}, {"medium-electric-pole", 10},
+}
+match.ENEMY_BARRACKS_RECIPE = "rts-walker-kit"
+
+-- Ore patches per side, relative to the CC centre for the side facing +x (dx is flipped for the other side):
+-- {resource, dx, dy, width, height}. Iron: a 12x12 blob 30 tiles towards the arena centre.
+match.ORE_AMOUNT = 1500
+match.ORE_PATCHES = {
+  {"iron-ore", 30, 0, 12, 12},
+  {"copper-ore", 28, -16, 8, 8},
+  {"stone", 28, 16, 6, 6},
+  {"coal", 36, 16, 6, 6},
+}
 local FORCE_COLORS = {
   [PLAYER] = {r = 0.15, g = 0.45, b = 1.0, a = 1},
   [ENEMY] = {r = 0.95, g = 0.15, b = 0.1, a = 1},
 }
-local FIRST_WAVE_TICKS = 45 * 60            -- first enemy wave 45 s after the armies spawn
-local WAVE_PERIOD_TICKS = 90 * 60           -- then every 90 s
 local WAVE_RADIUS = 16
 local RETARGET_RANGE = 300
 
@@ -105,28 +148,67 @@ local function prepare_arena(surface)
     -h, h, #tiles, ARENA_TILE, removed, water)
 end
 
--- Spawn grid spacing. The Space Age walker (strafer copy) is 1.8 tiles wide and the heavy (stomper copy)
--- 2.7 tiles, so heavies need more room than walkers; the base-game variants are smaller.
-local WALKER_SPACING = 3
-local HEAVY_SPACING = 4
-local HEAVY_FRONT = 6 -- heavies' column, tiles in front of the walker block's first column
+--- Where a force's army gathers: ARMY_OFFSET tiles in front of its CC (towards the arena centre).
+function match.army_point(force_name)
+  local home = match.home(force_name)
+  return {x = home.x + (FACING[force_name] or 1) * ARMY_OFFSET, y = home.y}
+end
 
---- Spawn the standard army of one force around its spawn point: 20 walkers in a 4x5 block and
---- 4 heavies in a column in front of them (towards the enemy).
+--- Grid spacing for a unit prototype name (match.SPACING; 3.5 for anything not listed).
+function match.spacing(name)
+  return match.SPACING[name] or match.SPACING["rts-walker"]
+end
+
+--- Spawn the starting army of one force at match.army_point: match.ARMY.walkers walkers in ARMY_COLUMNS columns
+--- (the first column faces the enemy, the others extend towards the own CC), match.ARMY.heavies heavies in a
+--- column HEAVY_FRONT tiles in front of them.
 local function spawn_army(force_name)
-  local s = SPAWNS[force_name]
+  local s = match.army_point(force_name)
   local dir = FACING[force_name]
   local made = 0
-  for i = 0, 19 do
-    local col, row = i % 4, math.floor(i / 4)
-    local pos = {x = s.x - dir * col * WALKER_SPACING, y = s.y + (row - 2) * WALKER_SPACING}
+  local ws, hs = match.spacing("rts-walker"), match.spacing("rts-walker-heavy")
+  local walkers, heavies = match.ARMY.walkers, match.ARMY.heavies
+  local rows = math.ceil(walkers / ARMY_COLUMNS)
+  for i = 0, walkers - 1 do
+    local col, row = i % ARMY_COLUMNS, math.floor(i / ARMY_COLUMNS)
+    local pos = {x = s.x - dir * col * ws, y = s.y + (row - (rows - 1) / 2) * ws}
     if units.spawn("rts-walker", pos, force_name, "walker") then made = made + 1 end
   end
-  for i = 0, 3 do
-    local pos = {x = s.x + dir * HEAVY_FRONT, y = s.y + (i - 1.5) * HEAVY_SPACING}
+  for i = 0, heavies - 1 do
+    local pos = {x = s.x + dir * HEAVY_FRONT, y = s.y + (i - (heavies - 1) / 2) * hs}
     if units.spawn("rts-walker-heavy", pos, force_name, "heavy") then made = made + 1 end
   end
   return made
+end
+
+local function config()
+  local m = storage.match
+  if not m.config then
+    m.config = {first_wave_ticks = match.DEFAULT_CONFIG.first_wave_ticks,
+                wave_period_ticks = match.DEFAULT_CONFIG.wave_period_ticks}
+  end
+  return m.config
+end
+
+--- Current wave timing {first_wave_ticks, wave_period_ticks} (storage.match.config).
+function match.wave_config()
+  return config()
+end
+
+--- Change the enemy wave timing (seconds). A first wave that has not come yet is rescheduled to
+--- tick_started + first (at the earliest one second from now); later waves use the new period from the next
+--- launch on. Waves switched off by /rts-qa-reset nowaves stay off. Debug and autotest use only.
+function match.set_wave_timing(first_seconds, period_seconds)
+  local m = storage.match
+  local c = config()
+  c.first_wave_ticks = math.max(60, math.floor(first_seconds * 60))
+  c.wave_period_ticks = math.max(60, math.floor(period_seconds * 60))
+  if m.phase == "running" and (m.wave or 0) == 0 and m.enemy_next_wave and not m.waves_off then
+    m.enemy_next_wave = math.max(game.tick + 60, (m.tick_started or game.tick) + c.first_wave_ticks)
+  end
+  util.log("match: wave timing first=%.0fs period=%.0fs, next wave %s", c.first_wave_ticks / 60,
+    c.wave_period_ticks / 60, m.enemy_next_wave and string.format("in %.0fs", (m.enemy_next_wave - game.tick) / 60)
+    or "not scheduled")
 end
 
 --- Spawn both armies (idempotent per force: only spawns a force that has no units) and (re)start the match.
@@ -135,13 +217,14 @@ function match.spawn_armies()
   for _, force_name in pairs({PLAYER, ENEMY}) do
     if units.count(force_name) == 0 then
       local n = spawn_army(force_name)
-      util.log("match: spawned %d units for %s at %s", n, force_name, util.pos_str(SPAWNS[force_name]))
+      util.log("match: spawned %d units for %s at %s", n, force_name, util.pos_str(match.army_point(force_name)))
     end
   end
   m.phase = "running"
   m.winner = nil
+  m.ended_tick = nil
   m.tick_started = game.tick
-  m.enemy_next_wave = game.tick + FIRST_WAVE_TICKS
+  m.enemy_next_wave = game.tick + config().first_wave_ticks
 end
 
 --- Put a player on the RTS player force (humans always play rts-player in Phase 1).
@@ -155,29 +238,94 @@ function match.home(force_name)
   return (spawns and spawns[force_name]) or {x = 0, y = 0}
 end
 
+-- Ore patches of one side (match.ORE_PATCHES, flipped in x for the side facing -x).
+local function place_ore_patches(surface, force_name)
+  local home, dir = SPAWNS[force_name], FACING[force_name]
+  local parts = {}
+  for _, p in ipairs(match.ORE_PATCHES) do
+    local center = {x = home.x + dir * p[2], y = home.y + p[3]}
+    local n = basetemplate.place_ore(surface, p[1], center, p[4], p[5], match.ORE_AMOUNT, true)
+    parts[#parts + 1] = string.format("%s %dx%d at %s: %d tiles", p[1], p[4], p[5], util.pos_str(center), n)
+  end
+  util.log("match: ore for %s: %s", force_name, table.concat(parts, "; "))
+end
+
+local function stock_stockpiles(stockpiles, items)
+  local parts = {}
+  for _, entry in ipairs(items) do
+    local name, left = entry[1], entry[2]
+    for _, chest in ipairs(stockpiles) do
+      if left <= 0 then break end
+      left = left - chest.insert({name = name, count = left})
+    end
+    parts[#parts + 1] = string.format("%s=%d", name, entry[2] - left)
+  end
+  return table.concat(parts, " ")
+end
+
+--- Set the walker-kit recipe on every barracks of a force that has none. Returns the number set.
+function match.arm_barracks(force_name, recipe)
+  local n = 0
+  for _, rec in buildings.for_force(force_name, "barracks") do
+    if not rec.entity.get_recipe() and production.set_recipe(rec.entity, recipe or match.ENEMY_BARRACKS_RECIPE) then
+      n = n + 1
+    end
+  end
+  return n
+end
+
+local function place_bases(surface)
+  -- Player: the CC composite and the starting stock.
+  local cc, parts = buildings.place_cc(surface, SPAWNS[PLAYER], PLAYER)
+  if cc then
+    util.log("match: %s starting stock: %s", PLAYER, stock_stockpiles(parts.stockpiles, match.STARTING_STOCK))
+  end
+  -- Enemy: the full starter template, facing the arena centre, with its barracks on walker kits.
+  basetemplate.ensure()
+  basetemplate.clone_to(surface, ENEMY, SPAWNS[ENEMY], FACING[ENEMY])
+  match.arm_barracks(ENEMY, match.ENEMY_BARRACKS_RECIPE)
+  for _, force_name in pairs({PLAYER, ENEMY}) do place_ore_patches(surface, force_name) end
+end
+
 function match.init()
-  if storage.match then return end
+  if storage.match then
+    config() -- older saves: add the wave timing config
+    return
+  end
   local spawns = {}
   for force_name, pos in pairs(SPAWNS) do spawns[force_name] = {x = pos.x, y = pos.y} end
   storage.match = {phase = "setup", wave = 0, spawns = spawns}
+  config()
   local surface = util.surface()
   disable_enemy_bases(surface)
   setup_forces()
   prepare_arena(surface)
+  place_bases(surface)
   match.spawn_armies()
   for _, player in pairs(game.players) do match.assign_player(player) end
 end
 
 ---------------------------------------------------------------------------
--- Enemy brain: every WAVE_PERIOD send every enemy unit, as one unit group, to attack the player army.
+-- Enemy brain: every config.wave_period_ticks send every enemy unit, as one unit group, to attack the player army
+-- (or its CC when the army is gone).
 ---------------------------------------------------------------------------
+-- Wave target: the player army, or the player's CC when the army is gone.
+local function wave_target()
+  local target = units.centroid(PLAYER)
+  if target then return target end
+  local cc = buildings.main_cc(PLAYER)
+  return cc and cc.entity.position or nil
+end
+
+--- Where a wave near `position` should go next: the nearest player entity within RETARGET_RANGE, else the
+--- player army centroid, else the player CC. nil when the player has nothing left.
 local function player_target(position)
   if position then
     local nearest = util.surface().find_nearest_enemy({position = position, max_distance = RETARGET_RANGE,
                                                        force = ENEMY})
     if nearest then return nearest.position end
   end
-  return units.centroid(PLAYER)
+  return wave_target()
 end
 
 local function drop_group()
@@ -189,7 +337,7 @@ end
 
 local function launch_wave()
   local m = storage.match
-  local target = units.centroid(PLAYER)
+  local target = wave_target()
   local origin = units.centroid(ENEMY)
   if not (target and origin) then return end
   drop_group()
@@ -223,19 +371,45 @@ local function release_orphans()
   end
 end
 
+-- Result rules (Phase 1 QA follow-up 4: the banner said Victory at 0 vs 0).
+--- A force is out when it has no CC, barracks or factory left (buildings.is_alive_force) and no units.
+function match.is_out(force_name)
+  return units.count(force_name) == 0 and not buildings.is_alive_force(force_name)
+end
+
+--- Pure winner rule: a side wins only when the other side is out and it is not; both out is a draw; nobody
+--- out is no result (nil).
+function match.decide_winner(player_out, enemy_out)
+  if player_out and enemy_out then return "draw" end
+  if enemy_out then return PLAYER end
+  if player_out then return ENEMY end
+  return nil
+end
+
+--- The match result from a force's point of view, derived from storage.match.phase only:
+--- nil while the match is not "ended", else "victory" | "defeat" | "draw". The HUD banner should use this.
+function match.result(force_name)
+  local m = storage.match
+  if not (m and m.phase == "ended") then return nil end
+  if m.winner == "draw" or m.winner == nil then return "draw" end
+  return m.winner == force_name and "victory" or "defeat"
+end
+
 local function check_winner()
   local m = storage.match
-  local alive_player, alive_enemy = units.count(PLAYER), units.count(ENEMY)
-  if alive_player > 0 and alive_enemy > 0 then return end
+  local winner = match.decide_winner(match.is_out(PLAYER), match.is_out(ENEMY))
+  if not winner then return end
   m.phase = "ended"
-  m.winner = alive_player > 0 and PLAYER or (alive_enemy > 0 and ENEMY or "draw")
+  m.ended_tick = game.tick
+  m.winner = winner
   drop_group()
   release_orphans()
-  local msg = m.winner == PLAYER and "Victory! The enemy army is destroyed."
-    or (m.winner == ENEMY and "Defeat. Your army is destroyed." or "Draw: both armies are destroyed.")
+  local msg = m.winner == PLAYER and "Victory! The enemy base and army are destroyed."
+    or (m.winner == ENEMY and "Defeat. Your base and army are destroyed." or "Draw: both sides are destroyed.")
   game.print("[RTS] " .. msg)
-  util.log("match: ended at tick %d, winner=%s (player units=%d, enemy units=%d)", game.tick, m.winner,
-    alive_player, alive_enemy)
+  util.log("match: ended at tick %d, winner=%s (player units=%d alive=%s, enemy units=%d alive=%s)", game.tick,
+    m.winner, units.count(PLAYER), tostring(buildings.is_alive_force(PLAYER)), units.count(ENEMY),
+    tostring(buildings.is_alive_force(ENEMY)))
 end
 
 --- QA reset (/rts-qa-reset): drop the wave group, destroy every unit and the corpses in the arena, spawn
@@ -277,11 +451,13 @@ events.on_nth_tick(60, function(e)
     release_orphans()
   end
   if m.enemy_next_wave and e.tick >= m.enemy_next_wave then
-    m.enemy_next_wave = e.tick + WAVE_PERIOD_TICKS
+    m.enemy_next_wave = e.tick + config().wave_period_ticks
     launch_wave()
   end
   check_winner()
 end)
+
+match.wave_retarget = player_target
 
 -- Re-target the wave when its attack_area completes: nearest player unit, else the player centroid.
 events.on(defines.events.on_ai_command_completed, function(e)

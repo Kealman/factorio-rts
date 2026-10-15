@@ -1,13 +1,19 @@
 -- Developer tools: /rts-* console commands, the headless autotest and the GUI self-test steps for
 -- selection and orders.
 -- Owns storage.debug = {autotest = nil|true|false, stage, started, stage_tick, units = {[unit_number] = true},
---                       dests, hold_pos, moved, attacked, checks = {pass, fail}, next_report, dummy, ...}
+--                       dests, hold_pos, moved, attacked, checks = {pass, fail}, next_report, dummy, eco, ...}
 --
--- Autotest: decided once at tick 120. With no connected players (tools/headless-run.sh) it drives
--- selection.lua and orders.lua through the fake player index 0 (AUTOTEST_PLAYER), exactly as the input
--- handlers do: selection set/add/click/groups/select-all/clear, then move -> hold -> stop -> right-click
--- dedupe and attack-move arming -> attack a lone enemy -> attack-move into the enemy army. Every expectation
--- is logged as "[rts] autotest check <name>: PASS|FAIL ..." and the totals are in every 10 s report.
+-- Autotest: decided once at tick 120. With no connected players (tools/headless-run.sh) it runs two parts:
+-- * Economy (Phase 2, storage.debug.eco): checks the match-start bases, the CC death cleanup, then clones the
+--   starter template for the player (/rts-build-template), adds stock (/rts-give), two factories and a turret,
+--   sets a rally point (/rts-rally) and watches for ECO_WINDOW ticks: kits produced, walkers spawned and at the
+--   rally, a factory item in the network, turret ammo, a non-zero economy snapshot, enemy production.
+-- * Selection and orders (Phase 1): drives selection.lua and orders.lua through the fake player index 0
+--   (AUTOTEST_PLAYER), exactly as the input handlers do: selection set/add/click/groups/select-all/clear, then
+--   move -> hold -> stop -> right-click dedupe and attack-move arming -> attack a lone enemy -> attack-move into
+--   the enemy army -> /rts-qa-reset. The first enemy wave is postponed until that part is done.
+-- Every expectation is logged as "[rts] autotest check <name>: PASS|FAIL ..."; when both parts are done the
+-- last line is "[rts] autotest summary <passed>/<total>".
 local util = require("scripts.util")
 local events = require("scripts.events")
 local units = require("scripts.units")
@@ -16,6 +22,10 @@ local camera = require("scripts.camera")
 local selection = require("scripts.selection")
 local orders = require("scripts.orders")
 local cursor = require("scripts.cursor")
+local buildings = require("scripts.buildings")
+local production = require("scripts.production")
+local economy = require("scripts.economy")
+local basetemplate = require("scripts.basetemplate")
 
 local debug_tools = {}
 
@@ -33,7 +43,25 @@ local HOLD_TICKS = 3 * 60
 local AUTOTEST_REPORT_PERIOD = 10 * 60
 -- /rts-qa-reset check: once the last autotest stage runs, after the match ends or this long after the start.
 local QA_RESET_CHECK_AFTER = 65 * 60
-local ARMY_SIZE = 24 -- units per side after match.spawn_armies()
+local ARMY_SIZE = match.ARMY_SIZE -- units per side after match.spawn_armies()
+local AUTOTEST_WAVE_TIMING = "45 90"  -- /rts-wave-timing for the headless run (the 3 min default is too slow)
+
+-- Economy autotest. Offsets are from the player's CC centre, with x towards the arena centre.
+local ECO_WINDOW = 150 * 60          -- ticks the economy checks may take
+local ECO_REPORT_PERIOD = 30 * 60
+local ECO_SNAPSHOT_AFTER = 15 * 60   -- machines have run for a while before the snapshot is judged
+local ECO_RALLY_OFFSET = {20, 10}
+local ECO_RALLY_RADIUS = 6           -- a spawned walker within this many tiles of the rally counts as arrived
+local ECO_FACTORIES = {{offset = {9.5, -9.5}, recipe = "rts-extractor", item = "rts-extractor"},
+                       {offset = {9.5, -13.5}, recipe = "rts-ammo", item = "firearm-magazine"}}
+local ECO_TURRET_OFFSET = {10, 9}
+local ECO_GIVE = {"iron-plate 400", "copper-plate 100"}
+local ECO_DEATH_TEST_POS = {x = 0, y = 60} -- throwaway CC composite for the death-cleanup check
+local ECO_BROWNOUT_AT = 20 * 60     -- the core power is switched off for ECO_BROWNOUT_TICKS at this age
+local ECO_BROWNOUT_TICKS = 180
+local ECO_POOL_FROM = 75 * 60        -- second half of the window: barracks and factories must both progress
+local ECO_KEYS = {"eco_kits_produced", "eco_walkers_spawned", "eco_walker_at_rally", "eco_factory_item_in_network",
+                  "eco_turret_ammo", "eco_snapshot", "eco_player_smelting", "eco_enemy_production"}
 
 function debug_tools.init()
   storage.debug = storage.debug or {}
@@ -76,9 +104,11 @@ end
 function debug_tools.dump_lines()
   local m = storage.match or {}
   local lines = {
-    string.format("tick %d, match phase=%s wave=%s next wave in %ss winner=%s", game.tick, tostring(m.phase),
-      tostring(m.wave), m.enemy_next_wave and string.format("%.0f", (m.enemy_next_wave - game.tick) / 60) or "-",
-      tostring(m.winner)),
+    string.format("tick %d, match phase=%s wave=%s next wave in %ss winner=%s (wave timing first %ss, period %ss)",
+      game.tick, tostring(m.phase), tostring(m.wave),
+      m.enemy_next_wave and string.format("%.0f", (m.enemy_next_wave - game.tick) / 60) or "-", tostring(m.winner),
+      m.config and tostring(m.config.first_wave_ticks / 60) or "-",
+      m.config and tostring(m.config.wave_period_ticks / 60) or "-"),
     force_summary(PLAYER),
     force_summary(ENEMY),
     string.format("registry size=%d, enemy group=%s", table_size(storage.units or {}),
@@ -92,6 +122,15 @@ function debug_tools.dump_lines()
       player and util.define_name(defines.controllers, player.controller_type) or "-",
       tostring(p.setup_done), tostring(player and player.connected), selection.count(index),
       selection.box_count(index), tostring(orders.is_armed(index)))
+  end
+  for _, force_name in pairs({PLAYER, ENEMY}) do
+    lines[#lines + 1] = economy.describe(force_name)
+    local st = production.stats(force_name)
+    lines[#lines + 1] = string.format("%s production: kits=%d walkers=%d (heavy %d) factory crafts=%d items to "
+      .. "network=%d magazines fed=%d | buildings cc=%d barracks=%d factory=%d turret=%d", force_name, st.kits,
+      st.walkers, st.heavies, st.buildings, st.items, st.magazines, buildings.count(force_name, "cc"),
+      buildings.count(force_name, "barracks"), buildings.count(force_name, "factory"),
+      buildings.count(force_name, "turret"))
   end
   local d = storage.debug or {}
   lines[#lines + 1] = string.format("autotest=%s stage=%s", tostring(d.autotest), tostring(d.stage))
@@ -224,17 +263,382 @@ local function selection_checks(picked, enemy)
   selection.set(P, picked)
 end
 
+---------------------------------------------------------------------------
+-- Economy autotest (Phase 2)
+---------------------------------------------------------------------------
+local function rel(offset)
+  local home = match.home(PLAYER)
+  local f = match.FACING[PLAYER] or 1
+  return {x = home.x + f * offset[1], y = home.y + offset[2]}
+end
+
+local function fresh_snapshot(force_name)
+  storage.economy.cache[force_name] = nil
+  return economy.snapshot(force_name)
+end
+
+local function count_resource(name, center, radius)
+  return util.surface().count_entities_filtered({name = name, position = center, radius = radius})
+end
+
+local function kinds_line(force_name)
+  local parts = {}
+  for _, kind in ipairs({"cc", "barracks", "factory", "turret", "extractor", "smelter", "solar", "stockpile"}) do
+    parts[#parts + 1] = kind .. "=" .. buildings.count(force_name, kind)
+  end
+  return table.concat(parts, " ")
+end
+
+-- The match-start state: player CC composite with the starting stock, ore, the enemy template base.
+local function eco_start_state()
+  local cc = buildings.main_cc(PLAYER)
+  local parts = cc and buildings.core_parts(cc) or {}
+  check("eco_cc_composite", cc ~= nil and parts.power ~= nil and parts.power.valid and parts.pole ~= nil
+    and parts.pole.valid and buildings.count(PLAYER, "stockpile") == #buildings.CC_STOCKPILES,
+    "cc=%s core power=%s core pole=%s stockpiles=%d", cc and ("#" .. cc.entity.unit_number) or "none",
+    tostring(parts.power ~= nil), tostring(parts.pole ~= nil), buildings.count(PLAYER, "stockpile"))
+  local snap = fresh_snapshot(PLAYER)
+  local want, bad = {}, {}
+  for _, entry in ipairs(match.STARTING_STOCK) do
+    want[#want + 1] = string.format("%s=%d/%d", entry[1], snap.items[entry[1]] or 0, entry[2])
+    if (snap.items[entry[1]] or 0) ~= entry[2] then bad[#bad + 1] = entry[1] end
+  end
+  check("eco_starting_stock", #bad == 0, "network has %s", table.concat(want, " "))
+  check("eco_bots", snap.construction_total == buildings.CC_BOTS["construction-robot"]
+    and snap.logistic_total == buildings.CC_BOTS["logistic-robot"], "construction=%d logistic=%d idle=%d",
+    snap.construction_total, snap.logistic_total, snap.bots_idle)
+  local e = cc and cc.entity
+  check("eco_cc_buffer_precharged", e ~= nil and e.energy >= 0.9 * e.electric_buffer_size,
+    "CC energy %.1f / %.1f MJ at tick %d", e and e.energy / 1e6 or -1, e and e.electric_buffer_size / 1e6 or -1,
+    game.tick)
+  local home, f = match.home(PLAYER), match.FACING[PLAYER]
+  local ore = {}
+  local ore_ok = true
+  for _, p in ipairs(match.ORE_PATCHES) do
+    local n = count_resource(p[1], {x = home.x + f * p[2], y = home.y + p[3]}, math.max(p[4], p[5]) / 2 + 1)
+    ore[#ore + 1] = string.format("%s=%d", p[1], n)
+    if n < p[4] * p[5] * 0.6 then ore_ok = false end
+  end
+  check("eco_ore_patches", ore_ok, "%s", table.concat(ore, " "))
+  local ek = {cc = 1, barracks = 1, extractor = 3, smelter = 4, solar = 2, stockpile = 8}
+  local ok = true
+  for kind, n in pairs(ek) do
+    if buildings.count(ENEMY, kind) ~= n then ok = false end
+  end
+  check("eco_enemy_template", ok, "%s", kinds_line(ENEMY))
+  local recipes = {}
+  for _, rec in buildings.for_force(ENEMY, "barracks") do
+    local r = rec.entity.get_recipe()
+    recipes[#recipes + 1] = r and r.name or "none"
+  end
+  check("eco_enemy_barracks_recipe", #recipes > 0 and recipes[1] == match.ENEMY_BARRACKS_RECIPE, "recipes [%s]",
+    table.concat(recipes, ","))
+end
+
+-- A throwaway CC composite dies: its hidden core parts must go with it and the registry must drop it.
+local function eco_death_test()
+  local surface = util.surface()
+  local cc, parts = buildings.place_cc(surface, ECO_DEATH_TEST_POS, PLAYER)
+  if not cc then
+    check("eco_cc_death_cleanup", false, "could not place the test CC at %s", util.pos_str(ECO_DEATH_TEST_POS))
+    return
+  end
+  local un = cc.unit_number
+  local registered = buildings.get(un) ~= nil
+  cc.die()
+  check("eco_cc_death_cleanup", registered and storage.buildings[un] == nil and not parts.power.valid
+    and not parts.pole.valid, "registered=%s, after die(): in registry=%s core power valid=%s core pole valid=%s",
+    tostring(registered), tostring(storage.buildings[un] ~= nil), tostring(parts.power.valid),
+    tostring(parts.pole.valid))
+  for _, s in ipairs(parts.stockpiles) do
+    if s.valid then s.destroy() end
+  end
+end
+
+local function eco_place(name, offset)
+  local surface = util.surface()
+  local pos = rel(offset)
+  return surface.create_entity({name = name, position = pos, force = PLAYER, raise_built = true})
+end
+
+-- Template for the player, stock, factories, turret, rally.
+local function eco_setup()
+  local e = storage.debug.eco
+  debug_tools.run_command("rts-build-template", "")
+  local ok = buildings.count(PLAYER, "cc") == 1 and buildings.count(PLAYER, "barracks") == 1
+    and buildings.count(PLAYER, "extractor") == 3 and buildings.count(PLAYER, "smelter") == 4
+    and buildings.count(PLAYER, "solar") == 2
+  check("eco_player_template", ok, "%s", kinds_line(PLAYER))
+  local before = fresh_snapshot(PLAYER)
+  for _, arg in ipairs(ECO_GIVE) do debug_tools.run_command("rts-give", arg) end
+  local after = fresh_snapshot(PLAYER)
+  check("eco_give", after.iron - before.iron == 400 and after.copper - before.copper == 100,
+    "iron %d -> %d, copper %d -> %d", before.iron, after.iron, before.copper, after.copper)
+
+  e.factories = {}
+  for i, spec in ipairs(ECO_FACTORIES) do
+    local f = eco_place("rts-factory", spec.offset)
+    if f then
+      e.factories[i] = f
+      if i == 1 then
+        check("eco_wrong_category_rejected", production.set_recipe(f, "rts-walker-kit") == false
+          and f.get_recipe() == nil, "factory recipe after set_recipe(rts-walker-kit): %s",
+          f.get_recipe() and f.get_recipe().name or "none")
+      end
+      production.set_recipe(f, spec.recipe)
+    end
+  end
+  e.turret = eco_place("rts-turret", ECO_TURRET_OFFSET)
+  local reg = 0
+  for _, f in pairs(e.factories) do if buildings.get(f.unit_number) then reg = reg + 1 end end
+  if e.turret and buildings.get(e.turret.unit_number) then reg = reg + 1 end
+  check("eco_registered_by_event", reg == #ECO_FACTORIES + 1, "%d of %d script_raised_built buildings registered",
+    reg, #ECO_FACTORIES + 1)
+
+  e.rally = rel(ECO_RALLY_OFFSET)
+  debug_tools.run_command("rts-rally", string.format("%.1f %.1f", e.rally.x, e.rally.y))
+  local set, total = 0, 0
+  for _, rec in buildings.for_force(PLAYER, "barracks") do
+    total = total + 1
+    if rec.rally and util.distance(rec.rally, e.rally) < 0.01 then set = set + 1 end
+  end
+  check("eco_rally_set", total > 0 and set == total, "%d of %d barracks rally at %s", set, total,
+    util.pos_str(e.rally))
+end
+
+local function eco_start()
+  local d = storage.debug
+  d.eco = {started = game.tick, passed = {}, spawned = {}, next_report = game.tick}
+  util.log("autotest eco: started at tick %d", game.tick)
+  eco_start_state()
+  eco_death_test()
+  eco_setup()
+end
+
+local function pass_once(key, ok, fmt, ...)
+  local e = storage.debug.eco
+  if e.passed[key] or not ok then return end
+  e.passed[key] = game.tick
+  check(key, true, "after %.1fs: " .. fmt, (game.tick - e.started) / 60, ...)
+end
+
+local function per_min(n, ticks)
+  return ticks > 0 and n * 3600 / ticks or 0
+end
+
+local function eco_report(final)
+  local e = storage.debug.eco
+  local age = game.tick - e.started
+  e.last = e.last or {}
+  for _, force_name in pairs({PLAYER, ENEMY}) do
+    local st = production.stats(force_name)
+    local last = e.last[force_name] or {kits = st.kits, crafts = st.buildings, tick = e.started}
+    local dt = game.tick - last.tick
+    util.log("autotest eco t=%.0fs %s: kits=%d (+%d = %.1f/min) walkers=%d factory crafts=%d (+%d) "
+      .. "items->network=%d magazines fed=%d%s | %s", age / 60, force_name, st.kits, st.kits - last.kits,
+      per_min(st.kits - last.kits, dt), st.walkers, st.buildings, st.buildings - last.crafts, st.items, st.magazines,
+      st.first_kit_tick and string.format(" first kit at tick %d", st.first_kit_tick) or "", kinds_line(force_name))
+    e.last[force_name] = {kits = st.kits, crafts = st.buildings, tick = game.tick}
+    util.log("autotest eco t=%.0fs %s", age / 60, economy.describe(force_name))
+  end
+  for _, line in ipairs(economy.power_lines(PLAYER)) do util.log("autotest eco power %s", line) end
+  if final then
+    local p, en = production.stats(PLAYER), production.stats(ENEMY)
+    util.log("autotest eco timing: player kits %d in %.0fs = %.1f/min (first kit %.1fs after the template), "
+      .. "enemy kits %d in %.0fs since tick 0 = %.1f/min (first kit at %.1fs)", p.kits, age / 60,
+      per_min(p.kits, age), p.first_kit_tick and (p.first_kit_tick - e.started) / 60 or -1, en.kits,
+      game.tick / 60, per_min(en.kits, game.tick), en.first_kit_tick and en.first_kit_tick / 60 or -1)
+  end
+end
+
+-- Brownout: switch the player's core power off (solar only) and back on; the snapshot must see both.
+local function eco_brownout(tick, age)
+  local e = storage.debug.eco
+  local b = e.brownout
+  if not b and age >= ECO_BROWNOUT_AT then
+    local cc = buildings.main_cc(PLAYER)
+    local power = cc and buildings.core_parts(cc).power
+    if not (power and power.valid) then
+      check("eco_brownout", false, "no core power to switch off")
+      e.brownout = {done = true}
+      return
+    end
+    e.brownout = {power = power, orig = power.power_production, tick = tick}
+    power.power_production = 0
+    power.energy = 0 -- its 4 MJ buffer would otherwise cover the deficit for a few seconds
+    util.log("autotest eco: brownout: core power switched off at tick %d (%s)", tick, economy.describe(PLAYER))
+  elseif b and not b.done and not b.measured and tick - b.tick >= ECO_BROWNOUT_TICKS - 60 then
+    b.measured = true
+    local s = fresh_snapshot(PLAYER)
+    check("eco_brownout", s.power_satisfaction < 0.9 and s.power_demand > 0, "solar only: %s",
+      economy.describe(PLAYER))
+    if b.power.valid then b.power.power_production = b.orig end
+    b.restored = tick
+  elseif b and b.restored and not b.done and tick - b.restored >= 120 then
+    b.done = true
+    local s = fresh_snapshot(PLAYER)
+    check("eco_power_restored", s.power_satisfaction >= 0.95, "core back on: %s", economy.describe(PLAYER))
+  end
+end
+
+local function eco_tick(tick)
+  local e = storage.debug.eco
+  if not e or e.done then return end
+  local age = tick - e.started
+  eco_brownout(tick, age)
+  if age >= ECO_POOL_FROM and not e.pool_mark then
+    local st = production.stats(PLAYER)
+    e.pool_mark = {kits = st.kits, crafts = st.buildings, tick = tick}
+  end
+  local st = production.stats(PLAYER)
+  pass_once("eco_kits_produced", st.kits > 0, "%d kits", st.kits)
+  pass_once("eco_walkers_spawned", st.walkers > 0, "%d walkers", st.walkers)
+  if not e.passed.eco_walker_at_rally then
+    for un in pairs(e.spawned) do
+      local rec = units.get(un)
+      if rec then
+        local dist = util.distance(rec.entity, e.rally)
+        pass_once("eco_walker_at_rally", dist <= ECO_RALLY_RADIUS, "walker #%d is %.1f tiles from the rally %s",
+          un, dist, util.pos_str(e.rally))
+      else
+        e.spawned[un] = nil
+      end
+    end
+  end
+  local net = economy.network(PLAYER)
+  local in_net = net and net.get_item_count(ECO_FACTORIES[1].item) or 0
+  pass_once("eco_factory_item_in_network", st.items > 0 and in_net > 0, "%d %s in the network, %d items handed off",
+    in_net, ECO_FACTORIES[1].item, st.items)
+  local turret = e.turret
+  local ammo = turret and turret.valid and turret.get_inventory(defines.inventory.turret_ammo).get_item_count() or 0
+  pass_once("eco_turret_ammo", ammo > 0, "turret holds %d magazines", ammo)
+  if age >= ECO_SNAPSHOT_AFTER then
+    local s = economy.snapshot(PLAYER)
+    pass_once("eco_snapshot", s.iron > 0 and s.bots_total > 0 and s.power_capacity > 0 and s.power_demand > 0
+      and s.power_satisfaction > 0, "%s", economy.describe(PLAYER))
+  end
+  local plates = game.forces[PLAYER].get_item_production_statistics(util.surface()).get_input_count("iron-plate")
+  pass_once("eco_player_smelting", plates > 0, "%d iron plates smelted by the cloned template", plates)
+  local en = production.stats(ENEMY)
+  local enemy_plates = game.forces[ENEMY].get_item_production_statistics(util.surface()).get_input_count("iron-plate")
+  pass_once("eco_enemy_production", en.walkers > 0 and enemy_plates > 0, "enemy kits=%d walkers=%d, %d iron plates "
+    .. "smelted", en.kits, en.walkers, enemy_plates)
+
+  if tick >= e.next_report then
+    e.next_report = tick + ECO_REPORT_PERIOD
+    eco_report(false)
+  end
+  local all = true
+  for _, key in ipairs(ECO_KEYS) do
+    if not e.passed[key] then all = false end
+  end
+  if all or age >= ECO_WINDOW then
+    if not all then
+      for _, key in ipairs(ECO_KEYS) do
+        if not e.passed[key] then check(key, false, "not reached in %.0fs", age / 60) end
+      end
+    end
+    -- keep measuring the rates over the whole window before closing
+    if age >= ECO_WINDOW then
+      e.done = true
+      local m = e.pool_mark
+      local p = production.stats(PLAYER)
+      check("eco_shared_pool", m ~= nil and p.kits > m.kits and p.buildings > m.crafts, "since %.0fs: barracks "
+        .. "kits +%d, factory crafts +%d (both must progress on the shared iron)", ECO_POOL_FROM / 60,
+        m and p.kits - m.kits or -1, m and p.buildings - m.crafts or -1)
+      eco_report(true)
+      local lat = e.latency
+      if lat and lat.n > 0 then
+        util.log("autotest eco: kit-to-unit latency over %d player kits: min %d, max %d, avg %.2f ticks", lat.n,
+          lat.min, lat.max, lat.sum / lat.n)
+      end
+      util.log("autotest eco: done after %.0fs", age / 60)
+    elseif not e.all_passed then
+      e.all_passed = tick
+      util.log("autotest eco: all economy checks passed after %.0fs; measuring until %.0fs", age / 60,
+        ECO_WINDOW / 60)
+    end
+  end
+end
+
+-- Spawn latency (spike #4 measure): the observer below notes the first tick a finished player kit is visible to
+-- Lua (products_finished grew), the spawn callback pairs it with the spawn tick. production.lua's on_tick
+-- handler runs before this module's, so the callback first brings the observation up to date for its barracks
+-- (a kit that finished just before this tick's spawn then counts with latency 0). Observation only;
+-- production.lua does not poll per tick.
+local function observe_barracks(e, un, rec)
+  e.finish = e.finish or {}
+  e.latency = e.latency or {n = 0, sum = 0, min = math.huge, max = 0}
+  local pf = rec.entity.products_finished
+  local seen = e.finish["pf" .. un] or pf
+  if pf > seen then
+    local q = e.finish[un] or {}
+    e.finish[un] = q
+    for _ = seen + 1, pf do q[#q + 1] = game.tick end
+  end
+  e.finish["pf" .. un] = pf
+end
+
+production.on_spawned(function(unit, rec)
+  local d = storage.debug
+  local e = d and d.eco
+  if not (e and not e.done and rec.force == PLAYER) then return end
+  e.spawned[unit.unit_number] = game.tick
+  observe_barracks(e, rec.entity.unit_number, rec)
+  local q = e.finish and e.finish[rec.entity.unit_number]
+  local finished = q and table.remove(q, 1)
+  if finished then
+    local lat = e.latency
+    local l = game.tick - finished
+    lat.n, lat.sum, lat.max = lat.n + 1, lat.sum + l, math.max(lat.max, l)
+    lat.min = math.min(lat.min, l)
+  end
+end)
+
+events.on(defines.events.on_tick, function()
+  local d = storage.debug
+  local e = d and d.eco
+  if not (e and not e.done) then return end
+  for un, rec in buildings.for_force(PLAYER, "barracks") do observe_barracks(e, un, rec) end
+end)
+
 function debug_tools.start_autotest()
   local d = storage.debug
   d.autotest = true
   if storage.match.phase ~= "running" or units.count(PLAYER) == 0 or units.count(ENEMY) == 0 then
     match.spawn_armies()
   end
+  d.checks = {pass = 0, fail = 0}
+  d.summary_logged = nil
+  local m = storage.match
+  local c = match.wave_config()
+  check("wave_config_default", c.first_wave_ticks == match.DEFAULT_CONFIG.first_wave_ticks
+    and c.wave_period_ticks == match.DEFAULT_CONFIG.wave_period_ticks
+    and m.enemy_next_wave == m.tick_started + c.first_wave_ticks, "first=%ds period=%ds, next wave at tick %s "
+    .. "(armies spawned at tick %s)", c.first_wave_ticks / 60, c.wave_period_ticks / 60, tostring(m.enemy_next_wave),
+    tostring(m.tick_started))
+  debug_tools.run_command("rts-wave-timing", AUTOTEST_WAVE_TIMING)
+  check("wave_timing_override", c.first_wave_ticks == 45 * 60 and c.wave_period_ticks == 90 * 60,
+    "first=%ds period=%ds", c.first_wave_ticks / 60, c.wave_period_ticks / 60)
+  local P, E = PLAYER, ENEMY
+  local rule = {match.decide_winner(false, false), match.decide_winner(false, true), match.decide_winner(true, false),
+                match.decide_winner(true, true)}
+  check("winner_rule", rule[1] == nil and rule[2] == P and rule[3] == E and rule[4] == "draw"
+    and match.result(P) == nil, "none out=%s enemy out=%s player out=%s both out=%s, result while running=%s",
+    tostring(rule[1]), tostring(rule[2]), tostring(rule[3]), tostring(rule[4]), tostring(match.result(P)))
+  -- Re-target with no player entity in range (the path that once called an undefined local): army centroid.
+  local far = match.wave_retarget({x = 5000, y = 5000})
+  local centroid = units.centroid(PLAYER)
+  check("wave_retarget_fallback", far ~= nil and centroid ~= nil and util.distance(far, centroid) < 0.01,
+    "target from (5000, 5000) = %s, player centroid %s", util.pos_str(far), util.pos_str(centroid))
+  -- The selection/orders part needs a quiet field: the first enemy wave waits until /rts-qa-reset (or this).
+  m.enemy_next_wave = game.tick + QA_RESET_CHECK_AFTER + 60 * 60
+  eco_start() -- first: it replaces the player base with the template before units are spawned nearby
   debug_tools.run_command("rts-spawn", "rts-walker 2 " .. PLAYER) -- exercises the console command path
+  debug_tools.run_command("rts-spawn", "rts-walker-heavy 1 " .. PLAYER) -- the starting armies have no heavies
   debug_tools.run_command("rts-dump", "")
   d.started = game.tick
   d.units, d.dests, d.moved, d.attacked = {}, {}, 0, 0
-  d.checks = {pass = 0, fail = 0}
   d.next_report = game.tick
 
   local picked, walkers, heavies, enemy = {}, 0, 0, nil
@@ -272,7 +676,8 @@ function debug_tools.start_autotest()
   for i = 1, #slots do
     for j = i + 1, #slots do min_gap = math.min(min_gap, util.distance(slots[i], slots[j])) end
   end
-  check("move_spread", min_gap >= 2.5, "min distance between formation slots=%.2f around %s", min_gap,
+  -- 2.5 is orders.lua's minimum spacing; the base-game walkers sit exactly on it (2.4999... after float math)
+  check("move_spread", min_gap >= 2.5 - 1e-6, "min distance between formation slots=%.2f around %s", min_gap,
     util.pos_str(MOVE_DEST))
   set_stage("move")
 end
@@ -466,6 +871,12 @@ local function autotest_tick(tick)
       end
     end
     if not alive then
+      if not d.engaged_tick then
+        -- killed before the first 60-tick look saw any damage (base-game walkers do that in under a second)
+        d.engaged_tick = tick
+        check("attack_engaged", d.attacked > 0, "target already gone at the first look (%d attack completions)",
+          d.attacked)
+      end
       d.dead_tick = d.dead_tick or tick
       local ok, detail = all_have_order(units.IDLE)
       if ok then
@@ -493,9 +904,20 @@ local function qa_reset_check()
   check("qa_reset_armies", units.count(PLAYER) == ARMY_SIZE and units.count(ENEMY) == ARMY_SIZE,
     "player=%d enemy=%d expected %d each", units.count(PLAYER), units.count(ENEMY), ARMY_SIZE)
   local home_p, home_e = units.centroid(PLAYER), units.centroid(ENEMY)
-  check("qa_reset_at_spawns", home_p and home_e and util.distance(home_p, match.home(PLAYER)) < 8
-    and util.distance(home_e, match.home(ENEMY)) < 8, "player centroid %s (home %s), enemy centroid %s (home %s)",
-    util.pos_str(home_p), util.pos_str(match.home(PLAYER)), util.pos_str(home_e), util.pos_str(match.home(ENEMY)))
+  check("qa_reset_at_spawns", home_p and home_e and util.distance(home_p, match.army_point(PLAYER)) < 8
+    and util.distance(home_e, match.army_point(ENEMY)) < 8, "player centroid %s (army point %s), enemy centroid %s "
+    .. "(army point %s)", util.pos_str(home_p), util.pos_str(match.army_point(PLAYER)), util.pos_str(home_e),
+    util.pos_str(match.army_point(ENEMY)))
+  local gap = math.huge
+  for _, force_name in pairs({PLAYER, ENEMY}) do
+    local list = {}
+    for _, rec in units.for_force(force_name) do list[#list + 1] = rec.entity.position end
+    for i = 1, #list do
+      for j = i + 1, #list do gap = math.min(gap, util.distance(list[i], list[j])) end
+    end
+  end
+  check("qa_reset_spacing", gap >= match.spacing("rts-walker") - 0.01, "min distance between spawned units %.2f "
+    .. "(grid %.1f for walkers, %.1f for heavies)", gap, match.spacing("rts-walker"), match.spacing("rts-walker-heavy"))
   check("qa_reset_cleared", selection.count(P) == 0 and selection.box_count(P) == 0 and selection.group_count(P, 1) == 0
     and not orders.is_armed(P), "selected=%d boxes=%d group1=%d armed=%s", selection.count(P), selection.box_count(P),
     selection.group_count(P, 1), tostring(orders.is_armed(P)))
@@ -533,10 +955,19 @@ events.on_nth_tick(60, function(e)
     if d.autotest then debug_tools.start_autotest() end
   end
   if d.autotest and d.stage then autotest_tick(e.tick) end
+  if d.autotest and d.eco then eco_tick(e.tick) end
   if d.autotest and d.started and not d.qa_reset_checked and (d.stage == "attack_move" or d.stage == "done")
      and (storage.match.phase == "ended" or e.tick - d.started >= QA_RESET_CHECK_AFTER) then
     d.qa_reset_checked = true
     qa_reset_check()
+  end
+  -- Both parts done (or the selection/orders part stuck well past the economy window): one summary line.
+  if d.autotest and d.started and d.eco and d.eco.done and not d.summary_logged
+     and (d.qa_reset_checked or e.tick - d.started >= ECO_WINDOW + 30 * 60) then
+    d.summary_logged = true
+    local total = d.checks.pass + d.checks.fail
+    util.log("autotest summary %d/%d%s", d.checks.pass, total, d.checks.fail == 0 and " (all passed)"
+      or string.format(" (%d FAILED)", d.checks.fail))
   end
 end)
 
@@ -618,6 +1049,12 @@ local function admin_only(cmd)
   return true
 end
 
+-- The force a command acts for: the issuing player's force, else (server console, autotest) rts-player.
+local function command_force(cmd)
+  local player = cmd.player_index and game.get_player(cmd.player_index)
+  return player and player.force.name or PLAYER
+end
+
 local COMMANDS = {
   ["rts-spawn"] = {
     help = "<name> <count> <force> - spawn RTS units at the camera (or the force's spawn)",
@@ -637,10 +1074,16 @@ local COMMANDS = {
       end
       count = math.max(1, math.min(100, math.floor(count or 1)))
       local player = cmd.player_index and game.get_player(cmd.player_index)
-      local center = player and player.position or match.home(force_name)
+      local center = player and player.position
+      if not center then
+        -- no camera: a row starting at the force's army point, on the side facing the arena centre
+        local ap = match.army_point(force_name)
+        center = {x = ap.x + (match.FACING[force_name] or 1) * 13.5, y = ap.y}
+      end
       local made = 0
+      local sp = match.spacing(name)
       for i = 0, count - 1 do
-        local pos = {x = center.x + (i % 10) * 3 - 13.5, y = center.y + math.floor(i / 10) * 3 + 12}
+        local pos = {x = center.x + (i % 10) * sp - 13.5, y = center.y + math.floor(i / 10) * sp + 12}
         if units.spawn(name, pos, force_name) then made = made + 1 end
       end
       reply(cmd, string.format("rts-spawn: %d x %s for %s near %s", made, name, force_name, util.pos_str(center)))
@@ -684,6 +1127,89 @@ local COMMANDS = {
       for _, line in pairs(debug_tools.dump_lines()) do reply(cmd, line) end
       util.log("RTS_QA_END by %s at tick %d", cmd.player_index and ("player=" .. cmd.player_index) or "script",
         game.tick)
+    end,
+  },
+  ["rts-give"] = {
+    help = "<item> [count=100] - put items into your force's resource pool (the CC network's stockpiles)",
+    run = function(cmd)
+      if not admin_only(cmd) then return end
+      local args = {}
+      for word in string.gmatch(cmd.parameter or "", "%S+") do args[#args + 1] = word end
+      local item, count = args[1], math.floor(tonumber(args[2] or "100") or 100)
+      if not (item and prototypes.item[item]) then
+        reply(cmd, "rts-give: unknown item " .. tostring(item))
+        return
+      end
+      local force_name = command_force(cmd)
+      local n = economy.give(force_name, item, math.max(1, count))
+      reply(cmd, string.format("rts-give: %d x %s into the %s pool", n, item, force_name))
+    end,
+  },
+  ["rts-eco"] = {
+    help = "- print the economy summary (resources, bots, power) and production counters of both forces",
+    run = function(cmd)
+      local own = command_force(cmd)
+      local other = own == ENEMY and PLAYER or ENEMY
+      for _, force_name in ipairs({own, other}) do
+        reply(cmd, economy.describe(force_name))
+        local st = production.stats(force_name)
+        reply(cmd, string.format("%s production: kits=%d walkers=%d factory crafts=%d items to network=%d "
+          .. "magazines fed=%d", force_name, st.kits, st.walkers, st.buildings, st.items, st.magazines))
+      end
+    end,
+  },
+  ["rts-build-template"] = {
+    help = "- replace your base with the starter base template (CC, extractors, smelters, barracks on walker kits)",
+    run = function(cmd)
+      if not admin_only(cmd) then return end
+      local force_name = command_force(cmd)
+      local r = basetemplate.clone_to(util.surface(), force_name, match.home(force_name))
+      local armed = match.arm_barracks(force_name, "rts-walker-kit")
+      local kinds = {}
+      for k, n in pairs(r.kinds) do kinds[#kinds + 1] = k .. "=" .. n end
+      table.sort(kinds)
+      reply(cmd, string.format("rts-build-template: %d entities for %s at %s [%s], %d barracks on walker kits",
+        r.entities, force_name, util.pos_str(match.home(force_name)), table.concat(kinds, " "), armed))
+    end,
+  },
+  ["rts-rally"] = {
+    help = "<x> <y> - set the rally point of all your barracks (no arguments: clear it)",
+    run = function(cmd)
+      if not admin_only(cmd) then return end
+      local args = {}
+      for word in string.gmatch(cmd.parameter or "", "%S+") do args[#args + 1] = word end
+      local x, y = tonumber(args[1] or ""), tonumber(args[2] or "")
+      if args[1] and not (x and y) then
+        reply(cmd, "rts-rally: usage /rts-rally <x> <y>")
+        return
+      end
+      local force_name = command_force(cmd)
+      local pos = x and {x = x, y = y} or nil
+      local n = 0
+      for un in buildings.for_force(force_name, "barracks") do
+        if buildings.set_rally(un, pos) then n = n + 1 end
+      end
+      reply(cmd, string.format("rts-rally: %d barracks of %s -> %s", n, force_name,
+        pos and util.pos_str(pos) or "cleared (default exit)"))
+    end,
+  },
+  ["rts-wave-timing"] = {
+    help = "[first_s] [period_s] - debug: enemy wave timing in seconds (no arguments: print it)",
+    run = function(cmd)
+      if not admin_only(cmd) then return end
+      local args = {}
+      for word in string.gmatch(cmd.parameter or "", "%S+") do args[#args + 1] = word end
+      local first, period = tonumber(args[1] or ""), tonumber(args[2] or "")
+      if args[1] and not first then
+        reply(cmd, "rts-wave-timing: usage /rts-wave-timing <first_s> [period_s]")
+        return
+      end
+      local c = match.wave_config()
+      if first then match.set_wave_timing(first, period or c.wave_period_ticks / 60) end
+      local m = storage.match
+      reply(cmd, string.format("rts-wave-timing: first wave %.0fs after the armies spawn, then every %.0fs; next %s",
+        c.first_wave_ticks / 60, c.wave_period_ticks / 60, m.enemy_next_wave
+        and string.format("in %.0fs", (m.enemy_next_wave - game.tick) / 60) or "not scheduled"))
     end,
   },
   ["rts-autotest"] = {
