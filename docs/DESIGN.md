@@ -1,4 +1,6 @@
-# Factorio RTS — Design Document (v0.1, 2026-10-15)
+# Factorio RTS — Design Document (v0.2, 2026-10-15)
+
+> Phase 0 spike verdicts and the decisions taken from them: `research/spikes.md`.
 
 ## 1. Vision
 
@@ -56,19 +58,20 @@ Known hard limits (shape the design, do not block it):
 - **Workers:** construction robots from the command center's roboport build ghosts placed in remote view. This is the SCV analog and is fully vanilla.
 - **Vehicles (`spider-vehicle`)** as a later, hero-tier unit (autopilot, auto-targeting, color).
 - Every unit prototype gets `radar_range` so armies reveal fog for their force.
-- Idle units wander by default; we issue `wander{radius=0}`/`stop` on `on_ai_command_completed` so they hold position.
+- Idle units wander by default; we issue `defines.command.stop` on `on_ai_command_completed` so they hold position (spike #3: `wander{radius=0}` only works for plain `unit`).
+- Unit groups work without `force.ai_controllable` (spike #3), so player forces keep it off. Attack-move re-targets the nearest enemy entity instead of aiming at a centroid.
 
 ### 3.4 Economy and production (the Factorio half)
 - **Command Center**: a composite — roboport (construction area), storage/provider chests, a small power source — placed as one blueprint. Losing all command centers loses the match.
 - **Resources**: vanilla ore patches as mineral fields; mining drills + belts/bots feed smelting. Power is the "gas" analog (steam early, solar later).
-- **Units as recipes**: assemblers with `rts-barracks` crafting category produce *unit items* (`rts-marine`, `rts-walker`). A `Barracks` entity (custom assembling machine) is polled every N ticks: finished unit items in its output are consumed and spawned as entities at its rally point. Production time and ingredient chains give RTS "build time" and "tech cost".
+- **Units as recipes**: assemblers with `rts-barracks` crafting category produce *unit items* (`rts-marine`, `rts-walker`). A `Barracks` entity (custom assembling machine) is checked at the predicted craft-completion tick (from `crafting_progress`, recipe energy and `crafting_speed`), with a slow fallback sweep; finished unit items in its output are consumed and spawned as entities at its rally point (spike #4: 0-tick latency, ~6 µs per check). Production time and ingredient chains give RTS "build time" and "tech cost".
 - **Buildings as items**: regular Factorio placeables built by bots from ghosts. Build time = bot travel + item availability, so expanding your logistics network is a core skill.
 - **Research**: vanilla labs and a trimmed tech tree (unit tiers, armor/damage upgrades, new buildings). Uses `LuaForce.technologies` per force.
 - **Scale**: compressed early game. Starting inventory in the command center chests (ores, plates, a few drills/assemblers) so the first unit appears within ~2 minutes.
 
 ### 3.5 AI opponents
-- Phase A ("scripted commander"): each AI force follows a **build order script** (data-driven JSON/Lua table of steps: place blueprint X at anchor Y when items Z are in storage). Bases are placed via `build_blueprint{force}` + timed `revive` (visible construction), production is real Factorio production, so the AI's army size is bounded by its actual factory.
-- Army control: periodic evaluation — gather idle units into a group with `create_unit_group` (requires `ai_controllable`, acceptable for AI forces), send `attack_area` to the nearest known enemy structure, retreat on heavy losses. `set_multi_command` for cheap harassment waves.
+- Phase A ("scripted commander"): each AI force follows a **build order script** (data-driven JSON/Lua table of steps: place blueprint X at anchor Y when items Z are in storage). Bases are placed via `build_blueprint{force, build_mode}` + paced `revive` (visible construction), production is real Factorio production, so the AI's army size is bounded by its actual factory (spike #5: works with no players in the force; verify ghost counts because drills without ore are skipped silently; clear blocking trees before revive).
+- Army control: periodic evaluation — gather idle units into a group with `create_unit_group` (no `ai_controllable` needed), send `attack_area` to the nearest known enemy structure, retreat on heavy losses. `set_multi_command` only picks plain `unit` entities, so walker waves use explicit groups.
 - Phase B: adaptive AI (scout → counter-compose, expand to new patches, defend chokes). Possible external brain via `--enable-lua-udp` bridge for experiments, but the shipped game must be pure Lua.
 - Difficulty knobs: build-order speed multipliers, starting stock, aggression timers.
 
@@ -85,12 +88,12 @@ Known hard limits (shape the design, do not block it):
 
 | # | Unknown | Spike |
 |---|---|---|
-| 1 | Can a player stay in `remote` controller with no character indefinitely? Does respawn logic interfere? | Scenario mod: destroy character on join, set remote, run 5 min, log controller type each minute, try F-keys |
-| 2 | Do `custom-input` mouse buttons and selection tools fire in remote view with correct `cursor_position`/area? | Interactive test with log output |
-| 3 | `spider-unit` with our prototype: force tint visible, `commandable` works, attack behavior sane? | Headless: spawn 2 forces, attack commands, log deaths |
-| 4 | Barracks pattern: assembler output → spawn entity; latency and UPS | Headless |
-| 5 | AI base placement: `build_blueprint{force}` + revive timing; does production run for a force with no players? | Headless, log item counts over time |
-| 6 | Does `on_gui_click` work on `minimap`/`camera` elements (click-to-jump)? | Interactive |
+| 1 | Can a player stay in `remote` controller with no character indefinitely? Does respawn logic interfere? | **CONFIRMED** (see `research/spikes.md`) |
+| 2 | Do `custom-input` mouse buttons and selection tools fire in remote view with correct `cursor_position`/area? | **OPEN**: test mod and protocol ready in `spikes/camera-input/`, needs a human or computer-use run |
+| 3 | `spider-unit` with our prototype: force tint visible, `commandable` works, attack behavior sane? | **CONFIRMED** headless (tint needs a visual check) |
+| 4 | Barracks pattern: assembler output → spawn entity; latency and UPS | **CONFIRMED** |
+| 5 | AI base placement: `build_blueprint{force}` + revive timing; does production run for a force with no players? | **CONFIRMED** |
+| 6 | Does `on_gui_click` work on `minimap`/`camera` elements (click-to-jump)? | **OPEN**: same test mod as #2 |
 
 Everything headless-testable runs through `tools/headless-run.sh`; interactive spikes need the GUI client and a human (or screenshot-based) check.
 

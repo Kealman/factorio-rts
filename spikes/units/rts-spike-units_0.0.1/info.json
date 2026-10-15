@@ -1,0 +1,9 @@
+{
+  "name": "rts-spike-units",
+  "version": "0.0.1",
+  "title": "RTS spike: spider-unit orders and combat",
+  "author": "factorio_rts",
+  "factorio_version": "2.0",
+  "description": "Phase 0 spike #3. Headless test of spider-unit / unit prototypes as RTS units: orders, holding position, unit groups, cross-force combat, UPS at 400 units.",
+  "dependencies": ["base >= 2.0", "? space-age"]
+}
