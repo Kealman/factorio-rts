@@ -91,9 +91,10 @@ do
 end
 match.ENEMY_BARRACKS_RECIPE = "rts-walker-kit"
 
--- Ore patches per spawn, relative to the CC centre for a force facing +x (dx is multiplied by the facing):
--- {resource, dx, dy, width, height}. The facing is the AI commander's own rule (towards the nearest other spawn
--- along x), so every force's patches lie in front of its CC exactly as in the calibrated 1v1 layout.
+-- Ore patches per spawn, relative to the CC centre: {resource, dx, dy, width, height}. dx runs along the force's
+-- front (match.front: towards the arena centre), dy along the side axis, which points south (east when the front is
+-- due north or south). The player's front is +x, so its patches are the calibrated Phase 2 layout; an AI on the
+-- x axis gets it mirrored in x, as before; off-axis AIs get it rotated towards the centre.
 match.ORE_AMOUNT = 1500
 match.ORE_PATCHES = {
   {"iron-ore", 17, 10, 12, 12},
@@ -107,13 +108,10 @@ match.CONTESTED_PATCHES = {
   {"iron-ore", 0, -24, 14, 14},
   {"copper-ore", 0, 24, 10, 10},
 }
--- The AI planner cannot lay a mining line on a patch that lies more north/south of its CC than east/west:
--- ai/layout.lua spine_candidate reads undefined globals for vertical spines (layout.lua:412) and the game stops with
--- "attempt to perform arithmetic on local 'perp' (a nil value)" (seen in the 1v2 autotest at 210 s). The AI's only
--- step that looks beyond its own patches is "expand iron2" (the nearest free iron patch), and in 1v2 / 1v3 the
--- contested iron patch is north or south of an off-axis AI. Until layout.lua is fixed, those matches get
--- CONTESTED_SAFE_ORE there instead (the AI never expands to stone). Set AI_VERTICAL_LINES = true once it is fixed.
-match.AI_VERTICAL_LINES = false
+-- AI_VERTICAL_LINES: the AI planner can lay mining lines north/south of its CC. Before the AI fix of 2026-10-15
+-- (commit 1051c60) it could not (layout.lua:412 crashed the game), and 1v2 / 1v3 matches got CONTESTED_SAFE_ORE
+-- instead of the contested iron. false brings that stand-in back.
+match.AI_VERTICAL_LINES = true
 match.CONTESTED_SAFE_ORE = "stone"
 
 match.FORCE_COLORS = {
@@ -270,10 +268,38 @@ end
 match.FACING = setmetatable({}, {__index = function(_, k) return match.facing(k) end})
 match.CC_POSITIONS = setmetatable({}, {__index = function(_, k) return match.home(k) end})
 
---- Where a force's army gathers: ARMY_OFFSET tiles in front of its CC.
+--- The force's front and side axes as unit vectors: front = from its CC towards the arena centre (0, 0); side =
+--- perpendicular, pointing south (east when the front is due north or south). A force without a spawn gets its
+--- facing along x. Ore patches (dx, dy) and the starting army are laid out in these axes.
+function match.front(force_name)
+  local home = match.home(force_name)
+  local len = math.sqrt(home.x * home.x + home.y * home.y)
+  if len < 1 then return {x = match.facing(force_name), y = 0}, {x = 0, y = 1} end
+  local f = {x = -home.x / len, y = -home.y / len}
+  local sx, sy = -f.y, f.x
+  if sy < -1e-9 or (math.abs(sy) <= 1e-9 and sx < 0) then sx, sy = -sx, -sy end
+  return f, {x = sx, y = sy}
+end
+
+-- Per-spawn layout of the ore patches and the starting army (the player's is the same in both):
+--   "rotated"  (default) front = towards the arena centre (match.front). For the off-axis AIs of 1v2 and 1v3 it puts
+--              iron and copper on one side of the CC; the AI's hub slots handle that since commit 33d5b40 (slots on
+--              all four sides). Before it, their copper line found no hub slot.
+--   "facing"   (option) front = along x towards the force's facing (the AI commander's rule), side = +y: iron south
+--              and copper north of every CC, the layout the AI hub was first calibrated on.
+match.ORE_LAYOUT = "rotated"
+
+--- The axes ore and army are laid out in (match.ORE_LAYOUT): front, side unit vectors.
+function match.layout_axes(force_name)
+  if match.ORE_LAYOUT == "facing" then return {x = match.facing(force_name), y = 0}, {x = 0, y = 1} end
+  return match.front(force_name)
+end
+
+--- Where a force's army gathers: ARMY_OFFSET tiles in front of its CC (match.layout_axes).
 function match.army_point(force_name)
   local home = match.home(force_name)
-  return {x = home.x + match.facing(force_name) * ARMY_OFFSET, y = home.y}
+  local f = match.layout_axes(force_name)
+  return {x = home.x + f.x * ARMY_OFFSET, y = home.y + f.y * ARMY_OFFSET}
 end
 
 --- Grid spacing for a unit prototype name (match.SPACING; 3.5 for anything not listed).
@@ -458,10 +484,12 @@ local function facing_of(force_name, spawns)
 end
 
 local function place_ore_patches(surface, force_name)
-  local home, dir = match.home(force_name), match.facing(force_name)
+  local home = match.home(force_name)
+  local f, side = match.layout_axes(force_name)
   local parts = {}
   for _, p in ipairs(match.ORE_PATCHES) do
-    local center = {x = home.x + dir * p[2], y = home.y + p[3]}
+    local center = {x = math.floor(home.x + f.x * p[2] + side.x * p[3] + 0.5),
+                    y = math.floor(home.y + f.y * p[2] + side.y * p[3] + 0.5)}
     local n = basetemplate.place_ore(surface, p[1], center, p[4], p[5], match.ORE_AMOUNT, true)
     parts[#parts + 1] = string.format("%s %dx%d at %s: %d tiles", p[1], p[4], p[5], util.pos_str(center), n)
   end
@@ -545,22 +573,28 @@ local function place_bases(surface)
 end
 
 --- Spawn one force's starting army at match.army_point: walkers in ARMY_COLUMNS columns (the first column faces
---- the front, the others extend towards the own CC), heavies in a column HEAVY_FRONT tiles in front of them.
+--- the front, the others extend towards the own CC), heavies in a column HEAVY_FRONT tiles in front of them. Columns
+--- run along the side axis (match.front).
 local function spawn_army(force_name, surface)
   local s = match.army_point(force_name)
-  local dir = match.facing(force_name)
+  local f, side = match.layout_axes(force_name)
   local made = 0
   local ws, hs = match.spacing("rts-walker"), match.spacing("rts-walker-heavy")
   local walkers, heavies = match.ARMY.walkers, match.ARMY.heavies
   local rows = math.ceil(walkers / ARMY_COLUMNS)
+  local function at(along, across) return {x = s.x + f.x * along + side.x * across,
+                                           y = s.y + f.y * along + side.y * across} end
   for i = 0, walkers - 1 do
     local col, row = i % ARMY_COLUMNS, math.floor(i / ARMY_COLUMNS)
-    local pos = {x = s.x - dir * col * ws, y = s.y + (row - (rows - 1) / 2) * ws}
-    if units.spawn("rts-walker", pos, force_name, "walker", surface) then made = made + 1 end
+    if units.spawn("rts-walker", at(-col * ws, (row - (rows - 1) / 2) * ws), force_name, "walker", surface) then
+      made = made + 1
+    end
   end
   for i = 0, heavies - 1 do
-    local pos = {x = s.x + dir * HEAVY_FRONT, y = s.y + (i - (heavies - 1) / 2) * hs}
-    if units.spawn("rts-walker-heavy", pos, force_name, "heavy", surface) then made = made + 1 end
+    if units.spawn("rts-walker-heavy", at(HEAVY_FRONT, (i - (heavies - 1) / 2) * hs), force_name, "heavy",
+      surface) then
+      made = made + 1
+    end
   end
   return made
 end

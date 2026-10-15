@@ -14,9 +14,10 @@ conventions: `docs/qa/phase2-polish-notes.md`. QA protocol: `docs/qa/phase3-prot
 - **Fog of war is verified on the minimap.** The GUI run's minimap is black except around the player's base, and
   the log reads `rts-player charted 20 visible 20 of 64`. Script screenshots render the world without fog, so the
   world view in remote view is not verified. Protocol steps 5, 6 and 9 check it with a real screen.
-- **One AI bug blocks iron in the contested centre patch for 1v2 and 1v3.** `scripts/ai/layout.lua:412` crashes the
-  game when the AI plans a mining line north or south of its CC. Those matches get stone there instead, until the AI is
-  fixed (see "AI planner limits").
+- **Contested iron is back in every match size,** since p3-ai's fix (commit 1051c60). Vertical mining lines and the
+  `storage.match.arena_half` contract are in `mods/`.
+- **Per-spawn ore is rotated towards the centre by default** (`match.ORE_LAYOUT = "rotated"`). The AI's hub slots
+  handle it since commit 33d5b40. `"facing"` (east/west) stays as an option. See "Final runs after the AI fix".
 - **Nothing is committed.**
 
 ## Files
@@ -85,17 +86,43 @@ neighbours. The AI commander faces its nearest other spawn along x, and on a tie
 | | 3 | player (−152, 0) +x; AI 1 (76, −132) +x; AI 2 (152, 0) −x; AI 3 (76, 132) +x |
 | Legacy 160×160 (waves brain) | 1 | player (−60, 0) +x; AI 1 (60, 0) −x (the Phase 2 geometry) |
 
-**Ore per spawn.** Each force gets `match.ORE_PATCHES`, the Phase 2 table, placed in front of its CC along its facing:
-iron (17, ±10), copper, stone and coal. This is the AI's own facing rule. The task asked for the table "rotated towards
-the centre". Exact rotation would put patches north or south of the off-axis CCs, which the AI planner cannot handle
-(next section). With this placement every force's patches sit exactly as in the calibrated 1v1 layout, mirrored as
-needed.
+The facing in the table is the AI commander's own rule, towards the nearest other spawn along x. The match uses it
+only for the legacy template.
+
+**Ore per spawn** (`match.ORE_LAYOUT`). Each force gets `match.ORE_PATCHES`, the Phase 2 table: iron (17, ±10),
+copper, stone and coal. `dx` runs along the force's front and `dy` along its side axis. The starting army
+(`match.army_point`, 14 tiles ahead) uses the same axes.
+
+| Layout | Front and side axes |
+|---|---|
+| `"rotated"` (default) | Front from the CC towards (0, 0) (`match.front`). Side perpendicular, pointing south (east when the front is due north or south). |
+| `"facing"` (option) | Front along x, towards the force's facing (the AI commander's rule). Side +y: iron south of the CC, copper north. The AI hub was first calibrated on this layout. |
+
+**History of the default.** Before p3-ai's commit 33d5b40, `"rotated"` put iron and copper on the same side of an
+off-axis AI's CC in 1v2 and 1v3. That AI's copper line then found no hub slot (`line copper unavailable: no hub slot
+reachable`), and it smelted no copper (see "Final runs after the AI fix"). For a while the lead made `"facing"` the
+default. 33d5b40 gives the hub slots on all four sides, and `"rotated"` is the default again. The player's layout is
+the same in both modes, and so is any AI on the x axis, so 1v1 does not change.
+
+Iron patch centres:
+
+| Map | Opponents | `"facing"` | `"rotated"` (default) |
+|---|---|---|---|
+| Small | 1 | player (−71, 10); AI 1 (71, 10) | same |
+| | 2 | AI 1 (13, −73); AI 2 (13, 93) | AI 1 (34, −64); AI 2 (15, 70) |
+| | 3 | AI 1 (61, −66); AI 2 (71, 10); AI 3 (61, 86) | AI 1 (44, −56); AI 2 (71, 10); AI 3 (27, 66) |
+| Medium | 2 | AI 1 (35, −133); AI 2 (35, 153) | AI 1 (56, −124); AI 2 (37, 130) |
+| | 3 | AI 1 (93, −122); AI 2 (135, 10); AI 3 (93, 142) | AI 1 (76, −112); AI 2 (135, 10); AI 3 (59, 122) |
+
+In both layouts, a check script found no overlapping patch and no patch outside the arena. No patch lies within 45
+tiles (`HOSTILE_RADIUS`) of another force's CC.
 
 **Contested ore.** Two patches near the centre, 2500 per tile: iron 14×14 at (0, −24) and copper 10×10 at (0, 24).
-With 2 or 3 AI opponents the iron one is stone.
+They are placed in every match size except legacy. `match.AI_VERTICAL_LINES = false` would bring back the stone
+stand-in for 1v2 and 1v3.
 
 **Starting state, the same for every force.** `buildings.place_cc` with `match.STARTING_STOCK`: 200 iron, 100 copper and
-the Phase 2 building stock. 6 walkers stand 14 tiles in front of the CC. Hard AI adds its own ×1.5 stock.
+the Phase 2 building stock. 6 walkers stand 14 tiles in front of the CC, towards the centre. Hard AI adds its own ×1.5 stock.
 
 **Forces.** `rts-player` (blue) and `rts-ai-1` (red), `rts-ai-2` (yellow) and `rts-ai-3` (green). Every pair is
 enemies, with no cease-fire: free-for-all. `share_chart` is off, and there is cease-fire with the vanilla `enemy`,
@@ -107,18 +134,16 @@ enemies, with no cease-fire: free-for-all. `share_chart` is off, and there is ce
    undefined globals. Any patch that lies more north/south of a CC than east/west stops the game with
    `layout.lua:414: attempt to perform arithmetic on local 'perp' (a nil value)`. The first 1v2 run hit it at 210 s,
    through `expand iron2` picking the contested iron patch.
-   - The fix is `along, perp = cell[2], cell[1]`.
-   - Until then, `match.AI_VERTICAL_LINES = false` swaps the contested iron for stone when there are 2 or more AI
-     opponents. The AI never expands to stone.
-   - Set the flag to true after the fix. True rotation of the per-spawn ore could then be considered too, although the
-     AI's hub layout still assumes an east/west front.
+   - **Fixed by p3-ai in commit 1051c60.** `match.AI_VERTICAL_LINES` is now true. Hub slots on all four sides came
+     in commit 33d5b40, and `"rotated"` ore is the default since then.
+   - Before the fix, the flag (false) swapped the contested iron for stone in 1v2 and 1v3.
 2. **`ai/layout.lua` `ARENA_HALF` was a constant 80.** The AI plans nothing outside it, and the small map's CCs are at
    ±88.
    - The lead set a contract (2026-10-15): `match.lua` sets `storage.match.arena_half` (the size / 2) at match start,
      and `ai/layout.lua` reads it, with a fallback of 80. `match.lua` no longer writes the module field.
    - The validation runs above wrote the module field directly, an earlier version of this code.
-   - **Until p3-ai's change is in `mods/`, the AI cannot plan any mining line on the small or medium map.** A 40 s
-     smoke run logs `line iron unavailable: no hub slot reachable` for every line. It has no script errors.
+   - **p3-ai's side is in `mods/` (commit 1051c60).** In the gap before it landed, the AI planned no lines on the
+     small map: `line iron unavailable: no hub slot reachable`, with no script errors.
 3. **`expand iron2` never succeeds in practice.** In the 1v1 run both AIs found the contested iron patch, then logged
    `line iron2 unavailable: no hub slot reachable for iron-ore@-7,-28`. This matches the AI notes' "hub is full".
 
@@ -287,6 +312,28 @@ All runs use copies of `mods/` plus `mods/mod-list.json` (Space Age on). "Final 
     | 1620 | "Враги: 0" after the victory |
 - **Headless run**, 150 s on `build/p3-flow`: 0 errors. The AI planned no lines in this run: the arena_half gap described in "AI planner limits".
 
+### Final runs after the AI fix
+
+**Current defaults:** `match.ORE_LAYOUT = "rotated"` and `match.AI_VERTICAL_LINES = true` (contested iron in every
+size). Every run is headless, 6-minute AI autotest, small map, normal difficulty, zero errors.
+
+| Run | AI code | Layout | Result |
+|---|---|---|---|
+| `build/p3-final-1v1` (final-code copy), 420 s | 1051c60 | 1v1, identical in both | 12/12, both alive |
+| `build/p3-final-1v2` | 1051c60 | rotated | 16/16, but both AIs logged `line copper unavailable` and smelted 0 copper. Player AI out at 278 s. |
+| `build/p3-final-1v2f` | 1051c60 | facing | 16/16; every line planned. Player AI out at 338 s. |
+| `build/p3-final-1v3` | 1051c60 | rotated | 17/20. AI 1 and AI 3 had no copper line. Failed checks: `attack_rts-ai-1`, `produce_rts-ai-3`, `outcome`. |
+| `build/p3-final-1v3f` | 1051c60 | facing | 20/20; every line planned |
+| **`build/p3-rot-1v2`** | **33d5b40** (current `mods/`) | **rotated** | **19/19.** Every AI built extractor, smelter and barracks at 34 s and smelts copper. Player AI out at 321 s. |
+| **`build/p3-rot-1v3`** | **33d5b40** | **rotated** | **23/24.** Every AI built extractor, smelter and barracks at 31–37 s. Only `rts-player:iron2` was unavailable, so every AI got its iron and copper lines. |
+
+**The one failure is AI army behaviour, not match flow.** The failed check is `attack_rts-ai-1: launched 0 attacks`:
+1. AI 1 lost its barracks and kept 2 units.
+2. AI 2 lost its CC and barracks, but kept a factory, so it was not out.
+3. In the four-way fight, AI 1 never reached its attack size.
+
+A GUI smoke run on the final 1v1 copy passed: lobby on join, `RTS_GUI_READY`, 0 errors.
+
 **Self-test timeline.** Ticks count from the player's camera setup. camera.lua's step at 960 still writes
 `RTS_GUI_READY`.
 
@@ -346,8 +393,6 @@ on the medium map.
 
 ## Open issues
 
-- **The AI layout bug** (`layout.lua:412`) and the stone stand-in for contested iron in 1v2 / 1v3 (see "AI planner
-  limits").
 - **No team mode.** It is always free-for-all. Allied AIs would need `set_friend`, `share_chart` and a team-aware
   `check_out`.
 - **The lobby still shows the HUD strip and the minimap** behind the dialog, with zeros, "--:--" and the Menu button.
