@@ -45,6 +45,17 @@ inputs[#inputs + 1] = {name = "rts-menu", key_sequence = "F10", consuming = "gam
 -- use (their vanilla technologies are disabled), so the input consumes it.
 inputs[#inputs + 1] = {name = "rts-tech", key_sequence = "T", consuming = "game-only"}
 
+-- Phase 4 HUD (scripts/hud.lua): F3 jumps the camera to the newest alert (again: the next older one), F11 toggles
+-- "How to play". Both are free in vanilla 2.0 (F4/F5 are the debug keys).
+inputs[#inputs + 1] = {name = "rts-alert-jump", key_sequence = "F3", consuming = "game-only"}
+inputs[#inputs + 1] = {name = "rts-help", key_sequence = "F11", consuming = "game-only"}
+
+-- Phase 4: abilities (scripts/abilities.lua). Z Stim, C Shield, V Scanner sweep, G Artillery strike; Overcharge is a
+-- button only. Away from WASD, Q/E/R/T, B, F, X, H, M and space, which other inputs or vanilla controls use.
+for i, key in ipairs({"Z", "C", "V", "G"}) do
+  inputs[#inputs + 1] = {name = "rts-ability-" .. i, key_sequence = key, consuming = "game-only"}
+end
+
 for i, input in ipairs(inputs) do
   input.type = "custom-input"
   input.order = string.format("z[rts]-%02d", i)

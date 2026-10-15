@@ -3,6 +3,8 @@
 --   storage.buildings[unit_number] = {
 --     entity   = LuaEntity,
 --     kind     = "cc" | "barracks" | "factory" | "turret" | "extractor" | "smelter" | "stockpile" | "solar",
+--                Phase 4: "laser-turret" | "wall" | "steam-plant" | "accumulator" | "radar" (below), "lab"
+--                (scripts/research.lua) and "hub" (scripts/logistics.lua), which those modules add at load time,
 --     force    = force name,
 --     surface  = surface index,
 --     position = MapPosition (copied at registration; used after the entity is gone),
@@ -34,6 +36,15 @@ buildings.KIND_BY_NAME = {
   ["rts-smelter"] = "smelter",
   ["rts-stockpile"] = "stockpile",
   ["rts-solar-array"] = "solar",
+  -- Phase 4 defence and power (prototypes/buildings.lua; kinds as in balance.buildings[name].kind). The laser turret
+  -- is not "turret": production.lua feeds kind "turret" with magazines, the AI budgets magazines per "turret" and
+  -- counts build-order steps by kind_of(name). Every wall segment is a building (one on_object_destroyed
+  -- registration each), so damage to a wall raises base-attacked alerts and counts as a base threat for the AI.
+  ["rts-laser-turret"] = "laser-turret",
+  ["rts-wall"] = "wall",
+  ["rts-steam-plant"] = "steam-plant",
+  ["rts-accumulator"] = "accumulator",
+  ["rts-radar"] = "radar",
 }
 
 buildings.CC_NAME = "rts-command-center"

@@ -12,17 +12,34 @@
 --   top-right     minimap of the arena (directly on `screen`, over a decorative frame); a click jumps the
 --                 camera there (camera.jump_to). The vanilla entity tooltip, which the game draws in that corner,
 --                 is switched off (HIDE_ENTITY_TOOLTIP).
+-- Phase 4 (docs/PHASE4.md section 7, docs/qa/phase2-hud-notes.md "Phase 4"):
+--   selection panel  unit cards (one per unit prototype: icon, count, HP bar; a click keeps only that kind, Shift +
+--                    click drops it); barracks / factory grids grey out recipes the force cannot use yet (disabled
+--                    recipe or a unit locked by research) with "Requires research: X"; the barracks page shows
+--                    research.block_of (kit waiting for research or for supply); pages for the Phase 4 buildings.
+--   build menu       three tabs (Economy, Production, Defence and power), locked items greyed out.
+--   strip            supply used/cap (supply.get), circuits and explosives, Research [T] and How to play [F11]
+--                    buttons. Below it the alert lines: the newest 3 storage.alerts of the player's force, 15 s,
+--                    fading; a click or F3 (rts-alert-jump, repeated presses cycle) jumps the camera there; a minimap
+--                    ping (chart tag) for 10 s. This module writes "base-attacked" (own building damaged by another
+--                    force, at most every 20 s per force).
+--   top-left         kill feed: the last 5 unit deaths the player's force saw ("Walker ✕ (AI 1)"), fading.
+--   centre           "How to play" (F11 / the ? button): 10 lines, en and ru.
 --
 -- Every player-facing text is a localised string from the [rts] section of locale/*/factorio-rts.cfg
 -- ({"rts.key", parameters...}); prototype names come from the prototypes (localised_name). Only numbers,
 -- key names (F, Ctrl+A), positions and rich-text icons are built here. See docs/qa/phase2-polish-notes.md.
 --
--- Owns storage.players[i].hud = {panel, strip, minimap_frame, minimap, build (LuaGuiElement), el = {...},
---   groups = {...}, res = {...}, build_buttons = {[item] = button}, recipe_buttons = {[recipe or ""] = button},
---   bld_un = unit number the recipe buttons were built for},
--- storage.players[i].hud_prefs = {build_hidden} (survives HUD rebuilds), storage.players[i].hud_resource_log
--- = {line, tick} (last "hud resources" QA line)
--- and storage.hud = {wave_seen, wave_tick, ended_tick} (match-event tracking shared by all players).
+-- Owns storage.players[i].hud = {panel, strip, minimap_frame, minimap, build, alerts, kills (LuaGuiElement),
+--   el = {...}, groups = {...}, res = {...}, build_buttons = {[item] = button}, recipe_buttons = {[recipe or ""] =
+--   button}, recipe_locks = {[recipe] = tech | true | false}, bld_un = unit number the recipe buttons were built for,
+--   cards = {[unit name] = {button, bar}}, card_key = names the cards were built for, alert_lines, kill_lines},
+-- storage.players[i].hud_prefs = {build_hidden, build_tab} (survives HUD rebuilds), storage.players[i].hud_resource_log
+-- = {line, tick} (last "hud resources" QA line), .hud_alert = {seen_tick, jump_tick, jump_index} (alert sound and
+-- F3 cycling)
+-- and storage.hud = {wave_seen, wave_tick, ended_tick (match-event tracking shared by all players),
+--   attack_alert = {[force] = tick} (base-attacked rate limit), kills = {{tick, name, force, killer, killer_force,
+--   seen = {[force] = true}}, ...} (kill feed, newest last), pings = {{tag, tick}, ...}, ping_tick}.
 -- Reads storage.players[i].selection / .groups / .building (selection.lua), storage.units (units.lua),
 -- storage.buildings (buildings.lua) and storage.match (match.lua); never writes them.
 --
@@ -39,6 +56,11 @@ local cursor = require("scripts.cursor")
 local buildings = require("scripts.buildings")
 local production = require("scripts.production")
 local economy = require("scripts.economy")
+-- Phase 4: control.lua loads these before the HUD, so requiring them here registers nothing new.
+local supply = require("scripts.supply")
+local research = require("scripts.research")
+local logistics = require("scripts.logistics")
+local balance = require("balance")
 
 local hud = {}
 
@@ -81,13 +103,34 @@ local RESOURCE_LOG_TICKS = 5 * 60  -- the "hud resources" QA line is written at 
 -- Layout, in GUI units (multiplied by player.display_scale on screen).
 -- The selection panel is wide and low: the console (chat) has no GameViewSettings switch and its last line ends
 -- about 135 GUI units above the bottom of the screen, so the panel's top (PANEL_HEIGHT + MARGIN) stays below it.
+-- Phase 4: 126 high (unit cards with HP bars, the factory's 2 x 14 recipe grid); its top, 134 units above the bottom,
+-- is still below the console. 520 wide: the abilities frame (scripts/abilitygui.lua) takes the bottom centre from
+-- x 400 px at 1280x800 and UI scale 0.75, and this panel ends at x 396.
 local MARGIN = 8
 local FRAME_PADDING_X = 16         -- rts_hud_frame: 8 left + 8 right
-local PANEL_WIDTH, PANEL_HEIGHT = 520, 114
+local PANEL_WIDTH, PANEL_HEIGHT = 520, 126
 local PANEL_INNER = PANEL_WIDTH - FRAME_PADDING_X
-local STRIP_WIDTH, STRIP_HEIGHT = 600, 96
+local STRIP_WIDTH, STRIP_HEIGHT = 720, 96 -- Phase 4: 720 (was 600) for supply, circuits, explosives and two buttons
 local STRIP_INNER = STRIP_WIDTH - FRAME_PADDING_X
-local KINDS_WIDTH = 180            -- "Walker ×20   Heavy ×4", left of the control-group buttons (42 wide each)
+-- Phase 4 layout and timing constants live in one table: the main chunk is close to Lua's 200-local limit.
+local P4 = {
+  -- Unit cards: one 30 px slot button per unit prototype in the selection with its count, an HP bar under it. At most
+  -- CARD_MAX in the row left of the control-group buttons; with more prototypes the last slot reads "+N".
+  CARD_SIZE = 30, CARD_SPACING = 2, CARD_MAX = 6,
+  -- The factory has 25 recipes, so its grid takes the whole panel width (2 rows of 14, 14 x 34 + 13 x 2 = 502 of
+  -- 504) and its status moves to a line under the grid.
+  FACTORY_COLUMNS = 14, FACTORY_STATUS_WIDTH = 250, FACTORY_PROGRESS_WIDTH = 80, FACTORY_COUNTS_WIDTH = 160,
+  -- Alert lines under the strip: the newest ALERT_SHOWN of the player's force, ALERT_TICKS long, fading out over the
+  -- last ALERT_FADE_TICKS. base-attacked at most once per force in ATTACK_ALERT_PERIOD. F3 again within
+  -- ALERT_JUMP_CYCLE_TICKS: the next older alert. A minimap ping (chart tag) stays PING_TICKS.
+  ALERT_WIDTH = 520, ALERT_SHOWN = 3, ALERT_TICKS = 15 * 60, ALERT_FADE_TICKS = 3 * 60,
+  ATTACK_ALERT_PERIOD = 20 * 60, ALERT_JUMP_CYCLE_TICKS = 5 * 60, PING_TICKS = 10 * 60,
+  -- Kill feed in the top-left corner: the last KILL_SHOWN deaths, KILL_TICKS long, KILL_KEEP kept in storage.
+  KILL_WIDTH = 260, KILL_SHOWN = 5, KILL_TICKS = 20 * 60, KILL_FADE_TICKS = 5 * 60, KILL_KEEP = 30,
+  FEED_PERIOD = 10, -- ticks; alert lines and kill feed (fading) refresh
+  HELP_WIDTH = 640, HELP_LINES = 10, -- "How to play": rts.help-1 .. rts.help-10
+}
+P4.CARDS_WIDTH = P4.CARD_MAX * P4.CARD_SIZE + (P4.CARD_MAX - 1) * P4.CARD_SPACING -- 190
 -- Recipe grid of a barracks / factory: Pause first, then the recipes (group, subgroup, recipe order), at most
 -- RECIPE_COLUMNS per row, so a new recipe never moves Pause and only shifts the recipes after it.
 local RECIPE_COLUMNS = 6
@@ -95,8 +138,9 @@ local RECIPE_BUTTON, RECIPE_SPACING = 34, 2 -- rts_hud_recipe_button size
 local RECIPE_GRID_WIDTH = RECIPE_COLUMNS * RECIPE_BUTTON + (RECIPE_COLUMNS - 1) * RECIPE_SPACING -- 214
 local BODY_SPACING = 8             -- between the recipe grid and the text column
 local TEXT_WITH_GRID = PANEL_INNER - RECIPE_GRID_WIDTH - BODY_SPACING -- 282
-local BUILD_COLUMNS = 6
-local BUILD_WIDTH, BUILD_HEIGHT = 272, 122
+-- Build menu (Phase 4): three tabs, at most 7 slot buttons each.
+local BUILD_COLUMNS = 7
+local BUILD_WIDTH, BUILD_HEIGHT = 308, 112 -- 7 x 40 + 6 x 2 + 16
 local MINIMAP_SIZE = 220
 local MINIMAP_PADDING = 4          -- rim of the decorative frame drawn behind the minimap
 local MINIMAP_FRAME_SIZE = MINIMAP_SIZE + 2 * MINIMAP_PADDING
@@ -115,19 +159,35 @@ local function minimap_zoom()
 end
 
 local NAMES = {panel = "rts_hud_panel", strip = "rts_hud_strip", minimap_frame = "rts_hud_minimap_frame",
-               minimap = "rts_hud_minimap", build = "rts_hud_build"}
+               minimap = "rts_hud_minimap", build = "rts_hud_build", alerts = "rts_hud_alerts",
+               kills = "rts_hud_kills"}
+local HELP_FRAME = "rts_hud_help" -- created on demand, not part of the HUD's frame set
 local PREFIX = "rts_hud_"          -- every clickable HUD element's name starts with this
 
 -- Locale keys ([rts] section).
-local KIND_KEYS = {walker = "rts.kind-walker", heavy = "rts.kind-heavy"}
-local KIND_RANK = {walker = 1, heavy = 2}
+local KIND_KEYS = {walker = "rts.kind-walker", heavy = "rts.kind-heavy", drone = "rts.kind-drone",
+                   raider = "rts.kind-raider", artillery = "rts.kind-artillery", hauler = "rts.kind-hauler",
+                   commander = "rts.kind-commander"}
+local KIND_RANK = {commander = 0, walker = 1, heavy = 2, drone = 3, raider = 4, artillery = 5, hauler = 6}
 local ORDER_KEYS = {idle = "rts.order-idle", move = "rts.order-move", attack = "rts.order-attack",
-                    attack_move = "rts.order-attack-move", hold = "rts.order-hold"}
+                    attack_move = "rts.order-attack-move", hold = "rts.order-hold", haul = "rts.order-haul",
+                    commander = "rts.order-commander"}
+
+-- Phase 4 unit data from balance.lua: kit recipe -> unit for the barracks kits (the hauler kit is the factory's,
+-- made_by = "factory"), and the mk2 kits, which research never enables (Armor I deploys mk2 units from tier-1 kits),
+-- so the barracks grid leaves them out.
+local KIT_UNIT, HIDDEN_KITS = {}, {}
+for name, u in pairs(balance.units) do
+  if u.kit and not u.made_by then
+    if u.base then HIDDEN_KITS[u.kit] = true else KIT_UNIT[u.kit] = name end
+  end
+end
 local FEED_KEYS = {fed = "rts.turret-fed", ["network empty"] = "rts.turret-network-empty",
                    ["no network"] = "rts.turret-no-network"}
 
 local COLOR = {
   white = {1, 1, 1},
+  gold = {1, 0.84, 0.6},
   dim = {0.72, 0.72, 0.72},
   yellow = {1, 0.85, 0.3},
   red = {1, 0.42, 0.36},
@@ -152,23 +212,59 @@ local COMMAND_BY_ACTION = {}
 for _, c in pairs(COMMANDS) do COMMAND_BY_ACTION[c.action] = c end
 local GROUP_COUNT = 5
 
--- Build menu, in button order: the first BUILD_COLUMNS are the economy row, then production and defense.
--- The belt, inserter and pole are the vanilla items (docs/qa/phase2-prototypes-notes.md "Reused vanilla
--- entities"). An item without an rts recipe is disabled while the network holds none of it.
-local BUILD_ITEMS = {
-  "rts-extractor", "rts-smelter", "rts-solar-array", "transport-belt", "fast-inserter", "medium-electric-pole",
-  "rts-factory", "rts-barracks", "rts-turret", "rts-stockpile",
+-- Build menu tabs, in button order (Phase 4). The belt, inserter and pole are the vanilla items
+-- (docs/qa/phase2-prototypes-notes.md "Reused vanilla entities"). An item without an rts recipe is disabled while the
+-- network holds none of it; an item whose recipe the force has not unlocked is greyed out with the technology in its
+-- tooltip (it can still be placed while the network holds some).
+local BUILD_TABS = {
+  {key = "economy", caption = "rts.build-tab-economy", tooltip = "rts.build-tab-economy-tooltip",
+   items = {"rts-extractor", "rts-smelter", "rts-stockpile", "transport-belt", "fast-inserter", "medium-electric-pole",
+            "rts-hub"}},
+  {key = "production", caption = "rts.build-tab-production", tooltip = "rts.build-tab-production-tooltip",
+   items = {"rts-barracks", "rts-factory", "rts-lab"}},
+  {key = "defence", caption = "rts.build-tab-defence", tooltip = "rts.build-tab-defence-tooltip",
+   items = {"rts-turret", "rts-laser-turret", "rts-wall", "rts-solar-array", "rts-steam-plant", "rts-accumulator",
+            "rts-radar"}},
 }
+local BUILD_TAB_BY_KEY = {}
+for _, tab in ipairs(BUILD_TABS) do BUILD_TAB_BY_KEY[tab.key] = tab end
+local BUILD_ITEMS = {}
+for _, tab in ipairs(BUILD_TABS) do
+  for _, item in ipairs(tab.items) do BUILD_ITEMS[#BUILD_ITEMS + 1] = item end
+end
 local RTS_CATEGORIES = {["rts-buildings"] = true, ["rts-units"] = true}
 
 -- Top-strip resources: economy.snapshot field, icon, tooltip key.
+-- `item` (Phase 4): read snapshot.items[item] instead of the snapshot field `key`.
 local RESOURCES = {
   {key = "iron", sprite = "item/iron-plate", tooltip = "rts.res-iron-tooltip"},
   {key = "copper", sprite = "item/copper-plate", tooltip = "rts.res-copper-tooltip"},
   {key = "steel", sprite = "item/steel-plate", tooltip = "rts.res-steel-tooltip"},
+  {key = "circuits", item = "electronic-circuit", sprite = "item/electronic-circuit",
+   tooltip = "rts.res-circuits-tooltip"},
+  {key = "explosives", item = "rts-explosives", sprite = "item/rts-explosives", tooltip = "rts.res-explosives-tooltip"},
   {key = "stone", sprite = "item/stone", tooltip = "rts.res-stone-tooltip"},
   {key = "magazines", sprite = "item/firearm-magazine", tooltip = "rts.res-magazines-tooltip"},
 }
+
+-- Alert kinds (storage.alerts): icon (first valid sprite path wins), text colour, sound when it arrives.
+local ALERT_STYLE = {
+  ["base-attacked"] = {icons = {"utility/danger_icon", "utility/warning_icon"}, color = "red",
+                       sound = "utility/alert_destroyed"},
+  ["hauler-lost"] = {icons = {"entity/rts-hauler", "utility/danger_icon"}, color = "red",
+                     sound = "utility/alert_destroyed"},
+  ["supply-blocked"] = {icons = {"utility/warning_icon"}, color = "yellow"},
+  ["unit-locked"] = {icons = {"item/rts-science-basic", "utility/warning_icon"}, color = "yellow"},
+  ["research-complete"] = {icons = {"item/rts-science-advanced", "utility/check_mark_green"}, color = "green"},
+  ["patch-depleted"] = {icons = {"item/iron-ore", "utility/warning_icon"}, color = "yellow"},
+  ["ruin-captured"] = {icons = {"item/steel-plate", "utility/check_mark_green"}, color = "green"},
+  ["commander-down"] = {icons = {"entity/rts-commander", "utility/danger_icon"}, color = "red",
+                        sound = "utility/alert_destroyed"},
+  ["commander-ready"] = {icons = {"entity/rts-commander", "utility/check_mark_green"}, color = "green"},
+}
+local ALERT_DEFAULT_STYLE = {icons = {"utility/warning_icon"}, color = "white"}
+local PING_KINDS = {["base-attacked"] = true, ["hauler-lost"] = true, ["commander-down"] = true}
+local PING_SIGNALS = {"signal-alert", "signal-red", "signal-dot"} -- the first that exists
 
 ---------------------------------------------------------------------------
 -- Helpers
@@ -267,10 +363,73 @@ local function get_hud(player)
   local p = pstate(player.index)
   local h = p and p.hud
   if h and h.panel and h.panel.valid and h.strip and h.strip.valid and h.minimap_frame and h.minimap_frame.valid
-     and h.minimap and h.minimap.valid and h.build and h.build.valid then
+     and h.minimap and h.minimap.valid and h.build and h.build.valid and h.alerts and h.alerts.valid
+     and h.kills and h.kills.valid then
     return h
   end
   return nil
+end
+
+-- Sprite paths are checked once (helpers.is_valid_sprite_path); the cache is derived from prototypes only.
+local sprite_ok = {}
+local function valid_sprite(path)
+  local ok = sprite_ok[path]
+  if ok == nil then
+    ok = helpers.is_valid_sprite_path(path)
+    sprite_ok[path] = ok
+  end
+  return ok
+end
+
+local function set_style(element, style)
+  if element.style.name ~= style then element.style = style end
+end
+
+local function first_sprite(list)
+  for _, path in ipairs(list) do
+    if valid_sprite(path) then return path end
+  end
+  return nil
+end
+
+--- Icon of a unit prototype: the entity's own icon, else its kit's.
+local function unit_sprite(name)
+  local u = balance.units[name]
+  return first_sprite({"entity/" .. name, u and u.kit and ("item/" .. u.kit) or "entity/" .. name,
+                       "utility/questionmark"}) or "utility/questionmark"
+end
+
+local function unit_name(name)
+  local proto = prototypes.entity[name]
+  return proto and proto.localised_name or name
+end
+
+local function tech_name(tech)
+  if type(tech) == "string" then return {"technology-name." .. tech} end
+  return {"rts.tech-unknown"}
+end
+
+-- supply.get walks the unit registry (about 33 us at 100 units, docs/qa/phase4-research-notes.md): once per force
+-- and tick, shared by the players of a force. Derived from game state only, so every client computes the same.
+local supply_cache = {}
+local function supply_of(force_name)
+  local c = supply_cache[force_name]
+  if c and c.tick == game.tick then return c end
+  local got = supply.get(force_name)
+  c = {tick = game.tick, used = got.used, cap = got.cap}
+  supply_cache[force_name] = c
+  return c
+end
+
+--- Why the force cannot use a recipe yet: the technology name, true (locked, technology unknown) or false. A recipe
+--- the force has disabled is locked (laser turret, steam plant); so is a barracks kit whose unit research has not
+--- unlocked: its recipe stays enabled, and research.gate would keep every such kit in the barracks output.
+local function recipe_lock(force, recipe_name)
+  local fr = force.recipes[recipe_name]
+  if fr and not fr.enabled then return research.lock_of(recipe_name) or true end
+  local unit = KIT_UNIT[recipe_name]
+  if unit and not research.is_unlocked(force.name, unit) then return research.lock_of(unit) or true end
+  return false
 end
 
 --- Switch the vanilla entity tooltip off (HIDE_ENTITY_TOOLTIP). Checked on every full refresh, because a
@@ -322,7 +481,7 @@ local function machine_recipes(entity)
   local categories = entity.prototype.crafting_categories or {}
   local keys = {}
   for _, r in pairs(prototypes.recipe) do
-    if categories[r.category] and not r.parameter and not r.hidden then
+    if categories[r.category] and not r.parameter and not r.hidden and not HIDDEN_KITS[r.name] then
       list[#list + 1] = r
       keys[r.name] = recipe_sort_key(r)
     end
@@ -346,23 +505,40 @@ local function product_amount(recipe)
   return product and (product.amount or product.amount_max) or 1
 end
 
-local function build_items()
+--- Existing items of one build tab (all tabs when nil), in button order.
+local function build_items(tab)
   local list = {}
-  for _, item in ipairs(BUILD_ITEMS) do
+  for _, item in ipairs(tab and tab.items or BUILD_ITEMS) do
     if prototypes.item[item] then list[#list + 1] = item end
   end
   return list
 end
 
-local function build_tooltip(item, in_network)
+--- Research lock of a build-menu item: the lock of its rts recipe (see recipe_lock), false without a recipe.
+local function item_lock(force, item)
+  local recipe = recipe_for(item)
+  return recipe and recipe_lock(force, recipe.name) or false
+end
+
+local function build_tooltip(item, in_network, lock)
   local recipe = recipe_for(item)
   local how = recipe and {"rts.build-recipe", cost_text(recipe), product_amount(recipe), seconds_text(recipe.energy)}
     or {"rts.build-no-recipe"}
+  if lock then
+    return {"rts.build-tooltip-locked", prototypes.item[item].localised_name, {"rts.in-stock", in_network}, how,
+            tech_name(lock)}
+  end
   return {"rts.build-tooltip", prototypes.item[item].localised_name, {"rts.in-stock", in_network}, how}
 end
 
-local function recipe_tooltip(recipe)
-  return {"rts.recipe-tooltip", recipe.localised_name, cost_text(recipe), seconds_text(recipe.energy)}
+--- Recipe button tooltip; barracks kits add the unit's supply cost, locked recipes the technology.
+local function recipe_tooltip(recipe, lock)
+  local unit = KIT_UNIT[recipe.name]
+  local base = unit and {"rts.recipe-tooltip-unit", recipe.localised_name, cost_text(recipe),
+                         seconds_text(recipe.energy), supply.cost(unit)}
+    or {"rts.recipe-tooltip", recipe.localised_name, cost_text(recipe), seconds_text(recipe.energy)}
+  if lock then return {"rts.recipe-locked-tooltip", base, tech_name(lock)} end
+  return base
 end
 
 ---------------------------------------------------------------------------
@@ -419,11 +595,18 @@ local function place(player, h)
   local sx = math.floor((res.width - sw) / 2 + 0.5)
   sx = math.max(m, math.min(sx, mx - pad - m - sw))
   h.strip.location = {sx, m}
+  -- Phase 4: alert lines centred under the strip, kill feed in the top-left corner.
+  local aw = px(P4.ALERT_WIDTH, s)
+  local ax, ay = sx + math.floor((sw - aw) / 2 + 0.5), m + px(STRIP_HEIGHT, s) + px(4, s)
+  h.alerts.location = {ax, ay}
+  h.kills.location = {m, m}
   util.log("hud: layout player=%d display %dx%d scale %.2f: panel (%d, %d) %dx%d, build (%d, %d) %dx%d, "
-    .. "strip (%d, %d) %dx%d, minimap (%d, %d) %dx%d", player.index, res.width, res.height, s,
+    .. "strip (%d, %d) %dx%d, minimap (%d, %d) %dx%d, alerts (%d, %d) %d wide, kill feed (%d, %d) %d wide",
+    player.index, res.width, res.height, s,
     m, res.height - px(PANEL_HEIGHT, s) - m, px(PANEL_WIDTH, s), px(PANEL_HEIGHT, s),
     res.width - px(BUILD_WIDTH, s) - m, res.height - px(BUILD_HEIGHT, s) - m, px(BUILD_WIDTH, s), px(BUILD_HEIGHT, s),
-    sx, m, sw, px(STRIP_HEIGHT, s), mx, m + pad, px(MINIMAP_SIZE, s), px(MINIMAP_SIZE, s))
+    sx, m, sw, px(STRIP_HEIGHT, s), mx, m + pad, px(MINIMAP_SIZE, s), px(MINIMAP_SIZE, s), ax, ay, aw, m, m,
+    px(P4.KILL_WIDTH, s))
 end
 
 local function add_filler(parent)
@@ -437,10 +620,11 @@ local function vflow(parent, spacing)
 end
 
 -- Units page, four rows:
---   "6 units selected" ............................ "HP 100%"  "Order: Idle"
---   "Walker ×6" ........................ Groups [1: 6] [2] [3] [4] [5]
+--   "6 units selected" (one prototype: "Raider ×6") ........ "HP 100%"  "Order: Idle"
+--   [card][card][card] (icon, count, HP bar) ............ Groups [1: 6] [2] [3] [4] [5]
 --   [Attack-move [F]] [Stop [X]] [Hold [H]] [Select all [Ctrl+A]]
 --   hint line
+-- (The abilities agent's buttons live in their own frame, scripts/abilitygui.lua.)
 local function build_unit_page(panel, h)
   local el = h.el
   local page = vflow(panel)
@@ -448,13 +632,17 @@ local function build_unit_page(panel, h)
 
   local header = page.add({type = "flow", direction = "horizontal", style = "rts_hud_row"})
   el.sel_count = header.add({type = "label", style = "rts_hud_heading_label"})
+  el.sel_count.style.maximal_width = 240
   add_filler(header)
   el.health = header.add({type = "label", style = "rts_hud_mono_label", tooltip = {"rts.hp-tooltip"}})
   el.order = header.add({type = "label", style = "rts_hud_label", tooltip = {"rts.order-tooltip"}})
+  el.order.style.maximal_width = 200
 
   local kinds_row = page.add({type = "flow", direction = "horizontal", style = "rts_hud_row"})
-  el.kinds = kinds_row.add({type = "label", style = "rts_hud_label"})
-  el.kinds.style.maximal_width = KINDS_WIDTH
+  el.cards = kinds_row.add({type = "flow", direction = "horizontal"})
+  el.cards.style.horizontal_spacing = P4.CARD_SPACING
+  el.cards.style.width = P4.CARDS_WIDTH
+  el.cards.style.height = P4.CARD_SIZE + 6
   add_filler(kinds_row)
   kinds_row.add({type = "label", style = "rts_hud_dim_label", caption = {"rts.groups"}})
   for n = 1, GROUP_COUNT do
@@ -479,12 +667,24 @@ end
 --   "Barracks #971" ............................................ "HP 1500/1500"
 --   [Pause][recipe][recipe][recipe][recipe][recipe]   status line ("Walker kit: running")
 --   [recipe]...                     (6 per row)        progress bar
---                                                      counters
+--                                                      counters, or why a kit waits (research / supply)
 --                                                      rally point / hint
--- Kinds without recipes hide the grid and the text column takes the whole width.
+-- The factory (Phase 4, 25 recipes): the grid takes the whole width, 14 per row, and the status, progress and
+-- counters go to one line under it. Kinds without recipes hide the grid and the text column takes the whole width.
+local function new_recipe_grid(el, columns)
+  if el.b_buttons and el.b_buttons.valid then el.b_buttons.destroy() end
+  local grid = el.b_body.add({type = "table", column_count = columns, index = 1})
+  grid.style.horizontal_spacing = RECIPE_SPACING
+  grid.style.vertical_spacing = RECIPE_SPACING
+  grid.style.minimal_width = RECIPE_GRID_WIDTH -- the text column starts at the same x for every barracks
+  el.b_buttons = grid
+  el.b_columns = columns
+  return grid
+end
+
 local function build_building_page(panel, h)
   local el = h.el
-  local page = vflow(panel)
+  local page = vflow(panel, 3)
   page.visible = false
   el.bld_page = page
 
@@ -495,16 +695,28 @@ local function build_building_page(panel, h)
 
   local body = page.add({type = "flow", direction = "horizontal"})
   body.style.horizontal_spacing = BODY_SPACING
-  el.b_buttons = body.add({type = "table", column_count = RECIPE_COLUMNS})
-  el.b_buttons.style.horizontal_spacing = RECIPE_SPACING
-  el.b_buttons.style.vertical_spacing = RECIPE_SPACING
-  el.b_buttons.style.minimal_width = RECIPE_GRID_WIDTH -- the text column starts at the same x for every producer
+  el.b_body = body
+  new_recipe_grid(el, RECIPE_COLUMNS)
   local text = vflow(body, 2)
+  el.b_text = text
   el.b_line1 = text.add({type = "label", style = "rts_hud_label"})
   el.b_progress = text.add({type = "progressbar", style = "rts_hud_progressbar", value = 0,
                             tooltip = {"rts.progress-tooltip"}})
   el.b_line2 = text.add({type = "label", style = "rts_hud_label"})
   el.b_line3 = text.add({type = "label", style = "rts_hud_dim_label"})
+
+  -- Factory status line (under its full-width grid)
+  local foot = page.add({type = "flow", direction = "horizontal", style = "rts_hud_row"})
+  foot.visible = false
+  el.b_foot = foot
+  el.f_line1 = foot.add({type = "label", style = "rts_hud_label"})
+  el.f_line1.style.maximal_width = P4.FACTORY_STATUS_WIDTH
+  el.f_progress = foot.add({type = "progressbar", style = "rts_hud_progressbar", value = 0,
+                            tooltip = {"rts.progress-tooltip"}})
+  el.f_progress.style.width = P4.FACTORY_PROGRESS_WIDTH
+  add_filler(foot)
+  el.f_line2 = foot.add({type = "label", style = "rts_hud_dim_label"})
+  el.f_line2.style.maximal_width = P4.FACTORY_COUNTS_WIDTH
 end
 
 -- Width of the building page's text column: next to the recipe grid, or the whole panel without it.
@@ -545,6 +757,23 @@ local function build_strip(screen, h)
   row.add({type = "label", style = "rts_hud_dim_label", caption = {"rts.versus"}})
   el.enemy = row.add({type = "label", style = "rts_hud_mono_label", tooltip = {"rts.enemy-units-tooltip"}})
   el.enemy.style.font_color = COLOR.enemy
+  -- Phase 4: supply used / cap (supply.get)
+  el.supply = row.add({type = "label", style = "rts_hud_mono_label", tooltip = {"rts.supply-tooltip"}})
+  el.supply.style.left_margin = 6
+  -- Phase 4: research panel (techgui.lua, T) and How to play (F11)
+  local function strip_button(name, caption, tooltip, action, left_margin)
+    local b = row.add({type = "button", name = PREFIX .. name, caption = caption, tooltip = tooltip,
+                       tags = {rts_hud = action}})
+    b.style.height = 24
+    b.style.minimal_width = 0
+    b.style.padding = {0, 6}
+    b.style.font = "default-semibold"
+    if left_margin then b.style.left_margin = left_margin end
+    return b
+  end
+  el.research = strip_button("research", {"rts.button-key", {"rts.research-button"}, "T"},
+    {"rts.research-button-tooltip"}, "research", 6)
+  el.help = strip_button("help", "?", {"rts.help-button-tooltip"}, "help")
   -- Phase 3: the match menu (lobby.lua); F10 does the same.
   el.menu = row.add({type = "button", name = PREFIX .. "menu", caption = {"rts.menu-button"},
                      tooltip = {"rts.menu-button-tooltip"}, tags = {rts_hud = "menu"}})
@@ -552,11 +781,13 @@ local function build_strip(screen, h)
   el.menu.style.minimal_width = 64
   el.menu.style.padding = {0, 6}
   el.menu.style.font = "default-semibold"
-  el.menu.style.left_margin = 12
 
   local res = strip.add({type = "flow", direction = "horizontal", style = "rts_hud_centered_row"})
+  res.style.horizontal_spacing = 8
   h.res = {}
-  for _, r in ipairs(RESOURCES) do h.res[r.key] = resource_pair(res, r.sprite, {r.tooltip}) end
+  for _, r in ipairs(RESOURCES) do
+    if valid_sprite(r.sprite) then h.res[r.key] = resource_pair(res, r.sprite, {r.tooltip}) end
+  end
   local power_tip = {"rts.power-tooltip"}
   local power, pair = resource_pair(res, "tooltip-category-electricity", power_tip) -- core SpritePrototype
   h.res.power = power
@@ -568,7 +799,27 @@ local function build_strip(screen, h)
   el.message.style.maximal_width = STRIP_INNER
 end
 
-local function build_build_menu(screen, h)
+local function build_tab(player_index)
+  local key = prefs(player_index).build_tab
+  return BUILD_TAB_BY_KEY[key] or BUILD_TABS[1]
+end
+
+--- (Re)fill the build grid with the buttons of the player's current tab.
+local function fill_build_grid(player_index, h)
+  local grid = h.el.build_grid
+  grid.clear()
+  h.build_buttons = {}
+  local tab = build_tab(player_index)
+  for _, item in ipairs(build_items(tab)) do
+    h.build_buttons[item] = grid.add({type = "sprite-button", name = PREFIX .. "build_" .. item,
+                                      style = "rts_hud_build_button", sprite = "item/" .. item,
+                                      tags = {rts_hud = "build", item = item}})
+  end
+  for key, button in pairs(h.el.build_tabs or {}) do button.toggled = key == tab.key end
+end
+
+-- Build menu: "Build [B]" ...... "Q / right-click: done"; [Economy] [Production] [Defence]; one row of slot buttons.
+local function build_build_menu(screen, h, player_index)
   local frame = screen.add({type = "frame", name = NAMES.build, direction = "vertical", style = "rts_hud_frame"})
   frame.style.width = BUILD_WIDTH
   frame.style.height = BUILD_HEIGHT
@@ -578,14 +829,50 @@ local function build_build_menu(screen, h)
               tooltip = {"rts.build-title-tooltip"}})
   add_filler(header)
   header.add({type = "label", style = "rts_hud_dim_label", caption = {"rts.build-done-hint"}})
+  local tabs = frame.add({type = "flow", direction = "horizontal"})
+  tabs.style.horizontal_spacing = 2
+  h.el.build_tabs = {}
+  for _, tab in ipairs(BUILD_TABS) do
+    h.el.build_tabs[tab.key] = tabs.add({type = "button", name = PREFIX .. "build_tab_" .. tab.key,
+      style = "rts_hud_tab_button", caption = {tab.caption}, tooltip = {tab.tooltip},
+      tags = {rts_hud = "build_tab", tab = tab.key}})
+  end
   local grid = frame.add({type = "table", column_count = BUILD_COLUMNS})
   grid.style.horizontal_spacing = 2
   grid.style.vertical_spacing = 2
-  h.build_buttons = {}
-  for _, item in ipairs(build_items()) do
-    h.build_buttons[item] = grid.add({type = "sprite-button", name = PREFIX .. "build_" .. item,
-                                      style = "rts_hud_build_button", sprite = "item/" .. item,
-                                      tags = {rts_hud = "build", item = item}})
+  h.el.build_grid = grid
+  fill_build_grid(player_index, h)
+end
+
+-- Alert lines under the strip (Phase 4): P4.ALERT_SHOWN labels, a click on one jumps the camera to its alert.
+local function build_alerts(screen, h)
+  local frame = screen.add({type = "frame", name = NAMES.alerts, direction = "vertical", style = "rts_hud_feed_frame"})
+  frame.style.width = P4.ALERT_WIDTH
+  frame.visible = false
+  h.alerts = frame
+  h.alert_lines = {}
+  for i = 1, P4.ALERT_SHOWN do
+    local line = frame.add({type = "label", name = PREFIX .. "alert_" .. i, style = "rts_hud_label",
+                            tooltip = {"rts.alert-tooltip"}, tags = {rts_hud = "alert", line = i}})
+    line.style.maximal_width = P4.ALERT_WIDTH - FRAME_PADDING_X
+    line.visible = false
+    h.alert_lines[i] = line
+  end
+end
+
+-- Kill feed in the top-left corner (Phase 4).
+local function build_kills(screen, h)
+  local frame = screen.add({type = "frame", name = NAMES.kills, direction = "vertical", style = "rts_hud_feed_frame",
+                            ignored_by_interaction = true})
+  frame.style.width = P4.KILL_WIDTH
+  frame.visible = false
+  h.kills = frame
+  h.kill_lines = {}
+  for i = 1, P4.KILL_SHOWN do
+    local line = frame.add({type = "label", style = "rts_hud_small_label"})
+    line.style.maximal_width = P4.KILL_WIDTH - FRAME_PADDING_X
+    line.visible = false
+    h.kill_lines[i] = line
   end
 end
 
@@ -609,11 +896,18 @@ end
 ---------------------------------------------------------------------------
 -- Refresh: units page
 ---------------------------------------------------------------------------
-local function sorted_kinds(kinds)
+-- Card order: commander, walker, heavy, drone, raider, artillery, hauler; tier 1 before mk2; then by name.
+local function card_rank(name)
+  local u = balance.units[name]
+  local kind = u and u.kind or name
+  return (KIND_RANK[kind] or 99) * 10 + (u and u.tier or 1)
+end
+
+local function sorted_names(by_name)
   local list = {}
-  for k in pairs(kinds) do list[#list + 1] = k end
+  for name in pairs(by_name) do list[#list + 1] = name end
   table.sort(list, function(a, b)
-    local ra, rb = KIND_RANK[a] or 99, KIND_RANK[b] or 99
+    local ra, rb = card_rank(a), card_rank(b)
     if ra ~= rb then return ra < rb end
     return a < b
   end)
@@ -638,21 +932,101 @@ local function order_text(orders)
           order_name(list[2][1]), list[2][2]}
 end
 
+local function health_color(ratio)
+  return ratio >= 0.66 and COLOR.green or (ratio >= 0.33 and COLOR.yellow or COLOR.red)
+end
+
+-- Counter wheel line of a card tooltip, from balance.units[name].strong / weak (kinds plus building classes).
+local COUNTER_KEYS = {building = "rts.kind-building", turret = "rts.kind-turret",
+                      ["laser-turret"] = "rts.kind-laser-turret", wall = "rts.kind-wall"}
+for kind, key in pairs(KIND_KEYS) do COUNTER_KEYS[kind] = key end
+local counters_cache = {}
+local function counters_text(name)
+  local cached = counters_cache[name]
+  if cached ~= nil then return cached or nil end
+  local u = balance.units[name]
+  local function list(kinds)
+    local out = {""}
+    for i, kind in ipairs(kinds or {}) do
+      if i > 1 then out[#out + 1] = ", " end
+      out[#out + 1] = COUNTER_KEYS[kind] and {COUNTER_KEYS[kind]} or kind
+    end
+    return #out > 1 and out or "-"
+  end
+  local text = false
+  if u and ((u.strong and #u.strong > 0) or (u.weak and #u.weak > 0)) then
+    text = {"rts.card-counters", list(u.strong), list(u.weak)}
+  end
+  counters_cache[name] = text
+  return text or nil
+end
+
+--- Rebuild the unit cards when the set of prototypes changed; otherwise update counts, bars and tooltips in place.
+local function update_cards(h, names, by_name)
+  local el = h.el
+  local shown = math.min(#names, #names > P4.CARD_MAX and P4.CARD_MAX - 1 or P4.CARD_MAX)
+  local key = table.concat(names, " ", 1, shown) .. "|" .. tostring(#names > shown and #names - shown or 0)
+  if h.card_key ~= key then
+    h.card_key = key
+    el.cards.clear()
+    h.cards = {}
+    for i = 1, shown do
+      local name = names[i]
+      local card = el.cards.add({type = "flow", direction = "vertical"})
+      card.style.vertical_spacing = 1
+      local button = card.add({type = "sprite-button", name = PREFIX .. "card_" .. name, style = "rts_hud_card_button",
+                               sprite = unit_sprite(name), tags = {rts_hud = "card", unit = name}})
+      local bar = card.add({type = "progressbar", style = "rts_hud_card_bar", value = 1})
+      h.cards[name] = {button = button, bar = bar}
+    end
+    if #names > shown then
+      local more = el.cards.add({type = "label", style = "rts_hud_label", caption = {"rts.cards-more", #names - shown}})
+      local rest = {""}
+      for i = shown + 1, #names do
+        rest[#rest + 1] = {"rts.kind-count", unit_name(names[i]), by_name[names[i]].n}
+        if i < #names then rest[#rest + 1] = "\n" end
+      end
+      more.tooltip = rest
+    end
+  end
+  for name, card in pairs(h.cards or {}) do
+    local d = by_name[name]
+    if d and card.button.valid then
+      local ratio = d.max > 0 and d.hp / d.max or 1
+      card.button.number = d.n
+      local tip = {"rts.card-tooltip", unit_name(name), d.n, math.floor(d.hp + 0.5), math.floor(d.max + 0.5),
+                   math.floor(ratio * 100 + 0.5), supply.cost(name)}
+      local counters = counters_text(name)
+      card.button.tooltip = counters and {"", tip, "\n", counters, "\n", {"rts.card-click-hint"}}
+        or {"", tip, "\n", {"rts.card-click-hint"}}
+      card.bar.value = math.max(0, math.min(1, ratio))
+      card.bar.style.color = health_color(ratio)
+    end
+  end
+end
+
 local function update_units(player, h)
   local el = h.el
   local p = pstate(player.index)
   local selection = p and p.selection
-  local n, kinds, orders, health_sum, health_n = 0, {}, {}, 0, 0
+  local n, by_name, orders, health_sum, health_n = 0, {}, {}, 0, 0
   if selection then
     for un in pairs(selection) do
       local rec = live_record(un)
       if rec then
         n = n + 1
-        local kind = rec.kind or "?"
-        kinds[kind] = (kinds[kind] or 0) + 1
+        local e = rec.entity
+        local d = by_name[e.name]
+        if not d then
+          d = {n = 0, hp = 0, max = 0}
+          by_name[e.name] = d
+        end
+        d.n = d.n + 1
+        d.hp = d.hp + (e.health or 0)
+        d.max = d.max + (e.max_health or 0)
         local order = rec.order or units.IDLE
         orders[order] = (orders[order] or 0) + 1
-        local ratio = rec.entity.get_health_ratio()
+        local ratio = e.get_health_ratio()
         if ratio then
           health_sum, health_n = health_sum + ratio, health_n + 1
         end
@@ -660,27 +1034,23 @@ local function update_units(player, h)
     end
   end
 
+  local names = sorted_names(by_name)
+  update_cards(h, names, by_name)
   if n == 0 then
     el.sel_count.caption = {"rts.sel-none"}
-    el.kinds.caption = ""
     el.hint.caption = {"rts.sel-hint-empty"}
     el.health.caption = ""
     el.order.caption = ""
     return n
   end
 
-  el.sel_count.caption = {"rts.sel-count", n}
+  -- One prototype: "Raider ×6"; mixed: "9 units selected"
+  el.sel_count.caption = #names == 1 and {"rts.kind-count", unit_name(names[1]), n} or {"rts.sel-count", n}
   el.hint.caption = {"rts.sel-hint"}
-  local parts = {""}
-  for i, kind in ipairs(sorted_kinds(kinds)) do
-    if i > 1 then parts[#parts + 1] = "   " end
-    parts[#parts + 1] = {"rts.kind-count", KIND_KEYS[kind] and {KIND_KEYS[kind]} or kind, kinds[kind]}
-  end
-  el.kinds.caption = parts
   if health_n > 0 then
     local avg = health_sum / health_n
     el.health.caption = {"rts.hp-percent", string.format("%3d", math.floor(avg * 100 + 0.5))}
-    el.health.style.font_color = avg >= 0.66 and COLOR.green or (avg >= 0.33 and COLOR.yellow or COLOR.red)
+    el.health.style.font_color = health_color(avg)
   else
     el.health.caption = ""
   end
@@ -719,10 +1089,6 @@ local function update_groups(player, h)
   end
 end
 
-local function set_style(element, style)
-  if element.style.name ~= style then element.style = style end
-end
-
 local function update_commands(player, h)
   local is_armed = optional_fn("scripts.orders", {"is_armed"})
   local armed = is_armed ~= nil and is_armed(player.index) == true
@@ -737,17 +1103,25 @@ end
 -- Refresh: building page (Phase 2)
 ---------------------------------------------------------------------------
 local function rebuild_recipe_buttons(player, h, un, rec)
-  local grid = h.el.b_buttons
+  local el = h.el
+  local factory = rec.kind == "factory"
+  local columns = factory and P4.FACTORY_COLUMNS or RECIPE_COLUMNS
+  local grid = el.b_columns == columns and el.b_buttons or new_recipe_grid(el, columns)
   grid.clear()
   h.recipe_buttons = {}
+  h.recipe_locks = {}
   h.bld_un = un
-  if rec.kind ~= "barracks" and rec.kind ~= "factory" then
+  if rec.kind ~= "barracks" and not factory then
     grid.visible = false
-    set_text_width(h.el, PANEL_INNER)
+    el.b_text.visible = true
+    el.b_foot.visible = false
+    set_text_width(el, PANEL_INNER)
     return
   end
   grid.visible = true
-  set_text_width(h.el, TEXT_WITH_GRID)
+  el.b_text.visible = not factory -- the factory's status is on the line under its full-width grid
+  el.b_foot.visible = factory
+  set_text_width(el, TEXT_WITH_GRID)
   -- Pause first: same place for every producer, and a new recipe never moves it.
   h.recipe_buttons[""] = grid.add({type = "sprite-button", name = PREFIX .. "recipe_pause",
     style = "rts_hud_recipe_button", sprite = "utility/pause", tooltip = {"rts.pause-tooltip"},
@@ -757,12 +1131,42 @@ local function rebuild_recipe_buttons(player, h, un, rec)
     h.recipe_buttons[r.name] = grid.add({type = "sprite-button", name = PREFIX .. "recipe_" .. r.name,
       style = "rts_hud_recipe_button", sprite = "recipe/" .. r.name, tooltip = recipe_tooltip(r),
       tags = {rts_hud = "recipe", recipe = r.name}})
+    h.recipe_locks[r.name] = false
     names[#names + 1] = r.name
   end
   -- QA log line: the button order, left to right and row by row ("hud: recipe buttons barracks#N player=N:
   -- pause rts-walker-kit rts-walker-heavy-kit (6 per row)")
   util.log("hud: recipe buttons %s#%d player=%d: pause %s (%d per row)", rec.kind, un, player.index,
-    table.concat(names, " "), RECIPE_COLUMNS)
+    table.concat(names, " "), columns)
+end
+
+--- Grey out the recipe buttons the force cannot use yet and mark the active one. Called on every panel refresh,
+--- so a technology finishing while the panel is open unlocks its button. QA log line when a lock changes:
+--- "hud: recipe locks <kind>#N player=N: <recipe>=<tech|locked|open> ...".
+local function update_recipe_buttons(player, h, rec, active)
+  local force = player.force
+  local changed
+  for name, button in pairs(h.recipe_buttons or {}) do
+    if button.valid then
+      local lock = name ~= "" and recipe_lock(force, name) or false
+      local style = name == active and "rts_hud_recipe_button_active"
+        or (lock and "rts_hud_recipe_button_locked" or "rts_hud_recipe_button")
+      set_style(button, style)
+      if name ~= "" and h.recipe_locks[name] ~= lock then
+        h.recipe_locks[name] = lock
+        button.enabled = not lock or name == active
+        button.tooltip = recipe_tooltip(prototypes.recipe[name], lock)
+        changed = changed or {}
+        changed[#changed + 1] = string.format("%s=%s", name, lock == false and "open"
+          or (type(lock) == "string" and lock or "locked"))
+      end
+    end
+  end
+  if changed then
+    table.sort(changed)
+    util.log("hud: recipe locks %s#%d player=%d: %s", rec.kind, rec.entity.unit_number, player.index,
+      table.concat(changed, " "))
+  end
 end
 
 -- "waiting for [item=iron-plate] [item=copper-plate]" from production's pull state.
@@ -787,37 +1191,55 @@ local function status_name(entity)
   return {"?", {"entity-status." .. string.gsub(name, "_", "-")}, (string.gsub(name, "_", " "))}
 end
 
+--- Why the barracks holds a kit (research.block_of): a localised line and its tooltip, or nil.
+local function block_text(un)
+  local b = research.block_of(un)
+  if not b then return nil end
+  local unit = b.unit and unit_name(b.unit) or "?"
+  if b.reason == "locked" then
+    return {"rts.barracks-blocked-research", tech_name(b.tech or true), unit},
+           {"rts.barracks-blocked-research-tooltip", unit, tech_name(b.tech or true)}
+  elseif b.reason == "supply" then
+    return {"rts.barracks-blocked-supply", b.used or 0, b.cap or 0, unit},
+           {"rts.barracks-blocked-supply-tooltip", unit, supply.cost(b.unit or ""), b.used or 0, b.cap or 0}
+  end
+  return {"rts.barracks-blocked-other", tostring(b.reason)}, ""
+end
+
 local function update_producer(player, h, un, rec)
   local el = h.el
+  local factory = rec.kind == "factory"
+  local line1, progress = factory and el.f_line1 or el.b_line1, factory and el.f_progress or el.b_progress
   local st = production.status(un) or {}
   local recipe = st.recipe and prototypes.recipe[st.recipe]
   if recipe then
-    el.b_line1.caption = {"rts.producer-line", "[recipe=" .. recipe.name .. "]", recipe.localised_name,
-                          state_text(st.state)}
-    el.b_line1.style.font_color = (st.state or ""):find("^starved") and COLOR.yellow or COLOR.white
+    line1.caption = {"rts.producer-line", "[recipe=" .. recipe.name .. "]", recipe.localised_name, state_text(st.state)}
+    line1.style.font_color = (st.state or ""):find("^starved") and COLOR.yellow or COLOR.white
   else
-    el.b_line1.caption = {"rts.paused"}
-    el.b_line1.style.font_color = COLOR.dim
+    line1.caption = {"rts.paused"}
+    line1.style.font_color = COLOR.dim
   end
-  el.b_progress.visible = recipe ~= nil
-  el.b_progress.value = math.max(0, math.min(1, st.progress or 0))
-  local active = st.recipe or ""
-  for name, button in pairs(h.recipe_buttons or {}) do
-    if button.valid then set_style(button, name == active and "rts_hud_recipe_button_active" or "rts_hud_recipe_button") end
-  end
+  progress.visible = recipe ~= nil
+  progress.value = math.max(0, math.min(1, st.progress or 0))
+  update_recipe_buttons(player, h, rec, st.recipe or "")
   local stats = production.stats(rec.force)
-  if rec.kind == "barracks" then
-    el.b_line2.style.font_color = COLOR.white
-    el.b_line2.caption = {"rts.barracks-made", st.spawned or 0, stats.walkers}
-    el.b_line2.tooltip = {"rts.barracks-made-tooltip", stats.kits, stats.walkers, stats.heavies}
+  if not factory then
+    -- Phase 4: a kit waiting for research or for supply takes the counters' line (research.block_of).
+    local blocked, tip = block_text(un)
+    if blocked then
+      el.b_line2.style.font_color = COLOR.red
+      el.b_line2.caption = blocked
+      el.b_line2.tooltip = tip
+    else
+      el.b_line2.style.font_color = COLOR.white
+      el.b_line2.caption = {"rts.barracks-made", st.spawned or 0, stats.walkers}
+      el.b_line2.tooltip = {"rts.barracks-made-tooltip", stats.kits, stats.walkers, stats.heavies}
+    end
     el.b_line3.caption = rec.rally and {"rts.rally-set", util.pos_str(rec.rally)} or {"rts.rally-none"}
     el.b_line3.tooltip = {"rts.rally-tooltip"}
   else
-    el.b_line2.style.font_color = COLOR.white
-    el.b_line2.caption = {"rts.factory-made", stats.buildings, stats.items}
-    el.b_line2.tooltip = ""
-    el.b_line3.caption = {"rts.factory-hint"}
-    el.b_line3.tooltip = ""
+    el.f_line2.caption = {"rts.factory-made-short", stats.buildings, stats.items}
+    el.f_line2.tooltip = {"", {"rts.factory-made", stats.buildings, stats.items}, "\n", {"rts.factory-hint"}}
   end
 end
 
@@ -883,6 +1305,45 @@ local function update_other(player, h, un, rec)
   elseif rec.kind == "solar" then
     local kw = math.floor(e.prototype.get_max_energy_production(e.quality) * 60 / 1000 + 0.5)
     el.b_line2.caption = {"rts.solar-hint", kw}
+  -- Phase 4 buildings
+  elseif rec.kind == "laser-turret" then
+    local size = e.electric_buffer_size or 0
+    local charge = size > 0 and math.floor(math.min(1, e.energy / size) * 100 + 0.5) or 0
+    el.b_line1.caption = {"rts.laser-charge", charge}
+    el.b_line1.style.font_color = charge >= 50 and COLOR.white or COLOR.yellow
+    el.b_line2.caption = {"rts.laser-hint"}
+    el.b_line3.caption = {"rts.laser-hint-2"}
+  elseif rec.kind == "wall" then
+    el.b_line2.caption = {"rts.wall-hint"}
+  elseif rec.kind == "steam-plant" then
+    local fuel = e.get_fuel_inventory and e.get_fuel_inventory()
+    local coal = fuel and fuel.get_item_count() or 0
+    el.b_line2.caption = {"rts.steam-fuel", coal}
+    el.b_line2.style.font_color = coal > 0 and COLOR.white or COLOR.red
+    el.b_line3.caption = {"rts.steam-hint"}
+  elseif rec.kind == "accumulator" then
+    local size = e.electric_buffer_size or 0
+    el.b_line2.caption = {"rts.accumulator-charge", string.format("%.1f", e.energy / 1e6),
+                          string.format("%.1f", size / 1e6)}
+    el.b_line3.caption = {"rts.accumulator-hint"}
+  elseif rec.kind == "radar" then
+    el.b_line2.caption = {"rts.radar-hint"}
+  elseif rec.kind == "lab" then
+    local cur = research.current(rec.force)
+    local state = rec.lab_state
+    local starved = state and string.match(state, "^starved: (.+)$")
+    el.b_line2.caption = cur and {"rts.lab-researching", tech_name(cur.name), math.floor(cur.progress * 100)}
+      or {"rts.lab-idle"}
+    if starved then
+      el.b_line3.caption = {"rts.lab-starved", "[item=" .. starved .. "]"}
+    elseif state == "no network" then
+      el.b_line3.caption = {"rts.lab-no-network"}
+    else
+      el.b_line3.caption = {"rts.lab-hint"}
+    end
+  elseif rec.kind == "hub" then
+    el.b_line2.caption = {"rts.hub-line", supply.HUB_CAP}
+    el.b_line3.caption = {"rts.hub-hint"}
   else
     el.b_line2.caption = ""
   end
@@ -955,7 +1416,7 @@ end
 
 local function match_message(m, own)
   if not (m and m.phase) or m.phase == "setup" then return {"rts.match-preparing"}, COLOR.yellow end
-  if m.phase == "lobby" then return {"rts.match-lobby"}, COLOR.yellow end
+  if m.phase == "lobby" then return {"rts.match-lobby-help"}, COLOR.yellow end
   local result = result_for(m, own)
   if result == "victory" then return {"rts.match-victory"}, COLOR.green end
   if result == "draw" then return {"rts.match-draw"}, COLOR.yellow end
@@ -1005,10 +1466,18 @@ local function update_strip(player, h)
     el.enemy.caption = {"rts.enemies-seen", seen > 0 and seen or "?"}
   end
 
+  -- Phase 4: supply used / cap, red at the cap, yellow from 90 %
+  local sup = supply_of(own)
+  el.supply.caption = {"rts.supply", sup.used, sup.cap}
+  el.supply.style.font_color = sup.used >= sup.cap and COLOR.red
+    or (sup.used >= 0.9 * sup.cap and COLOR.yellow or COLOR.white)
+
   local snap = snapshot(own)
   local res = h.res
   if snap then
-    for _, r in ipairs(RESOURCES) do res[r.key].caption = fmt_count(snap[r.key]) end
+    for _, r in ipairs(RESOURCES) do
+      if res[r.key] then res[r.key].caption = fmt_count(r.item and (snap.items[r.item] or 0) or snap[r.key]) end
+    end
     res.power.caption = {"rts.power-mw", string.format("%.1f", snap.power_demand / 1e6),
                          string.format("%.1f", snap.power_capacity / 1e6)}
     local sat = math.floor(snap.power_satisfaction * 100 + 0.5)
@@ -1018,9 +1487,11 @@ local function update_strip(player, h)
     res.bots.caption = string.format("%d/%d", snap.bots_idle, snap.bots_total)
     -- QA log line, when a value changed and at most every RESOURCE_LOG_TICKS:
     -- "hud resources player=N iron=.. copper=.. steel=.. stone=.. magazines=.. power=../.. MW sat=..% bots=../.."
-    local line = string.format("iron=%d copper=%d steel=%d stone=%d magazines=%d power=%.2f/%.2f MW sat=%d%% bots=%d/%d",
+    local line = string.format("iron=%d copper=%d steel=%d stone=%d magazines=%d power=%.2f/%.2f MW sat=%d%% bots=%d/%d"
+      .. " circuits=%d explosives=%d supply=%d/%d",
       snap.iron, snap.copper, snap.steel, snap.stone, snap.magazines, snap.power_demand / 1e6,
-      snap.power_capacity / 1e6, sat, snap.bots_idle, snap.bots_total)
+      snap.power_capacity / 1e6, sat, snap.bots_idle, snap.bots_total, snap.items["electronic-circuit"] or 0,
+      snap.items["rts-explosives"] or 0, sup.used, sup.cap)
     local p = util.pstorage(player.index)
     local last = p.hud_resource_log
     if not last or (last.line ~= line and game.tick - last.tick >= RESOURCE_LOG_TICKS) then
@@ -1044,12 +1515,127 @@ local function update_build_menu(player, h)
   for item, button in pairs(h.build_buttons or {}) do
     if button.valid then
       local n = snap and snap.items[item] or 0
+      -- Phase 4: an item whose recipe research has not unlocked is greyed out; stock in the network still places.
+      local lock = item_lock(player.force, item)
       button.number = n > 0 and n or nil
       button.toggled = ghost == item
-      button.enabled = n > 0 or recipe_for(item) ~= nil or ghost == item
-      button.tooltip = build_tooltip(item, n)
+      button.enabled = n > 0 or ghost == item or (recipe_for(item) ~= nil and not lock)
+      set_style(button, (lock and n == 0) and "rts_hud_build_button_locked" or "rts_hud_build_button")
+      button.tooltip = build_tooltip(item, n, lock)
     end
   end
+end
+
+---------------------------------------------------------------------------
+-- Refresh: alert lines and kill feed (Phase 4)
+---------------------------------------------------------------------------
+local function alert_style(kind) return ALERT_STYLE[kind] or ALERT_DEFAULT_STYLE end
+
+--- The alert's text as a localised string: {entry.text, params...} (supply.alert / logistics.alert format).
+local function alert_text(entry)
+  if type(entry.text) == "string" then
+    local t = {entry.text}
+    for _, param in ipairs(entry.params or {}) do t[#t + 1] = param end
+    return t
+  end
+  return {"rts.alert-generic", tostring(entry.kind)}
+end
+
+--- Alerts of a force, newest first: every entry younger than `max_age` ticks (all when nil), at most `limit`.
+local function force_alerts(force_name, max_age, limit, with_position)
+  local out, list = {}, storage.alerts or {}
+  for i = #list, 1, -1 do
+    local a = list[i]
+    if max_age and game.tick - (a.tick or 0) >= max_age then break end
+    if a.force == force_name and (not with_position or a.position) then
+      out[#out + 1] = a
+      if limit and #out >= limit then break end
+    end
+  end
+  return out
+end
+
+local function faded(color, age, life, fade)
+  local alpha = math.max(0.15, math.min(1, (life - age) / fade))
+  return {color[1], color[2], color[3], alpha}
+end
+
+local function update_alerts(player, h)
+  local own = player.force.name
+  local shown = force_alerts(own, P4.ALERT_TICKS, P4.ALERT_SHOWN)
+  h.alert_targets = {}
+  for i, line in ipairs(h.alert_lines) do
+    local a = shown[i]
+    line.visible = a ~= nil
+    if a then
+      local st = alert_style(a.kind)
+      local icon = first_sprite(st.icons)
+      local age = game.tick - a.tick
+      line.caption = {"", icon and ("[img=" .. icon .. "] ") or "", alert_text(a), "   ",
+                      {"rts.alert-age", math.floor(age / 60)}}
+      line.style.font_color = faded(COLOR[st.color] or COLOR.white, age, P4.ALERT_TICKS, P4.ALERT_FADE_TICKS)
+      h.alert_targets[i] = a.position and {x = a.position.x, y = a.position.y} or nil
+      line.tooltip = a.position and {"rts.alert-tooltip"} or {"rts.alert-tooltip-no-position"}
+    end
+  end
+  h.alerts.visible = #shown > 0 and not (match.in_lobby and match.in_lobby())
+  -- A sound for alerts that just arrived (base attacked, hauler lost); nothing on the first look.
+  local pa = util.pstorage(player.index)
+  pa.hud_alert = pa.hud_alert or {}
+  local seen = pa.hud_alert.seen_tick
+  local newest = shown[1] and shown[1].tick or seen
+  if seen and newest and newest > seen then
+    for _, a in ipairs(shown) do
+      if a.tick > seen then
+        local sound = alert_style(a.kind).sound
+        if sound and helpers.is_valid_sound_path(sound) then
+          player.play_sound({path = sound})
+          break
+        end
+      end
+    end
+  end
+  pa.hud_alert.seen_tick = math.max(seen or 0, newest or game.tick)
+end
+
+local function side_label(force_name, own)
+  if force_name == own then return {"rts.kill-own"} end
+  local prefix = match.AI_PREFIX or "rts-ai-" -- plain prefix: "-" is a pattern character
+  local n = force_name and string.sub(force_name, 1, #prefix) == prefix
+    and tonumber(string.sub(force_name, #prefix + 1))
+  if n then return {"rts.force-ai", n} end
+  return {"rts.kill-enemy"}
+end
+
+local function update_kills(player, h)
+  local own = player.force.name
+  local list = storage.hud and storage.hud.kills or {}
+  local shown = {}
+  for i = #list, 1, -1 do
+    local k = list[i]
+    if game.tick - k.tick >= P4.KILL_TICKS then break end
+    if k.seen and k.seen[own] then
+      shown[#shown + 1] = k
+      if #shown >= P4.KILL_SHOWN then break end
+    end
+  end
+  for i, line in ipairs(h.kill_lines) do
+    local k = shown[i]
+    line.visible = k ~= nil
+    if k then
+      local killer = k.killer and valid_sprite("entity/" .. k.killer) and ("[img=entity/" .. k.killer .. "] › ") or ""
+      line.caption = {"", killer, "[img=" .. unit_sprite(k.name) .. "] ",
+                      {"rts.kill-line", unit_name(k.name), side_label(k.force, own)}}
+      line.style.font_color = faded(k.force == own and COLOR.red or COLOR.green, game.tick - k.tick, P4.KILL_TICKS,
+                                    P4.KILL_FADE_TICKS)
+    end
+  end
+  h.kills.visible = #shown > 0
+end
+
+local function update_feeds(player, h)
+  update_alerts(player, h)
+  update_kills(player, h)
 end
 
 local function update(player, h)
@@ -1061,6 +1647,7 @@ local function update(player, h)
   update_groups(player, h)
   update_strip(player, h)
   update_build_menu(player, h)
+  update_feeds(player, h)
 end
 
 ---------------------------------------------------------------------------
@@ -1070,7 +1657,7 @@ end
 --- Destroy the player's HUD frames.
 function hud.destroy(player)
   local screen = player.gui.screen
-  for _, key in pairs({"panel", "strip", "minimap_frame", "minimap", "build"}) do
+  for _, key in pairs({"panel", "strip", "minimap_frame", "minimap", "build", "alerts", "kills"}) do
     local frame = screen[NAMES[key]]
     if frame then frame.destroy() end
   end
@@ -1085,7 +1672,9 @@ function hud.build(player)
   local h = {el = {}, groups = {}, res = {}, build_buttons = {}, recipe_buttons = {}}
   build_panel(screen, h)
   build_strip(screen, h)
-  build_build_menu(screen, h)
+  build_build_menu(screen, h, player.index)
+  build_alerts(screen, h)
+  build_kills(screen, h)
   build_minimap(screen, h)
   util.pstorage(player.index).hud = h
   place(player, h)
@@ -1113,6 +1702,10 @@ end
 
 function hud.init()
   storage.hud = storage.hud or {wave_seen = storage.match and storage.match.wave or 0}
+  local hs = storage.hud
+  hs.attack_alert = hs.attack_alert or {}
+  hs.kills = hs.kills or {}
+  hs.pings = hs.pings or {}
   -- Every module is loaded by now: confirm the package.loaded lookups the buttons depend on.
   local found = {}
   for _, c in ipairs(COMMANDS) do
@@ -1122,12 +1715,22 @@ function hud.init()
   found[#found + 1] = "group_recall=" .. (optional_fn("scripts.selection", {"group_recall"}) and "ok" or "MISSING")
   found[#found + 1] = "run_command=" .. (optional_fn("scripts.debug", {"run_command"}) and "ok" or "MISSING")
   util.log("hud: module lookup %s", table.concat(found, " "))
-  local items = {}
-  for _, item in ipairs(build_items()) do
-    local r = recipe_for(item)
-    items[#items + 1] = string.format("%s<-%s", item, r and r.name or "none")
+  found = {"techgui.toggle=" .. (optional_fn("scripts.techgui", {"toggle"}) and "ok" or "MISSING"),
+           "selection.set=" .. (optional_fn("scripts.selection", {"set"}) and "ok" or "MISSING"),
+           "lobby.toggle_menu=" .. (optional_fn("scripts.lobby", {"toggle_menu"}) and "ok" or "MISSING")}
+  util.log("hud: module lookup (phase 4) %s", table.concat(found, " "))
+  -- QA log line: "hud: build menu tab <key>: <item><-<recipe>[ locked by <tech>] ..." per tab
+  local force = game.forces[PLAYER]
+  for _, tab in ipairs(BUILD_TABS) do
+    local items = {}
+    for _, item in ipairs(build_items(tab)) do
+      local r = recipe_for(item)
+      local lock = force and item_lock(force, item)
+      items[#items + 1] = string.format("%s<-%s%s", item, r and r.name or "none",
+        lock and (" locked by " .. tostring(lock)) or "")
+    end
+    util.log("hud: build menu tab %s: %s", tab.key, table.concat(items, " "))
   end
-  util.log("hud: build menu items %s", table.concat(items, " "))
   for _, player in pairs(game.players) do hud.build(player) end
 end
 
@@ -1199,6 +1802,104 @@ function hud.recipe_click(player, recipe)
   return ok
 end
 
+--- Build menu tab: "economy", "production" or "defence". QA log line: "hud build tab <key> player=N: <items>".
+function hud.set_build_tab(player, key)
+  local tab = BUILD_TAB_BY_KEY[key]
+  if not tab then return false end
+  prefs(player.index).build_tab = key
+  local h = get_hud(player)
+  if h then
+    fill_build_grid(player.index, h)
+    update_build_menu(player, h)
+  end
+  util.log("hud build tab %s player=%d: %s", key, player.index, table.concat(build_items(tab), " "))
+  return true
+end
+
+--- Unit card: keep only the units of that prototype in the selection (Shift: drop them instead).
+--- QA log line: "hud click card <unit> player=N shift=true|false -> selected=N".
+function hud.card_click(player, name, shift)
+  local set_fn = optional_fn("scripts.selection", {"set"})
+  local p = pstate(player.index)
+  if not (set_fn and p and p.selection) then return 0 end
+  local keep = {}
+  for un in pairs(p.selection) do
+    local rec = live_record(un)
+    if rec and ((rec.entity.name == name) ~= (shift == true)) then keep[#keep + 1] = rec.entity end
+  end
+  local n = set_fn(player.index, keep)
+  util.log("hud click card %s player=%d shift=%s -> selected=%d", name, player.index, tostring(shift == true), n)
+  return n
+end
+
+--- Research [T] button: the research panel (scripts/techgui.lua).
+function hud.toggle_research(player)
+  local toggle = optional_fn("scripts.techgui", {"toggle"})
+  util.log("hud click research player=%d%s", player.index, toggle and "" or " (techgui.toggle missing)")
+  if toggle then toggle(player) end
+end
+
+--- "How to play" (F11, the ? button): 10 lines in a centred frame; Escape or the close button closes it.
+--- QA log lines: "hud help opened|closed player=N (<source>)".
+function hud.toggle_help(player, source)
+  local screen = player.gui.screen
+  local frame = screen[HELP_FRAME]
+  if frame then
+    frame.destroy()
+    util.log("hud help closed player=%d (%s)", player.index, source or "?")
+    return false
+  end
+  frame = screen.add({type = "frame", name = HELP_FRAME, direction = "vertical"})
+  frame.auto_center = true
+  frame.style.width = P4.HELP_WIDTH
+  local bar = frame.add({type = "flow", direction = "horizontal"})
+  bar.drag_target = frame
+  bar.add({type = "label", caption = {"rts.help-title"}, style = "frame_title", ignored_by_interaction = true})
+  local drag = bar.add({type = "empty-widget", style = "draggable_space_header", ignored_by_interaction = true})
+  drag.style.horizontally_stretchable = true
+  drag.style.height = 24
+  drag.style.right_margin = 4
+  bar.add({type = "sprite-button", name = PREFIX .. "help_close", style = "frame_action_button",
+           sprite = "utility/close", tooltip = {"rts.help-close-tooltip"}, tags = {rts_hud = "help"}})
+  local inner = frame.add({type = "frame", direction = "vertical", style = "inside_shallow_frame_with_padding"})
+  inner = inner.add({type = "flow", direction = "vertical"}) -- a frame style has no vertical_spacing
+  inner.style.vertical_spacing = 6
+  for i = 1, P4.HELP_LINES do
+    local line = inner.add({type = "label", caption = {"rts.help-" .. i}})
+    line.style.single_line = false
+    line.style.maximal_width = P4.HELP_WIDTH - 48
+  end
+  player.opened = frame
+  util.log("hud help opened player=%d (%s): %d lines", player.index, source or "?", P4.HELP_LINES)
+  return true
+end
+
+local function jump_to_alert(player, a, source, i, n)
+  camera.jump_to(player, a.position)
+  util.log("hud alert jump player=%d source=%s kind=%s at %s age=%.1fs (%d of %d)", player.index, source,
+    tostring(a.kind), util.pos_str(a.position), (game.tick - a.tick) / 60, i, n)
+end
+
+--- F3: the camera goes to the newest alert of the player's force that has a position; pressing again within
+--- P4.ALERT_JUMP_CYCLE_TICKS goes to the next older one (cycling). Returns the alert or nil.
+function hud.alert_hotkey(player)
+  local list = force_alerts(player.force.name, nil, 20, true)
+  local pa = util.pstorage(player.index)
+  pa.hud_alert = pa.hud_alert or {}
+  local st = pa.hud_alert
+  if #list == 0 then
+    util.log("hud alert jump player=%d source=F3: no alert with a position", player.index)
+    return nil
+  end
+  local i = 1
+  if st.jump_tick and game.tick - st.jump_tick < P4.ALERT_JUMP_CYCLE_TICKS then
+    i = (st.jump_index or 0) % #list + 1
+  end
+  st.jump_tick, st.jump_index = game.tick, i
+  jump_to_alert(player, list[i], "F3", i, #list)
+  return list[i]
+end
+
 local function on_click(e)
   local element = e.element
   if not (element and element.valid) or string.sub(element.name, 1, #PREFIX) ~= PREFIX then return end
@@ -1219,6 +1920,21 @@ local function on_click(e)
     local toggle = optional_fn("scripts.lobby", {"toggle_menu"})
     util.log("hud click menu player=%d%s", player.index, toggle and "" or " (lobby.toggle_menu missing)")
     if toggle then toggle(player) end
+  elseif action == "build_tab" then
+    hud.set_build_tab(player, element.tags.tab)
+  elseif action == "card" then
+    hud.card_click(player, element.tags.unit, e.shift)
+  elseif action == "research" then
+    hud.toggle_research(player)
+  elseif action == "help" then
+    hud.toggle_help(player, element.name == PREFIX .. "help_close" and "close button" or "? button")
+  elseif action == "alert" then
+    local target = h.alert_targets and h.alert_targets[element.tags.line]
+    if target then
+      camera.jump_to(player, target)
+      util.log("hud alert jump player=%d source=click line=%d at %s", player.index, element.tags.line,
+        util.pos_str(target))
+    end
   elseif COMMAND_BY_ACTION[action] then
     run_command(player, action)
   end
@@ -1277,6 +1993,128 @@ events.on("rts-build-menu", function(e)
   pr.build_hidden = not pr.build_hidden
   util.log("hud build menu %s player=%d (B)", pr.build_hidden and "hidden" or "shown", e.player_index)
   hud.refresh(e.player_index)
+end)
+
+-- Phase 4: F3 jumps to the newest alert (again: the next older one), F11 toggles "How to play".
+events.on("rts-alert-jump", function(e)
+  local player = game.get_player(e.player_index)
+  if player then hud.alert_hotkey(player) end
+end)
+
+events.on("rts-help", function(e)
+  local player = game.get_player(e.player_index)
+  if player then hud.toggle_help(player, "F11") end
+end)
+
+events.on(defines.events.on_gui_closed, function(e)
+  local el = e.element
+  if el and el.valid and el.name == HELP_FRAME then
+    el.destroy()
+    util.log("hud help closed player=%d (Escape)", e.player_index)
+  end
+end)
+
+-- Phase 4 alert "base-attacked": an own registered building took damage from another force. At most one per force
+-- every P4.ATTACK_ALERT_PERIOD ticks, only for forces with players (and rts-player, for the headless autotest).
+-- The on_entity_damaged filter is the shared one that scripts/research.lua sets (every RTS building name plus the
+-- armored units); this handler only adds itself to the bus and returns at once for anything but a building.
+events.on(defines.events.on_entity_damaged, function(e)
+  local entity = e.entity
+  if not (entity and entity.valid and buildings.KIND_BY_NAME[entity.name]) then return end
+  local hs = storage.hud
+  local by = e.force
+  if not (hs and hs.attack_alert and by) then return end
+  local force = entity.force
+  local f = force.name
+  if by.name == f then return end
+  local last = hs.attack_alert[f]
+  if last and game.tick - last < P4.ATTACK_ALERT_PERIOD then return end
+  if f ~= PLAYER and #force.players == 0 then return end
+  hs.attack_alert[f] = game.tick
+  supply.alert(f, "base-attacked", "rts.alert-base-attacked", {"[entity=" .. entity.name .. "]", entity.localised_name},
+    entity.position)
+  local cause = e.cause
+  util.log("hud: alert base-attacked for %s: %s #%s at %s, %.0f damage by %s%s", f, entity.name,
+    tostring(entity.unit_number), util.pos_str(entity.position), e.final_damage_amount, by.name,
+    (cause and cause.valid) and (" (" .. cause.name .. ")") or "")
+end)
+
+-- Kill feed: every death of an RTS unit (balance.units: walkers, heavies, drones, raiders, artillery, mk2 units,
+-- haulers, commanders). seen[force] = the victim or the killer is of that force, or that force sees the chunk.
+events.on(defines.events.on_entity_died, function(e)
+  local entity = e.entity
+  if not (entity and entity.valid and balance.units[entity.name]) then return end
+  local hs = storage.hud
+  if not (hs and hs.kills) then return end
+  local f = entity.force.name
+  local cause = e.cause
+  local killer = (cause and cause.valid) and cause.name or nil
+  local killer_force = e.force and e.force.name or ((cause and cause.valid) and cause.force.name or nil)
+  local pos, surface = entity.position, entity.surface
+  local chunk = {x = math.floor(pos.x / 32), y = math.floor(pos.y / 32)}
+  local seen = {}
+  for _, player in pairs(game.connected_players) do
+    local pf = player.force
+    if seen[pf.name] == nil then
+      seen[pf.name] = pf.name == f or pf.name == killer_force or pf.is_chunk_visible(surface, chunk)
+    end
+  end
+  local list = hs.kills
+  list[#list + 1] = {tick = game.tick, name = entity.name, force = f, killer = killer, killer_force = killer_force,
+                     seen = seen}
+  while #list > P4.KILL_KEEP do table.remove(list, 1) end
+end)
+
+-- Minimap pings: a chart tag for 10 s at every new alert of PING_KINDS (base attacked, hauler lost) that has a
+-- position, for forces with players. The HUD minimap and the map view draw chart tags.
+local ping_signal
+local function update_pings()
+  local hs = storage.hud
+  if not hs then return end
+  hs.pings = hs.pings or {}
+  for i = #hs.pings, 1, -1 do
+    local ping = hs.pings[i]
+    if game.tick - ping.tick >= P4.PING_TICKS or not (ping.tag and ping.tag.valid) then
+      if ping.tag and ping.tag.valid then ping.tag.destroy() end
+      table.remove(hs.pings, i)
+    end
+  end
+  local list = storage.alerts or {}
+  local last = hs.ping_tick or game.tick -- first look: older alerts get no ping
+  local newest = last
+  for i = #list, 1, -1 do
+    local a = list[i]
+    if (a.tick or 0) <= last then break end
+    newest = math.max(newest, a.tick)
+    local force = game.forces[a.force]
+    if PING_KINDS[a.kind] and a.position and force and #force.players > 0 then
+      if ping_signal == nil then
+        ping_signal = false
+        for _, name in ipairs(PING_SIGNALS) do
+          if prototypes.virtual_signal[name] then ping_signal = name break end
+        end
+      end
+      local surface = (match.surface and match.surface()) or util.surface()
+      local ok, tag = pcall(force.add_chart_tag, surface, {position = a.position,
+        icon = ping_signal and {type = "virtual", name = ping_signal} or nil, text = ping_signal and "" or "!"})
+      if ok and tag then
+        hs.pings[#hs.pings + 1] = {tag = tag, tick = game.tick}
+        util.log("hud: minimap ping %s for %s at %s", a.kind, a.force, util.pos_str(a.position))
+      end
+    end
+  end
+  hs.ping_tick = newest
+end
+
+-- Alert lines and the kill feed fade, so they refresh every P4.FEED_PERIOD ticks (the full refresh covers its
+-- own ticks).
+events.on_nth_tick(P4.FEED_PERIOD, function(e)
+  update_pings()
+  if e.tick % REFRESH_PERIOD == 0 then return end
+  for _, player in pairs(game.connected_players) do
+    local h = get_hud(player)
+    if h then update_feeds(player, h) end
+  end
 end)
 
 -- Console-free QA controls (docs/qa/phase1-followups.md item 3): the same code as the console commands,
@@ -1480,6 +2318,139 @@ camera.add_selftest_step(960, "hud_factory", function(player)
   end
   util.log("hud: selftest no own factory (robots have not built the ghost)")
 end)
+-- Phase 4 steps, between the match-flow menu (1320) and the AI kill (1500); see docs/qa/phase2-hud-notes.md "Phase 4".
+do -- scoped: the main chunk is close to the 200-local limit
+  local P4_UNITS = {{"rts-drone", 3}, {"rts-raider", 2}, {"rts-artillery", 1}, {"rts-walker-mk2", 2}}
+  local function first_ai(player)
+    for _, f in ipairs(match.ai_forces and match.ai_forces() or {}) do
+      if f ~= player.force.name then return f end
+    end
+    return ENEMY
+  end
+
+  -- The qa-reset at 930 starts a new match, so the barracks and factory of the Phase 2 steps are gone: place them.
+  local function ensure_building(player, kind, name, offset, surface)
+    for un, rec in buildings.for_force(player.force.name, kind) do return un, rec end
+    local home = match.home(player.force.name)
+    local pos = surface.find_non_colliding_position(name, {x = home.x + offset.x, y = home.y + offset.y}, 20, 1)
+    local e = pos and surface.create_entity({name = name, position = pos, force = player.force, raise_built = true})
+    local rec = e and buildings.register(e)
+    return e and e.unit_number, rec
+  end
+
+  camera.add_selftest_step(1350, "hud_p4_setup", function(player)
+    local own = player.force.name
+    local home = match.home(own)
+    local surface = (match.surface and match.surface()) or player.surface
+    camera.home(player)
+    local spawned, list = {}, {}
+    for i, spec in ipairs(P4_UNITS) do
+      for j = 1, spec[2] do
+        local pos = {x = home.x + 8 + 3 * j, y = home.y + 10 + 4 * i}
+        local e = prototypes.entity[spec[1]] and units.spawn(spec[1], pos, own, nil, surface)
+        if e then
+          list[#list + 1] = e
+          if j == 1 then e.health = e.max_health * 0.45 end -- the HP bars show yellow
+        end
+      end
+      spawned[#spawned + 1] = spec[1]
+    end
+    ensure_building(player, "barracks", "rts-barracks", {x = -14, y = -10}, surface)
+    ensure_building(player, "factory", "rts-factory", {x = -14, y = 10}, surface)
+    local hauler = logistics.spawn_hauler(surface, {x = home.x + 26, y = home.y + 14}, own)
+    if hauler then list[#list + 1] = hauler end
+    local spawn_commander = optional_fn("scripts.commander", {"spawn_now"}) -- the abilities agent's module
+    local hero = spawn_commander and spawn_commander(own)
+    if hero then list[#list + 1] = hero end
+    -- kill feed: one own drone killed by the first AI
+    local ai = first_ai(player)
+    for _, e in ipairs(list) do
+      if e.valid and e.name == "rts-drone" then
+        e.die(ai)
+        break
+      end
+    end
+    local alive = {}
+    for _, e in ipairs(list) do
+      if e.valid then alive[#alive + 1] = e end
+    end
+    local set_fn = optional_fn("scripts.selection", {"set"})
+    local n = set_fn and set_fn(player.index, alive) or 0
+    -- base-attacked: a stockpile damaged by the AI (the rate limit is cleared first, this is a test)
+    storage.hud.attack_alert[own] = nil
+    for _, rec in buildings.for_force(own, "stockpile") do
+      rec.entity.damage(40, ai, "physical")
+      break
+    end
+    -- unit-locked: the barracks makes raider kits (locked for players until Raiders is researched) and one is ready
+    local un, rec = own_barracks(player)
+    local kit_ok = false
+    if rec then
+      production.set_recipe(un, "rts-raider-kit")
+      local out = rec.entity.get_inventory(defines.inventory.assembling_machine_output)
+      kit_ok = out and out.insert({name = "rts-raider-kit", count = 1}) == 1
+    end
+    hud.set_build_tab(player, "defence")
+    hud.refresh(player.index)
+    util.log("hud: selftest p4 setup: spawned %s, hauler=%s, commander=%s, selected=%d, raider kit in barracks #%s: "
+      .. "%s, supply %d/%d", table.concat(spawned, " "), tostring(hauler ~= nil), tostring(hero ~= nil), n, tostring(un),
+      tostring(kit_ok),
+      supply_of(own).used, supply_of(own).cap)
+  end)
+  camera.add_selftest_step(1380, "hud_p4_screenshot_units", screenshot)
+  camera.add_selftest_step(1395, "hud_p4_card_click", function(player)
+    hud.card_click(player, "rts-raider", true)  -- every unit but the raiders
+    hud.card_click(player, "rts-drone", false)  -- only the drones
+  end)
+  camera.add_selftest_step(1410, "hud_p4_select_barracks", function(player)
+    local handle_area = optional_fn("scripts.selection", {"handle_area"})
+    local un, rec = own_barracks(player)
+    if not (rec and handle_area) then
+      util.log("hud: selftest p4 no own barracks")
+      return
+    end
+    handle_area(player.index, {}, zero_area(rec.entity.position), false, player.surface)
+    hud.set_build_tab(player, "production")
+    hud.refresh(player.index)
+    local b = research.block_of(un)
+    util.log("hud: selftest p4 barracks #%d selected=%s block=%s %s", un, tostring(selected_building(player) == un),
+      b and b.reason or "none", b and tostring(b.tech or b.unit) or "")
+    screenshot(player)
+  end)
+  camera.add_selftest_step(1440, "hud_p4_factory", function(player)
+    local handle_area = optional_fn("scripts.selection", {"handle_area"})
+    hud.set_build_tab(player, "economy")
+    for un, rec in buildings.for_force(player.force.name, "factory") do
+      if handle_area then handle_area(player.index, {}, zero_area(rec.entity.position), false, player.surface) end
+      hud.recipe_click(player, "rts-laser-turret") -- refused: locked
+      hud.refresh(player.index)
+      local h = get_hud(player)
+      local locked = {}
+      for name, lock in pairs(h and h.recipe_locks or {}) do
+        if lock then locked[#locked + 1] = name .. "=" .. tostring(lock) end
+      end
+      table.sort(locked)
+      util.log("hud: selftest p4 factory #%d selected=%s, %d recipe buttons, locked: %s", un,
+        tostring(selected_building(player) == un), table_size(h and h.recipe_buttons or {}), table.concat(locked, " "))
+      break
+    end
+    local a = hud.alert_hotkey(player)
+    util.log("hud: selftest p4 F3 -> %s", a and (a.kind .. " " .. util.pos_str(a.position)) or "none")
+    screenshot(player)
+  end)
+  camera.add_selftest_step(1470, "hud_p4_help", function(player)
+    hud.toggle_help(player, "selftest")
+    screenshot(player)
+  end)
+  camera.add_selftest_step(1500, "hud_p4_done", function(player)
+    if player.gui.screen[HELP_FRAME] then hud.toggle_help(player, "selftest") end
+    local list = {}
+    for _, a in ipairs(force_alerts(player.force.name, nil, 10)) do list[#list + 1] = a.kind end
+    util.log("RTS_P4_HUD_DONE player %d: alerts (newest first) %s; kills %d", player.index, table.concat(list, " "),
+      #(storage.hud.kills or {}))
+  end)
+end
+
 camera.add_selftest_step(3000, "hud_done", function(player) -- about 5 s into the first enemy wave
   screenshot(player)
   util.log("RTS_HUD_DONE player %d", player.index)

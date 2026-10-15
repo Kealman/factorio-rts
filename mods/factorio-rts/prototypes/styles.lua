@@ -189,3 +189,61 @@ styles.rts_hud_progressbar = {
   width = 120,
   bar_width = 8,
 }
+
+---------------------------------------------------------------------------
+-- Phase 4: build menu tabs, locked buttons, unit cards, alert lines and kill feed
+---------------------------------------------------------------------------
+
+-- Build menu tab (Economy / Production / Defence); toggled = the tab shown.
+styles.rts_hud_tab_button = {
+  type = "button_style",
+  parent = "button",
+  font = "default-semibold",
+  minimal_width = 0,
+  height = 24,
+  left_padding = 8,
+  right_padding = 8,
+}
+
+-- A build item or recipe the force has not unlocked yet: grey picture (the button is also disabled).
+styles.rts_hud_build_button_locked = {
+  type = "button_style",
+  parent = "rts_hud_build_button",
+  draw_grayscale_picture = true,
+}
+
+styles.rts_hud_recipe_button_locked = {
+  type = "button_style",
+  parent = "rts_hud_recipe_button",
+  draw_grayscale_picture = true,
+}
+
+-- Unit card: unit icon with the count in the corner; a click keeps only that unit type selected.
+styles.rts_hud_card_button = {
+  type = "button_style",
+  parent = "slot_button",
+  size = 30,
+}
+
+-- HP bar under a unit card (hud.lua sets the colour by health).
+styles.rts_hud_card_bar = {
+  type = "progressbar_style",
+  parent = "progressbar",
+  width = 30,
+  bar_width = 4,
+}
+
+-- Alert lines and kill feed: the HUD frame with less padding.
+styles.rts_hud_feed_frame = {
+  type = "frame_style",
+  parent = "rts_hud_frame",
+  top_padding = 4,
+  bottom_padding = 4,
+  vertical_flow_style = {type = "vertical_flow_style", vertical_spacing = 2},
+}
+
+styles.rts_hud_small_label = {
+  type = "label_style",
+  parent = "label",
+  font = "default-small-semibold",
+}

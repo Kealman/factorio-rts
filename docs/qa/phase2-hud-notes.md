@@ -208,3 +208,124 @@ and the orange armed button (gotcha 2). The pan speed was not measured: no run h
   the stockpile as soon as the network holds one.
 - **Not verified with real input:** Q, B, Ctrl+Shift+R/E, right click in build mode, a real ghost click, a real
   building click with the hover path, and the pan speed. The QA protocol covers each.
+
+## Phase 4 (wave B2): HUD integration of the new content
+
+Date: 2026-10-16. Plan: `docs/PHASE4.md` sections 1 and 7. Inputs: `docs/qa/phase4-content-notes.md`,
+`docs/qa/phase4-logistics-notes.md` and `docs/qa/phase4-research-notes.md` ("For the HUD agent" items).
+
+### Files
+
+| File | Change |
+|---|---|
+| `scripts/hud.lua` | Unit cards, locked recipes, barracks block reason, factory full-width grid, Phase 4 building pages, build menu tabs, supply and new resources, Research and How-to-play buttons, alert lines with F3, minimap pings, kill feed, How to play frame, `base-attacked` alerts, self-test steps 1350–1500 |
+| `scripts/buildings.lua` | `KIND_BY_NAME`: `rts-laser-turret` = `laser-turret`, `rts-wall` = `wall`, `rts-steam-plant` = `steam-plant`, `rts-accumulator` = `accumulator`, `rts-radar` = `radar` (the kinds `balance.buildings` proposes). `rts-lab` (research.lua) and `rts-hub` (logistics.lua) are registered by their modules, not duplicated. |
+| `scripts/match.lua` | `match.is_out` ignores units of kind `hauler` and `commander` |
+| `prototypes/inputs.lua` | `rts-alert-jump` (F3), `rts-help` (F11), both `game-only` |
+| `prototypes/styles.lua` | Tab button, locked build and recipe buttons (`draw_grayscale_picture`), unit card button and HP bar, feed frame, small label |
+| `locale/en/hud.cfg`, `locale/ru/hud.cfg` | New files: 2 controls and 73 `[rts]` keys each, same parameters. `factorio-rts.cfg` was not touched. |
+
+`scripts/selection.lua` needed no change: card clicks use `selection.set`.
+
+**Kinds.** The laser turret is not kind `turret`. `production.lua` feeds every `turret` with magazines (its
+`feed_turret` would return early anyway, because an electric turret has no ammo inventory), the AI budgets magazines per
+`turret` (`ai/commander.lua`) and counts build-order steps by `buildings.kind_of(name)` (`ai/build_order.lua`). Every
+wall segment is a registered building, so wall damage raises `base-attacked` and counts as an AI base threat.
+
+### Layout at 1280×800, UI scale 0.75
+
+From the `hud: layout` line: panel (6, 699) 390×95 (126 GUI units high, was 114), build menu (1043, 710) 231×84,
+strip (370, 6) 540×72 (720 GUI units wide, was 600), minimap (1106, 9) 165×165, alert lines (445, 81) 390 wide,
+kill feed (6, 6) 195 wide. The abilities bar (`scripts/abilitygui.lua`) sits at x 475–805, clear of the panel
+(ends at x 396) and the build menu. Nothing overlaps or clips in the English and Russian screenshots.
+
+| Element | Centre (px) |
+|---|---|
+| Unit cards (up to 6; the 6th reads "+N" with more prototypes) | y 735, x 24, 50, 75, 100, 125, 150; HP bar under each at y 747 |
+| Group buttons 1–5 | y 738, x 232, 267, 302, 337, 372 |
+| Command row | y 763: Attack-move 56, Stop 121, Hold 177, Select all 250 (English) |
+| Barracks grid | y 735: Pause 27, walker kit 53, heavy kit 80, drone kit 107, raider kit 132, artillery kit 157 |
+| Factory grid, row 1 | y 735, x 27 + 26 × i: Pause, hub, stockpile, extractor, smelter, solar array, factory, belt, inserter, pole, hauler kit, lab, steam plant (337), accumulator (363) |
+| Factory grid, row 2 | y 762: barracks 27, turret 53, ammo 80, laser turret 107, wall 132, radar 157, basic kit 183, advanced kit 208, gear 235, cable 260, circuit 287, explosives 312 |
+| Build menu tabs | y 744: Economy 1080, Production 1140, Defence 1199 |
+| Build menu slots | y 771, x 1066, 1097, 1129, 1160, 1190, 1221, 1252. Economy: extractor, smelter, stockpile, belt, inserter, pole, hub. Production: barracks, factory, lab. Defence: turret, laser turret, wall, solar array, steam plant, accumulator, radar. |
+| Strip row 1 | y 23: Supply label x ≈ 655, Research [T] 747, ? 796, Menu 836 |
+| Strip resources | y 44: iron, copper, steel, circuits, explosives, stone, magazines, power, bots |
+| Alert lines | y 94, 110, 126 (newest first), x 450–830; a click jumps the camera |
+| Kill feed lines | y 18, 35, … (newest first) |
+| How to play | centred, about (400, 205) to (880, 595); close button (861, 217) |
+
+### Behaviour
+
+- **Unit cards.** One card per unit prototype: icon, count, HP bar coloured by the average health. The tooltip gives
+  HP, supply per unit and the counter line from `balance.units[name].strong/weak`. Click keeps only that prototype;
+  Shift + click drops it. A one-prototype selection titles the page "Raider ×6". Orders `haul` and `commander` have
+  labels.
+- **Locked recipes.** A recipe is locked when the force has it disabled (laser turret, steam plant) or when it is a
+  barracks kit whose unit research has not unlocked (heavy, raider, artillery). Locked buttons are grey, disabled and
+  say "Requires research: X (T)". The mk2 kits are not shown: research never enables them. Buttons unlock while the
+  panel is open.
+- **Barracks block.** `research.block_of` replaces the counters line in red: "Waiting: research Raiders" or
+  "Supply cap 40/40: Raider waits", with the explanation in the tooltip.
+- **Build menu.** The tab survives HUD rebuilds (`hud_prefs.build_tab`). A locked item with stock in the network can
+  still be placed.
+- **Strip.** Supply turns yellow from 90 % and red at the cap. `supply.get` is cached per force and tick.
+- **Alerts.** Every `storage.alerts` writer is shown: `hauler-lost`, `supply-blocked`, `unit-locked`,
+  `research-complete`, `patch-depleted`, `ruin-captured`, `commander-down`, `commander-ready` and `base-attacked`. Lines
+  live 15 s and fade over the last 3 s. F3 goes to the newest alert with a position; F3 again within 5 s goes to the
+  next older one. `base-attacked` and `hauler-lost` play `utility/alert_destroyed`. Those two and `commander-down` add
+  a chart tag (minimap ping) for 10 s.
+- **base-attacked.** Written by hud.lua through `supply.alert` when an own registered building takes damage from
+  another force. At most once per force every 20 s, only for forces with players and `rts-player`. The handler joins
+  the event bus and keeps the shared `on_entity_damaged` filter that research.lua and abilities.lua set.
+- **Kill feed.** Every death of a `balance.units` unit: "[killer icon] › [icon] Walker ✕ (AI 1)". Own losses are red,
+  enemy losses green. A death is shown to a force when the victim or the killer is its own or it sees the chunk.
+- **Lobby.** The message line reads "… F11: how to play." The `?` button and F11 open the frame in the lobby too.
+
+### QA log lines (new)
+
+| Line | When |
+|---|---|
+| `hud: build menu tab <key>: <item><-<recipe>[ locked by <tech>] …` | `hud.init`, per tab |
+| `hud: module lookup (phase 4) techgui.toggle=ok selection.set=ok lobby.toggle_menu=ok` | `hud.init` |
+| `hud build tab <key> player=N: <items>` | Tab click |
+| `hud: recipe locks <kind>#N player=N: <recipe>=<tech>\|locked\|open …` | A recipe button's lock changed |
+| `hud click card <unit> player=N shift=true\|false -> selected=N` | Card click |
+| `hud click research player=N` | Research [T] button |
+| `hud help opened\|closed player=N (F11\|? button\|close button\|Escape\|selftest)` | How to play |
+| `hud alert jump player=N source=F3 kind=<kind> at (x, y) age=…s (i of n)` / `source=click line=N` | F3, alert click |
+| `hud: alert base-attacked for <force>: <entity> #N at (x, y), D damage by <force> (<cause>)` | New alert |
+| `hud: minimap ping <kind> for <force> at (x, y)` | Chart tag added |
+| `hud resources … circuits=N explosives=N supply=U/C` | Three fields appended to the Phase 2 line |
+
+### Validation
+
+| Run | Result |
+|---|---|
+| `tools/headless-run.sh 400 '\[rts' build/p4-hud` (copy of `mods/` + `mod-list.json`) | 0 errors in the create and server logs; `ai autotest summary 14/14 (all passed), result=both alive (time)` |
+| GUI, English and Russian (`build/p4-hud-gui`, `build/p4-hud-gui-ru`; self-test on in the copies only; a scratch `gui-run.sh` that appends `locale=` to the run's config) | 0 script errors, no "Unknown key", marker `RTS_P4_HUD_DONE`. Screenshots in `build/shots-p4-hud-gui/` and `build/shots-p4-hud-gui-ru/`. |
+
+The GUI copies patch one line of `scripts/abilitygui.lua` (`frame.style.horizontal_spacing` on a frame), which crashed
+every GUI client at tick 165 in the shared tree at the time; reported to the lead.
+
+Self-test steps (setup-relative ticks, between the match-flow menu at 1320 and the AI kill at 1500):
+
+| Tick | Step | Screenshot |
+|---|---|---|
+| 1350 | Barracks and factory placed (the qa-reset at 930 starts a new match), drones, raiders, artillery, mk2 walkers, a hauler and the Commander spawned and selected, one drone killed by the AI, a stockpile damaged by the AI, a raider kit in the barracks, build tab Defence | |
+| 1380 | | `rts-hud-1380.png`: six cards with HP bars (artillery yellow), Defence tab with laser turret and steam plant greyed, Supply 18/50, three alert lines, kill feed |
+| 1395 | Card clicks: Shift + raider (9 → 7), then drone (→ 2) | |
+| 1410 | Barracks selected, tab Production | `rts-hud-1410.png`: "Waiting: research Raiders" in red, heavy and artillery kits greyed, raider kit active |
+| 1440 | Factory selected, a click on the locked laser turret (refused by production), F3 | `rts-hud-1440.png`: 2 × 14 grid, laser turret and steam plant greyed; camera at the `unit-locked` alert |
+| 1470 | How to play opened | `rts-hud-1470.png` |
+| 1500 | How to play closed, `RTS_P4_HUD_DONE` with the alert kinds | |
+
+### Open items
+
+- **Real input not tested:** F3, F11, Escape on the help frame, the tab and card clicks with the mouse, and the alert
+  line click. The self-test drives the same functions.
+- **Alert fade** was not captured: the screenshots are within 3 s of the alerts.
+- **`economy.snapshot` power capacity** counts CC cores and solar arrays only, so steam plants and accumulators do not
+  show in the strip's MW. `economy.lua` is not this agent's file.
+- **`match.label`** builds a Lua pattern from `match.AI_PREFIX` (`rts-ai-`), where `-` is a quantifier, so it returns
+  the raw force name for AI forces. The kill feed uses its own plain prefix test.
