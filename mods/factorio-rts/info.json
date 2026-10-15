@@ -1,0 +1,9 @@
+{
+  "name": "factorio-rts",
+  "version": "0.1.0",
+  "title": "Factorio RTS",
+  "author": "factorio-rts",
+  "factorio_version": "2.0",
+  "dependencies": ["base >= 2.0", "? space-age"],
+  "description": "Real-time strategy controls for Factorio: a remote-view camera with no character, box selection and orders for spider-unit armies, and a 1v1 skirmish arena."
+}
