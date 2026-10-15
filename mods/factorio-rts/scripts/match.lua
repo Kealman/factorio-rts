@@ -2,9 +2,9 @@
 -- bases, ore, starting armies, out / win / lose, per-force counters, and the legacy Phase 2 wave brain.
 --
 -- Lifecycle: a new game sits in the "lobby" phase (no arena; lobby.lua shows the start dialog). match.start(config)
--- builds the arena surface rts-arena-<n>, the forces rts-player + rts-ai-1..N (free-for-all), a CC with the same
--- starting stock for every force, ore patches per spawn plus contested ones near the centre, 6 walkers each, and starts
--- the clock. lobby.lua starts the AI commanders and moves the players' cameras. match.teardown() stops the brains,
+-- builds the arena surface rts-arena-<n>, the forces rts-player + rts-ai-1..N (free-for-all), the map (scripts/mapgen.lua:
+-- terrain on "chokes", main / natural / middle ore patches with finite totals, the neutral ruin), a CC with the same
+-- starting stock for every force, 6 walkers each, and starts the clock. lobby.lua starts the AI commanders and moves the players' cameras. match.teardown() stops the brains,
 -- removes the match's units and buildings and returns to the lobby; lobby.lua deletes the old surface after moving
 -- the players off it (match.delete_arena). Nauvis is never touched: the players' god bodies sit on the lobby surface
 -- (camera.lua) and the remote view looks at the arena.
@@ -17,8 +17,9 @@
 --   version          3
 --   phase            "lobby" | "setup" | "running" | "ended" (match.result derives the result from it)
 --   match_id         number of matches started in this save (the arena of match n is rts-arena-<n>)
---   config           {opponents 1-3, difficulty, size, enemy_brain = "ai" | "waves", enemy_difficulty (= difficulty,
---                    read by ai.init), first_wave_ticks, wave_period_ticks}; match.normalize_config
+--   config           {opponents 1-3, difficulty, size, map = "chokes" | "open" (scripts/mapgen.lua layouts),
+--                    enemy_brain = "ai" | "waves", enemy_difficulty (= difficulty, read by ai.init), first_wave_ticks,
+--                    wave_period_ticks}; match.normalize_config
 --   surface          name of the current arena surface (nil in the lobby); util.surface() returns it
 --   arena_half       arena half size in tiles: the arena is [-arena_half, arena_half)^2 around (0, 0). Contract
 --                    with the AI planner (lead, 2026-10-15): ai/layout.lua reads it (fallback 80); nil before the
@@ -38,6 +39,7 @@ local units = require("scripts.units")
 local buildings = require("scripts.buildings")
 local production = require("scripts.production")
 local basetemplate = require("scripts.basetemplate")
+local mapgen = require("scripts.mapgen")
 
 local match = {}
 
@@ -50,13 +52,15 @@ match.MAX_OPPONENTS = 3
 local ARENA_TILE = "grass-1"
 
 -- Map sizes: the arena is [-half, half)^2; spawns sit on a circle of `radius` (size / 2 - 40). "legacy" is the
--- Phase 2 geometry (CCs at +-60 on a 160-tile arena): the waves brain and its autotest use it.
+-- Phase 2 geometry (CCs at +-60 on a 160-tile arena): the waves brain and its autotest use it, without mapgen.
 match.SIZES = {
   small = {half = 128, radius = 88},
   medium = {half = 192, radius = 152},
+  large = {half = 256, radius = 216},
   legacy = {half = 80, radius = 60},
 }
-match.SIZE_ORDER = {"small", "medium"} -- what the lobby offers
+match.SIZE_ORDER = {"small", "medium", "large"} -- what the lobby offers
+match.MAPS = mapgen.LAYOUTS -- "chokes" (default), "open"
 match.DIFFICULTIES = {"easy", "normal", "hard"}
 -- AI spawn angles in degrees (0 = east, y grows south); the player is at 180. Chosen so that no AI has two
 -- equally near neighbours: the AI commander faces the nearest other spawn along x (ai/commander.lua), and an exact
@@ -64,7 +68,7 @@ match.DIFFICULTIES = {"easy", "normal", "hard"}
 match.AI_ANGLES = {[1] = {0}, [2] = {-70, 70}, [3] = {-60, 0, 60}}
 
 -- Phase 1 QA follow-up 2 timing for the legacy wave brain; Phase 3 defaults for the match.
-match.DEFAULT_CONFIG = {opponents = 1, difficulty = "normal", size = "small", enemy_brain = "ai",
+match.DEFAULT_CONFIG = {opponents = 1, difficulty = "normal", size = "small", map = mapgen.DEFAULT_LAYOUT, enemy_brain = "ai",
                         enemy_difficulty = "normal", first_wave_ticks = 3 * 60 * 60, wave_period_ticks = 2 * 60 * 60}
 
 -- Starting armies, ARMY_OFFSET tiles in front of the CC (along the force's facing): ARMY.walkers walkers in
@@ -95,6 +99,8 @@ match.ENEMY_BARRACKS_RECIPE = "rts-walker-kit"
 -- front (match.front: towards the arena centre), dy along the side axis, which points south (east when the front is
 -- due north or south). The player's front is +x, so its patches are the calibrated Phase 2 layout; an AI on the
 -- x axis gets it mirrored in x, as before; off-axis AIs get it rotated towards the centre.
+-- Amounts: on the legacy map ORE_AMOUNT per tile (Phase 2); on every other map mapgen.MAIN_TOTALS per patch
+-- (PHASE4 2.4: finite totals), plus mapgen's natural pairs and middle patches (scripts/mapgen.lua).
 match.ORE_AMOUNT = 1500
 match.ORE_PATCHES = {
   {"iron-ore", 17, 10, 12, 12},
@@ -102,12 +108,7 @@ match.ORE_PATCHES = {
   {"stone", 28, 16, 6, 6},
   {"coal", 36, 16, 6, 6},
 }
--- Contested patches near the centre, absolute positions (not on the legacy map).
-match.CONTESTED_AMOUNT = 2500
-match.CONTESTED_PATCHES = {
-  {"iron-ore", 0, -24, 14, 14},
-  {"copper-ore", 0, 24, 10, 10},
-}
+-- Contested patches near the centre: mapgen.MIDDLE (iron, copper, coal; not on the legacy map).
 -- AI_VERTICAL_LINES: the AI planner can lay mining lines north/south of its CC. Before the AI fix of 2026-10-15
 -- (commit 1051c60) it could not (layout.lua:412 crashed the game), and 1v2 / 1v3 matches got CONTESTED_SAFE_ORE
 -- instead of the contested iron. false brings that stand-in back.
@@ -155,11 +156,13 @@ function match.normalize_config(c)
   local diff_ok = {easy = true, normal = true, hard = true}
   out.difficulty = diff_ok[c.difficulty] and c.difficulty or d.difficulty
   out.size = match.SIZES[c.size] and c.size or d.size
+  out.map = (c.map == "open" or c.map == "chokes") and c.map or d.map
   out.enemy_brain = c.enemy_brain == "waves" and "waves" or "ai"
   if out.enemy_brain == "waves" then
     out.opponents = 1
     if not c.size then out.size = "legacy" end
   end
+  if out.size == "legacy" then out.map = "open" end -- the Phase 2 geometry has no terrain
   out.enemy_difficulty = out.difficulty
   out.first_wave_ticks = tonumber(c.first_wave_ticks) or d.first_wave_ticks
   out.wave_period_ticks = tonumber(c.wave_period_ticks) or d.wave_period_ticks
@@ -373,13 +376,19 @@ function match.view_surface()
   return match.surface() or match.lobby_surface()
 end
 
-local function create_arena(m)
+--- The arena seed of the current match (nauvis seed + match number).
+local function arena_seed(m)
+  return ((game.surfaces.nauvis and game.surfaces.nauvis.map_gen_settings.seed or 1) + m.match_id) % 4294967296
+end
+
+-- `tile_at(x, y)` (mapgen.tile_function) names the ground tile; nil = ARENA_TILE everywhere (open, legacy).
+local function create_arena(m, tile_at)
   local half = m.arena_half
   local name = match.ARENA_PREFIX .. m.match_id
   local old = game.surfaces[name]
   if old then game.delete_surface(old) end -- a leftover from an older save; never the live arena
-  local seed = (game.surfaces.nauvis and game.surfaces.nauvis.map_gen_settings.seed or 1) + m.match_id
-  local surface = game.create_surface(old and (name .. "b") or name, empty_mgs(half, seed % 4294967296))
+  local seed = arena_seed(m)
+  local surface = game.create_surface(old and (name .. "b") or name, empty_mgs(half, seed))
   surface.generate_with_lab_tiles = true
   surface.always_day = true
   local prof = helpers.create_profiler()
@@ -393,10 +402,12 @@ local function create_arena(m)
       removed = removed + 1
     end
   end
-  -- Grass over everything (no water, no lab tiles), then no decoratives.
+  -- Grass over everything (no water, no lab tiles; mapgen's ground variation on "chokes"), then no decoratives.
   local tiles = {}
   for x = -half, half - 1 do
-    for y = -half, half - 1 do tiles[#tiles + 1] = {name = ARENA_TILE, position = {x, y}} end
+    for y = -half, half - 1 do
+      tiles[#tiles + 1] = {name = tile_at and tile_at(x, y) or ARENA_TILE, position = {x, y}}
+    end
   end
   surface.set_tiles(tiles, true, true, true, false)
   surface.destroy_decoratives({area = area})
@@ -496,16 +507,29 @@ local function place_ore_patches(surface, force_name)
   util.log("match: ore for %s: %s", force_name, table.concat(parts, "; "))
 end
 
-local function place_contested(surface)
-  local parts = {}
-  local safe = not match.AI_VERTICAL_LINES and config().opponents >= 2 and config().enemy_brain == "ai"
-  for _, p in ipairs(match.CONTESTED_PATCHES) do
-    local center = {x = p[2], y = p[3]}
-    local ore = (safe and p[1] == "iron-ore") and match.CONTESTED_SAFE_ORE or p[1]
-    local n = basetemplate.place_ore(surface, ore, center, p[4], p[5], match.CONTESTED_AMOUNT, true)
-    parts[#parts + 1] = string.format("%s %dx%d at %s: %d tiles", ore, p[4], p[5], util.pos_str(center), n)
+-- The main patches of a force (match.ORE_PATCHES in its layout axes) as {force, name, center, w, h}.
+local function main_patches(force_name)
+  local home = match.home(force_name)
+  local f, side = match.layout_axes(force_name)
+  local out = {}
+  for _, p in ipairs(match.ORE_PATCHES) do
+    out[#out + 1] = {force = force_name, name = p[1], w = p[4], h = p[5],
+                     center = {x = math.floor(home.x + f.x * p[2] + side.x * p[3] + 0.5),
+                               y = math.floor(home.y + f.y * p[2] + side.y * p[3] + 0.5)}}
   end
-  util.log("match: contested ore: %s", table.concat(parts, "; "))
+  return out
+end
+
+--- The mapgen spec of the match being started (storage.match spawns, forces, config).
+local function mapgen_spec(m, c)
+  local size = match.SIZES[c.size]
+  local main = {}
+  for _, f in ipairs(m.forces) do
+    for _, p in ipairs(main_patches(f)) do main[#main + 1] = p end
+  end
+  local safe = not match.AI_VERTICAL_LINES and c.opponents >= 2 and c.enemy_brain == "ai"
+  return {size = c.size, layout = c.map, half = size.half, radius = size.radius, seed = arena_seed(m),
+          forces = m.forces, spawns = m.spawns, main = main, middle_iron_ore = safe and match.CONTESTED_SAFE_ORE or nil}
 end
 
 local function stock_stockpiles(stockpiles, items)
@@ -562,8 +586,10 @@ local function place_bases(surface)
       end
     end
   end
-  for _, force_name in ipairs(m.forces) do place_ore_patches(surface, force_name) end
-  if c.size ~= "legacy" then place_contested(surface) end
+  -- Other sizes: mapgen.build placed the main, natural and middle patches before the CCs.
+  if c.size == "legacy" then
+    for _, force_name in ipairs(m.forces) do place_ore_patches(surface, force_name) end
+  end
   m.start_plates = {}
   for _, force_name in ipairs(m.forces) do
     local plates = stockpile_plates(force_name)
@@ -649,12 +675,15 @@ function match.start(cfg)
   m.out, m.winner, m.ended_tick, m.tick_started = {}, nil, nil, nil
   m.wave, m.waves_off, m.enemy_next_wave = 0, nil, nil
   m.stats = fresh_stats(m.forces)
-  util.log("match: starting match %d: %d opponent(s), %s, %s (%dx%d), brain %s", m.match_id, c.opponents,
-    c.difficulty, c.size, 2 * size.half, 2 * size.half, c.enemy_brain)
+  util.log("match: starting match %d: %d opponent(s), %s, %s (%dx%d), map %s, brain %s", m.match_id, c.opponents,
+    c.difficulty, c.size, 2 * size.half, 2 * size.half, c.map, c.enemy_brain)
 
-  local surface = create_arena(m)
+  -- Map generation (scripts/mapgen.lua): planned before the arena exists (ground tiles), built before the CCs.
+  local plan = c.size ~= "legacy" and mapgen.plan(mapgen_spec(m, c)) or nil
+  local surface = create_arena(m, plan and mapgen.tile_function(plan))
   m.surface = surface.name
   setup_forces(m.forces)
+  if plan then mapgen.build(surface, plan) else mapgen.reset() end
   m.placing = true
   place_bases(surface)
   m.placing = nil
@@ -687,6 +716,7 @@ function match.teardown(reason)
     if ai and ai.stop_force(name) then stopped = stopped + 1 end
   end
   drop_group()
+  mapgen.reset()
   local removed_units = units.despawn_all()
   local removed_buildings = 0
   for un, rec in pairs(storage.buildings or {}) do
@@ -746,6 +776,7 @@ end
 -- Init
 ---------------------------------------------------------------------------
 function match.init()
+  mapgen.init()
   local m = storage.match
   if m and m.version == 3 then
     config()
@@ -863,8 +894,14 @@ end
 -- Out, win, lose
 ---------------------------------------------------------------------------
 --- A force is out when it has no CC, barracks or factory left (buildings.is_alive_force) and no units.
+--- Phase 4: haulers and the Commander (it respawns at the CC) do not keep a side in the match.
+local NOT_ARMY = {hauler = true, commander = true}
 function match.is_out(force_name)
-  return units.count(force_name) == 0 and not buildings.is_alive_force(force_name)
+  if buildings.is_alive_force(force_name) then return false end
+  for _, rec in units.for_force(force_name) do
+    if not NOT_ARMY[rec.kind] then return false end
+  end
+  return true
 end
 
 --- Pure winner rule from the human force's view: rts-player wins when every enemy is out and it is not; both out

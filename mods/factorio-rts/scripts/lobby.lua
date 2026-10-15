@@ -6,10 +6,10 @@
 --   lobby.back_to_lobby(reason)      tear down, cameras to the lobby surface, the start dialog for everyone
 --   lobby.restart_current(reason)    the same config again (/rts-qa-reset, Ctrl+Shift+R)
 --   lobby.show_lobby / show_menu / toggle_menu / show_results (player)
--- Console: /rts-match <opponents> <difficulty> <size>. Input: rts-menu (F10) toggles the menu; the HUD has a Menu
--- button (hud.lua calls lobby.toggle_menu).
+-- Console: /rts-match <opponents> <difficulty> <size> [chokes|open] [waves]. Input: rts-menu (F10) toggles the menu;
+-- the HUD has a Menu button (hud.lua calls lobby.toggle_menu).
 --
--- Owns storage.lobby = {pending = {opponents, difficulty, size}} (the dialog's choices, shared by every player)
+-- Owns storage.lobby = {pending = {opponents, difficulty, size, map}} (the dialog's choices, shared by every player)
 -- and storage.players[i].results_closed = match_id whose results frame the player closed.
 local util = require("scripts.util")
 local events = require("scripts.events")
@@ -21,6 +21,7 @@ local cursor = require("scripts.cursor")
 local selection = require("scripts.selection")
 local orders = require("scripts.orders")
 local hud = require("scripts.hud")
+local mapgen = require("scripts.mapgen")
 
 local lobby = {}
 
@@ -40,6 +41,7 @@ local function pending()
     l.pending = {opponents = c.opponents, difficulty = c.difficulty,
                  size = match.SIZES[c.size] and c.size ~= "legacy" and c.size or match.DEFAULT_CONFIG.size}
   end
+  if not l.pending.map then l.pending.map = match.DEFAULT_CONFIG.map end -- saves from before the Map choice
   return l.pending
 end
 
@@ -55,9 +57,10 @@ local function size_caption(size)
   return {"rts.size-" .. size, 2 * s.half}
 end
 
---- One-line description of a config: "2 opponents · Normal · Small (256×256)".
+--- One-line description of a config: "2 opponents · Normal · Small (256×256) · Chokepoints".
 function lobby.config_text(c)
-  return {"rts.config-line", c.opponents, {"rts.difficulty-" .. c.difficulty}, size_caption(c.size)}
+  return {"", {"rts.config-line", c.opponents, {"rts.difficulty-" .. c.difficulty}, size_caption(c.size)}, " · ",
+          {"rts.map-" .. (c.map or match.DEFAULT_CONFIG.map)}}
 end
 
 local function can_control(player)
@@ -120,6 +123,11 @@ function lobby.show_lobby(player)
   for i, s in ipairs(match.SIZE_ORDER) do sizes[i] = size_caption(s) end
   grid.add({type = "drop-down", name = PREFIX .. "size", items = sizes, selected_index = index_of(match.SIZE_ORDER, p.size),
             tags = {rts_lobby = "size"}})
+  grid.add({type = "label", caption = {"rts.lobby-map"}, tooltip = {"rts.lobby-map-tooltip"}})
+  local maps = {}
+  for i, name in ipairs(match.MAPS) do maps[i] = {"rts.map-" .. name} end
+  grid.add({type = "drop-down", name = PREFIX .. "map", items = maps, selected_index = index_of(match.MAPS, p.map),
+            tags = {rts_lobby = "map"}, tooltip = {"rts.lobby-map-tooltip"}})
   local hint = inner.add({type = "label", caption = {"rts.lobby-hint"}})
   hint.style.single_line = false
   hint.style.maximal_width = DIALOG_WIDTH - 40
@@ -130,7 +138,8 @@ function lobby.show_lobby(player)
   local start = row.add({type = "button", name = PREFIX .. "start", style = "confirm_button",
                          caption = {"rts.lobby-start"}, tags = {rts_lobby = "start"}})
   start.enabled = can_control(player)
-  util.log("lobby: dialog shown to player %d (%d opponent(s), %s, %s)", player.index, p.opponents, p.difficulty, p.size)
+  util.log("lobby: dialog shown to player %d (%d opponent(s), %s, %s, %s)", player.index, p.opponents, p.difficulty,
+    p.size, p.map)
   return frame
 end
 
@@ -265,9 +274,9 @@ function lobby.start_match(cfg, who)
   players_to_view(function(player) return match.home(player.force.name) end)
   if old then match.delete_arena(old) end
   pending().opponents, pending().difficulty = c.opponents, c.difficulty
-  if c.size ~= "legacy" then pending().size = c.size end
-  util.log("lobby: match %d started by %s on %s: %d opponent(s), %s, %s, brain %s", m.match_id, tostring(who),
-    surface.name, c.opponents, c.difficulty, c.size, c.enemy_brain)
+  if c.size ~= "legacy" then pending().size, pending().map = c.size, c.map end
+  util.log("lobby: match %d started by %s on %s: %d opponent(s), %s, %s, map %s, brain %s", m.match_id, tostring(who),
+    surface.name, c.opponents, c.difficulty, c.size, c.map, c.enemy_brain)
   return surface
 end
 
@@ -299,8 +308,8 @@ local function on_click(e)
   if action == "start" then
     if not can_control(player) then return end
     local p = pending()
-    lobby.start_match({opponents = p.opponents, difficulty = p.difficulty, size = p.size, enemy_brain = "ai"},
-      "player " .. player.index)
+    lobby.start_match({opponents = p.opponents, difficulty = p.difficulty, size = p.size, map = p.map,
+                       enemy_brain = "ai"}, "player " .. player.index)
   elseif action == "restart" then
     if not can_control(player) then return end
     lobby.back_to_lobby("restart by player " .. player.index)
@@ -326,11 +335,13 @@ events.on(defines.events.on_gui_selection_state_changed, function(e)
     p.difficulty = match.DIFFICULTIES[el.selected_index] or p.difficulty
   elseif what == "size" then
     p.size = match.SIZE_ORDER[el.selected_index] or p.size
+  elseif what == "map" then
+    p.map = match.MAPS[el.selected_index] or p.map
   else
     return
   end
-  util.log("lobby: player %d set %s -> %d opponent(s), %s, %s", e.player_index, tostring(what), p.opponents,
-    p.difficulty, p.size)
+  util.log("lobby: player %d set %s -> %d opponent(s), %s, %s, %s", e.player_index, tostring(what), p.opponents,
+    p.difficulty, p.size, p.map)
   -- every connected player sees the same choices
   for _, player in pairs(game.connected_players) do
     if player.index ~= e.player_index and player.gui.screen[NAMES.lobby] then lobby.show_lobby(player) end
@@ -381,7 +392,8 @@ match.on_force_out(function(force_name)
   game.print({"", "[RTS] ", {"rts.match-force-out", match.label(force_name)}})
 end)
 
-commands.add_command("rts-match", "<opponents 1-3> <easy|normal|hard> <small|medium> - start a new match",
+commands.add_command("rts-match",
+  "<opponents 1-3> <easy|normal|hard> <small|medium|large> [chokes|open] [waves] - start a new match",
   function(cmd)
     local player = cmd.player_index and game.get_player(cmd.player_index)
     if player and not player.admin then
@@ -390,14 +402,21 @@ commands.add_command("rts-match", "<opponents 1-3> <easy|normal|hard> <small|med
     end
     local args = {}
     for w in string.gmatch(cmd.parameter or "", "%S+") do args[#args + 1] = string.lower(w) end
-    local cfg = {opponents = tonumber(args[1] or ""), difficulty = args[2], size = args[3],
-                 enemy_brain = args[4] == "waves" and "waves" or "ai"}
+    local cfg = {opponents = tonumber(args[1] or ""), difficulty = args[2], size = args[3], enemy_brain = "ai"}
+    for i = 4, #args do
+      if args[i] == "waves" then cfg.enemy_brain = "waves" end
+      if args[i] == "open" or args[i] == "chokes" then cfg.map = args[i] end
+    end
     local c = match.normalize_config(cfg)
     lobby.start_match(c, player and ("player " .. player.index) or "console")
-    local line = string.format("[rts] rts-match: match %d, %d opponent(s), %s, %s", storage.match.match_id,
-      c.opponents, c.difficulty, c.size)
+    local line = string.format("[rts] rts-match: match %d, %d opponent(s), %s, %s, map %s", storage.match.match_id,
+      c.opponents, c.difficulty, c.size, c.map)
     if player then player.print(line) else game.print(line) end
   end)
+
+-- Dev-only GUI self-test step (camera.lua, off by default): the whole arena, zoomed out, before the 900 screenshot
+-- and the QA reset at 930 (scripts/debug.lua).
+camera.add_selftest_step(890, "mapgen_overview", function(player) mapgen.overview_screenshot(player) end)
 
 function lobby.init()
   pending()
