@@ -59,7 +59,10 @@ storage.logistics = {
                            keep = {[item] = n}, export_above = {[item] = n},
                            parts = {power, pole, stockpiles = {...}}, setup_done, bonus_bots}},
   haulers = {[unit_number] = {entity, force, mode = "auto" | "manual", home, pickup, dropoff,
-                              state, reason, target, dest, plan, plan_src, cargo, delivered, trips, created, leg}},
+                              state, reason, target, dest, plan, plan_src, cargo, delivered, trips, created, leg,
+                              at_hub, route = {n, length, source}, path_req, repath_at, progress, stalls}},
+  path_requests = {[request id] = {un, dest, key, tick, from, retries}},
+  path_cache = {["<from hub>><to hub>"] = {tick, waypoints}},
   net_cache = {[force] = {tick, list, by_id = {[network_id] = i}, by_hub = {[unit_number] = i}}},
   stats = {[force] = {trips, delivered = {[item] = n}, lost, deployed}},
   hub_counter = {[force] = n},
@@ -125,6 +128,37 @@ Pickup and drop-off in one network: `same-network`. A missing end: `no-route`.
    (`plan`, `plan_src`) so a second hauler does not fetch the same surplus.
 3. At the source: load min(plan, surplus now, still needed), then go home.
 4. No request or no source: wait at home (`nothing`). A hauler whose home died is re-homed to the nearest hub.
+
+### Land routes
+
+Spider-vehicle autopilot walks a straight line and stops at water wider than about 10 tiles, such as the Chokepoints
+map's 16-tile moats. Every trip, and every ground move order, therefore asks the pathfinder for a land route first:
+
+- **Request.** `surface.request_path` from the hauler to the destination runs with a 3×3 box and the mask
+  `{layers = {doodad = true}, colliding_with_tiles_only = true}`. The flags are `allow_paths_through_own_entities`
+  and `prefer_straight_paths`, with the engine cache off.
+  - Water, deep water and out-of-map tiles carry the `doodad` layer; shallow water does not.
+  - Cliffs, trees and buildings do not carry it, so routes ignore them; spider legs step over them (gotcha 10).
+  - The hauler stands still until the answer comes, usually in 0 to 3 ticks.
+- **Waypoints.** The answer is simplified in two passes and then goes into `autopilot_destinations`.
+  - Douglas-Peucker at 0.75 tiles keeps only the turns.
+  - String pulling drops every turn whose straight shortcut has a 1.5-tile corridor free of water and out-of-map
+    tiles, checked every 0.5 tiles with `count_tiles_filtered`.
+  - Both passes matter, because every queued waypoint slows the spider down. Routes thinned to every 4th waypoint,
+    about 15 per 60 tiles, made a 60-tile leg take 4 s instead of 3.
+  - The engine's long-range search also bends open-ground paths through chunk-level nodes. The first hub-to-CC leg
+    came back 80 tiles long via x = −64.5, next to a chunk edge, against 61 straight. After string pulling it is one
+    waypoint and 61 tiles.
+- **Cache.** A trip that starts at the hub where the hauler last arrived is cached as `"<from hub>><to hub>"` for
+  60 s (`storage.logistics.path_cache`). The next hauler on that leg starts at once.
+- **No path.** With no path, or no answer within 180 ticks, the hauler walks the straight line and logs
+  `[rts] hauler no path #N ...`. When the pathfinder is busy (`try_again_later`) it asks again 60 ticks later, at
+  most 3 times.
+- **Stalls.** A travelling hauler that moves less than 1 tile in 180 ticks asks for a new route from where it
+  stands, at most 3 times per leg. So does one whose autopilot queue ran out short of the target. These log
+  `stalled ... re-routing (n)` and `may be stuck`.
+- **Logs.** Each route logs `route to (x, y): K of N waypoints, L tiles (pathfinder P, straight S), found in T ticks
+  [cached as A>B]`. Each arrival logs the route source (`path`, `cache` or `straight`), its waypoints and length.
 
 ### Capacity
 
@@ -207,6 +241,9 @@ ticks. The close button hides it until the selection changes.
 
 Constants: `HUB_STOCKPILES`, `HUB_BOTS`, `BONUS_BOT`, `BASE_SLOTS`, `DEFAULT_CC`, `DEFAULT_HUB`, `STEP_PERIOD` (30),
 `DEPLOY_PERIOD` (60), `CACHE_TICKS` (30), `ARRIVE_RADIUS` (4), `APPROACH_GAP` (2.5), `POLICY_ITEMS`, `POLICY_SUBGROUPS`.
+Land routes: `PATH_BOX` (3×3), `PATH_MASK` (`doodad`, tiles only), `PATH_EPSILON` (0.75), `PATH_CLEARANCE` (1.5),
+`PATH_SAMPLE` (0.5), `PATH_CACHE_TICKS` (3600), `PATH_TIMEOUT` (180), `PATH_RETRY_TICKS` (60), `STALL_TICKS` (180),
+`STALL_DIST` (1).
 
 ## What the AI agent needs
 
@@ -274,6 +311,13 @@ commander in that match. Steps, from the first 60-tick sweep with the match runn
    - The first hauler is killed with `die()`.
 4. **Manual stage.** The CC exports copper above 0, and the hub keeps 60 copper. The manual hauler must carry at
    least 20 copper within 90 s.
+5. **Moat stage.**
+   - `set_tiles` lays a water band 16 rows high, at 70 to 86 tiles north of the CC. It runs from the arena's west
+     edge to 60 tiles east of the CC, with a 14-tile land gap 20 to 34 tiles east of the CC.
+   - A source hub 50 tiles north exports iron above 0 and holds 200 iron. A target hub 108 tiles north keeps 50
+     iron.
+   - An auto hauler at the target must fetch 50 iron through the gap within 90 s. Every tick, the test records
+     where the hauler is while it is inside the band's interior rows, 2 tiles in from each edge.
 
 | Check | Expects |
 |---|---|
@@ -283,10 +327,13 @@ commander in that match. Steps, from the first 60-tick sweep with the match runn
 | `logistics_hauler_speed` | hauler at least 1.8× the walker over 60 tiles from a standing start |
 | `logistics_auto_delivery` | ≥ 50 iron delivered by the auto hauler, hub network holds ≥ 50 |
 | `logistics_kit_deploy` | a hauler within 12 tiles of the factory, no kit left in its output or network |
-| `logistics_move_order` | `hauler-move`, state `parked`, autopilot at the click |
+| `logistics_move_order` | `hauler-move`, state `parked`, destination at the click, route requested or set |
 | `logistics_route_orders` | `route-dropoff`, `route-pickup`, mode manual, pickup CC, drop-off hub, state `to_pickup` |
 | `logistics_hauler_lost` | one new `hauler-lost` alert this tick, hauler gone from both registries, `stats.lost` ≥ 1 |
 | `logistics_manual_route` | ≥ 20 copper delivered CC → hub |
+| `logistics_moat_route` | the trip to the moat source used a pathfinder route longer than the straight line |
+| `logistics_moat_gap` | every tick the hauler spent in the band's interior rows, it was within the 14-tile gap's columns |
+| `logistics_moat_delivery` | ≥ 50 iron delivered across the moat within 90 s |
 
 The last line is `[rts] logistics autotest summary N/M`.
 
@@ -294,26 +341,27 @@ The last line is `[rts] logistics autotest summary N/M`.
 
 All runs used copies of `mods/` plus `mods/mod-list.json`, with Space Age on. Other agents edited `balance.lua`,
 `prototypes/units.lua`, `prototypes/buildings.lua`, research and supply while these runs happened. Each copy holds
-the tree as it was at that moment. The AI and legacy copies predate two late changes of mine, the hauler leg speed
-and the policy item list. Neither matters there, because those tests spawn no hub and no hauler.
+the tree as it was at that moment. The AI and legacy copies predate three later changes of mine: the hauler leg
+speed, the policy item list and the land routes. None matters there, because those tests spawn no hub and no hauler.
 
 | Run | Copy | Result | Errors |
 |---|---|---|---|
-| Logistics autotest, 240 s, final code | `build/p4-logistics` | `logistics autotest summary 10/10 (all passed)`; hauler 21.4 tiles/s vs walker 10.8 | 0 |
+| Logistics autotest with land routes and the moat stage, 240 s, final code (2026-10-16), Chokepoints map with mapgen moats | `build/p4-haulpath` | `logistics autotest summary 13/13 (all passed)`; moat crossed inside the gap at x −63.1 to −62.5; 50 iron across the moat in 9 s | 0 |
+| Logistics autotest, 240 s, before land routes | `build/p4-logistics` | `logistics autotest summary 10/10 (all passed)`; hauler 21.4 tiles/s vs walker 10.8 | 0 |
 | Same, before the policy item list got the content agent's subgroups | `build/p4-logistics-run3-server.log` | `logistics autotest summary 10/10 (all passed)` | 0 |
 | Same, first version (leg speed 1.6, no speed probe) | `build/p4-logistics-run1-server.log` | 9/9 | 0 |
 | AI autotest, 420 s, logistics loaded, its test off | `build/p4-logistics-ai` | `ai autotest summary 14/14 (all passed), result=both alive (time)` | 0 |
 | Legacy waves autotest, 240 s, logistics loaded | `build/p4-logistics-legacy`, `build/p4-logistics-legacy2` | 64/65: `eco_shared_pool` FAIL | 0 |
 | Same, control copy with every logistics file and require removed | `build/p4-legacy-control` | 64/65: the same `eco_shared_pool` FAIL | 0 |
-| GUI self-test, Russian (system language), final code | `build/p4-logistics-gui` | Marker `RTS_LOGISTICS_GUI_DONE`, screenshots in `build/shots-p4-logistics-gui/` | 0 |
+| GUI self-test, Russian (system language), before land routes | `build/p4-logistics-gui` | Marker `RTS_LOGISTICS_GUI_DONE`, screenshots in `build/shots-p4-logistics-gui/` | 0 |
 | GUI self-test, English (scratch runner with `locale=en`), before the item list change | `build/p4-logistics-gui-en` | Same, `build/shots-p4-logistics-gui-en/` | 0 |
 
 **Why the legacy test fails, and why it is not this work.** The Phase 1 attack-move walkers razed the template
 enemy base. The match ended with a player victory at tick 5220 (85 s) in both the control copy and the repeat
 logistics copy, and at 96 s in the first logistics copy. The autotest then runs its QA reset early, the economy
-checks lose their base, and the barracks make no more kits after 75 s. The control copy has no logistics code at all and fails the same way. The cause is in
-the current tree, probably the Phase 4 unit balance, which makes the walkers stronger. The Phase 2 notes describe
-the same effect as gotcha 8.
+checks lose their base, and the barracks make no more kits after 75 s. The control copy has no logistics code at
+all and fails the same way. The cause is in the current tree, probably the Phase 4 unit balance, which makes the
+walkers stronger. The Phase 2 notes describe the same effect as gotcha 8.
 
 Excerpt from the 10/10 logistics run (`build/p4-logistics-run3-server.log`):
 
@@ -372,6 +420,8 @@ The first Russian GUI run kept going a few seconds past the marker, and its log 
 | Auto delivery, hub 61 tiles from the CC | 50 iron 7 s after the hauler appeared (two 60-tile legs plus planning) |
 | Kit to hauler | 9 s from the recipe being set: the 8 s craft, then the next 60-tick sweep |
 | Manual CC → hub copper | 60 copper 6 s after the route order |
+| Moat, source hub to target hub, 58 tiles apart in a straight line | Route 80 tiles through the gap in 3 waypoints, found in 2 to 3 ticks. Legs 4.0 and 4.5 s; 50 iron delivered 9 s after the hauler appeared. |
+| Route answer time | 0 to 3 ticks for routes up to 90 tiles |
 
 ## Gotchas
 
@@ -397,6 +447,17 @@ The first Russian GUI run kept going a few seconds past the marker, and its log 
    `logistics.init`'s cursor-filter line is in `build/<run>-create.log`, not in the server log.
 9. **Two runs of one copy directory collide.** The second fails at map creation: "Couldn't acquire exclusive lock
    ... Is another instance already running?". Give parallel runs their own directories.
+10. **Cliffs, trees and buildings carry the `water_tile` collision layer.** That is `building()` and `cliff` in
+    `core/lualib/collision-mask-defaults.lua`. Whether `colliding_with_tiles_only` keeps the pathfinder from treating
+    them as obstacles was not verified. The route mask uses `doodad` instead, which only water, deep water and
+    out-of-map tiles carry.
+11. **Every queued autopilot waypoint costs speed.** A 60-tile leg through about 15 waypoints took 4 s instead of 3,
+    so routes keep only their turns.
+12. **The pathfinder's long paths detour on open ground.** Its long-range search goes through chunk-level nodes. A
+    61-tile leg with nothing in the way came back 80 tiles long, and a diagnostic found no blocking tile or entity in
+    the corridor. Only that direction detoured; the reverse leg was straight. String pulling fixes it.
+13. **Testing a crossing needs a margin.** A route 1.5 tiles from the band's edge still let the spider's centre dip
+    into the edge rows on a turn. The moat check counts only the band's interior rows, 2 tiles in from each edge.
 
 ## Open items and decisions for the lead
 
@@ -411,9 +472,6 @@ The first Russian GUI run kept going a few seconds past the marker, and its log 
 - **Not tested with real input.** These still need an interactive QA pass:
   - A real left click or box drag on a hauler. The filter is verified through the prototype API.
   - A real right click and Shift + right click on a hub, and the policy text fields.
-- **Autopilot walks in a straight line.** Spider legs step over buildings and cliffs. A wide lake from the Phase 4
-  map generator could still stop a hauler. It then re-issues its destination and logs "may be stuck" once. Waypoints
-  from `LuaSurface.request_path` would be the next step if that happens.
 - **X and H do not stop haulers**, because they are claimed. The panel's Return home and a ground right click cover
   that.
 - **A policy changed by script** (AI, console) shows in an open hub panel only after it is reopened. Typing is never

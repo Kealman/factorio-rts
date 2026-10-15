@@ -90,6 +90,23 @@ logistics.APPROACH_GAP = 2.5       -- tiles between a hub's selection box and it
 logistics.STUCK_REISSUES = 3       -- autopilot re-issues before a "may be stuck" log line
 logistics.MAX_ALERTS = 100
 logistics.MAX_THRESHOLD = 100000
+-- Land routes (spider autopilot walks straight lines and stops at water wider than ~10 tiles): every trip asks the
+-- pathfinder for a route that avoids water and out-of-map tiles only (spider legs step over buildings and cliffs),
+-- keeps only its turns (Douglas-Peucker, PATH_EPSILON tiles: every queued waypoint costs the spider speed), then
+-- drops every turn whose straight shortcut is clear of blocking tiles (the engine's long-range search bends paths through
+-- chunk-level waypoints even on open ground), and caches hub-to-hub routes for PATH_CACHE_TICKS.
+logistics.PATH_BOX = {{-1.5, -1.5}, {1.5, 1.5}} -- the route keeps the spider's centre 1.5 tiles from water
+logistics.PATH_CLEARANCE = 1.5     -- tiles around a straight shortcut that must be free of blocking tiles
+logistics.PATH_SAMPLE = 0.5        -- tiles between the clearance checks along a shortcut
+-- "doodad": water, deep water and out-of-map tiles carry it, shallow water does not. Cliffs, trees and buildings
+-- carry "water_tile" but not "doodad", so this mask cannot route haulers around things their legs step over.
+logistics.PATH_MASK = {layers = {doodad = true}, colliding_with_tiles_only = true}
+logistics.PATH_EPSILON = 0.75      -- tiles a simplified route may cut a corner of the pathfinder's route by
+logistics.PATH_CACHE_TICKS = 60 * 60
+logistics.PATH_TIMEOUT = 180       -- ticks to wait for a route before walking the straight line
+logistics.PATH_RETRY_TICKS = 60    -- pathfinder busy (try_again_later): ask again this much later, at most 3 times
+logistics.STALL_TICKS = 180        -- travelling without moving STALL_DIST for this long: route again (max 3 times)
+logistics.STALL_DIST = 1
 -- Items the hub panel always lists (when the prototype exists), in this order. hubgui.lua appends the items of
 -- POLICY_SUBGROUPS (intermediates, science kits, unit kits), then anything else in the network or in a policy.
 logistics.POLICY_ITEMS = {
@@ -118,6 +135,8 @@ local function lstate()
   L.net_cache = L.net_cache or {}
   L.stats = L.stats or {}
   L.hub_counter = L.hub_counter or {}
+  L.path_requests = L.path_requests or {}
+  L.path_cache = L.path_cache or {}
   return L
 end
 
@@ -500,15 +519,136 @@ local function set_state(h, state, reason)
   end
 end
 
+---------------------------------------------------------------------------
+-- Haulers: land routes
+---------------------------------------------------------------------------
+local function route_length(from, waypoints)
+  local len, prev = 0, from
+  for _, w in ipairs(waypoints) do
+    len = len + util.distance(prev, w)
+    prev = w
+  end
+  return len
+end
+
+-- Hand a route to the autopilot. `source`: "path", "cache" or "straight".
+local function apply_route(h, waypoints, source)
+  local e = h.entity
+  e.autopilot_destination = nil
+  for _, w in ipairs(waypoints) do e.add_autopilot_destination(w) end
+  h.route = {n = #waypoints, length = route_length(e.position, waypoints), source = source}
+  h.progress = nil
+end
+
+-- Douglas-Peucker: the subset of `points` (array of {x, y}) whose polyline stays within `eps` of the original.
+local function simplify(points, eps)
+  local n = #points
+  if n <= 2 then return points end
+  local keep = {[1] = true, [n] = true}
+  local stack = {{1, n}}
+  while #stack > 0 do
+    local seg = table.remove(stack)
+    local a, b = seg[1], seg[2]
+    local ax, ay = points[a].x, points[a].y
+    local dx, dy = points[b].x - ax, points[b].y - ay
+    local len2 = dx * dx + dy * dy
+    local best, best_d = nil, eps
+    for i = a + 1, b - 1 do
+      local px, py = points[i].x - ax, points[i].y - ay
+      local t = len2 > 1e-9 and math.max(0, math.min(1, (px * dx + py * dy) / len2)) or 0
+      local qx, qy = px - t * dx, py - t * dy
+      local d = math.sqrt(qx * qx + qy * qy)
+      if d > best_d then best, best_d = i, d end
+    end
+    if best then
+      keep[best] = true
+      stack[#stack + 1] = {a, best}
+      stack[#stack + 1] = {best, b}
+    end
+  end
+  local out = {}
+  for i = 1, n do
+    if keep[i] then out[#out + 1] = points[i] end
+  end
+  return out
+end
+
+-- True when a PATH_CLEARANCE-wide corridor from a to b holds no tile of the route mask's layer (water, out-of-map).
+local function segment_clear(surface, a, b)
+  local dx, dy = b.x - a.x, b.y - a.y
+  local steps = math.max(1, math.ceil(math.sqrt(dx * dx + dy * dy) / logistics.PATH_SAMPLE))
+  local r = logistics.PATH_CLEARANCE
+  for i = 0, steps do
+    local x, y = a.x + dx * i / steps, a.y + dy * i / steps
+    if surface.count_tiles_filtered({area = {{x - r, y - r}, {x + r, y + r}}, collision_mask = "doodad", limit = 1}) > 0 then
+      return false
+    end
+  end
+  return true
+end
+
+-- String pulling: from each kept point jump to the farthest later point that is in clear straight line.
+local function shortcut(surface, start, points)
+  local out, cur, i = {}, start, 1
+  while i <= #points do
+    local j = #points
+    while j > i and not segment_clear(surface, cur, points[j]) do j = j - 1 end
+    out[#out + 1] = points[j]
+    cur, i = points[j], j + 1
+  end
+  return out
+end
+
+local function straight(h)
+  if not h.dest then return end
+  apply_route(h, {{x = h.dest.x, y = h.dest.y}}, "straight")
+end
+
+-- Cache key of a hub-to-hub trip: only when the hauler stands at the hub it last arrived at.
+local function path_key(h, hub_un)
+  local from = h.at_hub
+  if from and hub_un and from ~= hub_un and near_hub(h, from) then return from .. ">" .. hub_un end
+  return nil
+end
+
+-- Route to h.dest: from the cache when `key` has a fresh entry, else ask the pathfinder (the hauler waits for the
+-- answer, at most PATH_TIMEOUT ticks; on_script_path_request_finished applies it).
+local function request_route(h, key, retries)
+  local L = lstate()
+  local dest = h.dest
+  if not dest then return end
+  local cached = key and L.path_cache[key]
+  if cached and game.tick - cached.tick < logistics.PATH_CACHE_TICKS then
+    apply_route(h, cached.waypoints, "cache")
+    return
+  end
+  local e = h.entity
+  local ok, id = pcall(e.surface.request_path, {
+    bounding_box = logistics.PATH_BOX, collision_mask = logistics.PATH_MASK, start = e.position, goal = dest,
+    force = e.force, radius = 2, path_resolution_modifier = 0,
+    pathfind_flags = {allow_paths_through_own_entities = true, prefer_straight_paths = true, cache = false},
+  })
+  if not ok or not id then
+    util.log("hauler no path #%d: request failed (%s), straight line", e.unit_number, tostring(id))
+    straight(h)
+    return
+  end
+  L.path_requests[id] = {un = e.unit_number, dest = {x = dest.x, y = dest.y}, key = key, tick = game.tick,
+                         from = {x = e.position.x, y = e.position.y}, retries = retries or 0}
+  h.path_req = id
+  e.autopilot_destination = nil
+end
+
 local function go(h, hub_un, state)
   local point = logistics.approach_point(hub_un)
   if not point then return false end
+  local key = path_key(h, hub_un)
   h.target, h.dest = hub_un, point
   local p = h.entity.position
   h.leg = {tick = game.tick, x = p.x, y = p.y}
-  h.reissues = 0
-  h.entity.autopilot_destination = point
+  h.reissues, h.stalls, h.progress, h.repath_at, h.path_req, h.route = 0, 0, nil, nil, nil, nil
   set_state(h, state)
+  request_route(h, key)
   return true
 end
 
@@ -864,21 +1004,58 @@ local function step(h)
       if leg then
         local secs = (game.tick - leg.tick) / 60
         local dist = util.distance(leg, h.dest)
-        util.log("logistics: hauler #%d arrived at hub #%d (%s): %.1f tiles in %.1f s = %.1f tiles/s",
-          h.entity.unit_number, h.target, state, dist, secs, secs > 0 and dist / secs or 0)
+        local r = h.route
+        util.log("logistics: hauler #%d arrived at hub #%d (%s): %.1f tiles in %.1f s = %.1f tiles/s; route %s, "
+          .. "%d waypoints, %.1f tiles", h.entity.unit_number, h.target, state, dist, secs,
+          secs > 0 and dist / secs or 0, r and r.source or "-", r and r.n or 0, r and r.length or 0)
         h.leg = nil
       end
+      h.at_hub = h.target
       if state == "to_pickup" and h.mode == "manual" then h.plan = nil end
       set_state(h, "idle")
     else
       local e = h.entity
+      local L = lstate()
+      if h.path_req then
+        -- waiting for the pathfinder
+        local req = L.path_requests[h.path_req]
+        if not req or game.tick - req.tick > logistics.PATH_TIMEOUT then
+          util.log("hauler no path #%d to hub #%d: no answer in %d ticks, straight line", e.unit_number, h.target,
+            logistics.PATH_TIMEOUT)
+          if req then L.path_requests[h.path_req] = nil end
+          h.path_req = nil
+          straight(h)
+        end
+        return
+      end
+      if h.repath_at then
+        if game.tick >= h.repath_at then
+          local retries = h.repath_retries
+          h.repath_at, h.repath_retries = nil, nil
+          request_route(h, nil, retries)
+        end
+        return
+      end
       if not e.autopilot_destination then
+        -- the route ran out (or was cleared) short of the destination: route again from here
         h.reissues = (h.reissues or 0) + 1
-        e.autopilot_destination = h.dest
         if h.reissues == logistics.STUCK_REISSUES then
           util.log("logistics: hauler #%d may be stuck at %s on its way to hub #%d", e.unit_number,
             util.pos_str(e.position), h.target)
         end
+        if h.reissues <= logistics.STUCK_REISSUES then request_route(h, nil) else straight(h) end
+        return
+      end
+      -- stalled with a destination (e.g. stopped at water on a straight line): route again, at most 3 times
+      local p, pr = e.position, h.progress
+      if not pr or util.distance(pr, p) > logistics.STALL_DIST then
+        h.progress = {tick = game.tick, x = p.x, y = p.y}
+      elseif game.tick - pr.tick >= logistics.STALL_TICKS then
+        h.progress = {tick = game.tick, x = p.x, y = p.y}
+        h.stalls = (h.stalls or 0) + 1
+        util.log("logistics: hauler #%d stalled at %s on its way to hub #%d (%s route), re-routing (%d)",
+          e.unit_number, util.pos_str(p), h.target, h.route and h.route.source or "-", h.stalls)
+        if h.stalls <= 3 then request_route(h, nil) end
       end
       return
     end
@@ -903,6 +1080,7 @@ function logistics.spawn_hauler(surface, position, force_name, home_un)
   if color then entity.color = color end
   local h = {entity = entity, force = force_name, mode = "auto", home = home_un or nearest_hub(force_name, entity.position),
              state = "idle", cargo = {}, delivered = {}, trips = 0, created = game.tick}
+  h.at_hub = h.home
   lstate().haulers[entity.unit_number] = h
   local stats = logistics.stats(force_name)
   stats.deployed = stats.deployed + 1
@@ -913,6 +1091,7 @@ end
 
 local function reset_trip(h)
   h.plan, h.plan_src, h.target, h.dest, h.leg = nil, nil, nil, nil, nil
+  h.path_req, h.repath_at, h.route, h.progress = nil, nil, nil, nil
   if h.entity.valid then h.entity.autopilot_destination = nil end
   set_state(h, "idle")
   step(h)
@@ -979,10 +1158,10 @@ function logistics.move_hauler(unit_number, position)
   local h = logistics.hauler(unit_number)
   if not h then return false end
   local x, y = util.xy(position)
-  h.plan, h.plan_src, h.target, h.leg = nil, nil, nil, nil
+  h.plan, h.plan_src, h.target, h.leg, h.repath_at = nil, nil, nil, nil, nil
   h.dest = {x = x, y = y}
-  h.entity.autopilot_destination = h.dest
   set_state(h, "parked")
+  request_route(h, nil)
   return true
 end
 
@@ -1146,6 +1325,43 @@ events.on(defines.events.on_spider_command_completed, function(e)
   if h and h.state ~= "parked" then step(h) end
 end)
 
+events.on(defines.events.on_script_path_request_finished, function(e)
+  local L = storage.logistics
+  local req = L and L.path_requests and L.path_requests[e.id]
+  if not req then return end
+  L.path_requests[e.id] = nil
+  local h = logistics.hauler(req.un)
+  if not (h and h.path_req == e.id) then return end
+  h.path_req = nil
+  if not (h.dest and util.distance(h.dest, req.dest) < 0.01) then return end -- the destination changed meanwhile
+  local un = h.entity.unit_number
+  if e.path and #e.path > 0 then
+    local raw = {{x = req.from.x, y = req.from.y}}
+    for _, w in ipairs(e.path) do raw[#raw + 1] = {x = w.position.x, y = w.position.y} end
+    raw[#raw + 1] = {x = req.dest.x, y = req.dest.y}
+    local waypoints = simplify(raw, logistics.PATH_EPSILON)
+    table.remove(waypoints, 1) -- the start
+    waypoints = shortcut(h.entity.surface, req.from, waypoints)
+    if req.key then L.path_cache[req.key] = {tick = e.tick, waypoints = waypoints} end
+    apply_route(h, waypoints, "path")
+    util.log("logistics: hauler #%d route to %s: %d of %d waypoints, %.1f tiles (pathfinder %.1f, straight %.1f), "
+      .. "found in %d ticks%s", un, util.pos_str(req.dest), #waypoints, #e.path, h.route.length,
+      route_length(req.from, raw), util.distance(req.from, req.dest), e.tick - req.tick,
+      req.key and (" [cached as " .. req.key .. "]") or "")
+    if #waypoints > 1 and #waypoints <= 8 then
+      local parts = {}
+      for _, w in ipairs(waypoints) do parts[#parts + 1] = util.pos_str(w) end
+      util.log("logistics: hauler #%d route via %s", un, table.concat(parts, " "))
+    end
+  elseif e.try_again_later and req.retries < 3 then
+    h.repath_at, h.repath_retries = e.tick + logistics.PATH_RETRY_TICKS, req.retries + 1
+    util.log("logistics: hauler #%d pathfinder busy, retry %d", un, req.retries + 1)
+  else
+    util.log("hauler no path #%d from %s to %s, straight line", un, util.pos_str(req.from), util.pos_str(req.dest))
+    straight(h)
+  end
+end)
+
 events.on(defines.events.on_entity_died, function(e)
   local entity = e.entity
   if not (entity and entity.valid and entity.name == logistics.HAULER) then return end
@@ -1189,6 +1405,16 @@ function logistics.init()
   for t in pairs(ok and filters or {}) do types[#types + 1] = t end
   table.sort(types)
   util.log("logistics: rts-cursor select type filters: %s", table.concat(types, " "))
+  -- prototypes/logistics.lua opts the hub and the hauler into the raiders' bonus damage (balance.raid_target_type)
+  local masks = {}
+  for _, name in ipairs({logistics.HUB, logistics.HAULER}) do
+    local proto = prototypes.entity[name]
+    local list = {}
+    for t in pairs(proto and proto.trigger_target_mask or {}) do list[#list + 1] = t end
+    table.sort(list)
+    masks[#masks + 1] = string.format("%s=[%s]", name, table.concat(list, " "))
+  end
+  util.log("logistics: trigger target masks %s", table.concat(masks, " "))
 end
 
 ---------------------------------------------------------------------------
@@ -1212,6 +1438,16 @@ local AT = {
   speed_from = {x = -20, y = 14},
   speed_tiles = 60,
   speed_window = 40 * 60,
+  -- land route stage: a 16-row water band between a source hub and a target hub, with a 14-tile land gap off the
+  -- straight line; offsets from the player CC
+  moat_src = {x = 0, y = -50},
+  moat_dst = {x = 0, y = -108},
+  moat_rows = {-86, -70},               -- y range [from, to) of the band
+  moat_cols = {-200, 60},               -- x range [from, to), clipped to the arena
+  moat_gap = {20, 34},                  -- x range [from, to) of the land gap: 14 tiles
+  moat_iron = 200,
+  moat_deliver = 50,
+  moat_window = 90 * 60,
 }
 
 local function at_enabled()
@@ -1343,8 +1579,9 @@ end)
 events.on(defines.events.on_spider_command_completed, function(e)
   local L = storage.logistics
   local S = L and L.autotest and L.autotest.speed
-  if S and e.vehicle and e.vehicle.valid and e.vehicle.unit_number == S.hauler and not S.hauler_tick then
-    S.hauler_tick = e.tick
+  if S and e.vehicle and e.vehicle.valid and e.vehicle.unit_number == S.hauler and not S.hauler_tick
+     and util.distance(e.vehicle.position, S.hauler_from) >= AT.speed_tiles - 2 then
+    S.hauler_tick = e.tick -- the last waypoint (routes have several)
   end
 end)
 
@@ -1409,10 +1646,11 @@ local function at_orders(T)
   selection.set(P, {h2.entity})
   local ground = {x = hub.entity.position.x + 10, y = hub.entity.position.y + 8}
   local order, n = orders.handle_reverse_area(P, {}, area_at(ground), false)
-  local dest = h2.entity.autopilot_destination
+  local dest = h2.dest
   at_check(T, "logistics_move_order", order == "hauler-move" and n == 1 and h2.state == "parked" and dest ~= nil
-    and util.distance(dest, ground) < 0.5, "order=%s n=%s state=%s autopilot=%s", tostring(order), tostring(n),
-    h2.state, util.pos_str(dest))
+    and util.distance(dest, ground) < 0.5 and (h2.path_req ~= nil or h2.entity.autopilot_destination ~= nil),
+    "order=%s n=%s state=%s dest=%s route %s", tostring(order), tostring(n), h2.state, util.pos_str(dest),
+    h2.path_req and "requested" or "set")
   -- route: Shift + right click on the hub (drop-off), right click on the CC (pickup)
   local o1 = orders.handle_reverse_area(P, {hub.entity}, area_at(hub.entity.position), true)
   local o2 = orders.handle_reverse_area(P, {cc.entity}, area_at(cc.entity.position), false)
@@ -1452,13 +1690,105 @@ local function at_manual(T, tick)
     local he = logistics.entry_for_hub(T.hub)
     at_check(T, "logistics_manual_route", true, "hauler #%d carried %d copper CC -> hub in %.1f s (hub copper %d)",
       T.h2, copper, (tick - T.t1) / 60, he and he.network.get_item_count("copper-plate") or -1)
-    T.stage = "done"
+    T.stage = "moat_setup"
   elseif tick - T.t1 > AT.manual_window or not h2 then
     at_check(T, "logistics_manual_route", false, "%d copper after %.0f s (state %s)", copper, (tick - T.t1) / 60,
       h2 and h2.state or "gone")
+    T.stage = "moat_setup"
+  end
+end
+
+-- Land route stage: water band with a gap between hub S (exports iron) and hub T (keeps iron), an auto hauler at T.
+local function at_moat_setup(T)
+  local force = util.PLAYER_FORCE
+  local cc = buildings.main_cc(force)
+  local surface = cc.entity.surface
+  local c = cc.entity.position
+  local half = (storage.match and storage.match.arena_half) or 128
+  local x0, x1 = math.max(-half, math.floor(c.x + AT.moat_cols[1])), math.min(half, math.floor(c.x + AT.moat_cols[2]))
+  local y0, y1 = math.floor(c.y + AT.moat_rows[1]), math.floor(c.y + AT.moat_rows[2])
+  local g0, g1 = math.floor(c.x + AT.moat_gap[1]), math.floor(c.x + AT.moat_gap[2])
+  for cx = math.floor(x0 / 32), math.floor((x1 - 1) / 32) do
+    for cy = math.floor(y0 / 32), math.floor((y1 - 1) / 32) do surface.request_to_generate_chunks({cx * 32 + 16, cy * 32 + 16}, 0) end
+  end
+  surface.force_generate_chunk_requests()
+  local tiles = {}
+  for x = x0, x1 - 1 do
+    if x < g0 or x >= g1 then
+      for y = y0, y1 - 1 do tiles[#tiles + 1] = {name = "water", position = {x, y}} end
+    end
+  end
+  surface.set_tiles(tiles, true, true)
+  T.moat = {x0 = x0, x1 = x1, y0 = y0, y1 = y1, g0 = g0, g1 = g1, inside = 0, outside = 0, min_x = nil, max_x = nil}
+  local function hub_at(off)
+    local want = {x = c.x + off.x, y = c.y + off.y}
+    local pos = surface.find_non_colliding_position(logistics.HUB, want, 8, 1, true) or want
+    return surface.create_entity({name = logistics.HUB, position = pos, force = force, raise_built = true})
+  end
+  local src, dst = hub_at(AT.moat_src), hub_at(AT.moat_dst)
+  if not (src and dst) then
+    at_check(T, "logistics_moat_route", false, "could not place the moat hubs")
+    T.stage = "done"
+    return
+  end
+  T.moat.src, T.moat.dst = src.unit_number, dst.unit_number
+  for _, item in ipairs({"iron-plate", "copper-plate"}) do
+    logistics.set_policy(src.unit_number, "keep", item, nil)
+    logistics.set_policy(dst.unit_number, "keep", item, nil)
+  end
+  logistics.set_policy(src.unit_number, "export_above", "iron-plate", 0)
+  logistics.set_policy(dst.unit_number, "keep", "iron-plate", AT.moat_deliver)
+  local put = src.logistic_network and src.logistic_network.insert({name = "iron-plate", count = AT.moat_iron}) or 0
+  local entity = logistics.spawn_hauler(surface, logistics.approach_point(dst.unit_number), force, dst.unit_number)
+  T.moat.hauler = entity and entity.unit_number
+  local straight_len = util.distance(logistics.approach_point(src.unit_number), logistics.approach_point(dst.unit_number))
+  T.moat.straight = straight_len
+  util.log("logistics autotest: moat %d water tiles x [%d, %d) y [%d, %d), land gap x [%d, %d); source hub #%d at %s "
+    .. "(%d iron), target hub #%d at %s, hauler #%s; straight line %.1f tiles", #tiles, x0, x1, y0, y1, g0, g1,
+    src.unit_number, util.pos_str(src.position), put, dst.unit_number, util.pos_str(dst.position),
+    tostring(T.moat.hauler), straight_len)
+  T.t2 = game.tick
+  T.stage = "moat"
+end
+
+local function at_moat(T, tick)
+  local M = T.moat
+  local h = logistics.hauler(M.hauler)
+  if h and not M.route and h.state == "to_pickup" and h.route and h.route.source ~= "straight" then
+    M.route = {n = h.route.n, length = h.route.length, source = h.route.source, tick = tick}
+  end
+  local iron = h and h.delivered and h.delivered["iron-plate"] or 0
+  if iron >= AT.moat_deliver or not h or tick - T.t2 > AT.moat_window then
+    local r = M.route
+    at_check(T, "logistics_moat_route", r ~= nil and r.length > M.straight + 5,
+      "route to the source: %s, %d waypoints, %.1f tiles against %.1f straight", r and r.source or "none", r and r.n or 0,
+      r and r.length or 0, M.straight)
+    at_check(T, "logistics_moat_gap", M.inside > 0 and M.outside == 0,
+      "%d ticks in the band's interior rows, all within x [%d, %d): %s (x %.1f to %.1f)", M.inside, M.g0, M.g1,
+      tostring(M.outside == 0), M.min_x or 0, M.max_x or 0)
+    at_check(T, "logistics_moat_delivery", iron >= AT.moat_deliver,
+      "hauler #%s delivered %d iron across the moat in %.1f s (trips %d)", tostring(M.hauler), iron, (tick - T.t2) / 60,
+      h and h.trips or 0)
     T.stage = "done"
   end
 end
+
+-- Every tick of the moat stage: where the hauler crosses the band rows.
+events.on(defines.events.on_tick, function()
+  local L = storage.logistics
+  local T = L and L.autotest
+  if not (T and T.stage == "moat" and T.moat) then return end
+  local M = T.moat
+  local h = L.haulers[M.hauler]
+  if not (h and h.entity.valid) then return end
+  local p = h.entity.position
+  if p.y >= M.y0 + 2 and p.y < M.y1 - 2 then -- the band's interior: walking along its edge is not a crossing
+    M.inside = M.inside + 1
+    M.min_x = math.min(M.min_x or p.x, p.x)
+    M.max_x = math.max(M.max_x or p.x, p.x)
+    if p.x < M.g0 or p.x >= M.g1 then M.outside = M.outside + 1 end
+  end
+end)
 
 events.on_nth_tick(60, function(e)
   if not at_enabled() then return end
@@ -1479,6 +1809,10 @@ events.on_nth_tick(60, function(e)
     at_orders(T)
   elseif T.stage == "manual" then
     at_manual(T, e.tick)
+  elseif T.stage == "moat_setup" then
+    at_moat_setup(T)
+  elseif T.stage == "moat" then
+    at_moat(T, e.tick)
   elseif T.stage == "done" and not T.summary and (not T.speed or T.speed.done) then
     T.summary = true
     local s = logistics.stats(util.PLAYER_FORCE)
