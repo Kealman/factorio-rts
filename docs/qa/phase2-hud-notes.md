@@ -223,11 +223,27 @@ Date: 2026-10-16. Plan: `docs/PHASE4.md` sections 1 and 7. Inputs: `docs/qa/phas
 | `scripts/match.lua` | `match.is_out` ignores units of kind `hauler` and `commander` |
 | `prototypes/inputs.lua` | `rts-alert-jump` (F3), `rts-help` (F11), both `game-only` |
 | `prototypes/styles.lua` | Tab button, locked build and recipe buttons (`draw_grayscale_picture`), unit card button and HP bar, feed frame, small label |
-| `locale/en/hud.cfg`, `locale/ru/hud.cfg` | New files: 2 controls and 73 `[rts]` keys each, same parameters. `factorio-rts.cfg` was not touched. |
+| `locale/en/hud.cfg`, `locale/ru/hud.cfg` | New files: 2 controls and 75 `[rts]` keys each, same parameters. `factorio-rts.cfg` was not touched. |
 
 `scripts/selection.lua` needed no change: card clicks use `selection.set`.
 
-**Kinds.** The laser turret is not kind `turret`. `production.lua` feeds every `turret` with magazines (its
+**Lua's 200-local limit.** The main chunk of a file may hold at most 200 active locals. hud.lua is at 169: the Phase 4
+constants and alert tables live in one table `P4`, and the dev-only self-test section is one `do ... end` block. New
+constants go into `P4`, new self-test helpers into that block.
+
+**Building kinds (lead-approved; the AI uses the same names).**
+
+| Entity | Kind | Registered by |
+|---|---|---|
+| `rts-laser-turret` | `laser-turret` | `scripts/buildings.lua` |
+| `rts-wall` | `wall` (every segment) | `scripts/buildings.lua` |
+| `rts-steam-plant` | `steam-plant` | `scripts/buildings.lua` |
+| `rts-accumulator` | `accumulator` | `scripts/buildings.lua` |
+| `rts-radar` | `radar` | `scripts/buildings.lua` |
+| `rts-lab` | `lab` | `scripts/research.lua` |
+| `rts-hub` | `hub` | `scripts/logistics.lua` |
+
+The laser turret is not kind `turret`. `production.lua` feeds every `turret` with magazines (its
 `feed_turret` would return early anyway, because an electric turret has no ammo inventory), the AI budgets magazines per
 `turret` (`ai/commander.lua`) and counts build-order steps by `buildings.kind_of(name)` (`ai/build_order.lua`). Every
 wall segment is a registered building, so wall damage raises `base-attacked` and counts as an AI base threat.
@@ -258,7 +274,8 @@ kill feed (6, 6) 195 wide. The abilities bar (`scripts/abilitygui.lua`) sits at 
 ### Behaviour
 
 - **Unit cards.** One card per unit prototype: icon, count, HP bar coloured by the average health. The tooltip gives
-  HP, supply per unit and the counter line from `balance.units[name].strong/weak`. Click keeps only that prototype;
+  HP, supply per unit and the counter line from `balance.units[name].strong/weak`. The Commander's card number is its
+  level, with level and kills in the tooltip (`commander.card`). Click keeps only that prototype;
   Shift + click drops it. A one-prototype selection titles the page "Raider ×6". Orders `haul` and `commander` have
   labels.
 - **Locked recipes.** A recipe is locked when the force has it disabled (laser turret, steam plant) or when it is a
@@ -303,10 +320,11 @@ kill feed (6, 6) 195 wide. The abilities bar (`scripts/abilitygui.lua`) sits at 
 | Run | Result |
 |---|---|
 | `tools/headless-run.sh 400 '\[rts' build/p4-hud` (copy of `mods/` + `mod-list.json`) | 0 errors in the create and server logs; `ai autotest summary 14/14 (all passed), result=both alive (time)` |
-| GUI, English and Russian (`build/p4-hud-gui`, `build/p4-hud-gui-ru`; self-test on in the copies only; a scratch `gui-run.sh` that appends `locale=` to the run's config) | 0 script errors, no "Unknown key", marker `RTS_P4_HUD_DONE`. Screenshots in `build/shots-p4-hud-gui/` and `build/shots-p4-hud-gui-ru/`. |
+| GUI, English (`build/p4-hud-gui`; self-test on in the copy only; a scratch `gui-run.sh` that appends `locale=` to the run's config), final code | 0 script errors, no "Unknown key", marker `RTS_P4_HUD_DONE`. Screenshots in `build/shots-p4-hud-gui/`. |
+| GUI, Russian (`build/p4-hud-gui-ru`), code before the local-limit refactor and the Commander level | Same. Screenshots in `build/shots-p4-hud-gui-ru/`: no Russian text clipped. |
 
-The GUI copies patch one line of `scripts/abilitygui.lua` (`frame.style.horizontal_spacing` on a frame), which crashed
-every GUI client at tick 165 in the shared tree at the time; reported to the lead.
+An earlier shared `scripts/abilitygui.lua` crashed every GUI client at tick 165 (`frame.style.horizontal_spacing` on a
+frame). It was fixed upstream; the final English run used the shared file unpatched.
 
 Self-test steps (setup-relative ticks, between the match-flow menu at 1320 and the AI kill at 1500):
 

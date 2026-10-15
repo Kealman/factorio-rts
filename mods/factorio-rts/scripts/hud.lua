@@ -248,7 +248,7 @@ local RESOURCES = {
 }
 
 -- Alert kinds (storage.alerts): icon (first valid sprite path wins), text colour, sound when it arrives.
-local ALERT_STYLE = {
+P4.ALERT_STYLE = {
   ["base-attacked"] = {icons = {"utility/danger_icon", "utility/warning_icon"}, color = "red",
                        sound = "utility/alert_destroyed"},
   ["hauler-lost"] = {icons = {"entity/rts-hauler", "utility/danger_icon"}, color = "red",
@@ -262,9 +262,9 @@ local ALERT_STYLE = {
                         sound = "utility/alert_destroyed"},
   ["commander-ready"] = {icons = {"entity/rts-commander", "utility/check_mark_green"}, color = "green"},
 }
-local ALERT_DEFAULT_STYLE = {icons = {"utility/warning_icon"}, color = "white"}
-local PING_KINDS = {["base-attacked"] = true, ["hauler-lost"] = true, ["commander-down"] = true}
-local PING_SIGNALS = {"signal-alert", "signal-red", "signal-dot"} -- the first that exists
+P4.ALERT_DEFAULT_STYLE = {icons = {"utility/warning_icon"}, color = "white"}
+P4.PING_KINDS = {["base-attacked"] = true, ["hauler-lost"] = true, ["commander-down"] = true}
+P4.PING_SIGNALS = {"signal-alert", "signal-red", "signal-dot"} -- the first that exists
 
 ---------------------------------------------------------------------------
 -- Helpers
@@ -962,7 +962,18 @@ local function counters_text(name)
 end
 
 --- Rebuild the unit cards when the set of prototypes changed; otherwise update counts, bars and tooltips in place.
-local function update_cards(h, names, by_name)
+--- The Commander's card shows its level as the number (one Commander per force) and level and kills in the tooltip,
+--- from commander.card (scripts/commander.lua, the abilities agent's module). Returns number, tooltip line or nil.
+local function commander_card(force_name)
+  local card_fn = optional_fn("scripts.commander", {"card"})
+  local c = card_fn and card_fn(force_name)
+  if not (c and c.level) then return nil end
+  local line = c.next_kills and {"rts.card-commander", c.level, c.kills or 0, c.next_kills}
+    or {"rts.card-commander-max", c.level, c.kills or 0}
+  return c.level, line
+end
+
+local function update_cards(h, names, by_name, force_name)
   local el = h.el
   local shown = math.min(#names, #names > P4.CARD_MAX and P4.CARD_MAX - 1 or P4.CARD_MAX)
   local key = table.concat(names, " ", 1, shown) .. "|" .. tostring(#names > shown and #names - shown or 0)
@@ -996,6 +1007,13 @@ local function update_cards(h, names, by_name)
       card.button.number = d.n
       local tip = {"rts.card-tooltip", unit_name(name), d.n, math.floor(d.hp + 0.5), math.floor(d.max + 0.5),
                    math.floor(ratio * 100 + 0.5), supply.cost(name)}
+      if balance.units[name] and balance.units[name].kind == "commander" then
+        local level, line = commander_card(force_name)
+        if level then
+          card.button.number = level
+          tip = {"", tip, "\n", line}
+        end
+      end
       local counters = counters_text(name)
       card.button.tooltip = counters and {"", tip, "\n", counters, "\n", {"rts.card-click-hint"}}
         or {"", tip, "\n", {"rts.card-click-hint"}}
@@ -1035,7 +1053,7 @@ local function update_units(player, h)
   end
 
   local names = sorted_names(by_name)
-  update_cards(h, names, by_name)
+  update_cards(h, names, by_name, player.force.name)
   if n == 0 then
     el.sel_count.caption = {"rts.sel-none"}
     el.hint.caption = {"rts.sel-hint-empty"}
@@ -1529,7 +1547,7 @@ end
 ---------------------------------------------------------------------------
 -- Refresh: alert lines and kill feed (Phase 4)
 ---------------------------------------------------------------------------
-local function alert_style(kind) return ALERT_STYLE[kind] or ALERT_DEFAULT_STYLE end
+local function alert_style(kind) return P4.ALERT_STYLE[kind] or P4.ALERT_DEFAULT_STYLE end
 
 --- The alert's text as a localised string: {entry.text, params...} (supply.alert / logistics.alert format).
 local function alert_text(entry)
@@ -2065,7 +2083,7 @@ events.on(defines.events.on_entity_died, function(e)
   while #list > P4.KILL_KEEP do table.remove(list, 1) end
 end)
 
--- Minimap pings: a chart tag for 10 s at every new alert of PING_KINDS (base attacked, hauler lost) that has a
+-- Minimap pings: a chart tag for 10 s at every new alert of P4.PING_KINDS (base attacked, hauler lost) that has a
 -- position, for forces with players. The HUD minimap and the map view draw chart tags.
 local ping_signal
 local function update_pings()
@@ -2087,10 +2105,10 @@ local function update_pings()
     if (a.tick or 0) <= last then break end
     newest = math.max(newest, a.tick)
     local force = game.forces[a.force]
-    if PING_KINDS[a.kind] and a.position and force and #force.players > 0 then
+    if P4.PING_KINDS[a.kind] and a.position and force and #force.players > 0 then
       if ping_signal == nil then
         ping_signal = false
-        for _, name in ipairs(PING_SIGNALS) do
+        for _, name in ipairs(P4.PING_SIGNALS) do
           if prototypes.virtual_signal[name] then ping_signal = name break end
         end
       end
@@ -2171,289 +2189,294 @@ end)
 ---------------------------------------------------------------------------
 -- Dev-only checks (self-test steps and HUD_CALIBRATE, see the top of this file)
 ---------------------------------------------------------------------------
-local function screenshot(player)
-  local path = string.format("rts-hud-%d.png", game.tick)
-  local res = player.display_resolution
-  game.take_screenshot({player = player, by_player = player, path = path, show_gui = true, force_render = true,
-                        resolution = {res.width, res.height}, position = player.position, zoom = player.zoom})
-  local h = get_hud(player)
-  local cx, cy, ppt = 0, 0, 0
-  if h then cx, cy, ppt = minimap_geometry(player, h) end
-  util.log("hud: screenshot %s at %s zoom %.3f; minimap centre at display (%.1f, %.1f), %.3f px/tile; "
-    .. "own CC -> %s, enemy CC -> %s", path, util.pos_str(player.position), player.zoom, cx, cy, ppt,
-    h and util.pos_str(world_to_minimap(player, h, match.home(PLAYER))) or "-",
-    h and util.pos_str(world_to_minimap(player, h, match.home(ENEMY))) or "-")
-end
-
-local CALIBRATION_TAGS = {{x = -64, y = -64, text = "A"}, {x = 64, y = -64, text = "B"},
-                          {x = -64, y = 64, text = "C"}, {x = 0, y = 0, text = "O"}}
-
-local function add_calibration_tags()
-  local force, surface = game.forces[PLAYER], util.surface()
-  for _, t in pairs(CALIBRATION_TAGS) do
-    local tag = force.add_chart_tag(surface, {position = {t.x, t.y}, text = t.text,
-                                              icon = {type = "virtual", name = "signal-" .. t.text}})
-    util.log("hud: calibration tag %s at %s: %s", t.text, util.pos_str(t), tostring(tag ~= nil))
+do -- dev-only locals stay out of the main chunk (Lua allows 200 locals there)
+  local function screenshot(player)
+    local path = string.format("rts-hud-%d.png", game.tick)
+    local res = player.display_resolution
+    game.take_screenshot({player = player, by_player = player, path = path, show_gui = true, force_render = true,
+                          resolution = {res.width, res.height}, position = player.position, zoom = player.zoom})
+    local h = get_hud(player)
+    local cx, cy, ppt = 0, 0, 0
+    if h then cx, cy, ppt = minimap_geometry(player, h) end
+    util.log("hud: screenshot %s at %s zoom %.3f; minimap centre at display (%.1f, %.1f), %.3f px/tile; "
+      .. "own CC -> %s, enemy CC -> %s", path, util.pos_str(player.position), player.zoom, cx, cy, ppt,
+      h and util.pos_str(world_to_minimap(player, h, match.home(PLAYER))) or "-",
+      h and util.pos_str(world_to_minimap(player, h, match.home(ENEMY))) or "-")
   end
-end
 
-local function synthetic_click(player)
-  local h = get_hud(player)
-  if not h then return end
-  local target = {x = 50, y = 0}
-  local display = world_to_minimap(player, h, target)
-  local world = minimap_click(player, h, {player_index = player.index, button = defines.mouse_button_type.left,
-                                           cursor_display_location = display}, "synthetic")
-  util.log("hud: synthetic click aimed at %s, round trip error %.2f tiles", util.pos_str(target),
-    util.distance(world, target))
-end
+  local CALIBRATION_TAGS = {{x = -64, y = -64, text = "A"}, {x = 64, y = -64, text = "B"},
+                            {x = -64, y = 64, text = "C"}, {x = 0, y = 0, text = "O"}}
 
-local function zero_area(pos)
-  return {left_top = {x = pos.x, y = pos.y}, right_bottom = {x = pos.x, y = pos.y}}
-end
-
-local function cursor_summary(player)
-  return string.format("tool=%s ghost=%s", tostring(cursor.holds_tool(player)), cursor.ghost_name(player) or "none")
-end
-
--- Self-test barracks spot: next to the CC, clear of the stockpiles and the starting army.
-local SELFTEST_BARRACKS_OFFSET = {x = 5.5, y = -8.5}
-local SELFTEST_FACTORY_OFFSET = {x = 5.5, y = 8.5}
-local SELFTEST_RALLY_OFFSET = {x = 16, y = -10}
-
-local function own_barracks(player)
-  for un, rec in buildings.for_force(player.force.name, "barracks") do return un, rec end
-  return nil
-end
-
--- Self-test steps: camera.lua runs them `at` ticks after the player's setup, only while the self-test
--- switch is on (camera.selftest_enabled()). Registered at load time, identically on every load.
-if HUD_CALIBRATE then
-  camera.add_selftest_step(180, "hud_calibrate", function() add_calibration_tags() end)
-end
-camera.add_selftest_step(390, "hud_build_click", function(player)
-  hud.build_click(player, "rts-barracks")
-  util.log("hud: selftest build click: %s", cursor_summary(player))
-end)
-camera.add_selftest_step(420, "hud_screenshot_build_mode", screenshot) -- message line + pressed build button
-camera.add_selftest_step(450, "hud_build_place", function(player)
-  local home = match.home(player.force.name)
-  local pos = {x = home.x + SELFTEST_BARRACKS_OFFSET.x, y = home.y + SELFTEST_BARRACKS_OFFSET.y}
-  local ok, err = pcall(player.build_from_cursor, {position = pos})
-  local ghosts = player.surface.count_entities_filtered({position = pos, radius = 1, type = "entity-ghost"})
-  if ghosts == 0 then
-    -- build_from_cursor did not place it (not supported for a ghost cursor): place the ghost by script instead
-    player.surface.create_entity({name = "entity-ghost", inner_name = "rts-barracks", position = pos,
-                                  force = player.force, raise_built = true})
-    ghosts = player.surface.count_entities_filtered({position = pos, radius = 1, type = "entity-ghost"})
-  end
-  util.log("hud: selftest build_from_cursor at %s ok=%s%s; ghosts there=%d; %s", util.pos_str(pos), tostring(ok),
-    ok and "" or (" err=" .. tostring(err)), ghosts, cursor_summary(player))
-  local fpos = {x = home.x + SELFTEST_FACTORY_OFFSET.x, y = home.y + SELFTEST_FACTORY_OFFSET.y}
-  player.surface.create_entity({name = "entity-ghost", inner_name = "rts-factory", position = fpos,
-                                force = player.force, raise_built = true})
-end)
-camera.add_selftest_step(480, "hud_cursor_clear", function(player)
-  player.clear_cursor() -- what Q does
-  util.log("hud: selftest clear_cursor: %s", cursor_summary(player))
-end)
-camera.add_selftest_step(510, "hud_cursor_check", function(player)
-  util.log("hud: selftest cursor 30 ticks after clear: %s", cursor_summary(player))
-end)
--- Armed attack-move through the button path; a screenshot shows the red button and the strip prompt (debug.lua's
--- step 270 disarms in the same tick as its screenshot, and screenshots are rendered at the end of the tick).
--- camera.lua runs every due step in one 30-tick sweep, so steps that must be seen apart are 30 ticks apart.
-camera.add_selftest_step(510, "hud_arm_attack_move", function(player) run_command(player, "attack_move") end)
-camera.add_selftest_step(540, "hud_screenshot_armed", screenshot)
-camera.add_selftest_step(570, "hud_disarm_attack_move", function(player) run_command(player, "attack_move") end)
-camera.add_selftest_step(540, "hud_select_all_group1", function(player)
-  run_command(player, "select_all")
-  local group_set = optional_fn("scripts.selection", {"group_set"}) -- group 1 indicator: "1: 24", toggled
-  if group_set then group_set(player.index, 1) end
-  hud.refresh(player.index)
-end)
-camera.add_selftest_step(600, "hud_screenshot_600", screenshot)
-camera.add_selftest_step(660, "hud_minimap_click", synthetic_click)
-camera.add_selftest_step(720, "hud_screenshot_720", screenshot)
-camera.add_selftest_step(780, "hud_home", function(player) camera.home(player) end)
-camera.add_selftest_step(820, "hud_select_cc", function(player)
-  local handle_area = optional_fn("scripts.selection", {"handle_area"})
-  local cc = buildings.main_cc(player.force.name)
-  if handle_area and cc then handle_area(player.index, {}, zero_area(cc.entity.position), false, player.surface) end
-  hud.refresh(player.index)
-  local un = selected_building(player)
-  util.log("hud: selftest click on the CC at %s -> selected building #%s", cc and util.pos_str(cc.entity.position) or "-",
-    tostring(un))
-end)
-camera.add_selftest_step(840, "hud_screenshot_840", screenshot)
-camera.add_selftest_step(860, "hud_select_barracks", function(player)
-  local handle_area = optional_fn("scripts.selection", {"handle_area"})
-  local reverse = optional_fn("scripts.orders", {"handle_reverse_area"})
-  local un, rec = own_barracks(player)
-  if not (rec and handle_area) then
-    util.log("hud: selftest no own barracks yet (robots have not built the ghost)")
-    return
-  end
-  handle_area(player.index, {}, zero_area(rec.entity.position), false, player.surface)
-  hud.recipe_click(player, "rts-walker-kit")
-  local home = match.home(player.force.name)
-  local rally = {x = home.x + SELFTEST_RALLY_OFFSET.x, y = home.y + SELFTEST_RALLY_OFFSET.y}
-  local order, n = "none", 0
-  if reverse then order, n = reverse(player.index, {}, zero_area(rally), false) end
-  hud.refresh(player.index)
-  util.log("hud: selftest barracks #%d selected=%s, right click at %s -> %s %s", un,
-    tostring(selected_building(player) == un), util.pos_str(rally), tostring(order), tostring(n))
-end)
--- Same sweep as RTS_GUI_READY (960, after debug.lua's qa_reset at 930 cleared the selection): selecting and
--- screenshotting in one step is fine, because the screenshot is rendered at the end of the tick.
-camera.add_selftest_step(960, "hud_factory", function(player)
-  local handle_area = optional_fn("scripts.selection", {"handle_area"})
-  for un, rec in buildings.for_force(player.force.name, "factory") do
-    if handle_area then handle_area(player.index, {}, zero_area(rec.entity.position), false, player.surface) end
-    hud.recipe_click(player, "rts-extractor")
-    hud.refresh(player.index)
-    util.log("hud: selftest factory #%d selected=%s", un, tostring(selected_building(player) == un))
-    screenshot(player)
-    return
-  end
-  util.log("hud: selftest no own factory (robots have not built the ghost)")
-end)
--- Phase 4 steps, between the match-flow menu (1320) and the AI kill (1500); see docs/qa/phase2-hud-notes.md "Phase 4".
-do -- scoped: the main chunk is close to the 200-local limit
-  local P4_UNITS = {{"rts-drone", 3}, {"rts-raider", 2}, {"rts-artillery", 1}, {"rts-walker-mk2", 2}}
-  local function first_ai(player)
-    for _, f in ipairs(match.ai_forces and match.ai_forces() or {}) do
-      if f ~= player.force.name then return f end
+  local function add_calibration_tags()
+    local force, surface = game.forces[PLAYER], util.surface()
+    for _, t in pairs(CALIBRATION_TAGS) do
+      local tag = force.add_chart_tag(surface, {position = {t.x, t.y}, text = t.text,
+                                                icon = {type = "virtual", name = "signal-" .. t.text}})
+      util.log("hud: calibration tag %s at %s: %s", t.text, util.pos_str(t), tostring(tag ~= nil))
     end
-    return ENEMY
   end
 
-  -- The qa-reset at 930 starts a new match, so the barracks and factory of the Phase 2 steps are gone: place them.
-  local function ensure_building(player, kind, name, offset, surface)
-    for un, rec in buildings.for_force(player.force.name, kind) do return un, rec end
+  local function synthetic_click(player)
+    local h = get_hud(player)
+    if not h then return end
+    local target = {x = 50, y = 0}
+    local display = world_to_minimap(player, h, target)
+    local world = minimap_click(player, h, {player_index = player.index, button = defines.mouse_button_type.left,
+                                             cursor_display_location = display}, "synthetic")
+    util.log("hud: synthetic click aimed at %s, round trip error %.2f tiles", util.pos_str(target),
+      util.distance(world, target))
+  end
+
+  local function zero_area(pos)
+    return {left_top = {x = pos.x, y = pos.y}, right_bottom = {x = pos.x, y = pos.y}}
+  end
+
+  local function cursor_summary(player)
+    return string.format("tool=%s ghost=%s", tostring(cursor.holds_tool(player)), cursor.ghost_name(player) or "none")
+  end
+
+  -- Self-test barracks spot: next to the CC, clear of the stockpiles and the starting army.
+  local SELFTEST_BARRACKS_OFFSET = {x = 5.5, y = -8.5}
+  local SELFTEST_FACTORY_OFFSET = {x = 5.5, y = 8.5}
+  local SELFTEST_RALLY_OFFSET = {x = 16, y = -10}
+
+  local function own_barracks(player)
+    for un, rec in buildings.for_force(player.force.name, "barracks") do return un, rec end
+    return nil
+  end
+
+  -- Self-test steps: camera.lua runs them `at` ticks after the player's setup, only while the self-test
+  -- switch is on (camera.selftest_enabled()). Registered at load time, identically on every load.
+  if HUD_CALIBRATE then
+    camera.add_selftest_step(180, "hud_calibrate", function() add_calibration_tags() end)
+  end
+  camera.add_selftest_step(390, "hud_build_click", function(player)
+    hud.build_click(player, "rts-barracks")
+    util.log("hud: selftest build click: %s", cursor_summary(player))
+  end)
+  camera.add_selftest_step(420, "hud_screenshot_build_mode", screenshot) -- message line + pressed build button
+  camera.add_selftest_step(450, "hud_build_place", function(player)
     local home = match.home(player.force.name)
-    local pos = surface.find_non_colliding_position(name, {x = home.x + offset.x, y = home.y + offset.y}, 20, 1)
-    local e = pos and surface.create_entity({name = name, position = pos, force = player.force, raise_built = true})
-    local rec = e and buildings.register(e)
-    return e and e.unit_number, rec
-  end
-
-  camera.add_selftest_step(1350, "hud_p4_setup", function(player)
-    local own = player.force.name
-    local home = match.home(own)
-    local surface = (match.surface and match.surface()) or player.surface
-    camera.home(player)
-    local spawned, list = {}, {}
-    for i, spec in ipairs(P4_UNITS) do
-      for j = 1, spec[2] do
-        local pos = {x = home.x + 8 + 3 * j, y = home.y + 10 + 4 * i}
-        local e = prototypes.entity[spec[1]] and units.spawn(spec[1], pos, own, nil, surface)
-        if e then
-          list[#list + 1] = e
-          if j == 1 then e.health = e.max_health * 0.45 end -- the HP bars show yellow
-        end
-      end
-      spawned[#spawned + 1] = spec[1]
+    local pos = {x = home.x + SELFTEST_BARRACKS_OFFSET.x, y = home.y + SELFTEST_BARRACKS_OFFSET.y}
+    local ok, err = pcall(player.build_from_cursor, {position = pos})
+    local ghosts = player.surface.count_entities_filtered({position = pos, radius = 1, type = "entity-ghost"})
+    if ghosts == 0 then
+      -- build_from_cursor did not place it (not supported for a ghost cursor): place the ghost by script instead
+      player.surface.create_entity({name = "entity-ghost", inner_name = "rts-barracks", position = pos,
+                                    force = player.force, raise_built = true})
+      ghosts = player.surface.count_entities_filtered({position = pos, radius = 1, type = "entity-ghost"})
     end
-    ensure_building(player, "barracks", "rts-barracks", {x = -14, y = -10}, surface)
-    ensure_building(player, "factory", "rts-factory", {x = -14, y = 10}, surface)
-    local hauler = logistics.spawn_hauler(surface, {x = home.x + 26, y = home.y + 14}, own)
-    if hauler then list[#list + 1] = hauler end
-    local spawn_commander = optional_fn("scripts.commander", {"spawn_now"}) -- the abilities agent's module
-    local hero = spawn_commander and spawn_commander(own)
-    if hero then list[#list + 1] = hero end
-    -- kill feed: one own drone killed by the first AI
-    local ai = first_ai(player)
-    for _, e in ipairs(list) do
-      if e.valid and e.name == "rts-drone" then
-        e.die(ai)
-        break
-      end
-    end
-    local alive = {}
-    for _, e in ipairs(list) do
-      if e.valid then alive[#alive + 1] = e end
-    end
-    local set_fn = optional_fn("scripts.selection", {"set"})
-    local n = set_fn and set_fn(player.index, alive) or 0
-    -- base-attacked: a stockpile damaged by the AI (the rate limit is cleared first, this is a test)
-    storage.hud.attack_alert[own] = nil
-    for _, rec in buildings.for_force(own, "stockpile") do
-      rec.entity.damage(40, ai, "physical")
-      break
-    end
-    -- unit-locked: the barracks makes raider kits (locked for players until Raiders is researched) and one is ready
-    local un, rec = own_barracks(player)
-    local kit_ok = false
-    if rec then
-      production.set_recipe(un, "rts-raider-kit")
-      local out = rec.entity.get_inventory(defines.inventory.assembling_machine_output)
-      kit_ok = out and out.insert({name = "rts-raider-kit", count = 1}) == 1
-    end
-    hud.set_build_tab(player, "defence")
+    util.log("hud: selftest build_from_cursor at %s ok=%s%s; ghosts there=%d; %s", util.pos_str(pos), tostring(ok),
+      ok and "" or (" err=" .. tostring(err)), ghosts, cursor_summary(player))
+    local fpos = {x = home.x + SELFTEST_FACTORY_OFFSET.x, y = home.y + SELFTEST_FACTORY_OFFSET.y}
+    player.surface.create_entity({name = "entity-ghost", inner_name = "rts-factory", position = fpos,
+                                  force = player.force, raise_built = true})
+  end)
+  camera.add_selftest_step(480, "hud_cursor_clear", function(player)
+    player.clear_cursor() -- what Q does
+    util.log("hud: selftest clear_cursor: %s", cursor_summary(player))
+  end)
+  camera.add_selftest_step(510, "hud_cursor_check", function(player)
+    util.log("hud: selftest cursor 30 ticks after clear: %s", cursor_summary(player))
+  end)
+  -- Armed attack-move through the button path; a screenshot shows the red button and the strip prompt (debug.lua's
+  -- step 270 disarms in the same tick as its screenshot, and screenshots are rendered at the end of the tick).
+  -- camera.lua runs every due step in one 30-tick sweep, so steps that must be seen apart are 30 ticks apart.
+  camera.add_selftest_step(510, "hud_arm_attack_move", function(player) run_command(player, "attack_move") end)
+  camera.add_selftest_step(540, "hud_screenshot_armed", screenshot)
+  camera.add_selftest_step(570, "hud_disarm_attack_move", function(player) run_command(player, "attack_move") end)
+  camera.add_selftest_step(540, "hud_select_all_group1", function(player)
+    run_command(player, "select_all")
+    local group_set = optional_fn("scripts.selection", {"group_set"}) -- group 1 indicator: "1: 24", toggled
+    if group_set then group_set(player.index, 1) end
     hud.refresh(player.index)
-    util.log("hud: selftest p4 setup: spawned %s, hauler=%s, commander=%s, selected=%d, raider kit in barracks #%s: "
-      .. "%s, supply %d/%d", table.concat(spawned, " "), tostring(hauler ~= nil), tostring(hero ~= nil), n, tostring(un),
-      tostring(kit_ok),
-      supply_of(own).used, supply_of(own).cap)
   end)
-  camera.add_selftest_step(1380, "hud_p4_screenshot_units", screenshot)
-  camera.add_selftest_step(1395, "hud_p4_card_click", function(player)
-    hud.card_click(player, "rts-raider", true)  -- every unit but the raiders
-    hud.card_click(player, "rts-drone", false)  -- only the drones
-  end)
-  camera.add_selftest_step(1410, "hud_p4_select_barracks", function(player)
+  camera.add_selftest_step(600, "hud_screenshot_600", screenshot)
+  camera.add_selftest_step(660, "hud_minimap_click", synthetic_click)
+  camera.add_selftest_step(720, "hud_screenshot_720", screenshot)
+  camera.add_selftest_step(780, "hud_home", function(player) camera.home(player) end)
+  camera.add_selftest_step(820, "hud_select_cc", function(player)
     local handle_area = optional_fn("scripts.selection", {"handle_area"})
+    local cc = buildings.main_cc(player.force.name)
+    if handle_area and cc then handle_area(player.index, {}, zero_area(cc.entity.position), false, player.surface) end
+    hud.refresh(player.index)
+    local un = selected_building(player)
+    util.log("hud: selftest click on the CC at %s -> selected building #%s",
+      cc and util.pos_str(cc.entity.position) or "-",
+      tostring(un))
+  end)
+  camera.add_selftest_step(840, "hud_screenshot_840", screenshot)
+  camera.add_selftest_step(860, "hud_select_barracks", function(player)
+    local handle_area = optional_fn("scripts.selection", {"handle_area"})
+    local reverse = optional_fn("scripts.orders", {"handle_reverse_area"})
     local un, rec = own_barracks(player)
     if not (rec and handle_area) then
-      util.log("hud: selftest p4 no own barracks")
+      util.log("hud: selftest no own barracks yet (robots have not built the ghost)")
       return
     end
     handle_area(player.index, {}, zero_area(rec.entity.position), false, player.surface)
-    hud.set_build_tab(player, "production")
+    hud.recipe_click(player, "rts-walker-kit")
+    local home = match.home(player.force.name)
+    local rally = {x = home.x + SELFTEST_RALLY_OFFSET.x, y = home.y + SELFTEST_RALLY_OFFSET.y}
+    local order, n = "none", 0
+    if reverse then order, n = reverse(player.index, {}, zero_area(rally), false) end
     hud.refresh(player.index)
-    local b = research.block_of(un)
-    util.log("hud: selftest p4 barracks #%d selected=%s block=%s %s", un, tostring(selected_building(player) == un),
-      b and b.reason or "none", b and tostring(b.tech or b.unit) or "")
-    screenshot(player)
+    util.log("hud: selftest barracks #%d selected=%s, right click at %s -> %s %s", un,
+      tostring(selected_building(player) == un), util.pos_str(rally), tostring(order), tostring(n))
   end)
-  camera.add_selftest_step(1440, "hud_p4_factory", function(player)
+  -- Same sweep as RTS_GUI_READY (960, after debug.lua's qa_reset at 930 cleared the selection): selecting and
+  -- screenshotting in one step is fine, because the screenshot is rendered at the end of the tick.
+  camera.add_selftest_step(960, "hud_factory", function(player)
     local handle_area = optional_fn("scripts.selection", {"handle_area"})
-    hud.set_build_tab(player, "economy")
     for un, rec in buildings.for_force(player.force.name, "factory") do
       if handle_area then handle_area(player.index, {}, zero_area(rec.entity.position), false, player.surface) end
-      hud.recipe_click(player, "rts-laser-turret") -- refused: locked
+      hud.recipe_click(player, "rts-extractor")
       hud.refresh(player.index)
-      local h = get_hud(player)
-      local locked = {}
-      for name, lock in pairs(h and h.recipe_locks or {}) do
-        if lock then locked[#locked + 1] = name .. "=" .. tostring(lock) end
-      end
-      table.sort(locked)
-      util.log("hud: selftest p4 factory #%d selected=%s, %d recipe buttons, locked: %s", un,
-        tostring(selected_building(player) == un), table_size(h and h.recipe_buttons or {}), table.concat(locked, " "))
-      break
+      util.log("hud: selftest factory #%d selected=%s", un, tostring(selected_building(player) == un))
+      screenshot(player)
+      return
     end
-    local a = hud.alert_hotkey(player)
-    util.log("hud: selftest p4 F3 -> %s", a and (a.kind .. " " .. util.pos_str(a.position)) or "none")
-    screenshot(player)
+    util.log("hud: selftest no own factory (robots have not built the ghost)")
   end)
-  camera.add_selftest_step(1470, "hud_p4_help", function(player)
-    hud.toggle_help(player, "selftest")
+  -- Phase 4 steps, between the match-flow menu (1320) and the AI kill (1500); docs/qa/phase2-hud-notes.md "Phase 4".
+  do -- scoped: the main chunk is close to the 200-local limit
+    local P4_UNITS = {{"rts-drone", 3}, {"rts-raider", 2}, {"rts-artillery", 1}, {"rts-walker-mk2", 2}}
+    local function first_ai(player)
+      for _, f in ipairs(match.ai_forces and match.ai_forces() or {}) do
+        if f ~= player.force.name then return f end
+      end
+      return ENEMY
+    end
+
+    -- The qa-reset at 930 starts a new match, so the barracks and factory of the Phase 2 steps are gone: place them.
+    local function ensure_building(player, kind, name, offset, surface)
+      for un, rec in buildings.for_force(player.force.name, kind) do return un, rec end
+      local home = match.home(player.force.name)
+      local pos = surface.find_non_colliding_position(name, {x = home.x + offset.x, y = home.y + offset.y}, 20, 1)
+      local e = pos and surface.create_entity({name = name, position = pos, force = player.force, raise_built = true})
+      local rec = e and buildings.register(e)
+      return e and e.unit_number, rec
+    end
+
+    camera.add_selftest_step(1350, "hud_p4_setup", function(player)
+      local own = player.force.name
+      local home = match.home(own)
+      local surface = (match.surface and match.surface()) or player.surface
+      camera.home(player)
+      local spawned, list = {}, {}
+      for i, spec in ipairs(P4_UNITS) do
+        for j = 1, spec[2] do
+          local pos = {x = home.x + 8 + 3 * j, y = home.y + 10 + 4 * i}
+          local e = prototypes.entity[spec[1]] and units.spawn(spec[1], pos, own, nil, surface)
+          if e then
+            list[#list + 1] = e
+            if j == 1 then e.health = e.max_health * 0.45 end -- the HP bars show yellow
+          end
+        end
+        spawned[#spawned + 1] = spec[1]
+      end
+      ensure_building(player, "barracks", "rts-barracks", {x = -14, y = -10}, surface)
+      ensure_building(player, "factory", "rts-factory", {x = -14, y = 10}, surface)
+      local hauler = logistics.spawn_hauler(surface, {x = home.x + 26, y = home.y + 14}, own)
+      if hauler then list[#list + 1] = hauler end
+      local spawn_commander = optional_fn("scripts.commander", {"spawn_now"}) -- the abilities agent's module
+      local hero = spawn_commander and spawn_commander(own)
+      if hero then list[#list + 1] = hero end
+      -- kill feed: one own drone killed by the first AI
+      local ai = first_ai(player)
+      for _, e in ipairs(list) do
+        if e.valid and e.name == "rts-drone" then
+          e.die(ai)
+          break
+        end
+      end
+      local alive = {}
+      for _, e in ipairs(list) do
+        if e.valid then alive[#alive + 1] = e end
+      end
+      local set_fn = optional_fn("scripts.selection", {"set"})
+      local n = set_fn and set_fn(player.index, alive) or 0
+      -- base-attacked: a stockpile damaged by the AI (the rate limit is cleared first, this is a test)
+      storage.hud.attack_alert[own] = nil
+      for _, rec in buildings.for_force(own, "stockpile") do
+        rec.entity.damage(40, ai, "physical")
+        break
+      end
+      -- unit-locked: the barracks makes raider kits (locked for players until Raiders is researched) and one is ready
+      local un, rec = own_barracks(player)
+      local kit_ok = false
+      if rec then
+        production.set_recipe(un, "rts-raider-kit")
+        local out = rec.entity.get_inventory(defines.inventory.assembling_machine_output)
+        kit_ok = out and out.insert({name = "rts-raider-kit", count = 1}) == 1
+      end
+      hud.set_build_tab(player, "defence")
+      hud.refresh(player.index)
+      util.log("hud: selftest p4 setup: spawned %s, hauler=%s, commander=%s, selected=%d, raider kit in barracks #%s: "
+        .. "%s, supply %d/%d", table.concat(spawned, " "), tostring(hauler ~= nil), tostring(hero ~= nil), n,
+        tostring(un),
+        tostring(kit_ok),
+        supply_of(own).used, supply_of(own).cap)
+    end)
+    camera.add_selftest_step(1380, "hud_p4_screenshot_units", screenshot)
+    camera.add_selftest_step(1395, "hud_p4_card_click", function(player)
+      hud.card_click(player, "rts-raider", true)  -- every unit but the raiders
+      hud.card_click(player, "rts-drone", false)  -- only the drones
+    end)
+    camera.add_selftest_step(1410, "hud_p4_select_barracks", function(player)
+      local handle_area = optional_fn("scripts.selection", {"handle_area"})
+      local un, rec = own_barracks(player)
+      if not (rec and handle_area) then
+        util.log("hud: selftest p4 no own barracks")
+        return
+      end
+      handle_area(player.index, {}, zero_area(rec.entity.position), false, player.surface)
+      hud.set_build_tab(player, "production")
+      hud.refresh(player.index)
+      local b = research.block_of(un)
+      util.log("hud: selftest p4 barracks #%d selected=%s block=%s %s", un, tostring(selected_building(player) == un),
+        b and b.reason or "none", b and tostring(b.tech or b.unit) or "")
+      screenshot(player)
+    end)
+    camera.add_selftest_step(1440, "hud_p4_factory", function(player)
+      local handle_area = optional_fn("scripts.selection", {"handle_area"})
+      hud.set_build_tab(player, "economy")
+      for un, rec in buildings.for_force(player.force.name, "factory") do
+        if handle_area then handle_area(player.index, {}, zero_area(rec.entity.position), false, player.surface) end
+        hud.recipe_click(player, "rts-laser-turret") -- refused: locked
+        hud.refresh(player.index)
+        local h = get_hud(player)
+        local locked = {}
+        for name, lock in pairs(h and h.recipe_locks or {}) do
+          if lock then locked[#locked + 1] = name .. "=" .. tostring(lock) end
+        end
+        table.sort(locked)
+        util.log("hud: selftest p4 factory #%d selected=%s, %d recipe buttons, locked: %s", un,
+          tostring(selected_building(player) == un), table_size(h and h.recipe_buttons or {}),
+          table.concat(locked, " "))
+        break
+      end
+      local a = hud.alert_hotkey(player)
+      util.log("hud: selftest p4 F3 -> %s", a and (a.kind .. " " .. util.pos_str(a.position)) or "none")
+      screenshot(player)
+    end)
+    camera.add_selftest_step(1470, "hud_p4_help", function(player)
+      hud.toggle_help(player, "selftest")
+      screenshot(player)
+    end)
+    camera.add_selftest_step(1500, "hud_p4_done", function(player)
+      if player.gui.screen[HELP_FRAME] then hud.toggle_help(player, "selftest") end
+      local list = {}
+      for _, a in ipairs(force_alerts(player.force.name, nil, 10)) do list[#list + 1] = a.kind end
+      util.log("RTS_P4_HUD_DONE player %d: alerts (newest first) %s; kills %d", player.index, table.concat(list, " "),
+        #(storage.hud.kills or {}))
+    end)
+  end
+
+  camera.add_selftest_step(3000, "hud_done", function(player) -- about 5 s into the first enemy wave
     screenshot(player)
-  end)
-  camera.add_selftest_step(1500, "hud_p4_done", function(player)
-    if player.gui.screen[HELP_FRAME] then hud.toggle_help(player, "selftest") end
-    local list = {}
-    for _, a in ipairs(force_alerts(player.force.name, nil, 10)) do list[#list + 1] = a.kind end
-    util.log("RTS_P4_HUD_DONE player %d: alerts (newest first) %s; kills %d", player.index, table.concat(list, " "),
-      #(storage.hud.kills or {}))
+    util.log("RTS_HUD_DONE player %d", player.index)
   end)
 end
-
-camera.add_selftest_step(3000, "hud_done", function(player) -- about 5 s into the first enemy wave
-  screenshot(player)
-  util.log("RTS_HUD_DONE player %d", player.index)
-end)
 
 return hud
