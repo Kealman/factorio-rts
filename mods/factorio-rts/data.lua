@@ -8,3 +8,4 @@ require("prototypes.recipes")
 require("prototypes.cursor")
 require("prototypes.inputs")
 require("prototypes.styles")
+require("prototypes.controller") -- RTS-paced remote view panning

@@ -17,6 +17,7 @@
 --   armed      {[player_index] = tick}   attack-move armed by F: the next plain right click is an attack-move
 --   rclick     {[player_index] = {tick, position, entity?, wait}}   pending right-click fallback
 --   area_tick  {[player_index] = tick}   tick of the last reverse-select event handled
+--   cancel_tick {[player_index] = tick}  tick a right click ended build mode (Phase 2)
 --   stats      counters for the autotest and /rts-dump
 --
 -- Right click (spike decision 10): the rts-cursor tool turns a right click or drag into
@@ -26,10 +27,20 @@
 -- pending fallback; any reverse-select event for that player cancels it. The fallback runs when no area
 -- event came: 1 tick later if the cursor did not hold the tool (no area event can come), RCLICK_WAIT_TOOL
 -- ticks later if it did (a drag longer than that gets the fallback order first and the area order on release).
+--
+-- Phase 2:
+-- * Rally point: a plain right click while an own barracks is selected (no units) sets its rally point
+--   (buildings.set_rally); the flag is drawn by selection.lua. QA log line "rally set barracks #N -> (x, y) ...".
+-- * Build mode: a right click while a ghost is in the cursor ends build mode (the RTS cursor comes back) and
+--   orders nothing; a reverse-select click right after it is ignored (storage.orders.cancel_tick).
+-- * The armed attack-move prompt is shown on the HUD's top strip (hud.lua reads orders.is_armed), not as
+--   flying text at the cursor.
 local util = require("scripts.util")
 local events = require("scripts.events")
 local units = require("scripts.units")
 local selection = require("scripts.selection")
+local buildings = require("scripts.buildings")
+local cursor = require("scripts.cursor")
 
 local orders = {}
 
@@ -51,6 +62,8 @@ local ATTACK_DISTRACTION = defines.distraction.by_enemy
 local ATTACK_AREA_RADIUS = 4
 local FEEDBACK_TTL = 30         -- ticks an order marker stays on screen
 local RCLICK_WAIT_TOOL = 120    -- ticks to wait for the area event when the cursor held the rts-cursor
+local CANCEL_IGNORE_TICKS = 20  -- a reverse-select this soon after a right click ended build mode is that click's
+                                -- release (~3 ticks for a quick click), not a new order; ignored
 local COLORS = {
   move = {r = 0.2, g = 1, b = 0.2, a = 1},
   attack = {r = 1, g = 0.2, b = 0.15, a = 1},
@@ -71,6 +84,7 @@ local function ostate()
   o.armed = o.armed or {}
   o.rclick = o.rclick or {}
   o.area_tick = o.area_tick or {}
+  o.cancel_tick = o.cancel_tick or {}
   o.stats = o.stats or {issued = {}, completed = {}, retargets = 0, released = 0, fallbacks = 0, area_orders = 0}
   return o
 end
@@ -360,11 +374,7 @@ function orders.arm_attack_move(player_index, on)
   if on == nil then on = armed[player_index] == nil end
   armed[player_index] = on and game.tick or nil
   util.log("attack-move %s player=%d", on and "armed" or "disarmed (toggle)", player_index)
-  local player = selection.real_player(player_index)
-  if player then
-    player.create_local_flying_text({text = on and "Attack-move: right-click the target" or "Attack-move cancelled",
-                                     create_at_cursor = true, time_to_live = 60})
-  end
+  -- The prompt is the HUD's top-strip message line while armed (Phase 1 QA follow-up 5).
   selection.notify_hud(player_index)
   return on
 end
@@ -389,9 +399,31 @@ local function pick_enemy(force, entities, center)
   return best
 end
 
--- What a plain right click at `position` means: attack-move when armed, attack when it hit an enemy,
--- otherwise move. Returns the order name and the number of units ordered.
+--- Set the rally point of the player's selected barracks to `position` (Phase 2). Returns "rally" and 1 when
+--- it was set, "none" and 0 when no barracks is selected. QA log line: "rally set barracks #N -> (x, y) ok=...".
+function orders.set_rally(player_index, position)
+  local un, rec = selection.get_building(player_index)
+  if not rec then return "none", 0 end
+  if rec.kind ~= "barracks" then
+    util.log("rally ignored: the selected %s #%d has no rally point player=%d", rec.kind, un, player_index)
+    return "none", 0
+  end
+  local pos = pos_of(position)
+  local ok = buildings.set_rally(un, pos)
+  util.log("rally set barracks #%d -> %s ok=%s player=%d", un, util.pos_str(pos), tostring(ok), player_index)
+  selection.refresh_building(player_index)
+  feedback(player_index, pos, COLORS.move, rec.entity.surface)
+  return "rally", ok and 1 or 0
+end
+
+-- What a plain right click at `position` means: with a building selected (and no units) the rally point,
+-- else attack-move when armed, attack when it hit an enemy, otherwise move. Returns the order name and the
+-- number of units (or buildings) ordered.
 local function right_click_order(player_index, position, entities)
+  if selection.count(player_index) == 0 and selection.get_building(player_index) then
+    disarm(player_index, "a building is selected")
+    return orders.set_rally(player_index, position)
+  end
   if disarm(player_index, "used by this right click") then return "attack_move", orders.attack_move(player_index, position) end
   local force = game.forces[selection.force_name(player_index)]
   local enemy = pick_enemy(force, entities, position)
@@ -405,9 +437,16 @@ function orders.handle_reverse_area(player_index, entities, area, alt)
   local o = ostate()
   o.area_tick[player_index] = game.tick
   o.rclick[player_index] = nil
-  o.stats.area_orders = o.stats.area_orders + 1
   local lt, rb = area.left_top, area.right_bottom
   local center = {x = (lt.x + rb.x) / 2, y = (lt.y + rb.y) / 2}
+  local cancelled = o.cancel_tick[player_index]
+  if cancelled and game.tick - cancelled <= CANCEL_IGNORE_TICKS then
+    o.cancel_tick[player_index] = nil
+    util.log("orders: reverse-select at %s ignored: that right click ended build mode player=%d",
+      util.pos_str(center), player_index)
+    return "none", 0
+  end
+  o.stats.area_orders = o.stats.area_orders + 1
   if alt then
     disarm(player_index, "shift + right click")
     return "attack_move", orders.attack_move(player_index, center)
@@ -448,10 +487,7 @@ events.on(defines.events.on_tick, function(e)
   end
 end)
 
-local function holds_tool(player)
-  local stack = player.cursor_stack
-  return stack ~= nil and stack.valid_for_read and stack.name == util.CURSOR_ITEM
-end
+local holds_tool = cursor.holds_tool
 
 events.on(defines.events.on_player_reverse_selected_area, function(e)
   if e.item ~= util.CURSOR_ITEM then return end
@@ -466,6 +502,14 @@ end)
 events.on("rts-rclick", function(e)
   local player = game.get_player(e.player_index)
   if not player then return end
+  -- Build mode (a ghost from the build menu in the cursor): the right click only ends it.
+  local ghost = not e.in_gui and cursor.ghost_name(player)
+  if ghost then
+    ostate().cancel_tick[e.player_index] = game.tick
+    cursor.ensure(player, true, "right click ends build mode")
+    util.log("build mode ended item=%s player=%d (right click)", ghost, e.player_index)
+    return
+  end
   orders.handle_rclick(e.player_index, e.cursor_position, player.selected, holds_tool(player), e.in_gui)
 end)
 
@@ -505,6 +549,8 @@ events.on(defines.events.on_ai_command_completed, function(e)
     if target and target.valid then
       command(rec, attack_command(target))
     else
+      -- QA log line: the attack is over because the target died ("order attack done unit=#N (target gone)")
+      util.log("order attack done unit=#%d (target gone)", rec.entity.unit_number)
       release(rec)
     end
   elseif order == "attack_move" then
@@ -535,6 +581,7 @@ events.on_nth_tick(SWEEP_TICKS, function()
   if not storage.units then return end
   for _, rec in pairs(storage.units) do
     if rec.issuer == orders.ISSUER and rec.entity.valid and done_waiting(rec) then
+      if rec.order == "attack" then util.log("order attack done unit=#%d (target gone)", rec.entity.unit_number) end
       release(rec)
       local stats = ostate().stats
       stats.swept = (stats.swept or 0) + 1

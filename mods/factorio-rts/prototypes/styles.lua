@@ -131,3 +131,59 @@ styles.rts_hud_message_label = {
   font = "default-semibold",
   font_color = {1, 0.85, 0.3},
 }
+
+---------------------------------------------------------------------------
+-- Phase 2: build menu, building panel, resource strip
+---------------------------------------------------------------------------
+
+-- Attack-move button while attack-move is armed: the vanilla red button graphics, so the pressed state is
+-- obvious (docs/qa/phase1-followups.md item 5). Same size as rts_hud_button.
+styles.rts_hud_button_armed = {
+  type = "button_style",
+  parent = "red_button",
+  font = "default-semibold",
+  default_font_color = {1, 1, 1},
+  hovered_font_color = {1, 1, 1},
+  clicked_font_color = {1, 1, 1},
+  minimal_width = 0,
+  height = 26,
+  left_padding = 6,
+  right_padding = 6,
+}
+
+-- Build menu buttons: vanilla slot buttons (40 px, item icon, network count in the corner).
+-- toggled = the item that is in the cursor as a ghost right now.
+styles.rts_hud_build_button = {
+  type = "button_style",
+  parent = "slot_button",
+  size = 40,
+}
+
+-- Recipe buttons of the building panel (barracks / factory) and the pause button.
+styles.rts_hud_recipe_button = {
+  type = "button_style",
+  parent = "slot_button",
+  size = 34,
+}
+
+-- The recipe the machine runs now (or pause while it has none).
+styles.rts_hud_recipe_button_active = {
+  type = "button_style",
+  parent = "yellow_slot_button",
+  size = 34,
+}
+
+-- 20 px icon in front of a resource count on the top strip.
+styles.rts_hud_icon = {
+  type = "image_style",
+  size = 20,
+  stretch_image_to_widget_size = true,
+}
+
+-- Production progress of the selected barracks / factory.
+styles.rts_hud_progressbar = {
+  type = "progressbar_style",
+  parent = "progressbar",
+  width = 120,
+  bar_width = 10,
+}

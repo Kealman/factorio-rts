@@ -5,12 +5,17 @@
 --   groups        {[1..5] = {[unit_number] = true}}       control groups
 --   boxes         {[unit_number] = LuaRenderObject}       one rectangle per selected unit, shown to that player
 --   group_recall  {n = group, tick = tick}                last recall (double tap = jump the camera)
+--   building      unit_number?                            Phase 2: the selected own building (storage.buildings);
+--                                                         exclusive with `selection` (selecting units clears it)
+--   building_render {LuaRenderObject}                     its outline and, for a barracks, the rally line and flag
 -- and storage.selection = {dirty = {[player_index] = true}} (HUD refreshes deferred to the next tick).
 --
 -- Input model (spike decision 10): the rts-cursor selection tool raises on_player_selected_area for a left
 -- drag or click (replace the selection) and on_player_alt_selected_area for shift + left (add to it). Only
 -- live units from storage.units on the player's own force are taken; anything else in the event's entity
 -- list is ignored. A click (an area under CLICK_SIZE) takes the one own unit nearest to the click.
+-- Phase 2: a plain click that finds no own unit selects the own registered building under the cursor
+-- (any kind in buildings.KIND_BY_NAME). Box selection still takes units only.
 --
 -- The player index does not have to belong to a real player: the headless autotest drives index 0, whose
 -- force is rts-player, whose boxes are created invisible and whose changes never reach the HUD.
@@ -18,6 +23,7 @@ local util = require("scripts.util")
 local events = require("scripts.events")
 local units = require("scripts.units")
 local camera = require("scripts.camera")
+local buildings = require("scripts.buildings")
 
 local selection = {}
 
@@ -29,6 +35,10 @@ local BOX_PAD = 0            -- tiles added around the selection box (0: walker 
 local BOX_WIDTH = 2          -- pixels
 local BOX_LIGHTEN = 0.35     -- mix the force colour with white so the box stands out on tinted units
 local DEFAULT_COLOR = {r = 0.3, g = 1, b = 0.3, a = 1}
+local BUILDING_PICK_RADIUS = 1.0 -- tiles; a click this close to a building's edge still selects it
+local RALLY_FLAG = "utility/spawn_flag"
+local RALLY_COLOR = {r = 0.3, g = 1, b = 0.3, a = 0.8}
+local EXIT_COLOR = {r = 0.7, g = 0.7, b = 0.7, a = 0.6}
 
 ---------------------------------------------------------------------------
 -- Helpers
@@ -152,12 +162,133 @@ local function sync_boxes(player_index, p)
   end
 end
 
--- Common tail of every selection change: drop dead units, redraw boxes, refresh the HUD.
-local function changed(player_index)
+---------------------------------------------------------------------------
+-- Building selection (Phase 2)
+---------------------------------------------------------------------------
+
+-- The live registry record of a building, without side effects (buildings.get drops stale records).
+local function building_rec(unit_number)
+  local rec = unit_number and storage.buildings and storage.buildings[unit_number]
+  if rec and rec.entity and rec.entity.valid then return rec end
+  return nil
+end
+
+local function clear_building_render(p)
+  for _, obj in pairs(p.building_render or {}) do
+    if obj.valid then obj.destroy() end
+  end
+  p.building_render = nil
+end
+
+-- Outline of the selected building and, for a barracks, a dashed line to its rally point with a flag there
+-- (grey at the default exit while no rally point is set). Shown to that player only.
+local function draw_building(player_index, p)
+  clear_building_render(p)
+  local rec = building_rec(p.building)
+  if not rec then return end
+  local e = rec.entity
+  local player = real_player(player_index)
+  local players, visible = player and {player_index} or nil, player ~= nil
+  local box = e.selection_box
+  local objs = {}
+  objs[#objs + 1] = rendering.draw_rectangle({color = box_color(rec.force), width = BOX_WIDTH, filled = false,
+    left_top = box.left_top, right_bottom = box.right_bottom, surface = e.surface, players = players,
+    visible = visible})
+  if rec.kind == "barracks" then
+    local point = rec.rally or buildings.default_exit(rec)
+    local color = rec.rally and RALLY_COLOR or EXIT_COLOR
+    objs[#objs + 1] = rendering.draw_line({color = color, width = 2, dash_length = 0.5, gap_length = 0.4,
+      from = e, to = point, surface = e.surface, players = players, visible = visible})
+    objs[#objs + 1] = rendering.draw_sprite({sprite = RALLY_FLAG, target = {x = point.x + 0.3, y = point.y - 0.6},
+      x_scale = 0.6, y_scale = 0.6, tint = rec.rally and {1, 1, 1, 1} or {0.6, 0.6, 0.6, 0.6}, surface = e.surface,
+      players = players, visible = visible})
+    objs[#objs + 1] = rendering.draw_circle({color = color, radius = 0.3, width = 2, filled = false, target = point,
+      surface = e.surface, players = players, visible = visible})
+  end
+  p.building_render = objs
+end
+
+local function drop_building(p)
+  if p.building == nil and p.building_render == nil then return false end
+  p.building = nil
+  clear_building_render(p)
+  return true
+end
+
+-- Common tail of every selection change: drop dead units, redraw boxes, refresh the HUD. Any change of the unit
+-- selection also deselects the building, unless keep_building is set.
+local function changed(player_index, keep_building)
   local p = state(player_index)
   prune(p.selection)
+  if not keep_building then drop_building(p) end
   sync_boxes(player_index, p)
   selection.notify_hud(player_index)
+end
+
+--- Select one own building (by unit number) instead of units. Returns true when it was selected.
+--- QA log line: "select building <kind> unit=<unit_number> player=N at (x, y)".
+function selection.select_building(player_index, unit_number)
+  local rec = building_rec(unit_number)
+  if not rec or rec.force ~= selection.force_name(player_index) then return false end
+  local p = state(player_index)
+  p.selection = {}
+  p.building = unit_number
+  sync_boxes(player_index, p)
+  draw_building(player_index, p)
+  selection.notify_hud(player_index)
+  util.log("select building %s unit=%d player=%d at %s", rec.kind, unit_number, player_index,
+    util.pos_str(rec.entity.position))
+  return true
+end
+
+--- The selected building: unit_number, record (both nil when none is selected or it is gone).
+function selection.get_building(player_index)
+  local p = state(player_index)
+  local rec = building_rec(p.building)
+  if not rec then
+    if p.building then drop_building(p) end
+    return nil, nil
+  end
+  return p.building, rec
+end
+
+--- Redraw the selected building's outline and rally flag (after its rally point changed).
+function selection.refresh_building(player_index)
+  local p = state(player_index)
+  if p.building then draw_building(player_index, p) end
+  selection.notify_hud(player_index)
+end
+
+--- The own registered building at a map position: the hovered entity first (what the player sees highlighted)
+--- when the point is on it, else the building whose selection box is nearest to the point, within
+--- BUILDING_PICK_RADIUS (0 = inside it). Returns unit_number, record or nil.
+-- Distance from a map position to an entity's selection box (0 inside it).
+local function box_distance(entity, position)
+  local box = entity.selection_box
+  local dx = math.max(box.left_top.x - position.x, 0, position.x - box.right_bottom.x)
+  local dy = math.max(box.left_top.y - position.y, 0, position.y - box.right_bottom.y)
+  return math.sqrt(dx * dx + dy * dy)
+end
+
+function selection.building_at(player_index, position, surface)
+  local force = selection.force_name(player_index)
+  local player = real_player(player_index)
+  local hovered = player and player.selected
+  if hovered and hovered.valid and hovered.unit_number and box_distance(hovered, position) <= BUILDING_PICK_RADIUS then
+    local rec = building_rec(hovered.unit_number)
+    if rec and rec.force == force then return hovered.unit_number, rec end
+  end
+  surface = surface or util.surface()
+  local best_un, best_rec, best_d
+  for _, e in pairs(surface.find_entities_filtered({position = position, radius = BUILDING_PICK_RADIUS + 3,
+                                                     force = force})) do
+    local rec = e.unit_number and building_rec(e.unit_number)
+    if rec then
+      local d = box_distance(e, position)
+      if d <= BUILDING_PICK_RADIUS and (not best_d or d < best_d) then best_un, best_rec, best_d = e.unit_number, rec, d end
+    end
+  end
+  return best_un, best_rec
 end
 
 -- Unit numbers of the live, registered units in `entities` that belong to the player's force.
@@ -315,12 +446,19 @@ function selection.group_recall(player_index, n)
 end
 
 --- Apply a selection-tool area: replace (add = false) or add (add = true). `area` is the event's
---- BoundingBox; a click-sized area keeps only the own unit nearest to its centre. Returns the selection size.
-function selection.handle_area(player_index, entities, area, add)
+--- BoundingBox; a click-sized area keeps only the own unit nearest to its centre. A plain click with no own
+--- unit selects the own building there (selection.building_at); `surface` defaults to the arena surface.
+--- Returns the selection size (units; 0 when a building was selected).
+function selection.handle_area(player_index, entities, area, add, surface)
   local lt, rb = area.left_top, area.right_bottom
   local own = own_unit_numbers(player_index, entities)
   local own_in_area = #own
   local is_click = rb.x - lt.x < CLICK_SIZE and rb.y - lt.y < CLICK_SIZE
+  if #own == 0 and is_click and not add then
+    local center = {x = (lt.x + rb.x) / 2, y = (lt.y + rb.y) / 2}
+    local un = selection.building_at(player_index, center, surface)
+    if un and selection.select_building(player_index, un) then return 0 end
+  end
   if #own > 1 and is_click then
     local center = {x = (lt.x + rb.x) / 2, y = (lt.y + rb.y) / 2}
     local best, best_d
@@ -368,8 +506,22 @@ function selection.init()
       prune(p.selection)
       sync_boxes(index, state(index))
     end
+    if p.building then
+      if building_rec(p.building) then draw_building(index, p) else drop_building(p) end
+    end
   end
 end
+
+-- A selected building left the registry (died, mined, replaced by a template clone): deselect it.
+buildings.on_removed(function(unit_number)
+  for index, p in pairs(storage.players or {}) do
+    if p.building == unit_number then
+      drop_building(p)
+      mark_dirty(index)
+      util.log("select building cleared unit=%d player=%d (building gone)", unit_number, index)
+    end
+  end
+end)
 
 -- A unit left the registry (death or destruction): take it out of every selection and group. Its box is
 -- destroyed by the engine together with the entity; the stale handle is dropped here.
@@ -404,7 +556,7 @@ end)
 
 events.on(defines.events.on_player_selected_area, function(e)
   if e.item ~= util.CURSOR_ITEM then return end
-  selection.handle_area(e.player_index, e.entities, e.area, false)
+  selection.handle_area(e.player_index, e.entities, e.area, false, e.surface)
 end)
 
 events.on(defines.events.on_player_alt_selected_area, function(e)
