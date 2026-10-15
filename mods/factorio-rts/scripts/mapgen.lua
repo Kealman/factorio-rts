@@ -773,17 +773,24 @@ function mapgen.reset()
 end
 
 ---------------------------------------------------------------------------
--- Alerts (storage.alerts, the logistics format plus params; also printed to the force)
+-- Alerts: the shared writer supply.alert (storage.alerts {tick, force, kind, text, params, position}; the HUD shows
+-- {text, params...} and picks an icon per kind), looked up at call time so this module does not change the load
+-- order. Also printed to the force.
 ---------------------------------------------------------------------------
 function mapgen.alert(force_name, kind, text, params, position)
-  local list = storage.alerts
-  if not list then
-    list = {}
-    storage.alerts = list
+  local supply = loaded("scripts.supply")
+  if supply and supply.alert then
+    supply.alert(force_name, kind, text, params, position)
+  else -- same format, for a tree without supply.lua
+    local list = storage.alerts
+    if not list then
+      list = {}
+      storage.alerts = list
+    end
+    list[#list + 1] = {tick = game.tick, force = force_name, kind = kind, text = text, params = params,
+                       position = position and {x = position.x, y = position.y} or nil}
+    while #list > mapgen.ALERTS_MAX do table.remove(list, 1) end
   end
-  list[#list + 1] = {tick = game.tick, force = force_name, kind = kind, text = text, params = params,
-                     position = position and {x = position.x, y = position.y} or nil}
-  while #list > mapgen.ALERTS_MAX do table.remove(list, 1) end
   local force = game.forces[force_name]
   local msg = {text}
   for _, p in ipairs(params or {}) do msg[#msg + 1] = p end

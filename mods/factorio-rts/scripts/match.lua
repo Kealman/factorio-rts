@@ -318,9 +318,11 @@ function match.stats(force_name)
 end
 
 --- Localised display name of a force: "You" or "AI 2".
+-- "rts-ai-" has Lua pattern specials ("-"), so the prefix is escaped (before this fix AI forces got their raw name).
+local AI_PATTERN = "^" .. (string.gsub(match.AI_PREFIX, "%p", "%%%0")) .. "(%d+)$"
 function match.label(force_name)
   if force_name == PLAYER then return {"rts.force-player"} end
-  local n = force_name and tonumber(string.match(force_name, "^" .. match.AI_PREFIX .. "(%d+)$"))
+  local n = force_name and tonumber(string.match(force_name, AI_PATTERN))
   if n then return {"rts.force-ai", n} end
   return force_name or "?"
 end

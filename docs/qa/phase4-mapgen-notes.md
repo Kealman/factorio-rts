@@ -29,8 +29,8 @@ Plan: `docs/PHASE4.md` sections 2.4 (depletion) and 5 (map generation), wave A4.
 - **Cliffs do not stop spider units.** This was measured: walkers, heavies, raiders, artillery and haulers step over
   cliff lines. Cliffs stop drones and building placement. Only water 14 tiles wide or more stops every unit, and
   lakes are that wide. See "Terrain and units" and the open items.
-- **Nothing of mine is committed**, except the two locale files: the HUD commit 8e83c78 swept in
-  `locale/*/mapgen.cfg`.
+- **Committed by the lead as add68a1.** The follow-up below is not committed: the `match.label` fix and alerts
+  through the shared writer.
 
 ## Files
 
@@ -223,8 +223,11 @@ Consequences:
   [rts] ore remaining rts-player: main iron-ore 5211/6000, main copper-ore 3839/4000, main stone 2765/3000, main coal 3000/3000, natural iron-ore 8000/8000, natural copper-ore 4000/4000
   [rts] ore remaining middle: middle iron-ore 12000/12000, middle copper-ore 8000/8000, middle coal 6000/6000
   ```
-- **Alert format.** Alerts go to the shared `storage.alerts`: `{tick, force, kind, text, params, position}`, newest
-  last, at most 100. The supply and logistics modules use the same format.
+- **Alert format.** `mapgen.alert` hands every alert to the shared writer `supply.alert(force, kind, text, params,
+  position)`. That writer appends `{tick, force, kind, text, params, position}` to `storage.alerts`, newest last, at
+  most 100.
+  - `supply` is looked up at call time, so the module load order does not change.
+  - Without `supply.lua` the same entry is written directly.
 - **HUD.** The HUD of commit 8e83c78 already styles both kinds: `patch-depleted` yellow with an ore icon,
   `ruin-captured` green with a steel icon. It shows the newest 3 alerts under the strip, and F3 jumps to them.
 - **Measured pace.** The normal AI mines about 1000 main iron in 6 minutes (6000 → 4924–5241). At that pace the main
@@ -340,6 +343,26 @@ changes, not from finite ore or terrain.
 | Depletion check (every 10 s) | one `find_entities_filtered` per patch: 15 patches in 1v1, 27 in 1v3 |
 | Main iron mined by the normal AI in 6 minutes | 760–1076 of 6000 |
 
+## Follow-up (2026-10-16, after add68a1)
+
+- **`match.label` fix.** The lead reported it.
+  - The bug: the function built a Lua pattern from `"rts-ai-"`, and `-` is a pattern special, so every AI force got
+    its raw name ("rts-ai-2") instead of "AI 2".
+  - It showed in the ruin label, in the ruin-lost alert and in the "AI 2 is out" chat line.
+  - The fix: the prefix is now escaped (`^rts%-ai%-(%d+)$`). Both callers (`lobby.lua` and `mapgen.lua`) use the
+    result inside localised strings.
+- **Shared alert writer.** Alerts now go through `supply.alert`, as the HUD agent asked. The kinds stay
+  `patch-depleted` and `ruin-captured`, with a position and this module's own locale keys.
+- **Validation.** `build/p4-mgfix-ruin` is HEAD add68a1 plus these two edits.
+
+  | Check | Result |
+  |---|---|
+  | The six ruin and depletion checks | PASS |
+  | `label_ai`: `match.label("rts-ai-1")` | `{"rts.force-ai", 1}` |
+  | `ruin_label_owner`: the label after the AI recaptured | `{"rts.ruin-owned", {"rts.force-ai", "1"}}` |
+  | `alert_format`: the HUD's fields `tick, force, kind, text, params, position` | all present |
+  | Total | 9/9, 0 errors |
+
 ## Gotchas
 
 1. **`game.create_random_generator(seed)` ignores the lowest seed bits.** Seeds n and n + 1 gave identical maps for
@@ -369,7 +392,5 @@ changes, not from finite ore or terrain.
   there (`mapgen.patches(force, "natural")`).
 - **Alerts appear twice.** `patch-depleted` and `ruin-captured` are printed to the force's chat and shown in the HUD
   alert lines, like `supply-blocked`. Drop the chat line in `mapgen.alert` if the HUD alone is enough.
-- **My locale files were committed by someone else.** The HUD commit 8e83c78 includes `locale/en/mapgen.cfg` and
-  `locale/ru/mapgen.cfg`; my other files are uncommitted.
 - **Main patches last about 30 minutes at the current AI pace**, not 12. If 12 is the target, either the totals or
   the AI's smelting throughput has to change.
