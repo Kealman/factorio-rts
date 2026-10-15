@@ -119,6 +119,11 @@ local function pentapod_walker(spec)
   u.factoriopedia_simulation = nil
   u.absorptions_to_join_attack = nil -- spore-based attack joining; irrelevant for scripted units
   u.dying_trigger_effect = nil       -- vanilla spawns wrigglers / stomper shells on death
+  -- Full damage from every type, like the base-game variant. The Gleba originals carry physical resistance
+  -- (strafer: decrease 2 and 10 %, stomper: decrease 2 and 50 %) plus laser / impact, which turned the turret's
+  -- 5-damage bullets into 2.7 / 1.5 per round. The units' own attacks deal explosion / acid damage, so unit-vs-unit
+  -- fights are not affected.
+  u.resistances = nil
   u.vision_distance = 30             -- <= 100; >= 50 is documented to cause self-grouping for units
   u.radar_range = 1                  -- chunks charted around the unit for its force
   u.order = "z[rts]-" .. spec.name

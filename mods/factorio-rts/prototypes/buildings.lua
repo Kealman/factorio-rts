@@ -192,6 +192,11 @@ local turret = clone({
   health = 1200, map_color = {r = 0.95, g = 0.55, b = 0.15},
 })
 turret.is_military_target = true
--- attack_parameters stay vanilla: ammo_category "bullet", so it takes the vanilla firearm-magazine.
+-- Balance (2026-10-15, docs/qa/phase2-prototypes-notes.md "Turret balance"): ammo_category stays "bullet" (vanilla
+-- firearm-magazine, 5 physical damage per round, 10 rounds per magazine). Vanilla fires every 6 ticks, so 10
+-- magazines lasted 10 s. Here a round every 36 ticks (100 rounds = 60 s of continuous fire) at 5x damage
+-- (25 per round, ~42 damage/s): 8 rounds kill a 200 hp walker (~4.2 s), 24 rounds a 600 hp heavy (~14 s).
+turret.attack_parameters.cooldown = 36
+turret.attack_parameters.damage_modifier = 5
 
 data:extend({cc, core_power, core_pole, stockpile, extractor, smelter, solar, factory, barracks, turret})

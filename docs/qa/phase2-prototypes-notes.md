@@ -30,7 +30,7 @@ Size means the tile footprint. Every building has `map_color` and `enemy_map_col
 | `rts-solar-array` | solar-panel (`solar-panel`) | 3×3 | 300 | Produces 400 kW |
 | `rts-factory` | assembling-machine (`assembling-machine-2`) | 3×3 | 1000 | Category `{"rts-buildings"}` only. Speed 1, 150 kW, no modules, no fluid boxes. |
 | `rts-barracks` | assembling-machine (`assembling-machine-2`) | 3×3 | 1500 | Category `{"rts-units"}` only. Speed 1, 150 kW, no modules, no fluid boxes. `is_military_target`. |
-| `rts-turret` | ammo-turret (`gun-turret`) | 2×2 | 1200 | Vanilla attack: ammo category `bullet`, range 18. One ammo slot, automated ammo count 10. `is_military_target`. |
+| `rts-turret` | ammo-turret (`gun-turret`) | 2×2 | 1200 | Ammo category `bullet`, range 18. Fires every 36 ticks with `damage_modifier` 5, so a firearm-magazine round does 25 damage (see Turret balance). One ammo slot, automated ammo count 10. `is_military_target`. |
 
 The composite is three entities at the same position. The match script creates all three with `create_entity`. The core power sits inside the core pole's supply area, and so does the CC.
 
@@ -106,6 +106,66 @@ The runtime probe is a throwaway copy whose `control.lua` is replaced by a test 
 - **CC protection.** `cc.order_deconstruction(force)` returns false.
 - **Core immunity.** 5000 explosion plus 5000 physical damage leaves the core power and core pole at full health.
 - **Pole connections.** Medium poles connect to the hidden core pole when created by script within reach, revived from a ghost, or built by robots from a ghost.
+
+## Turret balance (2026-10-15)
+
+**The problem.** The AI agent reported that a turret with firearm magazines needed 20 s or more to kill one walker.
+
+**The cause.** The vanilla turret fires a 5-damage physical round every 6 ticks. In addition, the Space Age walker
+prototypes, which are copies of the Gleba pentapods, inherited Gleba's physical resistance:
+
+| Unit | Inherited resistances |
+|---|---|
+| `rts-walker` (strafer copy) | physical: decrease 2 and 10 %. laser: 50 %. |
+| `rts-walker-heavy` (stomper copy) | physical: decrease 2 and 50 %. laser and impact: 80 %. |
+
+A round therefore did 2.7 damage to a walker and 1.5 to a heavy. The base-game walkers have no resistances.
+
+**The change.**
+
+- **Units (`prototypes/units.lua`).** The pentapod copies now set `resistances = nil`, the same as the base-game
+  variant. The units' own attacks deal explosion damage (the walker projectile) and acid damage (the heavy stream),
+  and neither original resisted those, so unit-vs-unit fights do not change.
+- **Turret (`prototypes/buildings.lua`).**
+
+  | Parameter | Value |
+  |---|---|
+  | `attack_parameters.cooldown` | 36 ticks, instead of 6 |
+  | `attack_parameters.damage_modifier` | 5 |
+  | Damage per round | 25 |
+  | Damage per second | about 42 |
+  | 10 magazines (100 rounds) | 60 s of continuous fire |
+
+  Walker health was not changed.
+
+**Measured.** A probe copy in `build/p2-balance/` (Space Age) and `build/p2-balance-nosa/` (base only) replaces
+`control.lua` with a test script. It places an `rts-turret` with 10 magazines and a unit 10 tiles away. It does this in
+both directions between two hostile forces, A and B, for a walker and for a heavy. A third turret fires at a walker
+whose health is reset every tick. Turrets do not target an entity with `destructible = false`, so that cannot be used.
+Times are measured from when the unit spawns.
+
+| Case | Before (Space Age) | Before (base only) | After (both variants, both directions) |
+|---|---|---|---|
+| Turret kills a walker | 7.9 s, 75 rounds = 7.5 magazines | 4.4 s, 4 magazines | **4.7 s** (4.2 s from the first hit), 8 rounds = 0.8 magazines |
+| Turret kills a heavy | never: the heavy outlasts all 10 magazines and destroys the turret | never: same | **14.3 s** (13.8 s from the first hit), 24 rounds = 2.4 magazines |
+| 10 magazines of continuous fire | 10 s | 10 s | **59.4 s** |
+| Turret health after the heavy duel | 0 | 0 | 305–600 of 1200 |
+
+Damage per hit reads 25.0 before and after resistances, and the forces have no bullet damage or speed modifiers (both
+0.00).
+
+**Regression runs** on fresh copies with the change: zero errors in all of them.
+
+| Run | Copy | Result |
+|---|---|---|
+| Legacy Phase 1/2 autotest, Space Age | `build/p2-balance-legacy` | `autotest summary 65/65` |
+| Legacy Phase 1/2 autotest, base only | `build/p2-balance-legacy-nosa` | `autotest summary 65/65` |
+| AI autotest (1v1 normal small) | `build/p2-balance-ai` | `ai autotest summary 12/12, result=both alive (time)`. Both sides built 2 turrets and kept producing. |
+
+In the legacy copies, `AUTOTEST_MATCH` was set to `size = "legacy", enemy_brain = "waves"`.
+
+**Note.** The walker's range (20) is longer than the turret's (18). Walkers that strafe at 19–20 tiles can outrange
+it. The strafe settings aim for 16 ± 2 tiles, so this did not happen in the probe.
 
 ## Gotchas
 

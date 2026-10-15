@@ -199,7 +199,8 @@ replaced cannot take the new CC's parts down with it.
 - **Barracks checks.** A barracks is checked at its predicted completion tick, `(1 - crafting_progress) × recipe.energy / crafting_speed`.
   A sweep every 60 ticks catches anything the prediction missed.
 - **Every 120 ticks** (`FEED_PERIOD`), each `rts-turret` holding fewer than 5 `firearm-magazine` gets up to 10 from its
-  network.
+  network. Since the turret balance on 2026-10-15, a magazine is 6 s of fire, so 10 last a minute and the 2 s feed
+  cadence is ample. See "Turret balance" in `phase2-prototypes-notes.md`.
 - **Logging.** The pull and feed states are logged on change only. Spawns and hand-offs are logged as they happen.
 
 **Fairness.** Consumers are visited oldest-starved first. A starved consumer whose only shortage is a single item
