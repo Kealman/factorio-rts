@@ -27,7 +27,7 @@ conventions: `docs/qa/phase2-polish-notes.md`. QA protocol: `docs/qa/phase3-prot
 | `scripts/lobby.lua` | New. Start dialog, in-match menu, results frame; `start_match`, `back_to_lobby`, `restart_current`; `/rts-match`; the `rts-menu` input |
 | `scripts/fog.lua` | New. Script charting around own buildings and units, a stats line, the end-of-match reveal |
 | `scripts/camera.lua` | Two small edits. `enter_remote`, used by setup, jumps and the controller guard, now targets `match.view_surface()` instead of the physical surface. `camera.setup`, the join flow, parks the god body on the lobby surface. |
-| `scripts/hud.lua` | Minimal. Minimap zoom from the arena size, enemy count over every opponent, lobby message, a Menu button that calls `lobby.toggle_menu` |
+| `scripts/hud.lua` | Minimal. Minimap zoom from the arena size; "Enemies seen: N" (only enemy units in sight, "?" for none; the real total after the match); selection panel and build menu hidden in the lobby; lobby message; a Menu button that calls `lobby.toggle_menu` |
 | `scripts/debug.lua` | Autotest match start, `/rts-qa-reset` restarts the match, `/rts-kill-force`, the match-flow self-test steps, dump lines for N forces |
 | `scripts/util.lua` | `util.ENEMY_FORCE = "rts-ai-1"`, `util.LOBBY_SURFACE`, and `util.surface()` returns the current arena |
 | `control.lua` | Requires `scripts.fog` after `scripts.ai.init` and `scripts.lobby` after `scripts.hud` |
@@ -35,8 +35,7 @@ conventions: `docs/qa/phase2-polish-notes.md`. QA protocol: `docs/qa/phase3-prot
 | `locale/en`, `locale/ru` | 42 new `[rts]` keys and `controls.rts-menu`, identical key sets and parameters (227 keys each) |
 
 No file in `scripts/ai/` and none of `orders.lua`, `selection.lua`, `production.lua`, `economy.lua` or `buildings.lua` was
-edited. `match.lua` sets the public module field `ai/layout.lua` `ARENA_HALF` from the arena size (see "AI planner
-limits").
+edited. The AI planner's arena bounds come from `storage.match.arena_half` (see "AI planner limits").
 
 ## Match lifecycle
 
@@ -114,7 +113,12 @@ enemies, with no cease-fire: free-for-all. `share_chart` is off, and there is ce
    - Set the flag to true after the fix. True rotation of the per-spawn ore could then be considered too, although the
      AI's hub layout still assumes an east/west front.
 2. **`ai/layout.lua` `ARENA_HALF` was a constant 80.** The AI plans nothing outside it, and the small map's CCs are at
-   ±88. `match.lua` sets it from the arena size at match start and in `on_load`.
+   ±88.
+   - The lead set a contract (2026-10-15): `match.lua` sets `storage.match.arena_half` (the size / 2) at match start,
+     and `ai/layout.lua` reads it, with a fallback of 80. `match.lua` no longer writes the module field.
+   - The validation runs above wrote the module field directly, an earlier version of this code.
+   - **Until p3-ai's change is in `mods/`, the AI cannot plan any mining line on the small or medium map.** A 40 s
+     smoke run logs `line iron unavailable: no hub slot reachable` for every line. It has no script errors.
 3. **`expand iron2` never succeeds in practice.** In the 1v1 run both AIs found the contested iron patch, then logged
    `line iron2 unavailable: no hub slot reachable for iron-ore@-7,-28`. This matches the AI notes' "hub is full".
 
@@ -234,9 +238,10 @@ wave_period_ticks}` (`match.normalize_config`). `enemy_difficulty` mirrors `diff
 | Function | Returns / does |
 |---|---|
 | `match.start(cfg)`, `match.teardown(reason)`, `match.delete_arena(name)` | World part of starting and ending a match; `lobby.start_match` / `back_to_lobby` wrap them |
+| `storage.match.arena_half` | Arena half size in tiles; the contract with the AI planner. `match.arena_half()` reads it. |
 | `match.surface()`, `match.view_surface()`, `match.lobby_surface()` | Arena (nil in the lobby), arena or lobby, lobby (created on demand) |
 | `match.in_lobby()`, `match.phase()`, `match.config()`, `match.arena_half()` | State |
-| `match.forces()`, `match.ai_forces()`, `match.is_participant(f)`, `match.enemy_unit_count(f)` | Participants (rts-player first) |
+| `match.forces()`, `match.ai_forces()`, `match.is_participant(f)`, `match.enemy_unit_count(f)`, `match.enemy_units_seen(f)` | Participants (rts-player first); live enemy units in total, and those in the force's sight |
 | `match.home(f)`, `match.facing(f)`, `match.army_point(f)` | CC centre, ±1, army gathering point. `match.FACING[f]` and `match.CC_POSITIONS[f]` still work as read-only views. |
 | `match.stats(f)`, `match.label(f)`, `match.elapsed_seconds()` | Counters, localised name ("You", "AI 2"), match time |
 | `match.result(f)`, `match.is_out(f)`, `match.decide_winner(player_out, enemies_out)` | As in Phase 2, for N forces |
@@ -262,7 +267,25 @@ All runs use copies of `mods/` plus `mods/mod-list.json` (Space Age on). "Final 
 | GUI smoke, self-test off, `tools/gui-run.sh build/p3-flow 120 'RTS_GUI_READY'` | `build/p3-flow` | Start dialog on join, `autotest: off (1 connected players)`, `RTS_GUI_READY` | 0 |
 | GUI self-test, Russian (system language), `SELFTEST_DEFAULT = true` in the copy | `build/p3-flow-st` | Full flow up to `RTS_MATCHFLOW_DONE`, screenshots `build/shots-p3-flow-st/` | 0 |
 | GUI self-test, English (scratch copy of `gui-run.sh` that adds `locale=en`) | `build/p3-flow-en` | Same, screenshots `build/shots-p3-flow-en/` | 0 |
-| GUI self-test, 1v2 hard medium (the copy also sets the dialog's choice before Start) | `build/p3-flow-st2` | Same; "Army 6 vs 12 Enemy"; a 3-row results table; screenshots `build/shots-p3-flow-st2/` | 0 |
+| GUI self-test, 1v2 hard medium (the copy also sets the dialog's choice before Start) | `build/p3-flow-st2` | Same; "Army 6 vs 12 Enemy" (before the "Enemies seen" change); a 3-row results table; screenshots `build/shots-p3-flow-st2/` | 0 |
+
+**Follow-up: "Enemies seen" and the lobby panels.**
+- **Enemy count.** The strip now counts only enemy units whose chunk is visible to the player's force
+  (`match.enemy_units_seen`, `LuaForce.is_chunk_visible`). It reads "Enemies seen: N", or "?" with none in sight.
+  After the match it shows the real total, "Enemies: N".
+- **Lobby panels.** The selection panel and the build menu are hidden in the lobby and come back at Start.
+- **GUI self-test** (`build/p3-flow-st`, Russian, `RTS_MATCHFLOW_DONE`, 0 errors).
+  - A new step at 1230 spawns one enemy walker next to the own CC. The log reads
+    `enemies seen by rts-player before the spawn: 0 (total 6)`, then `after the spawn: 1 (total 7)`.
+  - The screenshots show:
+
+    | Screenshot | Strip and panels |
+    |---|---|
+    | 120 | "Врагов видно: ?"; no panel and no build menu under the dialog |
+    | 1200 | "Врагов видно: ?" |
+    | 1290 | "Врагов видно: 1", the red walker beside the base |
+    | 1620 | "Враги: 0" after the victory |
+- **Headless run**, 150 s on `build/p3-flow`: 0 errors. The AI planned no lines in this run: the arena_half gap described in "AI planner limits".
 
 **Self-test timeline.** Ticks count from the player's camera setup. camera.lua's step at 960 still writes
 `RTS_GUI_READY`.
@@ -286,7 +309,7 @@ All runs use copies of `mods/` plus `mods/mod-list.json` (Space Age on). "Final 
 | Screenshot | Content |
 |---|---|
 | 120 | Centred dialog with the opponents, difficulty and size drop-downs and the hint, over black. The strip reads "--:--", "Choose the match settings and press Start match.". The minimap is black. |
-| 1200 | Own CC, 6 walkers and 4 ore patches. On the minimap only a square around the base is lit (128×160 tiles, the 20 charted chunks); the rest is black. "Army 6 vs 6 Enemy". |
+| 1200 | Own CC, 6 walkers and 4 ore patches. On the minimap only a square around the base is lit (128×160 tiles, the 20 charted chunks); the rest is black. These runs predate the "Enemies seen" change and showed "Army 6 vs 6 Enemy". |
 | 1290 | Menu: "1 opponent · Normal · Small (256×256)", match time, Restart and Resume |
 | 1620 | "Victory", "Match time: 00:09", the table (You 0 / 0, 0 / 0, Winner; AI 1 (Normal) 0 / 6, 1 / 6, Out at 00:09), Restart and Continue. The minimap now shows the whole arena with both bases. |
 | 1740 | The start dialog over black again |
@@ -325,12 +348,10 @@ on the medium map.
 
 - **The AI layout bug** (`layout.lua:412`) and the stone stand-in for contested iron in 1v2 / 1v3 (see "AI planner
   limits").
-- **The HUD's enemy unit count leaks information through the fog.** "N Enemy" on the strip counts every opponent unit,
-  seen or not. Hiding it, or counting only visible units, is a HUD decision.
 - **No team mode.** It is always free-for-all. Allied AIs would need `set_friend`, `share_chart` and a team-aware
   `check_out`.
-- **The lobby keeps the HUD visible behind the dialog,** with zeros and "--:--". Hiding the HUD in the lobby is a HUD
-  change.
+- **The lobby still shows the HUD strip and the minimap** behind the dialog, with zeros, "--:--" and the Menu button.
+  The selection panel and the build menu are hidden there.
 - **Not tested with real input:** F10, the drop-downs (clicked by a person), Escape on the menu and results frames,
   and `/rts-match` typed in the console. The protocol covers each.
 - **Pre-Phase-3 saves** drop their old match on load (teardown) and restart in the lobby. Nauvis keeps whatever else was

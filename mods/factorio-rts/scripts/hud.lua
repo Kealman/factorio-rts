@@ -997,7 +997,13 @@ local function update_strip(player, h)
   local own = player.force.name
   local enemy = own == ENEMY and PLAYER or ENEMY
   el.own.caption = {"rts.army", count_force(own)}
-  el.enemy.caption = {"rts.enemy-count", match.enemy_unit_count and match.enemy_unit_count(own) or count_force(enemy)}
+  -- Phase 3 fog: only the enemy units in sight while the match runs ("?" when none), the real total after it.
+  if m and m.phase == "ended" then
+    el.enemy.caption = {"rts.enemies-total", match.enemy_unit_count(own)}
+  else
+    local seen = match.enemy_units_seen and match.enemy_units_seen(own) or 0
+    el.enemy.caption = {"rts.enemies-seen", seen > 0 and seen or "?"}
+  end
 
   local snap = snapshot(own)
   local res = h.res
@@ -1030,7 +1036,8 @@ local function update_strip(player, h)
 end
 
 local function update_build_menu(player, h)
-  h.build.visible = not prefs(player.index).build_hidden
+  -- Phase 3: no build menu in the lobby (the start dialog is up).
+  h.build.visible = not prefs(player.index).build_hidden and not (match.in_lobby and match.in_lobby())
   if not h.build.visible then return end
   local snap = snapshot(player.force.name)
   local ghost = cursor.ghost_name(player)
@@ -1048,6 +1055,7 @@ end
 local function update(player, h)
   track_match()
   apply_view_settings(player)
+  h.panel.visible = not (match.in_lobby and match.in_lobby()) -- Phase 3: no selection panel in the lobby
   update_selection(player, h)
   update_commands(player, h)
   update_groups(player, h)

@@ -20,7 +20,9 @@
 --   config           {opponents 1-3, difficulty, size, enemy_brain = "ai" | "waves", enemy_difficulty (= difficulty,
 --                    read by ai.init), first_wave_ticks, wave_period_ticks}; match.normalize_config
 --   surface          name of the current arena surface (nil in the lobby); util.surface() returns it
---   half             arena half size in tiles: the arena is [-half, half)^2 around (0, 0)
+--   arena_half       arena half size in tiles: the arena is [-arena_half, arena_half)^2 around (0, 0). Contract
+--                    with the AI planner (lead, 2026-10-15): ai/layout.lua reads it (fallback 80); nil before the
+--                    first match
 --   forces           participating forces, rts-player first; ai_forces = the AI ones
 --   spawns           {[force] = MapPosition} CC centres (match.home); facing = {[force] = +1 | -1}
 --   out              {[force] = tick the force was out}
@@ -36,7 +38,6 @@ local units = require("scripts.units")
 local buildings = require("scripts.buildings")
 local production = require("scripts.production")
 local basetemplate = require("scripts.basetemplate")
-local ai_layout = require("scripts.ai.layout") -- no events, no requires of match: safe here (arena bounds)
 
 local match = {}
 
@@ -195,7 +196,7 @@ end
 --- Arena half size in tiles (the lobby reports the default map's).
 function match.arena_half()
   local m = storage.match
-  return (m and m.half) or match.SIZES[match.DEFAULT_CONFIG.size].half
+  return (m and m.arena_half) or match.SIZES[match.DEFAULT_CONFIG.size].half
 end
 
 function match.phase()
@@ -224,6 +225,32 @@ function match.enemy_unit_count(force_name)
   local n = 0
   for _, f in ipairs(match.forces()) do
     if f ~= force_name then n = n + units.count(f) end
+  end
+  return n
+end
+
+--- Enemy units `force_name` sees now: live units of the other match forces standing in a chunk that is visible to
+--- the force (LuaForce.is_chunk_visible; fog.lua keeps the chunks around own units and buildings visible). The HUD
+--- shows this instead of the real total while the match runs, so the count does not leak through the fog.
+function match.enemy_units_seen(force_name)
+  local force = game.forces[force_name]
+  local surface = match.surface()
+  if not (force and surface and storage.units) then return 0 end
+  local visible, n = {}, 0
+  for _, f in ipairs(match.forces()) do
+    if f ~= force_name then
+      for _, rec in units.for_force(f) do
+        local p = rec.entity.position
+        local cx, cy = math.floor(p.x / 32), math.floor(p.y / 32)
+        local key = cx * 4096 + cy
+        local v = visible[key]
+        if v == nil then
+          v = force.is_chunk_visible(surface, {cx, cy})
+          visible[key] = v
+        end
+        if v then n = n + 1 end
+      end
+    end
   end
   return n
 end
@@ -321,7 +348,7 @@ function match.view_surface()
 end
 
 local function create_arena(m)
-  local half = m.half
+  local half = m.arena_half
   local name = match.ARENA_PREFIX .. m.match_id
   local old = game.surfaces[name]
   if old then game.delete_surface(old) end -- a leftover from an older save; never the live arena
@@ -556,13 +583,6 @@ function match.spawn_armies()
   m.enemy_next_wave = config().enemy_brain == "waves" and (game.tick + config().first_wave_ticks) or nil
 end
 
--- The AI planner's arena bounds (ai/layout.lua plans nothing outside [-ARENA_HALF, ARENA_HALF)^2). A module field:
--- set again on every load from storage.
-local function sync_ai_bounds()
-  local m = storage.match
-  ai_layout.ARENA_HALF = (m and m.half) or match.SIZES.legacy.half
-end
-
 local function fresh_stats(names)
   local stats = {}
   for _, f in ipairs(names) do
@@ -582,7 +602,7 @@ function match.start(cfg)
   local size = match.SIZES[c.size]
   m.match_id = (m.match_id or 0) + 1
   m.phase = "setup"
-  m.half = size.half
+  m.arena_half = size.half -- the AI planner's bounds too (see the header)
   m.forces = {PLAYER}
   m.ai_forces = {}
   for i = 1, c.opponents do
@@ -595,7 +615,6 @@ function match.start(cfg)
   m.out, m.winner, m.ended_tick, m.tick_started = {}, nil, nil, nil
   m.wave, m.waves_off, m.enemy_next_wave = 0, nil, nil
   m.stats = fresh_stats(m.forces)
-  sync_ai_bounds()
   util.log("match: starting match %d: %d opponent(s), %s, %s (%dx%d), brain %s", m.match_id, c.opponents,
     c.difficulty, c.size, 2 * size.half, 2 * size.half, c.enemy_brain)
 
@@ -696,7 +715,7 @@ function match.init()
   local m = storage.match
   if m and m.version == 3 then
     config()
-    sync_ai_bounds()
+    if m.half and not m.arena_half then m.arena_half, m.half = m.half, nil end -- the first Phase 3 field name
     match.lobby_surface()
     return
   end
@@ -709,16 +728,10 @@ function match.init()
     -- "alive" in the registries); the rest of nauvis is left as it is, and the save restarts in the lobby.
     match.teardown("pre-Phase-3 save, phase " .. tostring(m.phase) .. " on nauvis")
   end
-  sync_ai_bounds()
   match.lobby_surface()
   ensure_force(PLAYER)
   for _, player in pairs(game.players) do match.assign_player(player) end
 end
-
-events.on_load(function()
-  local m = storage.match
-  if m and m.half then ai_layout.ARENA_HALF = m.half end
-end)
 
 ---------------------------------------------------------------------------
 -- Per-force counters

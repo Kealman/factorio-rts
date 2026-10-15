@@ -118,7 +118,7 @@ function debug_tools.dump_lines()
   local c = m.config or {}
   local lines = {
     string.format("tick %d, match %s phase=%s on %s (half %s): %s opponent(s), %s, %s, brain %s; t=%.0fs winner=%s",
-      game.tick, tostring(m.match_id), tostring(m.phase), tostring(m.surface), tostring(m.half),
+      game.tick, tostring(m.match_id), tostring(m.phase), tostring(m.surface), tostring(m.arena_half),
       tostring(c.opponents), tostring(c.difficulty), tostring(c.size), tostring(c.enemy_brain),
       match.elapsed_seconds(), tostring(m.winner)),
     string.format("waves: wave=%s next wave in %ss (timing first %ss, period %ss)%s", tostring(m.wave),
@@ -1080,8 +1080,9 @@ end)
 
 -- Phase 3 match flow. The start dialog is up from the join (camera.lua's screenshot at 120 shows it). 150 clicks
 -- Start through the GUI click path; 930 (above) restarts the match through /rts-qa-reset; 1200 screenshot of the
--- running arena (fog on the minimap); 1260-1320 the in-match menu; 1500 /rts-kill-force ai; 1620 screenshot of the
--- results frame; 1680 Restart on the results frame (back to the lobby); 1740 screenshot; 1800 RTS_MATCHFLOW_DONE.
+-- running arena (fog on the minimap); 1230 one enemy walker in sight ("Enemies seen: 1"); 1260-1320 the in-match
+-- menu; 1500 /rts-kill-force ai; 1620 screenshot of the results frame; 1680 Restart on the results frame (back to the
+-- lobby); 1740 screenshot; 1800 RTS_MATCHFLOW_DONE.
 local function find_child(element, name)
   if element.name == name then return element end
   for _, child in pairs(element.children) do
@@ -1121,7 +1122,15 @@ camera.add_selftest_step(1200, "matchflow_screenshot_arena", function(player)
   if match.surface() then fog.stats_line() end
   camera.screenshot(player)
 end)
+-- One enemy walker next to the own CC (inside the force's vision): the strip must count it as seen.
+camera.add_selftest_step(1230, "matchflow_enemy_in_sight", function(player)
+  util.log("selftest: enemies seen by %s before the spawn: %d (total %d)", player.force.name,
+    match.enemy_units_seen(player.force.name), match.enemy_unit_count(player.force.name))
+  debug_tools.run_command("rts-spawn", "rts-walker 1 " .. ENEMY, player.index)
+end)
 camera.add_selftest_step(1260, "matchflow_menu_open", function(player)
+  util.log("selftest: enemies seen by %s after the spawn: %d (total %d)", player.force.name,
+    match.enemy_units_seen(player.force.name), match.enemy_unit_count(player.force.name))
   lobby.toggle_menu(player)
   util.log("selftest: menu: %s", flow_state(player))
 end)

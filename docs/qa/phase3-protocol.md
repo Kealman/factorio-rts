@@ -45,7 +45,7 @@ GUI self-test is off, so no scripted step clicks anything.
 |---|---|
 | Start dialog | Centre of the screen, title "Factorio RTS: new match" / "Factorio RTS: новый матч". Drop-downs: Opponents (601, 341) / (615, 341), Difficulty (601, 368) / (618, 368), Map size (617, 395) / (634, 395). **Start match** (739, 486) / (735, 486). |
 | Drop-down list | Clicking a drop-down opens its list just below it. Click the wanted line; take a screenshot first to see the rows. |
-| HUD strip | x 415–865, y 6–78. Row 1: timer, "Army N vs N Enemy", then the **Menu** button at about (721, 22). It moves a few pixels with the counts; use the screenshot. Row 3: the message line. |
+| HUD strip | x 415–865, y 6–78. Row 1: timer, "Army N vs Enemies seen: N", then the **Menu** button at about (721, 22). It moves a few pixels with the counts; use the screenshot. Row 3: the message line. |
 | Menu dialog | Centre. **Restart** (533, 438), **Resume** (745, 438) / (737, 438) |
 | Results dialog | Centre, title "Match over" / "Матч окончен". **Restart** (466, 504), **Continue** (813, 504) / **Осмотреться** (805, 504). With 2 opponents the table has one more row and the buttons sit at y 516 instead of 504; use the screenshot. |
 | Minimap | x 1106–1271, y 9–174. Small map: centre (1188.5, 91.5), 0.61 px per tile. Your CC is at (1135, 92). With 1 opponent the AI's CC is at (1242, 92). |
@@ -67,6 +67,7 @@ screen x = 640 + 16 × (world x + 88)        screen y = 400 + 16 × world y
 
 1. **Start dialog on join.** Wait for the window. Check what is shown:
    - the start dialog in the centre, over a black background;
+   - no selection panel at the bottom left and no build menu at the bottom right: both appear when the match starts;
    - the minimap black;
    - the strip message "Choose the match settings and press Start match." / "Выберите настройки и нажмите «Начать
      матч».".
@@ -89,7 +90,7 @@ screen x = 640 + 16 × (world x + 88)        screen y = 400 + 16 × world y
 4. **Start.** Click **Start match**. Expect:
    - the dialog to close;
    - your CC in the centre, 6 walkers to its right, 4 ore patches;
-   - the timer running and "Army 6 vs 6 Enemy";
+   - the timer running and "Army 6 vs Enemies seen: ?" ("?" = no enemy unit in sight; Russian "Врагов видно: ?");
    - on the minimap, only a lit area around your base on the left; the rest black.
 
    Patterns: `lobby click start player=1`, `match: match 1 running on rts-arena-1`,
@@ -120,7 +121,8 @@ screen x = 640 + 16 × (world x + 88)        screen y = 400 + 16 × world y
 9. **Contact.** Keep the camera on your walkers; press 1 to select all and SPACE for home if needed. When the AI group
    arrives, enemy walkers appear out of the fog near your units. Take a screenshot during the fight. Report:
    - whether the enemy units were visible before they came close;
-   - the strip's enemy count.
+   - the strip's "Enemies seen" count during the fight. It should count only enemies in sight, and go back to "?"
+     when they leave.
 
    Patterns, any of: `ai rts-ai-1: group #1 retreats`, `order attack done`, `match: rts-player is out`.
 10. **Play to 5:00.**
@@ -139,7 +141,7 @@ screen x = 640 + 16 × (world x + 88)        screen y = 400 + 16 × world y
 13. **QA reset restarts the match.** Press Ctrl+Shift+R. Expect a fresh base and army, the timer back at 00:0x, and
     the minimap fog reset to your base area. Patterns: `qa hotkey /rts-qa-reset nowaves player=1`,
     `qa-reset by player=1: match 1 -> 2 on rts-arena-2` and `match: arena rts-arena-1 queued for deletion: true`.
-14. **Console start, 1v2 easy.** Run `/rts-match 2 easy small`. Expect "Army 6 vs 12 Enemy". Patterns:
+14. **Console start, 1v2 easy.** Run `/rts-match 2 easy small`. Expect "Army 6 vs Enemies seen: ?": 12 enemy units exist, none in sight. Patterns:
     `rts-match: match 3, 2 opponent\(s\), easy, small`, `match: match 3 running on rts-arena-3` and
     `ai rts-ai-2: commander started, difficulty easy`.
 15. **Scripted victory, results, restart.**
