@@ -47,16 +47,18 @@ storage.match = { phase = "running", tick_started = n, enemy_next_wave = n }  --
 
 ## Input map (prototypes/inputs.lua)
 
+No input sits on W, A, S or D: a `game-only` input there blocks the vanilla move controls that pan the remote-view camera. That is why attack-move and stop are F and X instead of the classic A and S.
+
 | Name | key_sequence | consuming | Purpose |
 |---|---|---|---|
 | rts-lclick | mouse-button-1 | none | log/hover helper only (selection comes from the tool) |
 | rts-rclick | mouse-button-2 | none | order at cursor (fallback; primary path is reverse_select) |
-| rts-attack-move | A | game-only | next right click = attack-move |
-| rts-stop | S | game-only | stop selected |
+| rts-attack-move | F | game-only | arm attack-move: the next plain right click is an attack-move (F again cancels) |
+| rts-stop | X | game-only | stop selected (also cancels an armed attack-move) |
 | rts-hold | H | game-only | hold position (stop + flag) |
-| rts-group-set-N | CONTROL + N (1..5) | game-only | assign control group |
-| rts-group-N | N (1..5) | game-only | recall control group (must consume so the quickbar does not react) |
-| rts-select-all | CONTROL + A | game-only | select all own army on screen? (Phase 1: all) |
+| rts-group-set-N | CONTROL + N (1..5), alt COMMAND + N | game-only | assign control group |
+| rts-group-N | N (1..5) | game-only | recall control group (must consume so the quickbar does not react); double tap jumps the camera |
+| rts-select-all | CONTROL + A, alt COMMAND + A | game-only | select every own unit (only the chord is consumed; plain A still pans) |
 | rts-camera-home | SPACE | game-only | jump camera to own spawn |
 | rts-give-cursor | F1 | none | re-give the cursor tool |
 

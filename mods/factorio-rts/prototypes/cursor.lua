@@ -3,7 +3,8 @@
 --   left drag            = select              (own units, replaces the selection)
 --   shift + left drag    = alt_select          (own units, added to the selection)
 --   right click / drag   = reverse_select      (any entity: 0x0 area on ground = move, on enemy = attack)
---   shift + right drag   = alt_reverse_select  (attack-move)
+--   shift + right drag   = alt_reverse_select  (attack-move; F then a plain right click does the same)
+-- The handlers live in scripts/selection.lua (select, alt_select) and scripts/orders.lua (the reverse modes).
 local UNIT_TYPES = {"spider-unit", "unit"}
 local ICON = "__base__/graphics/icons/spidertron-remote.png"
 

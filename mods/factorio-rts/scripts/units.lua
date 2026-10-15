@@ -7,11 +7,14 @@
 --     order  = "idle" | "move" | "attack" | "attack_move" | "hold" | ...,  -- written by orders.lua (*)
 --     target = LuaEntity?,       -- orders.lua
 --     dest   = MapPosition?,     -- orders.lua
+--     issuer = "orders"?,        -- orders.lua: set while orders.lua drives the unit (also `fails`)
 --   }
 --
 -- (*) `order` is the claim on a unit: any value other than "idle" means some module drives the unit and
--- handles its on_ai_command_completed. orders.lua owns it for player orders; match.lua's enemy brain
--- writes "attack_move" for rts-enemy wave members; debug.lua's autotest writes "autotest" for its units.
+-- handles its on_ai_command_completed. orders.lua owns it for player orders and marks its claims with
+-- issuer = "orders" (match.lua also writes "attack_move", so the value alone does not say who owns it);
+-- match.lua's enemy brain writes "attack_move" for rts-enemy wave members; debug.lua's autotest may write
+-- "autotest" for units it commands directly (orders.lua never touches those).
 -- units.lua only creates records with order = "idle" and applies the idle rule below.
 --
 -- Idle rule (spike decision 3): units with no command wander 8-12 tiles, so whenever an unclaimed unit

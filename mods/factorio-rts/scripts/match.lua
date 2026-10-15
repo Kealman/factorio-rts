@@ -104,6 +104,12 @@ local function prepare_arena(surface)
     -h, h, #tiles, ARENA_TILE, removed, water)
 end
 
+-- Spawn grid spacing. The Space Age walker (strafer copy) is 1.8 tiles wide and the heavy (stomper copy)
+-- 2.7 tiles, so heavies need more room than walkers; the base-game variants are smaller.
+local WALKER_SPACING = 3
+local HEAVY_SPACING = 4
+local HEAVY_FRONT = 6 -- heavies' column, tiles in front of the walker block's first column
+
 --- Spawn the standard army of one force around its spawn point: 20 walkers in a 4x5 block and
 --- 4 heavies in a column in front of them (towards the enemy).
 local function spawn_army(force_name)
@@ -112,11 +118,11 @@ local function spawn_army(force_name)
   local made = 0
   for i = 0, 19 do
     local col, row = i % 4, math.floor(i / 4)
-    local pos = {x = s.x - dir * col * 3, y = s.y + (row - 2) * 3}
+    local pos = {x = s.x - dir * col * WALKER_SPACING, y = s.y + (row - 2) * WALKER_SPACING}
     if units.spawn("rts-walker", pos, force_name, "walker") then made = made + 1 end
   end
   for i = 0, 3 do
-    local pos = {x = s.x + dir * 5, y = s.y + (i - 1.5) * 3}
+    local pos = {x = s.x + dir * HEAVY_FRONT, y = s.y + (i - 1.5) * HEAVY_SPACING}
     if units.spawn("rts-walker-heavy", pos, force_name, "heavy") then made = made + 1 end
   end
   return made

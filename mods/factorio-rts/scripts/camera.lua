@@ -4,7 +4,8 @@
 --   setup_done, setup_tick
 --   last_remote_pos, last_zoom   tracked every 10 ticks, restored after an unwanted exit
 --   selftest_step                GUI self-test progress (dev only)
--- and storage.camera = {pending = {[player_index] = tick}} (deferred re-apply).
+-- and storage.camera = {pending = {[player_index] = tick}, selftest = nil|true|false}
+-- (deferred re-apply; the self-test switch set by /rts-selftest, nil = SELFTEST_DEFAULT).
 local util = require("scripts.util")
 local events = require("scripts.events")
 local match = require("scripts.match")
@@ -42,16 +43,19 @@ local BLOCKED_ACTIONS = {
   "toggle_equipment_movement_bonus", "drop_item", "use_item",
 }
 
--- Dev-only GUI self-test (tools/gui-run.sh): screenshots, a guard check, a home jump, then the
--- RTS_GUI_READY stop marker. Steps are ticks after setup. Turn off before a release.
-local GUI_SELFTEST = true
+-- Dev-only GUI self-test (tools/gui-run.sh): screenshots, a guard check, a home jump, the selection and
+-- order steps that debug.lua adds, then the RTS_GUI_READY stop marker. Steps are ticks after setup.
+-- Off by default so QA sessions are not disturbed; `/rts-selftest on` runs it from now (and `off` stops it).
+-- Only the RTS_GUI_READY log line (`always`) is written with the self-test off, so tools/gui-run.sh can
+-- still use it as the stop marker of a smoke run.
+local SELFTEST_DEFAULT = false
 local SELFTEST_STEPS = {
   {at = 120, run = "screenshot"},
   {at = 330, run = "exit_remote"}, -- off the 60-tick watchdog, so the controller-changed event path is tested
   {at = 360, run = "check_guard"},
   {at = 600, run = "home"},
   {at = 900, run = "screenshot"},
-  {at = 960, run = "ready"},
+  {at = 960, run = "ready", always = true},
 }
 
 ---------------------------------------------------------------------------
@@ -265,19 +269,65 @@ local SELFTEST = {
   end,
 }
 
-if GUI_SELFTEST then
-  events.on_nth_tick(30, function(e)
-    for _, player in pairs(game.connected_players) do
-      local p = storage.players and storage.players[player.index]
-      local step = p and p.setup_done and p.selftest_step and SELFTEST_STEPS[p.selftest_step]
-      while step and e.tick - p.setup_tick >= step.at do
-        p.selftest_step = p.selftest_step + 1
-        SELFTEST[step.run](player)
-        step = SELFTEST_STEPS[p.selftest_step]
-      end
-    end
+--- Screenshot of what the player sees (with the GUI) into script-output; logs the view summary.
+camera.screenshot = screenshot
+
+--- True while the GUI self-test is on (storage switch from /rts-selftest, else SELFTEST_DEFAULT).
+function camera.selftest_enabled()
+  local flag = storage.camera and storage.camera.selftest
+  if flag == nil then return SELFTEST_DEFAULT end
+  return flag
+end
+
+--- Add a self-test step: fn(player) runs `at` ticks after the player's setup while the self-test is on.
+--- Load time only (module top level), so every client has the same list.
+function camera.add_selftest_step(at, name, fn)
+  assert(not SELFTEST[name], "camera.add_selftest_step: duplicate step " .. name)
+  SELFTEST[name] = fn
+  SELFTEST_STEPS[#SELFTEST_STEPS + 1] = {at = at, run = name}
+  table.sort(SELFTEST_STEPS, function(a, b)
+    if a.at ~= b.at then return a.at < b.at end
+    return a.run < b.run
   end)
 end
+
+-- Registered unconditionally (the switch lives in storage); every handler registration must be the same
+-- on every load.
+events.on_nth_tick(30, function(e)
+  local enabled = camera.selftest_enabled()
+  for _, player in pairs(game.connected_players) do
+    local p = storage.players and storage.players[player.index]
+    local step = p and p.setup_done and p.selftest_step and SELFTEST_STEPS[p.selftest_step]
+    while step and e.tick - p.setup_tick >= step.at do
+      p.selftest_step = p.selftest_step + 1
+      if enabled or step.always then SELFTEST[step.run](player) end
+      step = SELFTEST_STEPS[p.selftest_step]
+    end
+  end
+end)
+
+commands.add_command("rts-selftest", "[on|off] - run the GUI self-test from now (on) or stop it (off)", function(cmd)
+  local player = cmd.player_index and game.get_player(cmd.player_index)
+  if player and not player.admin then
+    player.print("[rts] admins only")
+    return
+  end
+  local arg = (cmd.parameter or ""):lower()
+  local on = arg ~= "off"
+  storage.camera.selftest = on
+  if on then
+    for _, pl in pairs(game.connected_players) do
+      local p = storage.players and storage.players[pl.index]
+      if p and p.setup_done then
+        p.setup_tick = game.tick
+        p.selftest_step = 1
+      end
+    end
+  end
+  local line = "[rts] GUI self-test " .. (on and "on (restarted for connected players)" or "off")
+  if player then player.print(line) else game.print(line) end
+  util.log("camera: %s", line)
+end)
 
 ---------------------------------------------------------------------------
 -- Lifecycle
