@@ -7,7 +7,8 @@
 --   [rts] ai perf minute N: ticks T, AI runs R, AI time <profiler>, wall clock <profiler>
 --   [rts] ai autotest check <name>: PASS|FAIL ...
 --   [rts] ai autotest summary <passed>/<total> ... result=...
--- Checks: build_3min (each force has an extractor, a smelter and a barracks by 3 min), produce (kits made in every
+-- Checks: planner_arena_half and planner_vertical_iron / _copper (autotest.planner_check: a base whose ore lies north
+-- and south of the CC, as rotated spawns put it), build_3min (each force has an extractor, a smelter and a barracks by 3 min), produce (kits made in every
 -- minute from minute 3 on while the force still has a barracks and a CC), attack (each force launched an attack by the end,
 -- unless the match ended first or the force lost its CC first), outcome (the match ended, or at least two forces
 -- still produce at the end; when a force stopped producing at DURATION, the test waits up to END_GRACE for the match
@@ -21,6 +22,8 @@ local production = require("scripts.production")
 local economy = require("scripts.economy")
 local ai = require("scripts.ai.init")
 local commander = require("scripts.ai.commander")
+local layout = require("scripts.ai.layout")
+local data = require("scripts.ai.orders_data")
 
 local autotest = {}
 
@@ -44,10 +47,85 @@ local function check(name, ok, fmt, ...)
   util.log("ai autotest check %s: %s %s", name, ok and "PASS" or "FAIL", string.format(fmt, ...))
 end
 
+---------------------------------------------------------------------------
+-- Planner check (rotated spawns): a CC whose ore lies north and south of it
+---------------------------------------------------------------------------
+autotest.PLANNER_SURFACE = "rts-ai-planner-check"
+autotest.PLANNER_ORE = {{"iron-ore", 0, 28, 12}, {"copper-ore", 0, -28, 10}} -- name, dx, dy, size (from the CC)
+
+--- Plan the iron and copper lines with the real planner for a CC at (0, 0) on a scratch surface, iron 28 tiles
+--- south and copper 28 tiles north of it, as rotated spawns put them. Both spines must run north-south (vertical),
+--- with drills, at least one routed hub slot and a pole chain to the CC. Also checks the arena-size contract
+--- (layout.arena_half() == storage.match.arena_half). Nothing is registered and the surface is deleted afterwards.
+function autotest.planner_check()
+  local m = storage.match
+  check("planner_arena_half", m == nil or m.arena_half == nil or layout.arena_half() == m.arena_half,
+    "layout.arena_half() = %s, storage.match.arena_half = %s", tostring(layout.arena_half()),
+    tostring(m and m.arena_half))
+  local surface = game.surfaces[autotest.PLANNER_SURFACE] or game.create_surface(autotest.PLANNER_SURFACE, {
+    default_enable_all_autoplace_controls = false,
+    autoplace_settings = {entity = {treat_missing_as_default = false, settings = {}},
+                          decorative = {treat_missing_as_default = false, settings = {}}},
+  })
+  surface.request_to_generate_chunks({0, 0}, 2)
+  surface.force_generate_chunk_requests()
+  for _, e in pairs(surface.find_entities_filtered({area = {{-60, -60}, {60, 60}}})) do e.destroy() end
+  local tiles = {}
+  for x = -60, 59 do
+    for y = -60, 59 do tiles[#tiles + 1] = {name = "grass-1", position = {x, y}} end
+  end
+  surface.set_tiles(tiles, true, true, true, false)
+  -- obstacles where a CC composite stands (neutral, unregistered: create_entity raises no built event)
+  surface.create_entity({name = "rts-command-center", position = {0, 0}, force = "neutral"})
+  for _, off in ipairs(buildings.CC_STOCKPILES) do
+    surface.create_entity({name = "rts-stockpile", position = {off.x, off.y}, force = "neutral"})
+  end
+  for _, o in ipairs(autotest.PLANNER_ORE) do
+    local half = o[4] / 2
+    for x = o[2] - half, o[2] + half - 1 do
+      for y = o[3] - half, o[3] + half - 1 do
+        surface.create_entity({name = o[1], position = {x + 0.5, y + 0.5}, amount = 1000})
+      end
+    end
+  end
+  local C = {force = "rts-planner-check", frame = layout.frame({x = 0, y = 0}, 1), reserved = {}, avoid = {},
+             belt_tiles = {}, claimed = {}, plan = {}}
+  layout.reserve_hub(C, C.frame)
+  local ctx = layout.context(C, surface)
+  for _, name in ipairs({"iron", "copper"}) do
+    local ok_plan, plan, reason = pcall(layout.plan_line, C, ctx, name, data.LINES[name], {})
+    local vertical, drills, slots, detail = false, 0, 0, nil
+    if not ok_plan then
+      detail = "planner error: " .. tostring(plan)
+    elseif not plan then
+      detail = "no plan: " .. tostring(reason)
+    else
+      local xs, ys = {}, {}
+      for _, b in ipairs(plan.belts) do
+        if b.seg == 0 then
+          xs[b.x] = true
+          ys[b.y] = true
+        end
+      end
+      vertical = table_size(xs) == 1 and table_size(ys) > 1
+      drills, slots = #plan.drills, #plan.slots
+      local names = {}
+      for i, sl in ipairs(plan.slots) do names[i] = sl.name end
+      detail = string.format("patch %s at %s: spine %s (%d tiles), %d drill spots, slots [%s], %d belts, pole chain %s",
+        plan.patch.id, util.pos_str({plan.patch.cx, plan.patch.cy}), vertical and "vertical" or "NOT vertical",
+        table_size(ys) * table_size(xs), drills, table.concat(names, " "), #plan.belts,
+        plan.chained and "reaches the CC" or "short")
+    end
+    check("planner_vertical_" .. name, vertical and drills >= 2 and slots >= 1, "%s", detail)
+  end
+  game.delete_surface(surface)
+end
+
 function autotest.start()
   local s = {started = game.tick, minute = 0, pass = 0, fail = 0, kits = {}, per_minute = {}, built_at = {},
              produced_ok = {}, done = false}
   storage.ai_autotest = s
+  autotest.planner_check()
   local cfg = storage.match and storage.match.config
   local difficulty = autotest.PLAYER_DIFFICULTY or (cfg and cfg.enemy_difficulty) or "normal"
   for _, f in ipairs(autotest.FORCES) do

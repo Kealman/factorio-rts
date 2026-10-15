@@ -27,8 +27,11 @@ Date: 2026-10-15. Factorio 2.0.77 (mac-arm64, Steam). Plan: `docs/PHASE3.md` ("A
 
   Hard finishes a match faster than easy. In 12-minute runs, easy and normal both still stood at 12 minutes, while
   hard ended at 224 s again.
-- **The match-flow owner can set `match.AI_VERTICAL_LINES = true`.** The vertical-line crash that their notes report
-  (`layout.lua:412`) is fixed. The 1v3 run passes with the flag on.
+- **The match-flow owner can set `match.AI_VERTICAL_LINES = true` and rotate spawns.**
+  - The vertical-line crash that their notes report (`layout.lua:412`, undefined `tx`/`ty` in the vertical branch of
+    `spine_candidate`) is fixed: `along, perp = cell[2], cell[1]`.
+  - The arena size comes from `storage.match.arena_half` (`layout.arena_half()`, fallback 80).
+  - The autotest checks both at start ("Planner check" below). The 1v3 run passes with the flag on.
 
 ## Files (`scripts/ai/`)
 
@@ -326,6 +329,29 @@ one barracks, then stone, a second iron smelter, a second extractor, and one tur
 - the expansion at 5 min.
 
 ## Validation and measured timings
+
+**Planner check** (`autotest.planner_check`, run at the start of every AI autotest):
+- It plans the iron and copper lines with the real planner on a scratch surface, deleted afterwards.
+- The CC is at (0, 0) with iron 28 tiles south and copper 28 tiles north, as rotated spawns put ore.
+- `planner_vertical_iron` and `planner_vertical_copper` require a north-south spine, at least 2 drills and a routed
+  hub slot. `planner_arena_half` requires `layout.arena_half() == storage.match.arena_half`.
+
+Result on the current code:
+
+```
+ai autotest check planner_arena_half: PASS layout.arena_half() = 128, storage.match.arena_half = 128
+ai autotest check planner_vertical_iron: PASS patch iron-ore@-6,22 at (0.0, 28.0): spine vertical (13 tiles), 8 drill spots, slots [S1 S2 W2 W1 N2c X1 X2], 85 belts, pole chain reaches the CC
+ai autotest check planner_vertical_copper: PASS patch copper-ore@-5,-33 at (0.0, -28.0): spine vertical (10 tiles), 6 drill spots, slots [N1 E1], 53 belts, pole chain reaches the CC
+```
+
+A full 6-minute normal run with the check in place: 12/12 (the 9 match checks plus these 3), zero errors.
+
+With the old line put back (`along, perp = ty, tx`), both vertical checks FAIL with the reported error instead of
+crashing the game, because the planner runs under `pcall`:
+
+```
+ai autotest check planner_vertical_iron: FAIL planner error: __factorio-rts__/scripts/ai/layout.lua:421: attempt to perform arithmetic on local 'perp' (a nil value)
+```
 
 All runs below use the current `mods/` plus these AI files. Each copy differs from `mods/` only in `AUTOTEST_MATCH`
 (difficulty, opponents), `autotest.DURATION`, or, for the 1v3 run, `match.AI_VERTICAL_LINES = true`. Up to seven
