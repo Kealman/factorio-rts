@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Create a fresh map with our mods and run a headless server for N seconds, then print mod log lines.
-# Usage: tools/headless-run.sh [seconds=20] [grep-pattern='\[rts']
+# Usage: tools/headless-run.sh [seconds=20] [grep-pattern='\[rts'] [mods-dir=$RTS_MODS_DIR]  (each spike has its own mods dir)
 # Verified on Factorio 2.0.77 mac-arm64 (2026-10-15): --create and --start-server run without a window.
 set -euo pipefail
 source "$(dirname "$0")/factorio-env.sh"
