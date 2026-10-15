@@ -278,6 +278,10 @@ kill feed (6, 6) 195 wide. The abilities bar (`scripts/abilitygui.lua`) sits at 
   level, with level and kills in the tooltip (`commander.card`). Click keeps only that prototype;
   Shift + click drops it. A one-prototype selection titles the page "Raider ×6". Orders `haul` and `commander` have
   labels.
+- **Stop and Hold buttons** run every handler of `rts-stop` / `rts-hold` (`script.get_event_handler`), so they do
+  exactly what X and H do: orders.lua stops the units, commander.lua the selected Commander. Haulers are not stopped
+  by either (logistics claims them; Return home or a ground right-click parks them). Log line:
+  `hud click stop|hold player=N result=<selected> (rts-stop handlers)`.
 - **Locked recipes.** A recipe is locked when the force has it disabled (laser turret, steam plant) or when it is a
   barracks kit whose unit research has not unlocked (heavy, raider, artillery). Locked buttons are grey, disabled and
   say "Requires research: X (T)". The mk2 kits are not shown: research never enables them. Buttons unlock while the

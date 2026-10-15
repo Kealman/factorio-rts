@@ -196,15 +196,16 @@ local COLOR = {
   enemy = {1, 0.5, 0.45},
 }
 
--- Command buttons. Each calls the first of module[fns[i]](player_index) that exists at click time.
+-- Command buttons. Each calls the first of module[fns[i]](player_index) that exists at click time; a button with
+-- `input` runs every handler of that custom input instead, exactly like its key (Phase 4: the Commander's stop).
 -- caption / tooltip are [rts] locale keys; key is the key name shown in brackets (prototypes/inputs.lua).
 local COMMANDS = {
   {action = "attack_move", caption = "rts.cmd-attack-move", key = "F", module = "scripts.orders",
    fns = {"arm_attack_move"}, tooltip = "rts.cmd-attack-move-tooltip"},
   {action = "stop", caption = "rts.cmd-stop", key = "X", module = "scripts.orders", fns = {"stop"},
-   tooltip = "rts.cmd-stop-tooltip"},
+   tooltip = "rts.cmd-stop-tooltip", input = "rts-stop"},
   {action = "hold", caption = "rts.cmd-hold", key = "H", module = "scripts.orders", fns = {"hold"},
-   tooltip = "rts.cmd-hold-tooltip"},
+   tooltip = "rts.cmd-hold-tooltip", input = "rts-hold"},
   {action = "select_all", caption = "rts.cmd-select-all", key = "Ctrl+A", module = "scripts.selection",
    fns = {"select_all"}, tooltip = "rts.cmd-select-all-tooltip"},
 }
@@ -1768,6 +1769,20 @@ end
 
 local function run_command(player, action)
   local c = COMMAND_BY_ACTION[action]
+  -- Stop and Hold run every handler of their key (`input`): orders.lua for units, commander.lua for the Commander (a
+  -- spider-vehicle, which orders.lua cannot command), abilities.lua's disarm, and any module that hooks the key later.
+  -- The button therefore does exactly what X / H do.
+  local handler = c.input and script.get_event_handler(c.input)
+  if handler then
+    local count = optional_fn("scripts.selection", {"count"})
+    local n = count and count(player.index) or -1
+    local proto = prototypes.custom_input[c.input]
+    handler({name = proto and proto.event_id, input_name = c.input, player_index = player.index, tick = game.tick,
+             cursor_position = player.position, cursor_display_location = {x = 0, y = 0}})
+    -- QA log line: "hud click stop|hold player=N result=<selected> (rts-stop handlers)"
+    util.log("hud click %s player=%d result=%d (%s handlers)", action, player.index, n, c.input)
+    return n
+  end
   local fn = optional_fn(c.module, c.fns)
   if not fn then
     local wanted = c.module .. "." .. table.concat(c.fns, "/")
@@ -2418,6 +2433,8 @@ do -- dev-only locals stay out of the main chunk (Lua allows 200 locals there)
         tostring(kit_ok),
         supply_of(own).used, supply_of(own).cap)
     end)
+    -- The Stop button runs the X handlers: orders.lua for the units, commander.lua for the selected Commander.
+    camera.add_selftest_step(1365, "hud_p4_stop_button", function(player) run_command(player, "stop") end)
     camera.add_selftest_step(1380, "hud_p4_screenshot_units", screenshot)
     camera.add_selftest_step(1395, "hud_p4_card_click", function(player)
       hud.card_click(player, "rts-raider", true)  -- every unit but the raiders
