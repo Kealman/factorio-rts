@@ -1,15 +1,21 @@
 -- HUD: four areas in player.gui.screen.
---   bottom-left   selection panel. With units selected: count per kind, average health, current order, four
---                 command buttons, control-group indicators 1-5. With an own building selected (Phase 2): its
---                 name and health, then per kind: barracks / factory recipe buttons + pause, production progress,
---                 counters and the rally point; Command Center bots and power; turret ammo; others their status.
+--   bottom-left   selection panel. With units selected: count, average health, current order, kinds,
+--                 control-group indicators 1-5, four command buttons. With an own building selected (Phase 2):
+--                 its name and health, then per kind: barracks / factory recipe grid (Pause first, 6 per row),
+--                 production progress, counters and the rally point; Command Center bots and power; turret ammo;
+--                 others their status. The panel is wide and low, so it stays below the console (chat).
 --   bottom-right  build menu (Phase 2): one slot button per placeable item with the count in the logistic network;
 --                 a click puts a ghost of the item in the cursor (cursor.give_ghost). B shows / hides it.
 --   top-centre    match strip: timer and own vs enemy unit counts; the resource row (iron, copper, steel, stone,
 --                 magazines, power, bots from economy.snapshot); a message line (attack-move armed, build mode,
 --                 enemy waves, match result)
 --   top-right     minimap of the arena (directly on `screen`, over a decorative frame); a click jumps the
---                 camera there (camera.jump_to)
+--                 camera there (camera.jump_to). The vanilla entity tooltip, which the game draws in that corner,
+--                 is switched off (HIDE_ENTITY_TOOLTIP).
+--
+-- Every player-facing text is a localised string from the [rts] section of locale/*/factorio-rts.cfg
+-- ({"rts.key", parameters...}); prototype names come from the prototypes (localised_name). Only numbers,
+-- key names (F, Ctrl+A), positions and rich-text icons are built here. See docs/qa/phase2-polish-notes.md.
 --
 -- Owns storage.players[i].hud = {panel, strip, minimap_frame, minimap, build (LuaGuiElement), el = {...},
 --   groups = {...}, res = {...}, build_buttons = {[item] = button}, recipe_buttons = {[recipe or ""] = button},
@@ -55,11 +61,17 @@ local PLAYER, ENEMY = util.PLAYER_FORCE, util.ENEMY_FORCE
 --   820   click-selects the Command Center; 840 screenshot (CC panel, build menu, resource strip)
 --   860   click-selects the barracks, walker-kit recipe through the button path, rally point through the
 --         right-click path (camera.lua's screenshot at 900 shows the barracks panel and the flag)
---   960   click-selects the factory (placed as a ghost at 450), extractor recipe, screenshot (11 recipe buttons)
+--   960   click-selects the factory (placed as a ghost at 450), extractor recipe, screenshot (12 recipe buttons)
 --   3000  screenshot, then the "RTS_HUD_DONE" marker
 -- HUD_CALIBRATE (a load-time constant): at setup + 180 adds chart tags A, B, C at (-64,-64), (64,-64),
 -- (-64,64) and O at (0,0), to measure the minimap scale from a screenshot (docs/qa/phase1-hud-notes.md).
 local HUD_CALIBRATE = false
+
+-- The vanilla entity tooltip (the info box shown while hovering an entity) is drawn in the top-right corner,
+-- half under the HUD minimap (docs/qa/phase2-qa-results.md steps 3 and 10). The HUD owns that corner, so it
+-- switches the tooltip off. Hovering itself (player.selected, building clicks) is update_entity_selection,
+-- which camera.lua keeps on. false = leave the vanilla tooltip alone.
+local HIDE_ENTITY_TOOLTIP = true
 
 local REFRESH_PERIOD = 30          -- ticks; full refresh (counts, resources, dead units, timer)
 local BUILDING_REFRESH_PERIOD = 10 -- ticks; building panel only (production progress), while one is selected
@@ -67,11 +79,22 @@ local WAVE_ALERT_TICKS = 10 * 60   -- how long "wave N is attacking" stays on th
 local RESOURCE_LOG_TICKS = 5 * 60  -- the "hud resources" QA line is written at most this often (on change)
 
 -- Layout, in GUI units (multiplied by player.display_scale on screen).
+-- The selection panel is wide and low: the console (chat) has no GameViewSettings switch and its last line ends
+-- about 135 GUI units above the bottom of the screen, so the panel's top (PANEL_HEIGHT + MARGIN) stays below it.
 local MARGIN = 8
-local PANEL_WIDTH, PANEL_HEIGHT = 420, 140
+local FRAME_PADDING_X = 16         -- rts_hud_frame: 8 left + 8 right
+local PANEL_WIDTH, PANEL_HEIGHT = 520, 114
+local PANEL_INNER = PANEL_WIDTH - FRAME_PADDING_X
 local STRIP_WIDTH, STRIP_HEIGHT = 600, 96
-local LINE_WIDTH = PANEL_WIDTH - 16 -- inside the frame's padding
-local LINE1_WITH_BAR = 270         -- first status line when the 120-wide progress bar shares its row
+local STRIP_INNER = STRIP_WIDTH - FRAME_PADDING_X
+local KINDS_WIDTH = 180            -- "Walker ×20   Heavy ×4", left of the control-group buttons (42 wide each)
+-- Recipe grid of a barracks / factory: Pause first, then the recipes (group, subgroup, recipe order), at most
+-- RECIPE_COLUMNS per row, so a new recipe never moves Pause and only shifts the recipes after it.
+local RECIPE_COLUMNS = 6
+local RECIPE_BUTTON, RECIPE_SPACING = 34, 2 -- rts_hud_recipe_button size
+local RECIPE_GRID_WIDTH = RECIPE_COLUMNS * RECIPE_BUTTON + (RECIPE_COLUMNS - 1) * RECIPE_SPACING -- 214
+local BODY_SPACING = 8             -- between the recipe grid and the text column
+local TEXT_WITH_GRID = PANEL_INNER - RECIPE_GRID_WIDTH - BODY_SPACING -- 282
 local BUILD_COLUMNS = 6
 local BUILD_WIDTH, BUILD_HEIGHT = 272, 122
 local MINIMAP_SIZE = 220
@@ -90,11 +113,13 @@ local NAMES = {panel = "rts_hud_panel", strip = "rts_hud_strip", minimap_frame =
                minimap = "rts_hud_minimap", build = "rts_hud_build"}
 local PREFIX = "rts_hud_"          -- every clickable HUD element's name starts with this
 
-local KIND_NAMES = {walker = "Walker", heavy = "Heavy"}
+-- Locale keys ([rts] section).
+local KIND_KEYS = {walker = "rts.kind-walker", heavy = "rts.kind-heavy"}
 local KIND_RANK = {walker = 1, heavy = 2}
-local ORDER_NAMES = {idle = "Idle", move = "Move", attack = "Attack", attack_move = "Attack-move", hold = "Hold"}
-local BUILDING_NAMES = {cc = "Command Center", barracks = "Barracks", factory = "Factory", turret = "Turret",
-                        extractor = "Extractor", smelter = "Smelter", stockpile = "Stockpile", solar = "Solar array"}
+local ORDER_KEYS = {idle = "rts.order-idle", move = "rts.order-move", attack = "rts.order-attack",
+                    attack_move = "rts.order-attack-move", hold = "rts.order-hold"}
+local FEED_KEYS = {fed = "rts.turret-fed", ["network empty"] = "rts.turret-network-empty",
+                   ["no network"] = "rts.turret-no-network"}
 
 local COLOR = {
   white = {1, 1, 1},
@@ -107,16 +132,16 @@ local COLOR = {
 }
 
 -- Command buttons. Each calls the first of module[fns[i]](player_index) that exists at click time.
+-- caption / tooltip are [rts] locale keys; key is the key name shown in brackets (prototypes/inputs.lua).
 local COMMANDS = {
-  {action = "attack_move", caption = "Attack-move", key = "F", module = "scripts.orders",
-   fns = {"arm_attack_move"},
-   tooltip = "Attack-move: the next right click sends the selection there, fighting every enemy on the way."},
-  {action = "stop", caption = "Stop", key = "X", module = "scripts.orders", fns = {"stop"},
-   tooltip = "Stop: cancel the current orders. Units still return fire."},
-  {action = "hold", caption = "Hold", key = "H", module = "scripts.orders", fns = {"hold"},
-   tooltip = "Hold position: stay put and fire at enemies in range."},
-  {action = "select_all", caption = "Select all", key = "Ctrl+A", module = "scripts.selection", fns = {"select_all"},
-   tooltip = "Select your whole army."},
+  {action = "attack_move", caption = "rts.cmd-attack-move", key = "F", module = "scripts.orders",
+   fns = {"arm_attack_move"}, tooltip = "rts.cmd-attack-move-tooltip"},
+  {action = "stop", caption = "rts.cmd-stop", key = "X", module = "scripts.orders", fns = {"stop"},
+   tooltip = "rts.cmd-stop-tooltip"},
+  {action = "hold", caption = "rts.cmd-hold", key = "H", module = "scripts.orders", fns = {"hold"},
+   tooltip = "rts.cmd-hold-tooltip"},
+  {action = "select_all", caption = "rts.cmd-select-all", key = "Ctrl+A", module = "scripts.selection",
+   fns = {"select_all"}, tooltip = "rts.cmd-select-all-tooltip"},
 }
 local COMMAND_BY_ACTION = {}
 for _, c in pairs(COMMANDS) do COMMAND_BY_ACTION[c.action] = c end
@@ -124,21 +149,20 @@ local GROUP_COUNT = 5
 
 -- Build menu, in button order: the first BUILD_COLUMNS are the economy row, then production and defense.
 -- The belt, inserter and pole are the vanilla items (docs/qa/phase2-prototypes-notes.md "Reused vanilla
--- entities"). An item without an rts recipe (the stockpile has none yet) is disabled while the network holds
--- none of it, so it only becomes usable when some was given (/rts-give rts-stockpile 2) or a recipe is added.
+-- entities"). An item without an rts recipe is disabled while the network holds none of it.
 local BUILD_ITEMS = {
   "rts-extractor", "rts-smelter", "rts-solar-array", "transport-belt", "fast-inserter", "medium-electric-pole",
   "rts-factory", "rts-barracks", "rts-turret", "rts-stockpile",
 }
 local RTS_CATEGORIES = {["rts-buildings"] = true, ["rts-units"] = true}
 
--- Top-strip resources: economy.snapshot field, icon, tooltip.
+-- Top-strip resources: economy.snapshot field, icon, tooltip key.
 local RESOURCES = {
-  {key = "iron", sprite = "item/iron-plate", tooltip = "Iron plates in your logistic network"},
-  {key = "copper", sprite = "item/copper-plate", tooltip = "Copper plates in your logistic network"},
-  {key = "steel", sprite = "item/steel-plate", tooltip = "Steel plates in your logistic network (smelters make them from iron plates)"},
-  {key = "stone", sprite = "item/stone", tooltip = "Stone in your logistic network (the smelter recipe needs it)"},
-  {key = "magazines", sprite = "item/firearm-magazine", tooltip = "Firearm magazines in your logistic network (turret ammo)"},
+  {key = "iron", sprite = "item/iron-plate", tooltip = "rts.res-iron-tooltip"},
+  {key = "copper", sprite = "item/copper-plate", tooltip = "rts.res-copper-tooltip"},
+  {key = "steel", sprite = "item/steel-plate", tooltip = "rts.res-steel-tooltip"},
+  {key = "stone", sprite = "item/stone", tooltip = "rts.res-stone-tooltip"},
+  {key = "magazines", sprite = "item/firearm-magazine", tooltip = "rts.res-magazines-tooltip"},
 }
 
 ---------------------------------------------------------------------------
@@ -177,9 +201,10 @@ local function fmt_count(n)
   return tostring(n)
 end
 
-local function fmt_seconds(s)
-  if s == math.floor(s) then return string.format("%d s", s) end
-  return string.format("%.1f s", s)
+--- "3 s" / "2.5 с": a recipe time as a localised string.
+local function seconds_text(s)
+  local number = s == math.floor(s) and string.format("%d", s) or string.format("%.1f", s)
+  return {"rts.seconds", number}
 end
 
 --- The live registry record of a unit, without side effects (units.get would drop stale records and
@@ -243,11 +268,24 @@ local function get_hud(player)
   return nil
 end
 
+--- Switch the vanilla entity tooltip off (HIDE_ENTITY_TOOLTIP). Checked on every full refresh, because a
+--- controller change may restore game view settings; logs only when it changed something.
+local function apply_view_settings(player)
+  if not HIDE_ENTITY_TOOLTIP then return end
+  local gvs = player.game_view_settings
+  if not gvs.show_entity_tooltip then return end
+  gvs.show_entity_tooltip = false
+  -- GameViewSettings is a LuaStruct; if the read returned a detached copy, write the whole struct back.
+  if player.game_view_settings.show_entity_tooltip then player.game_view_settings = gvs end
+  util.log("hud: vanilla entity tooltip hidden for player %d (the top-right corner is the HUD minimap's)",
+    player.index)
+end
+
 ---------------------------------------------------------------------------
 -- Recipes (derived from prototypes only, so the caches are identical on every client)
 ---------------------------------------------------------------------------
 local recipe_by_item     -- [item name] = LuaRecipePrototype of the rts recipe that makes it
-local recipes_by_machine = {} -- [entity name] = {LuaRecipePrototype...} sorted by order
+local recipes_by_machine = {} -- [entity name] = {LuaRecipePrototype...} sorted like the crafting menu
 
 local function recipe_for(item)
   if not recipe_by_item then
@@ -263,6 +301,13 @@ local function recipe_for(item)
   return recipe_by_item[item]
 end
 
+-- Sort key of a recipe as in the crafting menu: group order, subgroup order, recipe order, name.
+local function recipe_sort_key(r)
+  local group, subgroup = r.group, r.subgroup
+  return string.format("%s\0%s\0%s\0%s", group and group.order or "", subgroup and subgroup.order or "",
+    r.order or "", r.name)
+end
+
 local function machine_recipes(entity)
   local list = recipes_by_machine[entity.name]
   if list then return list end
@@ -270,18 +315,19 @@ local function machine_recipes(entity)
   -- Every crafting machine also lists the "parameters" category (the blueprint parameter recipes 0-9, seen in
   -- the first GUI run as ten purple buttons on the barracks): those recipes are skipped.
   local categories = entity.prototype.crafting_categories or {}
+  local keys = {}
   for _, r in pairs(prototypes.recipe) do
-    if categories[r.category] and not r.parameter and not r.hidden then list[#list + 1] = r end
+    if categories[r.category] and not r.parameter and not r.hidden then
+      list[#list + 1] = r
+      keys[r.name] = recipe_sort_key(r)
+    end
   end
-  table.sort(list, function(a, b)
-    if a.order ~= b.order then return a.order < b.order end
-    return a.name < b.name
-  end)
+  table.sort(list, function(a, b) return keys[a.name] < keys[b.name] end)
   recipes_by_machine[entity.name] = list
   return list
 end
 
--- "[item=iron-plate] 10  [item=copper-plate] 2"
+-- "[item=iron-plate] 10  [item=copper-plate] 2" (icons and numbers only, so it needs no translation)
 local function cost_text(recipe)
   local parts = {}
   for _, ing in ipairs(recipe.ingredients) do
@@ -304,19 +350,14 @@ local function build_items()
 end
 
 local function build_tooltip(item, in_network)
-  local proto = prototypes.item[item]
   local recipe = recipe_for(item)
-  local how = recipe and string.format("Factory recipe: %s gives %d in %s.", cost_text(recipe), product_amount(recipe),
-    fmt_seconds(recipe.energy)) or "No factory recipe: usable only while the network holds some."
-  return {"", "[font=default-bold]", proto.localised_name, "[/font]\n",
-          string.format("In your network: %d. %s\n", in_network, how),
-          "Click, then left-click the map to place ghosts; robots build them from the network.\n",
-          "R rotates. Q or right-click ends placing."}
+  local how = recipe and {"rts.build-recipe", cost_text(recipe), product_amount(recipe), seconds_text(recipe.energy)}
+    or {"rts.build-no-recipe"}
+  return {"rts.build-tooltip", prototypes.item[item].localised_name, {"rts.in-stock", in_network}, how}
 end
 
 local function recipe_tooltip(recipe)
-  return {"", "[font=default-bold]", recipe.localised_name, "[/font]\n",
-          string.format("Cost: %s. Time: %s.", cost_text(recipe), fmt_seconds(recipe.energy))}
+  return {"rts.recipe-tooltip", recipe.localised_name, cost_text(recipe), seconds_text(recipe.energy)}
 end
 
 ---------------------------------------------------------------------------
@@ -384,12 +425,17 @@ local function add_filler(parent)
   return parent.add({type = "empty-widget", style = "rts_hud_filler"})
 end
 
-local function vflow(parent)
+local function vflow(parent, spacing)
   local flow = parent.add({type = "flow", direction = "vertical"})
-  flow.style.vertical_spacing = 4
+  flow.style.vertical_spacing = spacing or 4
   return flow
 end
 
+-- Units page, four rows:
+--   "6 units selected" ............................ "HP 100%"  "Order: Idle"
+--   "Walker ×6" ........................ Groups [1: 6] [2] [3] [4] [5]
+--   [Attack-move [F]] [Stop [X]] [Hold [H]] [Select all [Ctrl+A]]
+--   hint line
 local function build_unit_page(panel, h)
   local el = h.el
   local page = vflow(panel)
@@ -398,30 +444,39 @@ local function build_unit_page(panel, h)
   local header = page.add({type = "flow", direction = "horizontal", style = "rts_hud_row"})
   el.sel_count = header.add({type = "label", style = "rts_hud_heading_label"})
   add_filler(header)
-  el.health = header.add({type = "label", style = "rts_hud_mono_label", tooltip = "Average health of the selection"})
-  el.order = header.add({type = "label", style = "rts_hud_label", tooltip = "Current order of the selection"})
+  el.health = header.add({type = "label", style = "rts_hud_mono_label", tooltip = {"rts.hp-tooltip"}})
+  el.order = header.add({type = "label", style = "rts_hud_label", tooltip = {"rts.order-tooltip"}})
 
-  el.kinds = page.add({type = "label", style = "rts_hud_label"})
+  local kinds_row = page.add({type = "flow", direction = "horizontal", style = "rts_hud_row"})
+  el.kinds = kinds_row.add({type = "label", style = "rts_hud_label"})
+  el.kinds.style.maximal_width = KINDS_WIDTH
+  add_filler(kinds_row)
+  kinds_row.add({type = "label", style = "rts_hud_dim_label", caption = {"rts.groups"}})
+  for n = 1, GROUP_COUNT do
+    h.groups[n] = kinds_row.add({type = "button", name = PREFIX .. "group_" .. n, style = "rts_hud_group_button",
+                                 caption = tostring(n), tags = {rts_hud = "group", group = n}})
+  end
 
   local commands = page.add({type = "flow", direction = "horizontal", style = "rts_hud_row"})
   for _, c in ipairs(COMMANDS) do
     el["cmd_" .. c.action] = commands.add({
       type = "button", name = PREFIX .. "cmd_" .. c.action, style = "rts_hud_button",
-      caption = string.format("%s [%s]", c.caption, c.key),
-      tooltip = string.format("%s (%s)\n%s", c.caption, c.key, c.tooltip),
+      caption = {"rts.button-key", {c.caption}, c.key},
+      tooltip = {"rts.cmd-tooltip", {c.caption}, c.key, {c.tooltip}},
       tags = {rts_hud = c.action}})
   end
 
-  local groups = page.add({type = "flow", direction = "horizontal", style = "rts_hud_row"})
-  groups.add({type = "label", style = "rts_hud_dim_label", caption = "Groups"})
-  for n = 1, GROUP_COUNT do
-    h.groups[n] = groups.add({type = "button", name = PREFIX .. "group_" .. n, style = "rts_hud_group_button",
-                              caption = tostring(n), tags = {rts_hud = "group", group = n}})
-  end
-  page.add({type = "label", style = "rts_hud_dim_label",
-            caption = "Right-click: move or attack. Shift + right-drag: attack-move. Space: home."})
+  el.hint = page.add({type = "label", style = "rts_hud_dim_label", caption = {"rts.sel-hint"}})
+  el.hint.style.maximal_width = PANEL_INNER
 end
 
+-- Building page:
+--   "Barracks #971" ............................................ "HP 1500/1500"
+--   [Pause][recipe][recipe][recipe][recipe][recipe]   status line ("Walker kit: running")
+--   [recipe]...                     (6 per row)        progress bar
+--                                                      counters
+--                                                      rally point / hint
+-- Kinds without recipes hide the grid and the text column takes the whole width.
 local function build_building_page(panel, h)
   local el = h.el
   local page = vflow(panel)
@@ -431,21 +486,28 @@ local function build_building_page(panel, h)
   local header = page.add({type = "flow", direction = "horizontal", style = "rts_hud_row"})
   el.b_name = header.add({type = "label", style = "rts_hud_heading_label"})
   add_filler(header)
-  el.b_hp = header.add({type = "label", style = "rts_hud_mono_label", tooltip = "Health"})
+  el.b_hp = header.add({type = "label", style = "rts_hud_mono_label", tooltip = {"rts.health"}})
 
-  local row = page.add({type = "flow", direction = "horizontal", style = "rts_hud_row"})
-  el.b_line1 = row.add({type = "label", style = "rts_hud_label"})
-  el.b_line1.style.maximal_width = LINE1_WITH_BAR
-  add_filler(row)
-  el.b_progress = row.add({type = "progressbar", style = "rts_hud_progressbar", value = 0,
-                           tooltip = "Progress of the item in production"})
+  local body = page.add({type = "flow", direction = "horizontal"})
+  body.style.horizontal_spacing = BODY_SPACING
+  el.b_buttons = body.add({type = "table", column_count = RECIPE_COLUMNS})
+  el.b_buttons.style.horizontal_spacing = RECIPE_SPACING
+  el.b_buttons.style.vertical_spacing = RECIPE_SPACING
+  el.b_buttons.style.minimal_width = RECIPE_GRID_WIDTH -- the text column starts at the same x for every producer
+  local text = vflow(body, 2)
+  el.b_line1 = text.add({type = "label", style = "rts_hud_label"})
+  el.b_progress = text.add({type = "progressbar", style = "rts_hud_progressbar", value = 0,
+                            tooltip = {"rts.progress-tooltip"}})
+  el.b_line2 = text.add({type = "label", style = "rts_hud_label"})
+  el.b_line3 = text.add({type = "label", style = "rts_hud_dim_label"})
+end
 
-  el.b_buttons = page.add({type = "flow", direction = "horizontal"})
-  el.b_buttons.style.horizontal_spacing = 2
-  el.b_line2 = page.add({type = "label", style = "rts_hud_label"})
-  el.b_line2.style.maximal_width = LINE_WIDTH
-  el.b_line3 = page.add({type = "label", style = "rts_hud_dim_label"})
-  el.b_line3.style.maximal_width = LINE_WIDTH
+-- Width of the building page's text column: next to the recipe grid, or the whole panel without it.
+local function set_text_width(el, width)
+  if el.text_width == width then return end
+  el.text_width = width
+  for _, key in pairs({"b_line1", "b_line2", "b_line3"}) do el[key].style.maximal_width = width end
+  el.b_progress.style.width = width
 end
 
 local function build_panel(screen, h)
@@ -455,6 +517,7 @@ local function build_panel(screen, h)
   h.panel = panel
   build_unit_page(panel, h)
   build_building_page(panel, h)
+  set_text_width(h.el, PANEL_INNER)
 end
 
 local function resource_pair(row, sprite, tooltip)
@@ -471,26 +534,25 @@ local function build_strip(screen, h)
   h.strip = strip
   local el = h.el
   local row = strip.add({type = "flow", direction = "horizontal", style = "rts_hud_centered_row"})
-  el.timer = row.add({type = "label", style = "rts_hud_timer_label", caption = "--:--", tooltip = "Match time"})
-  el.own = row.add({type = "label", style = "rts_hud_mono_label", tooltip = "Your units"})
+  el.timer = row.add({type = "label", style = "rts_hud_timer_label", caption = "--:--", tooltip = {"rts.match-time"}})
+  el.own = row.add({type = "label", style = "rts_hud_mono_label", tooltip = {"rts.own-units-tooltip"}})
   el.own.style.font_color = COLOR.own
-  row.add({type = "label", style = "rts_hud_dim_label", caption = "vs"})
-  el.enemy = row.add({type = "label", style = "rts_hud_mono_label", tooltip = "Enemy units"})
+  row.add({type = "label", style = "rts_hud_dim_label", caption = {"rts.versus"}})
+  el.enemy = row.add({type = "label", style = "rts_hud_mono_label", tooltip = {"rts.enemy-units-tooltip"}})
   el.enemy.style.font_color = COLOR.enemy
 
   local res = strip.add({type = "flow", direction = "horizontal", style = "rts_hud_centered_row"})
   h.res = {}
-  for _, r in ipairs(RESOURCES) do h.res[r.key] = resource_pair(res, r.sprite, r.tooltip) end
-  local power_tip = "Power: used / available (4 MW per Command Center plus 400 kW per solar array), then the "
-    .. "satisfaction of your machines. Below 100% everything works slower."
+  for _, r in ipairs(RESOURCES) do h.res[r.key] = resource_pair(res, r.sprite, {r.tooltip}) end
+  local power_tip = {"rts.power-tooltip"}
   local power, pair = resource_pair(res, "tooltip-category-electricity", power_tip) -- core SpritePrototype
   h.res.power = power
   h.res.power_sat = pair.add({type = "label", style = "rts_hud_mono_label", caption = "", tooltip = power_tip})
-  h.res.bots = resource_pair(res, "item/construction-robot",
-    "Robots idle / total (construction + logistic). Construction robots build your ghosts.")
+  h.res.bots = resource_pair(res, "item/construction-robot", {"rts.bots-tooltip"})
 
   local message_row = strip.add({type = "flow", direction = "horizontal", style = "rts_hud_centered_row"})
   el.message = message_row.add({type = "label", style = "rts_hud_message_label"})
+  el.message.style.maximal_width = STRIP_INNER
 end
 
 local function build_build_menu(screen, h)
@@ -499,11 +561,10 @@ local function build_build_menu(screen, h)
   frame.style.height = BUILD_HEIGHT
   h.build = frame
   local header = frame.add({type = "flow", direction = "horizontal", style = "rts_hud_row"})
-  header.add({type = "label", style = "rts_hud_heading_label", caption = "Build [B]",
-              tooltip = "Click a building, then left-click the map to place ghosts. Robots from your Command "
-                .. "Center build them from the network. B hides this menu."})
+  header.add({type = "label", style = "rts_hud_heading_label", caption = {"rts.build-title"},
+              tooltip = {"rts.build-title-tooltip"}})
   add_filler(header)
-  header.add({type = "label", style = "rts_hud_dim_label", caption = "Q / right-click: done"})
+  header.add({type = "label", style = "rts_hud_dim_label", caption = {"rts.build-done-hint"}})
   local grid = frame.add({type = "table", column_count = BUILD_COLUMNS})
   grid.style.horizontal_spacing = 2
   grid.style.vertical_spacing = 2
@@ -546,7 +607,12 @@ local function sorted_kinds(kinds)
   return list
 end
 
-local function order_text(orders, n)
+local function order_name(o)
+  return ORDER_KEYS[o] and {ORDER_KEYS[o]} or o
+end
+
+-- "Idle", or the two most common orders: "Move 8, Idle 4" (plus ", …" when there are more).
+local function order_text(orders)
   local list = {}
   for o, c in pairs(orders) do list[#list + 1] = {o, c} end
   table.sort(list, function(a, b)
@@ -554,10 +620,9 @@ local function order_text(orders, n)
     return a[1] < b[1]
   end)
   if #list == 0 then return "" end
-  local function name(o) return ORDER_NAMES[o] or o end
-  if #list == 1 then return name(list[1][1]) end
-  return string.format("%s %d, %s %d%s", name(list[1][1]), list[1][2], name(list[2][1]), list[2][2],
-    #list > 2 and ", ..." or "")
+  if #list == 1 then return order_name(list[1][1]) end
+  return {#list > 2 and "rts.order-more" or "rts.order-two", order_name(list[1][1]), list[1][2],
+          order_name(list[2][1]), list[2][2]}
 end
 
 local function update_units(player, h)
@@ -583,29 +648,30 @@ local function update_units(player, h)
   end
 
   if n == 0 then
-    el.sel_count.caption = "No units selected"
-    el.kinds.caption = "Left-drag to select. Shift adds. Click a building to select it."
-    el.kinds.style.font_color = COLOR.dim
+    el.sel_count.caption = {"rts.sel-none"}
+    el.kinds.caption = ""
+    el.hint.caption = {"rts.sel-hint-empty"}
     el.health.caption = ""
     el.order.caption = ""
     return n
   end
 
-  el.sel_count.caption = string.format("%d %s selected", n, n == 1 and "unit" or "units")
-  local parts = {}
-  for _, kind in ipairs(sorted_kinds(kinds)) do
-    parts[#parts + 1] = string.format("%s ×%d", KIND_NAMES[kind] or kind, kinds[kind])
+  el.sel_count.caption = {"rts.sel-count", n}
+  el.hint.caption = {"rts.sel-hint"}
+  local parts = {""}
+  for i, kind in ipairs(sorted_kinds(kinds)) do
+    if i > 1 then parts[#parts + 1] = "   " end
+    parts[#parts + 1] = {"rts.kind-count", KIND_KEYS[kind] and {KIND_KEYS[kind]} or kind, kinds[kind]}
   end
-  el.kinds.caption = table.concat(parts, "   ")
-  el.kinds.style.font_color = COLOR.white
+  el.kinds.caption = parts
   if health_n > 0 then
     local avg = health_sum / health_n
-    el.health.caption = string.format("HP %3d%%", math.floor(avg * 100 + 0.5))
+    el.health.caption = {"rts.hp-percent", string.format("%3d", math.floor(avg * 100 + 0.5))}
     el.health.style.font_color = avg >= 0.66 and COLOR.green or (avg >= 0.33 and COLOR.yellow or COLOR.red)
   else
     el.health.caption = ""
   end
-  el.order.caption = "Order: " .. order_text(orders, n)
+  el.order.caption = {"rts.order", order_text(orders)}
   return n
 end
 
@@ -629,12 +695,11 @@ local function update_groups(player, h)
     local count = live_count(set)
     if count > 0 then
       button.caption = string.format("%d: %d", n, count)
-      button.tooltip = string.format("Control group %d: %d units.\n%d recalls it, Ctrl+%d assigns the selection.",
-        n, count, n, n)
+      button.tooltip = {"rts.group-tooltip", n, count}
       button.toggled = selection ~= nil and next(selection) ~= nil and same_set(set, selection)
     else
       button.caption = tostring(n)
-      button.tooltip = string.format("Control group %d is empty.\nCtrl+%d assigns the selection.", n, n)
+      button.tooltip = {"rts.group-empty-tooltip", n}
       button.toggled = false
     end
     button.enabled = count > 0
@@ -659,47 +724,54 @@ end
 -- Refresh: building page (Phase 2)
 ---------------------------------------------------------------------------
 local function rebuild_recipe_buttons(player, h, un, rec)
-  local flow = h.el.b_buttons
-  flow.clear()
+  local grid = h.el.b_buttons
+  grid.clear()
   h.recipe_buttons = {}
   h.bld_un = un
   if rec.kind ~= "barracks" and rec.kind ~= "factory" then
-    flow.visible = false
+    grid.visible = false
+    set_text_width(h.el, PANEL_INNER)
     return
   end
-  flow.visible = true
+  grid.visible = true
+  set_text_width(h.el, TEXT_WITH_GRID)
+  -- Pause first: same place for every producer, and a new recipe never moves it.
+  h.recipe_buttons[""] = grid.add({type = "sprite-button", name = PREFIX .. "recipe_pause",
+    style = "rts_hud_recipe_button", sprite = "utility/pause", tooltip = {"rts.pause-tooltip"},
+    tags = {rts_hud = "recipe", recipe = ""}})
   local names = {}
   for _, r in ipairs(machine_recipes(rec.entity)) do
-    h.recipe_buttons[r.name] = flow.add({type = "sprite-button", name = PREFIX .. "recipe_" .. r.name,
+    h.recipe_buttons[r.name] = grid.add({type = "sprite-button", name = PREFIX .. "recipe_" .. r.name,
       style = "rts_hud_recipe_button", sprite = "recipe/" .. r.name, tooltip = recipe_tooltip(r),
       tags = {rts_hud = "recipe", recipe = r.name}})
     names[#names + 1] = r.name
   end
-  -- QA log line: the button order, left to right ("hud: recipe buttons barracks#N: rts-walker-kit ... pause")
-  util.log("hud: recipe buttons %s#%d player=%d: %s pause", rec.kind, un, player.index, table.concat(names, " "))
-  h.recipe_buttons[""] = flow.add({type = "sprite-button", name = PREFIX .. "recipe_pause",
-    style = "rts_hud_recipe_button", sprite = "utility/pause",
-    tooltip = "Pause: clear the recipe. Production stops; loaded ingredients go back to the network.",
-    tags = {rts_hud = "recipe", recipe = ""}})
+  -- QA log line: the button order, left to right and row by row ("hud: recipe buttons barracks#N player=N:
+  -- pause rts-walker-kit rts-walker-heavy-kit (6 per row)")
+  util.log("hud: recipe buttons %s#%d player=%d: pause %s (%d per row)", rec.kind, un, player.index,
+    table.concat(names, " "), RECIPE_COLUMNS)
 end
 
 -- "waiting for [item=iron-plate] [item=copper-plate]" from production's pull state.
 local function state_text(state)
-  if not state or state == "supplied" then return "running" end
+  if not state or state == "supplied" then return {"rts.state-running"} end
   local short = string.match(state, "^starved: (.+)$")
   if short then
     local icons = {}
     for name in string.gmatch(short, "[^,]+") do icons[#icons + 1] = "[item=" .. name .. "]" end
-    return "waiting for " .. table.concat(icons, " ")
+    return {"rts.state-waiting", table.concat(icons, " ")}
   end
-  if state == "no network" then return "outside the logistic network" end
+  if state == "no network" then return {"rts.state-no-network"} end
+  if state == "idle" then return {"rts.state-idle"} end
   return state
 end
 
+-- The vanilla entity status text (entity-status.<name> in the core locale), e.g. "Working".
 local function status_name(entity)
   local status = entity.status
   if not status then return "-" end
-  return (string.gsub(util.define_name(defines.entity_status, status), "_", " "))
+  local name = util.define_name(defines.entity_status, status)
+  return {"?", {"entity-status." .. string.gsub(name, "_", "-")}, (string.gsub(name, "_", " "))}
 end
 
 local function update_producer(player, h, un, rec)
@@ -707,14 +779,14 @@ local function update_producer(player, h, un, rec)
   local st = production.status(un) or {}
   local recipe = st.recipe and prototypes.recipe[st.recipe]
   if recipe then
-    el.b_line1.caption = {"", "[recipe=" .. recipe.name .. "] ", recipe.localised_name, ": ", state_text(st.state)}
+    el.b_line1.caption = {"rts.producer-line", "[recipe=" .. recipe.name .. "]", recipe.localised_name,
+                          state_text(st.state)}
     el.b_line1.style.font_color = (st.state or ""):find("^starved") and COLOR.yellow or COLOR.white
   else
-    el.b_line1.caption = "Paused: pick a recipe below."
+    el.b_line1.caption = {"rts.paused"}
     el.b_line1.style.font_color = COLOR.dim
   end
   el.b_progress.visible = recipe ~= nil
-  el.b_line1.style.maximal_width = recipe and LINE1_WITH_BAR or LINE_WIDTH
   el.b_progress.value = math.max(0, math.min(1, st.progress or 0))
   local active = st.recipe or ""
   for name, button in pairs(h.recipe_buttons or {}) do
@@ -722,17 +794,17 @@ local function update_producer(player, h, un, rec)
   end
   local stats = production.stats(rec.force)
   if rec.kind == "barracks" then
-    el.b_line2.caption = string.format("Units from this barracks: %d. All barracks: %d kits, %d units (%d heavy).",
-      st.spawned or 0, stats.kits, stats.walkers, stats.heavies)
-    if rec.rally then
-      el.b_line3.caption = string.format("Rally point %s. Right-click the ground to move it.", util.pos_str(rec.rally))
-    else
-      el.b_line3.caption = "No rally point: new units wait at the exit. Right-click the ground to set one."
-    end
+    el.b_line2.style.font_color = COLOR.white
+    el.b_line2.caption = {"rts.barracks-made", st.spawned or 0, stats.walkers}
+    el.b_line2.tooltip = {"rts.barracks-made-tooltip", stats.kits, stats.walkers, stats.heavies}
+    el.b_line3.caption = rec.rally and {"rts.rally-set", util.pos_str(rec.rally)} or {"rts.rally-none"}
+    el.b_line3.tooltip = {"rts.rally-tooltip"}
   else
-    el.b_line2.caption = string.format("All factories: %d crafts, %d items moved into the network.",
-      stats.buildings, stats.items)
-    el.b_line3.caption = "Finished items go to the network; the build menu counts them."
+    el.b_line2.style.font_color = COLOR.white
+    el.b_line2.caption = {"rts.factory-made", stats.buildings, stats.items}
+    el.b_line2.tooltip = ""
+    el.b_line3.caption = {"rts.factory-hint"}
+    el.b_line3.tooltip = ""
   end
 end
 
@@ -740,42 +812,46 @@ local function update_cc(player, h, un, rec)
   local el = h.el
   local snap = snapshot(rec.force)
   el.b_progress.visible = false
-  el.b_line1.style.maximal_width = LINE_WIDTH
+  el.b_line2.tooltip, el.b_line3.tooltip = "", ""
   if not snap then
     el.b_line1.caption, el.b_line2.caption, el.b_line3.caption = "", "", ""
     return
   end
-  el.b_line1.caption = string.format("Robots idle: construction %d/%d, logistic %d/%d",
-    snap.construction_idle, snap.construction_total, snap.logistic_idle, snap.logistic_total)
+  el.b_line1.caption = {"rts.cc-robots", snap.construction_idle, snap.construction_total, snap.logistic_idle,
+                        snap.logistic_total}
   el.b_line1.style.font_color = COLOR.white
-  el.b_line2.caption = string.format("Power: %.2f / %.2f MW used, machines at %d%%", snap.power_demand / 1e6,
-    snap.power_capacity / 1e6, math.floor(snap.power_satisfaction * 100 + 0.5))
+  el.b_line2.caption = {"rts.cc-power", string.format("%.2f", snap.power_demand / 1e6),
+                        string.format("%.2f", snap.power_capacity / 1e6),
+                        math.floor(snap.power_satisfaction * 100 + 0.5)}
   el.b_line2.style.font_color = snap.power_satisfaction < 0.9 and COLOR.red or COLOR.white
   local proto = rec.entity.prototype
-  el.b_line3.caption = string.format("Robots build ghosts within %d tiles; the network reaches %d tiles.",
-    proto.construction_radius or 0, proto.logistic_radius or 0)
+  el.b_line3.caption = {"rts.cc-range", proto.construction_radius or 0, proto.logistic_radius or 0}
 end
 
 local function update_other(player, h, un, rec)
   local el = h.el
   local e = rec.entity
   el.b_progress.visible = false
-  el.b_line1.style.maximal_width = LINE_WIDTH
-  el.b_line1.caption = "Status: " .. status_name(e)
+  el.b_line1.caption = {"rts.status", status_name(e)}
   el.b_line1.style.font_color = e.status == defines.entity_status.working and COLOR.white or COLOR.yellow
+  el.b_line2.style.font_color = COLOR.white
+  el.b_line2.tooltip, el.b_line3.tooltip = "", ""
   el.b_line3.caption = ""
   if rec.kind == "turret" then
     local ammo = e.get_inventory(defines.inventory.turret_ammo)
     local n = ammo and ammo.get_item_count(production.AMMO) or 0
     local snap = snapshot(rec.force)
-    el.b_line1.caption = string.format("Ammo: %d magazines (%s)", n, rec.feed_state or "not fed yet")
+    local feed = rec.feed_state
+    local feed_text = feed and (FEED_KEYS[feed] and {FEED_KEYS[feed]} or feed) or {"rts.turret-not-fed"}
+    el.b_line1.caption = {"rts.turret-ammo", n, feed_text}
     el.b_line1.style.font_color = n > 0 and COLOR.white or COLOR.red
-    el.b_line2.caption = string.format("Magazines in the network: %d. Turrets refill from it.", snap and snap.magazines or 0)
-    el.b_line3.caption = "The factory makes 10 magazines from 10 iron plates."
+    el.b_line2.caption = {"rts.turret-network", snap and snap.magazines or 0}
+    el.b_line3.caption = {"rts.turret-hint"}
   elseif rec.kind == "extractor" then
     local target = e.mining_target
-    el.b_line2.caption = target and ("Mining: [entity=" .. target.name .. "] " .. target.name) or "Not on ore."
-    el.b_line3.caption = "Put a smelter, a chest or a belt at its output. Needs a pole connection for power."
+    el.b_line2.caption = target and {"rts.extractor-mining", "[entity=" .. target.name .. "]", target.localised_name}
+      or {"rts.extractor-no-ore"}
+    el.b_line3.caption = {"rts.extractor-hint"}
   elseif rec.kind == "smelter" then
     local recipe = e.get_recipe()
     local name = recipe and recipe.name
@@ -784,13 +860,16 @@ local function update_other(player, h, un, rec)
       local id = previous and previous.name
       name = id and (type(id) == "string" and id or id.name)
     end
-    el.b_line2.caption = name and ("Smelting: [recipe=" .. name .. "] " .. name) or "Waiting for ore."
-    el.b_line3.caption = "Feed it ore by belt and inserter (or an extractor output); an inserter takes the plates out."
+    local proto = name and prototypes.recipe[name]
+    el.b_line2.caption = proto and {"rts.smelter-recipe", "[recipe=" .. name .. "]", proto.localised_name}
+      or {"rts.smelter-waiting"}
+    el.b_line3.caption = {"rts.smelter-hint"}
   elseif rec.kind == "stockpile" then
     local inv = e.get_inventory(defines.inventory.chest)
-    el.b_line2.caption = string.format("Holds %d items. Part of the logistic network.", inv and inv.get_item_count() or 0)
+    el.b_line2.caption = {"rts.stockpile-holds", inv and inv.get_item_count() or 0}
   elseif rec.kind == "solar" then
-    el.b_line2.caption = "Adds 400 kW to the Command Center's power while connected by poles."
+    local kw = math.floor(e.prototype.get_max_energy_production(e.quality) * 60 / 1000 + 0.5)
+    el.b_line2.caption = {"rts.solar-hint", kw}
   else
     el.b_line2.caption = ""
   end
@@ -800,9 +879,9 @@ local function update_building(player, h, un, rec)
   local el = h.el
   local e = rec.entity
   if h.bld_un ~= un then rebuild_recipe_buttons(player, h, un, rec) end
-  el.b_name.caption = string.format("%s #%d", BUILDING_NAMES[rec.kind] or rec.kind, un)
+  el.b_name.caption = {"rts.bld-title", e.localised_name, un}
   local hp, max = e.health or 0, e.max_health or 0
-  el.b_hp.caption = max > 0 and string.format("HP %d/%d", math.floor(hp + 0.5), math.floor(max + 0.5)) or ""
+  el.b_hp.caption = max > 0 and {"rts.hp-value", math.floor(hp + 0.5), math.floor(max + 0.5)} or ""
   local ratio = max > 0 and hp / max or 1
   el.b_hp.style.font_color = ratio >= 0.66 and COLOR.green or (ratio >= 0.33 and COLOR.yellow or COLOR.red)
   if rec.kind == "barracks" or rec.kind == "factory" then
@@ -862,33 +941,31 @@ local function result_for(m, own)
 end
 
 local function match_message(m, own)
-  if not (m and m.phase) or m.phase == "setup" then return "Preparing the arena...", COLOR.yellow end
+  if not (m and m.phase) or m.phase == "setup" then return {"rts.match-preparing"}, COLOR.yellow end
   local result = result_for(m, own)
-  if result == "victory" then return "Victory! The enemy base and army are destroyed.", COLOR.green end
-  if result == "draw" then return "Draw: both sides are destroyed.", COLOR.yellow end
-  if result == "defeat" then return "Defeat. Your base and army are destroyed.", COLOR.red end
+  if result == "victory" then return {"rts.match-victory"}, COLOR.green end
+  if result == "draw" then return {"rts.match-draw"}, COLOR.yellow end
+  if result == "defeat" then return {"rts.match-defeat"}, COLOR.red end
   local hs = storage.hud
   if (m.wave or 0) > 0 and hs and hs.wave_tick and game.tick - hs.wave_tick < WAVE_ALERT_TICKS then
-    return string.format("Enemy wave %d is attacking!", m.wave), COLOR.red
+    return {"rts.wave-attacking", m.wave}, COLOR.red
   end
   if m.enemy_next_wave then
-    return string.format("Enemy wave %d in %s", (m.wave or 0) + 1, clock((m.enemy_next_wave - game.tick) / 60)),
-      COLOR.yellow
+    return {"rts.wave-next", (m.wave or 0) + 1, clock((m.enemy_next_wave - game.tick) / 60)}, COLOR.yellow
   end
-  if m.waves_off then return "Enemy waves off (QA reset). /rts-qa-reset turns them back on.", COLOR.yellow end
-  return "Destroy the enemy base and army.", COLOR.yellow
+  if m.waves_off then return {"rts.waves-off"}, COLOR.yellow end
+  return {"rts.match-goal"}, COLOR.yellow
 end
 
 -- Player-specific prompts take the message line over the match messages.
 local function player_message(player)
   local is_armed = optional_fn("scripts.orders", {"is_armed"})
   if is_armed and is_armed(player.index) then
-    return "Attack-move armed: right-click where to go. F or X cancels.", COLOR.red
+    return {"rts.attack-move-armed"}, COLOR.red
   end
   local ghost = cursor.ghost_name(player)
   if ghost and prototypes.item[ghost] then
-    return {"", "Placing ", prototypes.item[ghost].localised_name,
-            ": left-click the map. R rotates. Q or right-click: done."}, COLOR.green
+    return {"rts.placing", prototypes.item[ghost].localised_name}, COLOR.green
   end
   return nil
 end
@@ -905,14 +982,15 @@ local function update_strip(player, h)
   end
   local own = player.force.name
   local enemy = own == ENEMY and PLAYER or ENEMY
-  el.own.caption = string.format("Army %d", count_force(own))
-  el.enemy.caption = string.format("%d Enemy", count_force(enemy))
+  el.own.caption = {"rts.army", count_force(own)}
+  el.enemy.caption = {"rts.enemy-count", count_force(enemy)}
 
   local snap = snapshot(own)
   local res = h.res
   if snap then
     for _, r in ipairs(RESOURCES) do res[r.key].caption = fmt_count(snap[r.key]) end
-    res.power.caption = string.format("%.1f/%.1f MW", snap.power_demand / 1e6, snap.power_capacity / 1e6)
+    res.power.caption = {"rts.power-mw", string.format("%.1f", snap.power_demand / 1e6),
+                         string.format("%.1f", snap.power_capacity / 1e6)}
     local sat = math.floor(snap.power_satisfaction * 100 + 0.5)
     res.power_sat.caption = string.format("%d%%", sat)
     res.power_sat.style.font_color = sat >= 90 and COLOR.green or (sat >= 50 and COLOR.yellow or COLOR.red)
@@ -955,6 +1033,7 @@ end
 
 local function update(player, h)
   track_match()
+  apply_view_settings(player)
   update_selection(player, h)
   update_commands(player, h)
   update_groups(player, h)
@@ -1049,7 +1128,7 @@ local function run_command(player, action)
   local fn = optional_fn(c.module, c.fns)
   if not fn then
     local wanted = c.module .. "." .. table.concat(c.fns, "/")
-    player.print(string.format("[RTS] %s is not available yet (%s is missing).", c.caption, wanted))
+    player.print({"rts.not-available", {c.caption}, wanted})
     util.log("hud: button %s: %s missing", action, wanted)
     return
   end
@@ -1061,7 +1140,7 @@ end
 local function recall_group(player, n)
   local fn = optional_fn("scripts.selection", {"group_recall", "recall_group"})
   if not fn then
-    player.print(string.format("[RTS] Control group %d: press %d to recall it.", n, n))
+    player.print({"rts.group-recall-hint", n})
     return
   end
   local selected = fn(player.index, n)

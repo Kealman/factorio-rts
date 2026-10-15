@@ -1,7 +1,7 @@
 -- GUI styles and fonts for scripts/hud.lua.
 --
--- Sizes that the HUD's screen placement depends on (panel width and height, minimap size) are also set
--- from hud.lua at runtime, so the numbers that matter live in one place.
+-- Sizes that the HUD's screen placement depends on (panel width and height, minimap size, label and progress
+-- bar widths) are set from hud.lua at runtime, so the numbers that matter live in one place.
 local styles = data.raw["gui-style"].default
 
 -- "default-mono" is a locale font family (NotoMono, DejaVuSansMono fallback) declared by the core
@@ -76,12 +76,12 @@ styles.rts_hud_button = {
   right_padding = 6,
 }
 
--- Control-group indicator: "1  12".
+-- Control-group indicator: "1: 12". Narrow, because the five of them share a row with the kinds label.
 styles.rts_hud_group_button = {
   type = "button_style",
   parent = "rts_hud_button",
   font = "default-small-bold",
-  width = 54,
+  width = 42,
   height = 24,
   left_padding = 2,
   right_padding = 2,
@@ -159,7 +159,8 @@ styles.rts_hud_build_button = {
   size = 40,
 }
 
--- Recipe buttons of the building panel (barracks / factory) and the pause button.
+-- Recipe buttons of the building panel (barracks / factory) and the pause button: a 6-column grid, Pause first.
+-- hud.lua's RECIPE_BUTTON must match this size (it sizes the text column next to the grid).
 styles.rts_hud_recipe_button = {
   type = "button_style",
   parent = "slot_button",
@@ -180,10 +181,11 @@ styles.rts_hud_icon = {
   stretch_image_to_widget_size = true,
 }
 
--- Production progress of the selected barracks / factory.
+-- Production progress of the selected barracks / factory: its own line in the text column, as wide as the
+-- column (hud.lua sets the width at runtime).
 styles.rts_hud_progressbar = {
   type = "progressbar_style",
   parent = "progressbar",
   width = 120,
-  bar_width = 10,
+  bar_width = 8,
 }

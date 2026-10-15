@@ -22,21 +22,19 @@ for n = 1, 5 do
   inputs[#inputs + 1] = {name = "rts-group-" .. n, key_sequence = tostring(n), consuming = "game-only"}
 end
 
--- Phase 2. The locale file is not ours, so these carry an English localised_name directly.
+-- Phase 2. Names are controls.<name> in locale/*/factorio-rts.cfg, like every input above.
 -- B: build menu (vanilla B is the blueprint library, which the rts permission group blocks anyway).
 -- CONTROL + SHIFT + R / E: console-free QA controls (docs/qa/phase1-followups.md item 3); they run the same code
 -- as /rts-qa-reset nowaves and /rts-qa-end (debug.run_command).
 -- rts-clear-cursor follows the vanilla "clear-cursor" control (Q by default, whatever the player bound it to):
 -- it ends ghost placement and brings the RTS cursor back without waiting for the cursor watchdog.
 local phase2 = {
-  {name = "rts-build-menu", key_sequence = "B", consuming = "game-only",
-   localised_name = "RTS: show or hide the build menu"},
+  {name = "rts-build-menu", key_sequence = "B", consuming = "game-only"},
   {name = "rts-qa-reset", key_sequence = "CONTROL + SHIFT + R", alternative_key_sequence = "COMMAND + SHIFT + R",
-   consuming = "game-only", localised_name = "RTS QA: reset both armies, enemy waves off"},
+   consuming = "game-only"},
   {name = "rts-qa-end", key_sequence = "CONTROL + SHIFT + E", alternative_key_sequence = "COMMAND + SHIFT + E",
-   consuming = "game-only", localised_name = "RTS QA: write the end-of-session marker"},
-  {name = "rts-clear-cursor", key_sequence = "", linked_game_control = "clear-cursor", consuming = "none",
-   localised_name = "RTS: clear cursor (follows the vanilla control)"},
+   consuming = "game-only"},
+  {name = "rts-clear-cursor", key_sequence = "", linked_game_control = "clear-cursor", consuming = "none"},
 }
 for _, input in ipairs(phase2) do inputs[#inputs + 1] = input end
 

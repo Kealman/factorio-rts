@@ -17,20 +17,17 @@ local function tinted_icons(src)
   return {{icon = src.icon, icon_size = src.icon_size, tint = ICON_TINT}}
 end
 
--- English fallback until a locale entry exists (a locale key, when present, wins).
-local function label(key, text)
-  return {"?", {key}, text}
-end
-
--- spec: type, source (vanilla name), name, title, description, health, map_color,
+-- spec: type, source (vanilla name), name, health, map_color,
 --       minable (default true: mined into the rts item of the same name).
+-- Names and descriptions come from the locale (entity-name.<name>, entity-description.<name> in
+-- locale/*/factorio-rts.cfg): both are reset to the defaults so nothing is inherited from the vanilla source.
 local function clone(spec)
   local src = data.raw[spec.type][spec.source]
   assert(src, "factorio-rts: missing vanilla " .. spec.type .. " " .. spec.source)
   local e = table.deepcopy(src)
   e.name = spec.name
-  e.localised_name = label("entity-name." .. spec.name, spec.title)
-  e.localised_description = spec.description and label("entity-description." .. spec.name, spec.description)
+  e.localised_name = nil
+  e.localised_description = nil
   e.icons = tinted_icons(src)
   e.icon = nil
   e.icon_size = nil
@@ -67,8 +64,6 @@ local CC_MAP_COLOR = {r = 0.2, g = 0.85, b = 1.0}
 
 local cc = clone({
   type = "roboport", source = "roboport", name = "rts-command-center",
-  title = "Command center",
-  description = "Home of your construction and logistic robots, logistic storage hub and 4 MW power core. Lose all command centers and you lose the match.",
   health = 3000, map_color = CC_MAP_COLOR,
 })
 -- Not markable by the deconstruction or upgrade planner, so bots never take it down by accident.
@@ -95,7 +90,7 @@ cc.surface_conditions = nil -- Space Age adds a pressure condition to the vanill
 -- hidden-electric-energy-interface, which already has an empty sprite and no selection box.
 local core_power = clone({
   type = "electric-energy-interface", source = "hidden-electric-energy-interface", name = "rts-core-power",
-  title = "Command center power core", map_color = CC_MAP_COLOR, minable = false,
+  map_color = CC_MAP_COLOR, minable = false,
 })
 core_power.hidden = true
 core_power.hidden_in_factoriopedia = true
@@ -121,7 +116,7 @@ immune(core_power)
 -- placed within their own wire reach (9 tiles for a medium pole) auto-connect to it.
 local core_pole = clone({
   type = "electric-pole", source = "substation", name = "rts-core-pole",
-  title = "Command center power hub", map_color = CC_MAP_COLOR, minable = false,
+  map_color = CC_MAP_COLOR, minable = false,
 })
 core_pole.hidden = true
 core_pole.hidden_in_factoriopedia = true
@@ -140,7 +135,6 @@ immune(core_pole)
 -------------------------------------------------------------------------------
 local stockpile = clone({
   type = "logistic-container", source = "storage-chest", name = "rts-stockpile",
-  title = "Stockpile", description = "Logistic storage for the resource pool.",
   health = 800, map_color = {r = 0.6, g = 0.6, b = 0.85},
 })
 stockpile.logistic_mode = "storage"
@@ -148,7 +142,6 @@ stockpile.inventory_size = 48
 
 local extractor = clone({
   type = "mining-drill", source = "electric-mining-drill", name = "rts-extractor",
-  title = "Extractor", description = "Mines the ore under it and drops it at its output position.",
   health = 500, map_color = {r = 0.3, g = 0.65, b = 0.45},
 })
 extractor.mining_speed = 1.0
@@ -157,7 +150,6 @@ extractor.module_slots = 0
 
 local smelter = clone({
   type = "furnace", source = "electric-furnace", name = "rts-smelter",
-  title = "Smelter", description = "Smelts ore into plates, stone into bricks and iron plates into steel.",
   health = 600, map_color = {r = 0.8, g = 0.55, b = 0.3},
 })
 smelter.crafting_speed = 2
@@ -166,7 +158,6 @@ smelter.module_slots = 0
 
 local solar = clone({
   type = "solar-panel", source = "solar-panel", name = "rts-solar-array",
-  title = "Solar array", description = "Adds 400 kW to the power network.",
   health = 300, map_color = {r = 0.25, g = 0.4, b = 0.7},
 })
 solar.production = "400kW"
@@ -184,7 +175,6 @@ end
 
 local factory = rts_assembler({
   type = "assembling-machine", source = "assembling-machine-2", name = "rts-factory",
-  title = "Factory", description = "Builds structures, belts, inserters, poles and ammunition from the resource pool.",
   health = 1000, map_color = {r = 0.45, g = 0.55, b = 0.8},
 }, "rts-buildings")
 
@@ -193,14 +183,12 @@ local factory = rts_assembler({
 -------------------------------------------------------------------------------
 local barracks = rts_assembler({
   type = "assembling-machine", source = "assembling-machine-2", name = "rts-barracks",
-  title = "Barracks", description = "Trains walkers from the resource pool and sends them to its rally point.",
   health = 1500, map_color = {r = 0.9, g = 0.8, b = 0.25},
 }, "rts-units")
 barracks.is_military_target = true
 
 local turret = clone({
   type = "ammo-turret", source = "gun-turret", name = "rts-turret",
-  title = "Turret", description = "Gun turret. Fires firearm magazines from the resource pool.",
   health = 1200, map_color = {r = 0.95, g = 0.55, b = 0.15},
 })
 turret.is_military_target = true

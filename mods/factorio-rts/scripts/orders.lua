@@ -60,7 +60,11 @@ local MAX_FAILS = 3             -- consecutive failed commands before an attack 
 local ATTACK_MODE = "area"      -- "area" (attack_area on the target) or "attack" (defines.command.attack)
 local ATTACK_DISTRACTION = defines.distraction.by_enemy
 local ATTACK_AREA_RADIUS = 4
-local FEEDBACK_TTL = 30         -- ticks an order marker stays on screen
+local FEEDBACK_TTL = 20         -- ticks an order marker stays on screen (brief, but large: see feedback())
+local FEEDBACK_RADIUS = 1.75    -- tiles; ring at a ground target
+local FEEDBACK_ENTITY_PAD = 0.5 -- tiles added to an entity target's selection box half-diagonal
+local FEEDBACK_WIDTH = 4        -- pixels
+local FEEDBACK_DOT = 0.3        -- tiles; filled centre dot, marks the exact point
 local RCLICK_WAIT_TOOL = 120    -- ticks to wait for the area event when the cursor held the rts-cursor
 local CANCEL_IGNORE_TICKS = 20  -- a reverse-select this soon after a right click ended build mode is that click's
                                 -- release (~3 ticks for a quick click), not a new order; ignored
@@ -217,17 +221,19 @@ local function feedback(who, target, color, surface)
   if type(who) ~= "number" then return end
   local player = selection.real_player(who)
   local is_entity = type(target) == "table" and target.object_name == "LuaEntity"
-  rendering.draw_circle({
-    color = color,
-    radius = is_entity and 1.5 or 1,
-    width = 3,
-    filled = false,
-    target = target,
-    surface = surface,
-    time_to_live = FEEDBACK_TTL,
-    players = player and {who} or nil,
-    visible = player ~= nil,
-  })
+  local radius = FEEDBACK_RADIUS
+  if is_entity and target.valid then
+    local box = target.selection_box
+    local w, h = box.right_bottom.x - box.left_top.x, box.right_bottom.y - box.left_top.y
+    radius = math.max(FEEDBACK_RADIUS, math.sqrt(w * w + h * h) / 2 + FEEDBACK_ENTITY_PAD)
+  end
+  local players, visible = player and {who} or nil, player ~= nil
+  rendering.draw_circle({color = color, radius = radius, width = FEEDBACK_WIDTH, filled = false, target = target,
+    surface = surface, time_to_live = FEEDBACK_TTL, players = players, visible = visible})
+  if not is_entity then
+    rendering.draw_circle({color = color, radius = FEEDBACK_DOT, filled = true, target = target, surface = surface,
+      time_to_live = FEEDBACK_TTL, players = players, visible = visible})
+  end
 end
 
 local function disarm(player_index, why)

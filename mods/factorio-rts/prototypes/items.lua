@@ -1,6 +1,8 @@
 -- Phase 2 items: one placeable item per RTS building and the two unit kits made by the barracks.
--- Building items copy the vanilla item (sounds, weight) and take name and tinted icon from their rts entity,
+-- Building items copy the vanilla item (sounds, weight) and take the tinted icon from their rts entity,
 -- so prototypes/buildings.lua must be loaded first. The core power and core pole have no item.
+-- Names come from the locale: item-name.<name>; building items reuse entity-description.<name>, kits have
+-- item-description.<name> (locale/*/factorio-rts.cfg).
 -- Belts, inserters, poles and ammo use the vanilla items (transport-belt, fast-inserter,
 -- medium-electric-pole, firearm-magazine); see prototypes/recipes.lua.
 
@@ -10,8 +12,8 @@ local function building_item(spec)
   local item = table.deepcopy(data.raw.item[spec.source])
   assert(item, "factorio-rts: missing vanilla item " .. spec.source)
   item.name = spec.name
-  item.localised_name = entity.localised_name
-  item.localised_description = entity.localised_description
+  item.localised_name = nil -- item-name.<name>
+  item.localised_description = {"entity-description." .. spec.name}
   item.icons = table.deepcopy(entity.icons)
   item.icon = nil
   item.icon_size = nil
@@ -38,8 +40,6 @@ local function kit_item(spec)
   return {
     type = "item",
     name = spec.name,
-    localised_name = {"?", {"item-name." .. spec.name}, spec.title},
-    localised_description = {"?", {"item-description." .. spec.name}, spec.description},
     icons = kit_icons(spec.pentapod, spec.tint),
     subgroup = "rts-units",
     order = spec.order,
@@ -66,10 +66,8 @@ data:extend({
   building_item({type = "ammo-turret", name = "rts-turret", source = "gun-turret",
                  subgroup = "rts-defense", order = "a[turret]", stack_size = 50}),
 
-  kit_item({name = "rts-walker-kit", title = "Walker kit", order = "a[walker-kit]",
-            description = "Made by the barracks, which deploys it as a walker at its rally point.",
+  kit_item({name = "rts-walker-kit", order = "a[walker-kit]",
             pentapod = "small-strafer-pentapod", tint = {r = 0.6, g = 0.85, b = 1.0, a = 1}}),
-  kit_item({name = "rts-walker-heavy-kit", title = "Heavy walker kit", order = "b[walker-heavy-kit]",
-            description = "Made by the barracks, which deploys it as a heavy walker at its rally point.",
+  kit_item({name = "rts-walker-heavy-kit", order = "b[walker-heavy-kit]",
             pentapod = "small-stomper-pentapod", tint = {r = 1.0, g = 0.6, b = 0.4, a = 1}}),
 })

@@ -2,11 +2,7 @@
 -- rts-units is crafted only by rts-barracks, rts-buildings only by rts-factory. No vanilla machine and no
 -- character or god controller has these categories, so RTS recipes cannot be hand-crafted, and vanilla
 -- recipes cannot be set in the RTS machines. See docs/PHASE2.md ("Data stage additions").
--- Names use the {"?", key, fallback} form: the English fallback shows until a locale entry is added.
-
-local function label(key, text)
-  return {"?", {key}, text}
-end
+-- The item group's name is item-group-name.rts in locale/*/factorio-rts.cfg.
 
 data:extend({
   {type = "recipe-category", name = "rts-units"},
@@ -16,7 +12,6 @@ data:extend({
   {
     type = "item-group",
     name = "rts",
-    localised_name = label("item-group-name.rts", "RTS"),
     order = "z[rts]",
     icon = "__base__/graphics/icons/roboport.png",
     icon_size = 64,

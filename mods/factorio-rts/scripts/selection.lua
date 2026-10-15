@@ -7,7 +7,8 @@
 --   group_recall  {n = group, tick = tick}                last recall (double tap = jump the camera)
 --   building      unit_number?                            Phase 2: the selected own building (storage.buildings);
 --                                                         exclusive with `selection` (selecting units clears it)
---   building_render {LuaRenderObject}                     its outline and, for a barracks, the rally line and flag
+--   building_render {LuaRenderObject}                     its outline and, for a barracks, the rally line, ring,
+--                                                         flag and "Rally" label (rts.rally-label)
 -- and storage.selection = {dirty = {[player_index] = true}} (HUD refreshes deferred to the next tick).
 --
 -- Input model (spike decision 10): the rts-cursor selection tool raises on_player_selected_area for a left
@@ -36,9 +37,20 @@ local BOX_WIDTH = 2          -- pixels
 local BOX_LIGHTEN = 0.35     -- mix the force colour with white so the box stands out on tinted units
 local DEFAULT_COLOR = {r = 0.3, g = 1, b = 0.3, a = 1}
 local BUILDING_PICK_RADIUS = 1.0 -- tiles; a click this close to a building's edge still selects it
+-- Rally marker of a selected barracks (docs/qa/phase2-qa-results.md steps 28 and 30: the old 0.6-scale flag and
+-- 0.3-tile ring were lost under walking units). The flag is the vanilla 64 px spawn flag (red, pole at the
+-- lower left), drawn at 1.5 scale (3 tiles) with its pole foot on the point; render objects that are not on the
+-- ground are drawn above entities, so units walking over the point do not hide it. While no rally point is set,
+-- the same marker sits greyed out at the default exit, without the label.
 local RALLY_FLAG = "utility/spawn_flag"
-local RALLY_COLOR = {r = 0.3, g = 1, b = 0.3, a = 0.8}
+local RALLY_FLAG_SCALE = 1.5
+local RALLY_FLAG_OFFSET = {x = 0.47, y = -0.81} -- sprite centre relative to the pole foot, at scale 1
+local RALLY_RING_RADIUS = 1.0
+local RALLY_LABEL_OFFSET = -2.6 -- tiles above the point (over the flag); the label grows upward from there
+local RALLY_COLOR = {r = 0.3, g = 1, b = 0.3, a = 0.9}
+local RALLY_FILL = {r = 0.15, g = 0.5, b = 0.15, a = 0.35}
 local EXIT_COLOR = {r = 0.7, g = 0.7, b = 0.7, a = 0.6}
+local EXIT_FILL = {r = 0.3, g = 0.3, b = 0.3, a = 0.25}
 
 ---------------------------------------------------------------------------
 -- Helpers
@@ -196,14 +208,24 @@ local function draw_building(player_index, p)
     visible = visible})
   if rec.kind == "barracks" then
     local point = rec.rally or buildings.default_exit(rec)
-    local color = rec.rally and RALLY_COLOR or EXIT_COLOR
-    objs[#objs + 1] = rendering.draw_line({color = color, width = 2, dash_length = 0.5, gap_length = 0.4,
-      from = e, to = point, surface = e.surface, players = players, visible = visible})
-    objs[#objs + 1] = rendering.draw_sprite({sprite = RALLY_FLAG, target = {x = point.x + 0.3, y = point.y - 0.6},
-      x_scale = 0.6, y_scale = 0.6, tint = rec.rally and {1, 1, 1, 1} or {0.6, 0.6, 0.6, 0.6}, surface = e.surface,
-      players = players, visible = visible})
-    objs[#objs + 1] = rendering.draw_circle({color = color, radius = 0.3, width = 2, filled = false, target = point,
-      surface = e.surface, players = players, visible = visible})
+    local set = rec.rally ~= nil
+    local color = set and RALLY_COLOR or EXIT_COLOR
+    local function add(obj) objs[#objs + 1] = obj end
+    add(rendering.draw_line({color = color, width = 3, dash_length = 0.6, gap_length = 0.4,
+      from = e, to = point, surface = e.surface, players = players, visible = visible}))
+    add(rendering.draw_circle({color = set and RALLY_FILL or EXIT_FILL, radius = RALLY_RING_RADIUS, filled = true,
+      target = point, draw_on_ground = true, surface = e.surface, players = players, visible = visible}))
+    add(rendering.draw_circle({color = color, radius = RALLY_RING_RADIUS, width = 3, filled = false, target = point,
+      surface = e.surface, players = players, visible = visible}))
+    add(rendering.draw_sprite({sprite = RALLY_FLAG, x_scale = RALLY_FLAG_SCALE, y_scale = RALLY_FLAG_SCALE,
+      target = {x = point.x + RALLY_FLAG_OFFSET.x * RALLY_FLAG_SCALE, y = point.y + RALLY_FLAG_OFFSET.y * RALLY_FLAG_SCALE},
+      tint = set and {1, 1, 1, 1} or {0.6, 0.6, 0.6, 0.6}, surface = e.surface, players = players,
+      visible = visible}))
+    if set then
+      add(rendering.draw_text({text = {"rts.rally-label"}, target = {x = point.x, y = point.y + RALLY_LABEL_OFFSET},
+        color = RALLY_COLOR, scale = 1.3, font = "default-bold", alignment = "center", vertical_alignment = "bottom",
+        scale_with_zoom = true, surface = e.surface, players = players, visible = visible}))
+    end
   end
   p.building_render = objs
 end
