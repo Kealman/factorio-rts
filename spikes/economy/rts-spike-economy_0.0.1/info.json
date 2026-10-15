@@ -1,0 +1,9 @@
+{
+  "name": "rts-spike-economy",
+  "version": "0.0.1",
+  "title": "RTS spike: economy (barracks pattern, AI base)",
+  "author": "factorio-rts",
+  "factorio_version": "2.0",
+  "description": "Phase 0 spikes #4 (barracks: assembler output -> spawned unit) and #5 (AI base from blueprint for a force with no players). Headless only.",
+  "dependencies": ["base >= 2.0", "? space-age"]
+}
