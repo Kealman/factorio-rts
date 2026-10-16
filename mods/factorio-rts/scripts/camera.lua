@@ -239,12 +239,25 @@ events.on(defines.events.on_tick, function(e)
   end
 end)
 
+-- Phase 5 M1 QA round 1 (finding 5): with hover selection off (update_entity_selection) player.selected changes only
+-- when the engine sets it itself (a ghost the player just placed, a build) and then stays; in the remote view a
+-- selected ghost or entity shows the vanilla info box in the top-right corner, half under the HUD minimap and stale.
+-- Nothing in the RTS reads player.selected (selection.lua picks by position), so it is cleared.
+local function clear_hover(player)
+  local sel = player.selected
+  if not sel then return end
+  local name = sel.valid and (sel.type == "entity-ghost" and ("ghost of " .. sel.ghost_name) or sel.name) or "?"
+  player.clear_selected_entity()
+  util.log("camera: cleared the hover selection (%s) of player %d", name, player.index)
+end
+
 events.on_nth_tick(10, function()
   for _, player in pairs(game.connected_players) do
     if player.controller_type == REMOTE then
       local p = util.pstorage(player.index)
       p.last_remote_pos = player.position
       p.last_zoom = player.zoom
+      if player.permission_group and player.permission_group.name == PERMISSION_GROUP then clear_hover(player) end
     end
   end
 end)

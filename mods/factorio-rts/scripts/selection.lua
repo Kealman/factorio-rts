@@ -44,6 +44,11 @@ local BOX_WIDTH = 2          -- pixels
 local BOX_LIGHTEN = 0.35     -- mix the force colour with white so the box stands out on tinted units
 local DEFAULT_COLOR = {r = 0.3, g = 1, b = 0.3, a = 1}
 local BUILDING_PICK_RADIUS = 1.0 -- tiles; a click this close to a building's edge still selects it
+-- Phase 5 M1 QA round 1: rolling stock and depots are picked only inside their selection box (rails.lua fills these
+-- at load time: building kind "train", entity name "rts-depot"). A wagon's box is oriented (BoundingBox.orientation):
+-- read as axis-aligned, a horizontal wagon answered clicks up to 4 tiles below the track.
+selection.EXACT_PICK_KINDS = {}
+selection.EXACT_PICK_NAMES = {}
 -- Phase 4 QA step 8: a click on a pentapod's body selected nothing, because the engine's selection box (centred one
 -- torso height above the feet) and the drawn body (in the remote view about two torso heights up) do not agree, and a
 -- click between them hits no box. A click therefore picks the own unit nearest to it by position: its feet, or for
@@ -205,6 +210,48 @@ local function clear_building_render(p)
   p.building_render = nil
 end
 
+-- Distance from a map position to an entity's selection box (0 inside it). Rolling stock has an oriented box
+-- (orientation 0 = north, 0.25 = east, clockwise; it turns about the box centre): the point is turned into the box's
+-- own frame first.
+local function box_distance(entity, position)
+  local box = entity.selection_box
+  local lt, rb = box.left_top, box.right_bottom
+  local px, py = position.x, position.y
+  local o = box.orientation
+  if o and o ~= 0 then
+    local cx, cy = (lt.x + rb.x) / 2, (lt.y + rb.y) / 2
+    local a = o * 2 * math.pi
+    local cos, sin = math.cos(a), math.sin(a)
+    local dx, dy = px - cx, py - cy
+    px, py = cx + dx * cos + dy * sin, cy - dx * sin + dy * cos
+  end
+  local dx = math.max(lt.x - px, 0, px - rb.x)
+  local dy = math.max(lt.y - py, 0, py - rb.y)
+  return math.sqrt(dx * dx + dy * dy)
+end
+selection.box_distance = box_distance
+
+-- The four corners (world positions, clockwise from the top left) of an entity's selection box, turned by its
+-- orientation (rolling stock).
+local function box_corners(box)
+  local lt, rb = box.left_top, box.right_bottom
+  local cx, cy = (lt.x + rb.x) / 2, (lt.y + rb.y) / 2
+  local a = (box.orientation or 0) * 2 * math.pi
+  local cos, sin = math.cos(a), math.sin(a)
+  local out = {}
+  for i, c in ipairs({{lt.x, lt.y}, {rb.x, lt.y}, {rb.x, rb.y}, {lt.x, rb.y}}) do
+    local dx, dy = c[1] - cx, c[2] - cy
+    out[i] = {x = cx + dx * cos - dy * sin, y = cy + dx * sin + dy * cos}
+  end
+  return out
+end
+
+-- How far outside its selection box a click may land and still pick this building.
+local function pick_radius(entity, rec)
+  if selection.EXACT_PICK_NAMES[entity.name] or (rec and selection.EXACT_PICK_KINDS[rec.kind]) then return 0 end
+  return BUILDING_PICK_RADIUS
+end
+
 -- Outline of the selected building and, for a barracks, a dashed line to its rally point with a flag there
 -- (grey at the default exit while no rally point is set). Shown to that player only.
 local function draw_building(player_index, p)
@@ -216,9 +263,20 @@ local function draw_building(player_index, p)
   local players, visible = player and {player_index} or nil, player ~= nil
   local box = e.selection_box
   local objs = {}
-  objs[#objs + 1] = rendering.draw_rectangle({color = box_color(rec.force), width = BOX_WIDTH, filled = false,
-    left_top = box.left_top, right_bottom = box.right_bottom, surface = e.surface, players = players,
-    visible = visible})
+  if box.orientation and box.orientation ~= 0 then
+    -- rolling stock (QA round 1): the turned box, attached to the carriage
+    local corners, pos = box_corners(box), e.position
+    for i = 1, 4 do
+      local a, b = corners[i], corners[i % 4 + 1]
+      objs[#objs + 1] = rendering.draw_line({color = box_color(rec.force), width = BOX_WIDTH,
+        from = {entity = e, offset = {a.x - pos.x, a.y - pos.y}}, to = {entity = e, offset = {b.x - pos.x, b.y - pos.y}},
+        surface = e.surface, players = players, visible = visible})
+    end
+  else
+    objs[#objs + 1] = rendering.draw_rectangle({color = box_color(rec.force), width = BOX_WIDTH, filled = false,
+      left_top = box.left_top, right_bottom = box.right_bottom, surface = e.surface, players = players,
+      visible = visible})
+  end
   if rec.kind == "barracks" then
     local point = rec.rally or buildings.default_exit(rec)
     local set = rec.rally ~= nil
@@ -294,33 +352,21 @@ function selection.refresh_building(player_index)
   selection.notify_hud(player_index)
 end
 
---- The own registered building at a map position: the hovered entity first (what the player sees highlighted)
---- when the point is on it, else the building whose selection box is nearest to the point, within
---- BUILDING_PICK_RADIUS (0 = inside it). Returns unit_number, record or nil.
--- Distance from a map position to an entity's selection box (0 inside it).
-local function box_distance(entity, position)
-  local box = entity.selection_box
-  local dx = math.max(box.left_top.x - position.x, 0, position.x - box.right_bottom.x)
-  local dy = math.max(box.left_top.y - position.y, 0, position.y - box.right_bottom.y)
-  return math.sqrt(dx * dx + dy * dy)
-end
-
+--- The own registered building at a map position: the one whose selection box is nearest to the point, within
+--- BUILDING_PICK_RADIUS (0 = inside it; rolling stock and depots: inside only). Returns unit_number, record or nil.
+--- Phase 5 M1 QA round 1: hover selection is off (camera.lua: update_entity_selection), so player.selected is never
+--- the entity under the cursor (at best a stale one) and is no longer consulted.
 function selection.building_at(player_index, position, surface)
   local force = selection.force_name(player_index)
-  local player = real_player(player_index)
-  local hovered = player and player.selected
-  if hovered and hovered.valid and hovered.unit_number and box_distance(hovered, position) <= BUILDING_PICK_RADIUS then
-    local rec = building_rec(hovered.unit_number)
-    if rec and rec.force == force then return hovered.unit_number, rec end
-  end
   surface = surface or util.surface()
   local best_un, best_rec, best_d
-  for _, e in pairs(surface.find_entities_filtered({position = position, radius = BUILDING_PICK_RADIUS + 3,
+  -- rolling stock is up to 7 tiles long: its centre can lie that far from a click inside its box
+  for _, e in pairs(surface.find_entities_filtered({position = position, radius = BUILDING_PICK_RADIUS + 5,
                                                      force = force})) do
     local rec = e.unit_number and building_rec(e.unit_number)
     if rec then
       local d = box_distance(e, position)
-      if d <= BUILDING_PICK_RADIUS and (not best_d or d < best_d) then best_un, best_rec, best_d = e.unit_number, rec, d end
+      if d <= pick_radius(e, rec) and (not best_d or d < best_d) then best_un, best_rec, best_d = e.unit_number, rec, d end
     end
   end
   return best_un, best_rec

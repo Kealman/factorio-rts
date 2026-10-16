@@ -124,6 +124,11 @@ buildings.KIND_BY_NAME[rails.WAGON] = rails.KIND
 buildings.KIND_BY_NAME[rails.CWAGON] = rails.KIND
 -- Ctrl+A and box selection take units only; trains are clicked.
 selection.SELECT_ALL_SKIP[rails.KIND] = true
+-- QA round 1: a click picks rolling stock and depots only inside their (oriented) selection box, not 1 tile around it
+if selection.EXACT_PICK_KINDS then
+  selection.EXACT_PICK_KINDS[rails.KIND] = true
+  selection.EXACT_PICK_NAMES[rails.DEPOT] = true
+end
 
 -- Research (scripts/research.lua): Railways unlocks the depot, rails and kits; Bridges lets the planner fly over water.
 -- Both technologies are Nation-only.
