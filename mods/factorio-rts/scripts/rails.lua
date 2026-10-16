@@ -657,8 +657,16 @@ local function heap_pop(hf, hk)
   return topk
 end
 
+-- Phase 5 M1 integration: package.loaded is keyed by the resolved file ("__factorio-rts__/scripts/territory.lua"), so
+-- the plain module name never matched and the survey never saw foreign land, nor the AI hook its cities.
+local function loaded(module_name)
+  local l = package and package.loaded
+  if not l then return nil end
+  return l["__" .. script.mod_name .. "__/" .. string.gsub(module_name, "%.", "/") .. ".lua"] or l[module_name]
+end
+
 local function territory_owner(position)
-  local t = package.loaded["scripts.territory"]
+  local t = loaded("scripts.territory")
   if type(t) ~= "table" or not t.owner_at then return nil end
   local ok, owner = pcall(t.owner_at, position)
   return ok and owner or nil
@@ -1262,7 +1270,7 @@ local function refuel(train, net)
 end
 
 --- Spawn a train of `kind` ("cargo" | "construction") on a depot platform from kits in the depot's network.
---- Returns the LuaTrain, or nil and a reason ("no-depot", "no-platform", "busy", "no-kits", "no-room").
+--- Returns the LuaTrain, or nil and a reason ("no-depot", "no-platform", "busy", "no-kits", "no-fuel", "no-room").
 function rails.create_train(depot_un, kind)
   kind = kind == "construction" and "construction" or "cargo"
   local R = rstate()
@@ -1276,6 +1284,8 @@ function rails.create_train(depot_un, kind)
   for _, k in ipairs(kits) do
     if net.get_item_count(k[1]) < k[2] then return nil, "no-kits" end
   end
+  -- Phase 5 M1 integration: a train without coal never moves (an AI crew stood on its platform with 0 coal)
+  if net.get_item_count(rails.FUEL) < 2 then return nil, "no-fuel" end
   local surface, force_name = d.entity.surface, d.force
   local p = d.platform
   -- the front locomotive at the end the line joins (or the second end), facing out
@@ -1549,8 +1559,9 @@ end
 ---------------------------------------------------------------------------
 -- Lines: open, cut, repair dispatch
 ---------------------------------------------------------------------------
-local function line_path_ok(line)
+local function line_path_ok(line, reverse)
   local A, B = rails.depot(line.a), rails.depot(line.b)
+  if reverse then A, B = B, A end
   if not (A and B and A.platform and B.platform) then return false end
   local goals = {}
   for _, st in pairs(B.platform.stops) do
@@ -1684,6 +1695,7 @@ local function dispatch_builder(line)
   local cargo = cargo_positions(line)
   local sides = {{depot = line.a, dir = 1, from = lo}, {depot = line.b, dir = -1, from = hi}}
   local why = "no-kits"
+  local why_set = false -- Phase 5 M1 integration: the far side's "no-rails" no longer hides the near side's reason
   for _, side in ipairs(sides) do
     local blocked = false
     for _, ci in ipairs(cargo) do
@@ -1697,7 +1709,7 @@ local function dispatch_builder(line)
       local need = rails_needed(line, side.dir, side.from)
       local have = net.get_item_count(rails.RAIL)
       if have <= 0 then
-        why = "no-rails"
+        if not why_set then why = "no-rails" end
       else
         local train, reason = rails.create_train(side.depot, "construction")
         if train then
@@ -1717,7 +1729,7 @@ local function dispatch_builder(line)
             .. "of %d needed", line.id, train.id, side.depot, side.dir, lo, hi, loaded, need)
           return
         end
-        why = reason
+        why, why_set = reason, true
       end
     end
   end
@@ -1735,7 +1747,20 @@ local function check_lines()
     if (st == "building" or st == "cut") and line.pieces then
       if line.builder and not R.trains[line.builder] then line.builder = nil end
       if line.missing <= 0 and supports_missing(line) == 0 then
-        if line_path_ok(line) then open_line(line) end
+        if line_path_ok(line) then
+          open_line(line)
+        elseif line_path_ok(line, true) and #(line.signals or {}) > 0 then
+          -- one-way (an unpaired signal from an older save or a cut): the signals go, a single-train line needs none
+          local n = 0
+          for _, sig in ipairs(line.signals) do
+            if sig.valid then
+              sig.destroy()
+              n = n + 1
+            end
+          end
+          line.signals = {}
+          util.log("rails: line #%d of %s was one-way: %d signals removed", line.id, line.force, n)
+        end
       elseif not line.builder then
         dispatch_builder(line)
       end
@@ -1856,6 +1881,15 @@ local function place_signals(line, p, rec, s)
     if abs(pos.x - p.gx) < 0.2 and abs(pos.y - p.gy) < 0.2 then re = x end
   end
   if not re then return end
+  -- Phase 5 M1 integration: both signals of a pair or none: a crew short of rails placed one signal of a pair, which
+  -- made the line one-way (no path from depot A to B; seed 405 never opened its line)
+  local n = 0
+  for _, key in ipairs({"in_signal_location", "out_signal_location"}) do
+    local loc = re[key]
+    if loc and loc.rail_layer == 0 then n = n + 1 end
+  end
+  local inv0 = wagon_inv(rec)
+  if not inv0 or inv0.get_item_count(rails.RAIL) < n * CFG.signal_rails then return end
   for _, key in ipairs({"in_signal_location", "out_signal_location"}) do
     local loc = re[key]
     local inv = wagon_inv(rec)
@@ -2086,6 +2120,26 @@ local function fuel_left(train)
 end
 rails.fuel_left = fuel_left
 
+-- Phase 5 M1 integration: a train standing without coal on one of its force's depot platforms (deployed before the
+-- network had coal) tanks from that depot's network as soon as the coal is there.
+local function refuel_stranded(rec, train)
+  if train.speed ~= 0 or fuel_left(train) > 0 then return end
+  local R = rstate()
+  local pos = train.front_stock and train.front_stock.valid and train.front_stock.position
+  if not pos then return end
+  for _, un in ipairs(sorted_keys(R.depots)) do
+    local d = R.depots[un]
+    local a = d.force == rec.force and d.platform and d.platform.area
+    if a and pos.x >= a[1][1] - 4 and pos.x <= a[2][1] + 4 and pos.y >= a[1][2] - 4 and pos.y <= a[2][2] + 4 then
+      local put = refuel(train, logistics.hub_network(un))
+      if put > 0 then
+        util.log("rails: train %d (%s) stranded without coal at depot #%d took %d coal", train.id, rec.force, un, put)
+      end
+      return
+    end
+  end
+end
+
 local function train_step(id, rec)
   local R = rstate()
   local train = train_of(rec)
@@ -2094,6 +2148,7 @@ local function train_step(id, rec)
     R.dwelling[id] = nil
     return
   end
+  refuel_stranded(rec, train)
   if train.id ~= id then
     R.trains[id] = nil
     R.trains[train.id] = rec
@@ -2252,14 +2307,53 @@ local function ai_state(force_name)
   return A
 end
 
+-- Phase 5 M1 integration: what an intermediate is made of, per item (balance.intermediates; steel from the smelter
+-- recipe, balance.smelting). The AI pays a missing intermediate with its inputs (circuits were the rail program's
+-- bottleneck: locomotive kits waited for them for half an hour while plates piled up).
+local AI_EXPAND = {}
+for _, def in pairs(balance.intermediates or {}) do
+  local per = {}
+  for item, amount in pairs(def.cost) do per[item] = amount / (def.count or 1) end
+  AI_EXPAND[def.result] = per
+end
+for item, def in pairs(balance.smelting or {}) do
+  local per = {}
+  for ing, amount in pairs(def.cost) do per[ing] = amount end
+  AI_EXPAND[item] = per
+end
+-- (steel paid as iron without a reserve starved an AI's army and repairs of plates and lost it its capital: an
+-- expanded item's inputs keep AI_RESERVE_EXPANDED in the network)
+-- What the AI's capital keeps for its own army and repairs: the rail program never takes it below this, and never
+-- below the larger AI_RESERVE_EXPANDED for the inputs of an intermediate it pays as plates (circuits for a kit).
+rails.AI_RESERVE = {["iron-plate"] = 40, ["copper-plate"] = 20, ["stone"] = 20}
+rails.AI_RESERVE_EXPANDED = {["iron-plate"] = 150, ["copper-plate"] = 60}
+
+-- Raw goods to take from `pay` for `count` of `item` (an intermediate it lacks is paid with its inputs, 3 levels deep;
+-- `taken` holds what earlier parts of the same payment already take). Returns false when the network cannot pay.
+local function ai_bill(pay, item, count, taken, depth)
+  local reserve = depth > 0 and rails.AI_RESERVE_EXPANDED[item] or rails.AI_RESERVE[item] or 0
+  local have = pay.get_item_count(item) - (taken[item] or 0) - reserve
+  local use = math.min(math.max(0, have), count)
+  if use > 0 then taken[item] = (taken[item] or 0) + use end
+  local rest = count - use
+  if rest <= 0 then return true end
+  local per = AI_EXPAND[item]
+  if not per or depth >= 3 then return false end
+  for ing, amount in pairs(per) do
+    if not ai_bill(pay, ing, math.ceil(amount * rest - 1e-9), taken, depth + 1) then return false end
+  end
+  return true
+end
+
 -- Pay `n` crafts of a recipe's ingredients from network `pay` and put the products into network `put`. Returns true.
 local function ai_pay(pay, put, recipe_name, n)
   local proto = prototypes.recipe[recipe_name]
   if not (proto and pay and pay.valid and put and put.valid) then return false end
+  local taken = {}
   for _, ing in ipairs(proto.ingredients) do
-    if pay.get_item_count(ing.name) < ing.amount * n then return false end
+    if not ai_bill(pay, ing.name, ing.amount * n, taken, 0) then return false end
   end
-  for _, ing in ipairs(proto.ingredients) do pay.remove_item({name = ing.name, count = ing.amount * n}) end
+  for item, count in pairs(taken) do pay.remove_item({name = item, count = count}) end
   for _, prod in ipairs(proto.products) do
     if prod.type == "item" then put.insert({name = prod.name, count = (prod.amount or 1) * n}) end
   end
@@ -2272,15 +2366,23 @@ local function anchor_net(un)
   return (net and net.valid) and net or nil
 end
 
-local function find_depot_site(surface, force_name, center)
-  for r = 26, 74, 8 do
-    for a = 0, 15 do
-      local ang = a * math.pi / 8
-      local p = {x = floor(center.x + r * math.cos(ang) + 0.5), y = floor(center.y + r * math.sin(ang) + 0.5)}
-      if surface.can_place_entity({name = rails.DEPOT, position = p, force = force_name,
-                                   build_check_type = MANUAL_GHOST, forced = true})
-         and rails.platform_fits(surface, force_name, p) then
-        return p
+-- Phase 5 M1 integration: `reach` = the largest Chebyshev distance at which the depot's logistic area still touches
+-- the anchor's (the depot then joins the anchor's network: freight loads and unloads straight into it); sites within
+-- it are tried first, the rest of the ring after them. `prefer` (ai/towns.lua's reserved site) comes first of all.
+local function find_depot_site(surface, force_name, center, reach, prefer)
+  local function fits(p)
+    return surface.can_place_entity({name = rails.DEPOT, position = p, force = force_name,
+                                     build_check_type = MANUAL_GHOST, forced = true})
+      and rails.platform_fits(surface, force_name, p) ~= nil
+  end
+  if prefer and fits(prefer) then return {x = prefer.x, y = prefer.y} end
+  for pass = 1, reach and 2 or 1 do
+    for r = 26, 74, 8 do
+      for a = 0, 15 do
+        local ang = a * math.pi / 8
+        local p = {x = floor(center.x + r * math.cos(ang) + 0.5), y = floor(center.y + r * math.sin(ang) + 0.5)}
+        local near = reach and math.max(math.abs(p.x - center.x), math.abs(p.y - center.y)) <= reach
+        if (pass == 2 or not reach or near) and not (pass == 2 and near) and fits(p) then return p end
       end
     end
   end
@@ -2299,7 +2401,11 @@ local function ai_depot(force_name, anchor_un, field, A)
     A.next_craft = game.tick + rails.AI_CRAFT_TICKS
   end
   local surface = anchor.entity.surface
-  local pos = find_depot_site(surface, force_name, anchor.entity.position)
+  local radius = anchor.entity.prototype.logistic_radius or 0
+  local depot_radius = prototypes.entity[rails.DEPOT].logistic_radius or 14
+  local reach = radius > 0 and math.floor(radius + depot_radius - 2) or nil
+  local pos = find_depot_site(surface, force_name, anchor.entity.position, reach,
+    field == "depot_b" and A.far_site or nil)
   if not pos then
     if A.why ~= "no-site" then util.log("rails: AI %s finds no depot site near #%d", force_name, anchor_un) end
     A.why = "no-site"
@@ -2346,7 +2452,7 @@ local function ai_supplies(depot_un, anchor_un, want_rails)
   end
   local have = net.get_item_count(rails.RAIL)
   if have >= want_rails then return true end
-  local crafts = min(50, math.ceil((want_rails - have) / CFG.rail.count))
+  local crafts = min(25, math.ceil((want_rails - have) / CFG.rail.count))
   while crafts > 0 and not ai_pay(pay, net, "rts-rail", crafts) do crafts = floor(crafts / 2) end
   return false
 end
@@ -2421,6 +2527,38 @@ function rails.ai_program(force_name, A)
   end
 end
 
+--- logistics.lua hook: a cargo train of the force runs from a depot in network `src_id` to one in `home_id` on an
+--- open line (auto haulers then leave that source to the train).
+logistics.served_by_train = function(force_name, src_id, home_id)
+  local R = storage.rails
+  if not (R and next(R.trains)) then return false end
+  for _, rec in pairs(R.trains) do
+    if rec.kind == "cargo" and rec.force == force_name and rec.pickup and rec.dropoff then
+      local a, b = logistics.hub_network(rec.pickup), logistics.hub_network(rec.dropoff)
+      local line = rec.line and R.lines[rec.line]
+      if a and b and a.network_id == src_id and b.network_id == home_id and (not line or line.state == "open") then
+        return true
+      end
+    end
+  end
+  return false
+end
+
+--- The AI rail program's state for a force: "idle" | "depots" | "survey" | "building" | "cut" | "open" (ai/age_up.lua
+--- saves plates for it).
+function rails.ai_program_state(force_name)
+  local R = storage.rails
+  local A = R and R.ai and R.ai[force_name]
+  return A and A.state or "idle"
+end
+
+--- ai/towns.lua: the depot site it reserved next to the AI's mining town (the far end of its line).
+function rails.ai_set_far_site(force_name, position)
+  local A = ai_state(force_name)
+  A.far_site = {x = position.x, y = position.y}
+  util.log("rails: AI %s far depot site %s (town)", force_name, util.pos_str(position))
+end
+
 --- AI commander hook (ai/commander.lua, every run): Nation mode only, every AI_PERIOD ticks.
 function rails.ai_step(C)
   if not rails.nation() then return end
@@ -2429,18 +2567,27 @@ function rails.ai_step(C)
   A.next = game.tick + rails.AI_PERIOD
   if not (A.anchor and buildings.get(A.anchor) and A.far and buildings.get(A.far)) then
     local cc, cc_un = buildings.main_cc(C.force)
-    local cities = package.loaded["scripts.cities"]
+    local cities = loaded("scripts.cities")
     if type(cities) == "table" and cities.get and storage.nations and storage.nations[C.force] then
       local ok, city = pcall(cities.get, storage.nations[C.force].capital)
       if ok and city and city.center and buildings.get(city.center) then cc, cc_un = buildings.get(city.center), city.center end
     end
     if not cc then return end
     local best, bd
+    -- Phase 5 M1 integration: a City Center (the AI's mining town, ai/towns.lua) before any hub; with a reserved far
+    -- depot site, the hub or City Center nearest to it
+    local function rank(un, rec)
+      local d = util.distance(rec.entity.position, cc.entity.position)
+      if A.far_site then return util.distance(rec.entity.position, A.far_site), d end
+      local city = type(cities) == "table" and cities.of_center and cities.of_center(un)
+      return d + (city and 0 or 100000), d
+    end
+    local best_rank
     for un, rec in buildings.for_force(C.force) do
       if (rec.kind == "hub" or rec.kind == "cc") and un ~= cc_un and not rails.depot(un)
          and rec.entity.surface == cc.entity.surface then
-        local d = util.distance(rec.entity.position, cc.entity.position)
-        if d >= CFG.ai_min_distance and (not bd or d < bd) then best, bd = un, d end
+        local r, d = rank(un, rec)
+        if d >= CFG.ai_min_distance and (not best_rank or r < best_rank) then best, bd, best_rank = un, d, r end
       end
     end
     if not best then return end
