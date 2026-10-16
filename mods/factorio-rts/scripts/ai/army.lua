@@ -20,10 +20,15 @@
 -- Phase 4: the pool never holds haulers or the commander (POOL_SKIP); ai/raids.lua forms "harass", "guard" and
 -- "patrol" groups from it after the base defence, and the doctrine's reserve raiders stay out of attack groups.
 -- Stats in C.stats: attacks, reinforcements, retreats, defends, recalls.
+-- Phase 5 (docs/PHASE5-M1.md section 3): attack and defence groups run as divisions (scripts/divisions.lua, stance
+-- advance, owner "ai"): G.division is the division id, order_attack / send_home order it with divisions.order (one
+-- unit-group path per group instead of one path per unit), disband() disbands it, and a group counts as idle when its
+-- division is. Guard, patrol and harass groups (ai/raids.lua) stay loose units.
 local util = require("scripts.util")
 local units = require("scripts.units")
 local buildings = require("scripts.buildings")
 local orders = require("scripts.orders")
+local divisions = require("scripts.divisions") -- Phase 5: attack and defence groups are divisions
 local scout = require("scripts.ai.scout")
 local raids = require("scripts.ai.raids")
 
@@ -43,6 +48,7 @@ army.RALLY_SHARE = 0.34          -- rally point: this share of the way from the 
 army.RALLY_MIN, army.RALLY_MAX = 20, 40 -- clamped; two rallies 24 tiles apart (0.4 of 120) saw each other (vision 30)
 army.POOL_SKIP = {hauler = true, commander = true} -- unit kinds the army never commands (logistics, abilities)
 army.PARITY = 0.8 -- an attack (not a finishing one) also needs this share of the largest enemy army seen lately
+army.DIVISION_STATES = {attack = true, defend = true} -- Phase 5: groups formed in these states run as divisions
 
 --- Set up C.army; the rally point lies between `home` (CC) and the nearest other spawn.
 function army.init(C, home)
@@ -122,6 +128,7 @@ end
 local function disband(C, G, why)
   for un in pairs(G.members) do C.army.member[un] = nil end
   C.army.groups[G.id] = nil
+  if G.division then divisions.disband(G.division, "AI group #" .. G.id .. " disbanded: " .. why) end
   util.log("ai %s: group #%d disbanded (%s)", C.force, G.id, why)
 end
 
@@ -137,17 +144,46 @@ local function form(C, list, state, target)
   end
   G.initial_hp = hp_of(list)
   a.groups[G.id] = G
+  if army.DIVISION_STATES[state] then
+    G.division = divisions.create(C.force, list, {stance = "advance"}, {owner = "ai"})
+  end
   return G
+end
+
+-- Phase 5: the group's division, when it has one that still exists.
+local function division_of(G)
+  return G.division and divisions.get(G.division) and G.division or nil
+end
+
+-- Units of the group outside its division (none normally: a unit another module drives cannot join).
+local function outside(G, list)
+  local out = {}
+  for _, e in ipairs(list) do
+    if e.valid and divisions.of_unit(e.unit_number) ~= G.division then out[#out + 1] = e end
+  end
+  return out
 end
 
 local function order_attack(C, G, list, target)
   G.target = target
   G.last_order = game.tick
+  local id = division_of(G)
+  if id and divisions.order(id, "attack_move", target.position) then
+    local rest = outside(G, list)
+    if #rest > 0 then orders.attack_move(rest, target.position) end
+    return #list
+  end
   return orders.attack_move(list, target.position)
 end
 
 local function send_home(C, G, list, state)
   G.state, G.state_tick, G.last_order = state, game.tick, game.tick
+  local id = division_of(G)
+  if id and divisions.order(id, state == "retreat" and "retreat" or "move", C.army.rally) then
+    local rest = outside(G, list)
+    if #rest > 0 then orders.move(rest, C.army.rally) end
+    return
+  end
   orders.move(list, C.army.rally)
 end
 
@@ -332,9 +368,13 @@ function army.step(C, surface)
               G.state == "defend" and "threat over" or "no target known")
           else
             local idle = false
-            for _, e in ipairs(list) do
-              local rec = units.get(e.unit_number)
-              if rec and rec.order == units.IDLE then idle = true break end
+            if division_of(G) then
+              idle = divisions.is_idle(G.division)
+            else
+              for _, e in ipairs(list) do
+                local rec = units.get(e.unit_number)
+                if rec and rec.order == units.IDLE then idle = true break end
+              end
             end
             local moved = util.distance(target.position, G.target and G.target.position or target.position) > 6
             if moved or idle then
@@ -364,8 +404,9 @@ function army.describe(C)
   table.sort(ids)
   for _, gid in ipairs(ids) do
     local G = a.groups[gid]
-    parts[#parts + 1] = string.format("#%d %s %du -> %s %s", gid, G.state, table_size(G.members),
-      G.target and G.target.kind or "-", G.target and util.pos_str(G.target.position) or "")
+    parts[#parts + 1] = string.format("#%d %s %du%s -> %s %s", gid, G.state, table_size(G.members),
+      division_of(G) and (" div#" .. G.division) or "", G.target and G.target.kind or "-",
+      G.target and util.pos_str(G.target.position) or "")
   end
   return string.format("rally %s min=%s pool=%d (strength %.1f, enemy army seen %d) groups=[%s]",
     util.pos_str(a.rally), tostring(a.min), a.pool_size or 0, a.pool_strength or 0, a.enemy_seen or 0,

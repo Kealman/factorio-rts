@@ -1758,6 +1758,11 @@ function hud.build(player)
   return h
 end
 
+-- Phase 5: fn(player) after every refresh, e.g. a selection change (scripts/divisiongui.lua: division cards). Load time
+-- only. A table field, not a local: the main chunk is close to Lua's 200-local limit.
+hud.refresh_hooks = {}
+function hud.on_refresh(fn) hud.refresh_hooks[#hud.refresh_hooks + 1] = fn end
+
 --- Update the player's HUD now (selection.lua calls this after every selection change). Builds the HUD
 --- when it is missing. Cheap: one pass over the selection and the unit registry, one cached economy snapshot.
 function hud.refresh(player_index)
@@ -1766,9 +1771,10 @@ function hud.refresh(player_index)
   local h = get_hud(player)
   if not h then
     hud.build(player)
-    return
+  else
+    update(player, h)
   end
-  update(player, h)
+  for _, fn in ipairs(hud.refresh_hooks) do fn(player) end
 end
 
 -- A torn-down match takes its kill feed, attack-alert rate limits and pings with it (Wave C).

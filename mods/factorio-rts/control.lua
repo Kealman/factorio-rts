@@ -26,6 +26,9 @@ local modules = {
   require("scripts.cursor"),
   require("scripts.selection"),
   require("scripts.orders"),
+  require("scripts.divisions"), -- Phase 5: divisions (unit groups) and the order router; after orders (path-request
+                                -- queue) and selection (division hooks). ai/army.lua requires it already, so its
+                                -- handlers register inside ai.init's require chain, right after orders.lua's
   require("scripts.logistics"), -- Phase 4: hubs, stockpile policies, haulers (after orders: right-click hook)
   require("scripts.hubgui"),    -- Phase 4: hub and hauler panels
   require("scripts.demolish"),  -- Phase 5: demolish own buildings (Delete, Demolish buttons)
@@ -38,6 +41,7 @@ local modules = {
                                 -- targeted-ability right-click hook is registered first)
   require("scripts.abilitygui"), -- Phase 4: ability bar (bottom centre)
   require("scripts.hud"),
+  require("scripts.divisiongui"), -- Phase 5: division panel; after the HUD (hud.on_refresh hook)
   require("scripts.lobby"),    -- Phase 3 start dialog, menu, results; match start / restart
   require("scripts.techgui"),  -- Phase 4 research panel (T)
   require("scripts.debug"),

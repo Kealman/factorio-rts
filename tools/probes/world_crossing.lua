@@ -90,7 +90,8 @@ local function setup_lane(surface, P, b)
     if edge > 160 then
       local dc = math.huge
       for _, c in ipairs(cross) do dc = math.min(dc, math.abs(s - c.along)) end
-      if dc < 600 and (not best or dc > best) then best, best_s = dc, s end
+      -- the nearest crossing must be clearly shorter than walking round the open inner end
+      if dc < 600 and dc >= 120 and s - dc > 120 and (not best or dc > best) then best, best_s = dc, s end
     end
   end
   if not best_s then return nil, "no mid-span point" end

@@ -10,6 +10,7 @@
 --   target  LuaEntity?     attack target, or the enemy an attack-move was re-targeted at
 --   issuer  "orders"       set together with order; on_ai_command_completed is handled only for these units
 --   fails   number?        consecutive failed attack / attack-move commands (gives up after MAX_FAILS)
+--   retarget_tick number?  Phase 5: tick of the unit's last search for the next enemy (re-target throttle)
 -- Claim rule (units.lua): a record whose order is not "idle" and whose issuer is not "orders" belongs to
 -- another module (debug.lua's "autotest", match.lua's enemy waves) and is never commanded from here.
 --
@@ -19,6 +20,8 @@
 --   area_tick  {[player_index] = tick}   tick of the last reverse-select event handled
 --   cancel_tick {[player_index] = tick}  tick a right click ended build mode (Phase 2)
 --   stats      counters for the autotest and /rts-dump
+--   queue      Phase 5 path-request queue (below): {units = fifo, groups = fifo, keys, inflight, tick, used_u, used_g,
+--              burst, stats}
 --
 -- Right click (spike decision 10): the rts-cursor tool turns a right click or drag into
 -- on_player_reverse_selected_area (shift: on_player_alt_reverse_selected_area). That event is the primary
@@ -35,6 +38,19 @@
 --   orders nothing; a reverse-select click right after it is ignored (storage.orders.cancel_tick).
 -- * The armed attack-move prompt is shown on the HUD's top strip (hud.lua reads orders.is_armed), not as
 --   flying text at the cursor.
+--
+-- Phase 5 (docs/PHASE5-M1.md section 3, docs/qa/phase5-divisions-notes.md):
+-- * Path-request queue. Every command that makes a unit or a unit group path goes through orders.queue_command. At
+--   most orders.QUEUE.unit_budget unit commands and orders.QUEUE.group_budget unit-group commands are issued per
+--   tick; the rest wait in two FIFOs and are issued on the next ticks (on_tick below). While nothing waits and the
+--   tick's budget is not used up, a command is issued at once, so orders to 100 units or fewer behave exactly as
+--   before. A unit or group has at most one queued command: a newer one replaces it in place, and stop / hold /
+--   release cancel it. Probe numbers (spider-units, 512-tile arena with rivers, M3 Pro): 48 group paths of 200 tiles
+--   in one tick cost a 19 ms pathFinder tick, 4 per tick at most 6.5 ms; 100 unit commands per tick at most 10 ms.
+--   QA log line when a backlog drains: "orders queue: drained ... max U unit + G group commands per tick ...".
+-- * Divisions (scripts/divisions.lua) register a router (orders.set_division_router): an order whose units include
+--   every live member of a division becomes one division order (one unit-group path); members ordered without the
+--   rest of their division are detached and ordered as loose units. The QA order line then adds "divisions=N".
 local util = require("scripts.util")
 local events = require("scripts.events")
 local units = require("scripts.units")
@@ -52,6 +68,9 @@ local MOVE_RADIUS = 1           -- go_to_location radius
 local ATTACK_MOVE_RADIUS = 8    -- attack_area radius
 local RETARGET_RANGE = 30       -- tiles searched for the next enemy when an attack-move completes
 local MAX_FAILS = 3             -- consecutive failed commands before an attack / attack-move unit is stopped
+-- Phase 5 re-target throttle: a unit searches for its next enemy at most this often; a completion sooner keeps
+-- attacking the enemy it found last while that one lives (divisions re-target once per second per division)
+local RETARGET_MIN_TICKS = 60
 -- Attacking one entity. defines.command.attack on a spider-unit completes (result=success) on nearly every
 -- tick while the target is alive, so the order has to be re-issued constantly and the units re-aim each time:
 -- in the autotest 6 walkers needed ~16 s and ~5000 completion events to kill one 200 hp walker (7-9 s with
@@ -103,6 +122,233 @@ function orders.stats()
 end
 
 ---------------------------------------------------------------------------
+-- Path-request queue (Phase 5; see the header)
+---------------------------------------------------------------------------
+-- unit_budget: unit commands that path (go_to_location, attack_area, attack) issued per tick at most.
+-- group_budget: unit-group commands per tick at most (a group asks for one long, distinct path; see the header).
+-- group_inflight: unit groups whose path is still being searched (group state "pathfinding") at most. A long group
+-- path is a pathfinder job that runs for several ticks, and the jobs add up: 48 group orders of 400 tiles at 4 per tick
+-- (2048-tile lab map with rivers) cost a 21 ms pathFinder tick once 20+ jobs ran at the same time.
+orders.QUEUE = {unit_budget = 100, group_budget = 4, group_inflight = 2}
+local INFLIGHT_MAX_TICKS = 300 -- a group still "pathfinding" after this long no longer holds a slot
+local PATHFINDING = defines.group_state.pathfinding
+
+local function new_fifo() return {first = 1, last = 0, items = {}} end
+
+local function qstate()
+  local o = ostate()
+  local q = o.queue
+  if not q then
+    q = {units = new_fifo(), groups = new_fifo(), keys = {}, tick = -1, used_u = 0, used_g = 0,
+         stats = {immediate = 0, queued = 0, issued_later = 0, replaced = 0, cancelled = 0, max_u = 0, max_g = 0,
+                  peak = 0, bursts = 0, groups = 0}}
+    o.queue = q
+  end
+  return q
+end
+
+local function fifo_size(f) return f.last - f.first + 1 end
+
+-- Groups whose path is still being searched (pruned once per tick: gone, found, or too old).
+local function inflight(q)
+  local list = q.inflight
+  if not list then
+    list = {}
+    q.inflight = list
+  end
+  if q.inflight_tick ~= game.tick then
+    q.inflight_tick = game.tick
+    local keep, tick = {}, game.tick
+    for _, f in ipairs(list) do
+      local c = f.c
+      if c.valid and tick - f.tick < INFLIGHT_MAX_TICKS and (tick - f.tick < 2 or c.state == PATHFINDING) then
+        keep[#keep + 1] = f
+      end
+    end
+    q.inflight = keep
+    list = keep
+  end
+  return #list
+end
+
+-- Commands left in this tick's budget for one class (the counters reset on the first use in a tick).
+local function budget_left(q, is_group)
+  if q.tick ~= game.tick then q.tick, q.used_u, q.used_g = game.tick, 0, 0 end
+  if is_group then
+    return math.min(orders.QUEUE.group_budget - q.used_g, orders.QUEUE.group_inflight - inflight(q))
+  end
+  return orders.QUEUE.unit_budget - q.used_u
+end
+
+local function issue(q, c, cmd, is_group, start_moving)
+  c.set_command(cmd)
+  if start_moving then c.start_moving() end
+  local st = q.stats
+  if is_group then
+    q.used_g = q.used_g + 1
+    st.groups = st.groups + 1
+    if q.used_g > st.max_g then st.max_g = q.used_g end
+    local list = q.inflight or {}
+    q.inflight = list
+    list[#list + 1] = {c = c, tick = game.tick}
+    if #list > (st.max_inflight or 0) then st.max_inflight = #list end
+  else
+    q.used_u = q.used_u + 1
+    if q.used_u > st.max_u then st.max_u = q.used_u end
+  end
+end
+
+
+--- Give a command to a unit (LuaEntity or its LuaCommandable) or a unit group (LuaCommandable) through the
+--- path-request queue: at once while the tick's budget lasts and nothing waits, else on a later tick (FIFO).
+--- opts.start_moving: call start_moving() on the group right after its command. Returns true when issued now.
+-- The queue key of a unit (its unit_number) or a group (minus its unique_id): one queued command per key. Returns
+-- commandable, key, is_group (nil when the target is gone or cannot be commanded).
+local function resolve_target(target)
+  if not target.valid then return nil end
+  if target.object_name == "LuaEntity" then
+    local c = target.commandable
+    if not c then return nil end
+    return c, target.unit_number, false
+  end
+  if target.is_unit_group then return target, -target.unique_id, true end
+  local e = target.entity
+  return target, e and e.unit_number or target.unique_id, false
+end
+
+function orders.queue_command(target, command, opts)
+  local c, key, is_group = resolve_target(target)
+  if not c then return false end
+  local start_moving = opts ~= nil and opts.start_moving == true
+  local q = qstate()
+  local waiting = q.keys[key]
+  if waiting then -- the newer command replaces the queued one and keeps its place in line
+    local item = (is_group and q.groups or q.units).items[waiting]
+    if item then
+      item.cmd, item.start = command, start_moving
+      q.stats.replaced = q.stats.replaced + 1
+      return false
+    end
+    q.keys[key] = nil
+  end
+  local fifo = is_group and q.groups or q.units
+  if fifo.first > fifo.last and budget_left(q, is_group) > 0 then
+    issue(q, c, command, is_group, start_moving)
+    q.stats.immediate = q.stats.immediate + 1
+    if q.burst then q.burst.n = q.burst.n + 1 end
+    return true
+  end
+  fifo.last = fifo.last + 1
+  fifo.items[fifo.last] = {c = c, cmd = command, start = start_moving, key = key}
+  q.keys[key] = fifo.last
+  local st = q.stats
+  st.queued = st.queued + 1
+  local backlog = fifo_size(q.units) + fifo_size(q.groups)
+  if backlog > st.peak then st.peak = backlog end
+  local b = q.burst
+  if not b then
+    b = {start = game.tick, n = q.used_u + q.used_g, queued = 0, max_u = q.used_u, max_g = q.used_g, peak = 0}
+    q.burst = b
+    st.bursts = st.bursts + 1
+  end
+  b.queued = b.queued + 1
+  if backlog > b.peak then b.peak = backlog end
+  return false
+end
+
+--- Drop the queued command of a unit (LuaEntity) or group (LuaCommandable), if any. Returns true when one was dropped.
+function orders.cancel_queued(target)
+  local q = storage.orders and storage.orders.queue
+  if not (q and target and next(q.keys)) then return false end
+  local c, key, is_group = resolve_target(target)
+  if not c then return false end
+  local index = q.keys[key]
+  if not index then return false end
+  q.keys[key] = nil
+  local item = (is_group and q.groups or q.units).items[index]
+  if item then item.c = nil end
+  q.stats.cancelled = q.stats.cancelled + 1
+  return true
+end
+
+--- Queue counters: immediate, queued, issued_later, replaced, cancelled, max_u / max_g (most unit / group commands
+--- issued in one tick), max_inflight (most group paths searched at once), peak (largest backlog), bursts, groups; plus
+--- backlog (now).
+function orders.queue_stats()
+  local q = qstate()
+  local out = {}
+  for k, v in pairs(q.stats) do out[k] = v end
+  out.backlog = fifo_size(q.units) + fifo_size(q.groups)
+  return out
+end
+
+--- Reset the per-tick maxima (autotests that measure one order).
+function orders.queue_reset_max()
+  local st = qstate().stats
+  st.max_u, st.max_g, st.peak, st.max_inflight = 0, 0, 0, 0
+end
+
+local function pump_fifo(q, fifo, is_group)
+  local left = budget_left(q, is_group)
+  local n = 0
+  while left > 0 and fifo.first <= fifo.last do
+    local i = fifo.first
+    local item = fifo.items[i]
+    fifo.items[i] = nil
+    fifo.first = i + 1
+    if item and item.c then
+      if q.keys[item.key] == i then q.keys[item.key] = nil end
+      if item.c.valid then
+        issue(q, item.c, item.cmd, is_group, item.start)
+        left = left - 1
+        n = n + 1
+      end
+    end
+  end
+  if fifo.first > fifo.last then fifo.first, fifo.last = 1, 0 end
+  return n
+end
+
+events.on(defines.events.on_tick, function(e)
+  local o = storage.orders
+  local q = o and o.queue
+  if not q then return end
+  -- groups whose path was found (or that are gone) leave the in-flight list, also while nothing waits
+  if q.inflight and q.inflight[1] and e.tick % 60 == 0 then inflight(q) end
+  local u, g = q.units, q.groups
+  if u.first > u.last and g.first > g.last then return end
+  local n = pump_fifo(q, u, false) + pump_fifo(q, g, true)
+  q.stats.issued_later = q.stats.issued_later + n
+  local b = q.burst
+  if b then
+    b.n = b.n + n
+    if q.used_u > b.max_u then b.max_u = q.used_u end
+    if q.used_g > b.max_g then b.max_g = q.used_g end
+  end
+  if u.first > u.last and g.first > g.last then
+    q.keys = {}
+    if b then
+      q.burst = nil
+      -- QA log line (docs/PHASE5-M1.md section 4: an order to 1,000 units issues <= 100 path requests per tick)
+      util.log("orders queue: drained %d queued commands in %d ticks (%d commands in the burst, max %d unit + %d group "
+        .. "commands per tick, budgets %d / %d, at most %d group paths in flight, peak backlog %d)", b.queued,
+        e.tick - b.start + 1, b.n, b.max_u, b.max_g, orders.QUEUE.unit_budget, orders.QUEUE.group_budget,
+        orders.QUEUE.group_inflight, b.peak)
+    end
+  end
+end)
+
+---------------------------------------------------------------------------
+-- Division router (Phase 5; set by scripts/divisions.lua at load time)
+---------------------------------------------------------------------------
+-- fn(entities, kind, target) -> rest, handled, surface: kind is "move" | "attack" | "attack_move" | "stop" | "hold",
+-- target a MapPosition (move, attack_move), a LuaEntity (attack) or nil. Orders whole divisions among `entities`,
+-- detaches partly ordered members, and returns the entities left for the loose-unit path, the number of units ordered
+-- as divisions and the surface of one of them.
+local division_router = nil
+function orders.set_division_router(fn) division_router = fn end
+
+---------------------------------------------------------------------------
 -- Helpers
 ---------------------------------------------------------------------------
 local function pos_of(p)
@@ -112,8 +358,12 @@ end
 
 -- Unit records an order may command: `who` is a player index (that player's selection) or an array of
 -- LuaEntity. Units claimed by another module are skipped.
-local function resolve(who)
+-- Phase 5: `kind` passes the order through the division router first (whole divisions take a division order);
+-- returns the loose records, the number of units ordered as divisions and the surface of one of them.
+local function resolve(who, kind, target)
   local list = type(who) == "number" and selection.get(who) or who
+  local n_div, surface = 0, nil
+  if division_router and kind then list, n_div, surface = division_router(list, kind, target) end
   local out = {}
   for _, entity in pairs(list) do
     if entity.valid and entity.unit_number then
@@ -121,13 +371,22 @@ local function resolve(who)
       if rec and (rec.order == units.IDLE or rec.issuer == orders.ISSUER) then out[#out + 1] = rec end
     end
   end
-  return out
+  return out, n_div, surface
 end
 
--- Size of the box a formation slot must hold for this prototype (widest side of the collision box).
+-- Size of the box a formation slot must hold for this prototype (widest side of the collision box). Phase 5: cached
+-- per prototype name (static prototype data, the same on every client), so an order to 1,000 units reads it once per
+-- unit type instead of twice per unit.
+local width_cache = {}
 local function unit_width(entity)
-  local box = entity.prototype.collision_box
-  return math.max(box.right_bottom.x - box.left_top.x, box.right_bottom.y - box.left_top.y)
+  local name = entity.name
+  local w = width_cache[name]
+  if not w then
+    local box = entity.prototype.collision_box
+    w = math.max(box.right_bottom.x - box.left_top.x, box.right_bottom.y - box.left_top.y)
+    width_cache[name] = w
+  end
+  return w
 end
 
 --- Formation spacing for a set of unit records.
@@ -144,19 +403,22 @@ function orders.formation(recs, center)
   local n = #recs
   if n == 0 then return {} end
   if n == 1 then return {{x = center.x, y = center.y}} end
-  local from = util.centroid((function()
-    local l = {}
-    for i, rec in ipairs(recs) do l[i] = rec.entity end
-    return l
-  end)())
+  -- each position is read once (Phase 5: orders to 1,000 units)
+  local xs, ys, sx, sy = {}, {}, 0, 0
+  for i, rec in ipairs(recs) do
+    local p = rec.entity.position
+    xs[i], ys[i] = p.x, p.y
+    sx, sy = sx + p.x, sy + p.y
+  end
+  local from = {x = sx / n, y = sy / n}
   local dx, dy = center.x - from.x, center.y - from.y
   local len = math.sqrt(dx * dx + dy * dy)
   if len < 0.5 then dx, dy = 1, 0 else dx, dy = dx / len, dy / len end
   local px, py = -dy, dx -- perpendicular to the direction of travel
 
   local along, across, idx = {}, {}, {}
-  for i, rec in ipairs(recs) do
-    local x, y = util.xy(rec.entity)
+  for i = 1, n do
+    local x, y = xs[i], ys[i]
     along[i], across[i], idx[i] = x * dx + y * dy, x * px + y * py, i
   end
   table.sort(idx, function(a, b)
@@ -190,19 +452,21 @@ end
 
 local function claim(rec, order, dest, target)
   rec.order, rec.dest, rec.target, rec.issuer, rec.fails = order, dest, target, orders.ISSUER, nil
+  rec.retarget_tick = nil
 end
 
 -- The order is over: the unit goes back to idle with `stop` (spike decision 3: never leave it commandless).
 local function release(rec)
   rec.order, rec.dest, rec.target, rec.issuer, rec.fails = units.IDLE, nil, nil, nil, nil
+  rec.retarget_tick = nil
+  orders.cancel_queued(rec.entity)
   units.stop(rec.entity)
   ostate().stats.released = ostate().stats.released + 1
 end
 
+-- Every unit command that paths goes through the queue (Phase 5); within the tick's budget it is issued at once.
 local function command(rec, cmd)
-  local c = rec.entity.commandable
-  if not c then return false end
-  c.set_command(cmd)
+  orders.queue_command(rec.entity, cmd)
   return true
 end
 
@@ -248,8 +512,9 @@ end
 
 -- QA log line for an order given to a player's selection: "order <name> n=<units> ... player=<index>".
 -- Orders given to an entity list (scripts) are not logged.
-local function log_order(who, name, n, detail)
+local function log_order(who, name, n, detail, n_div)
   if type(who) ~= "number" then return end
+  if n_div and n_div > 0 then detail = string.format("%sdivisions=%d", detail and (detail .. " ") or "", n_div) end
   util.log("order %s n=%d %splayer=%d", name, n, detail and (detail .. " ") or "", who)
 end
 
@@ -260,32 +525,35 @@ end
 
 --- Move to `position` in formation, ignoring enemies on the way (go_to_location, distraction none).
 function orders.move(who, position)
-  local recs = resolve(who)
-  if #recs == 0 then
+  local center = pos_of(position)
+  local recs, n_div, dsurf = resolve(who, "move", center)
+  if #recs == 0 and n_div == 0 then
     log_order(who, "move", 0, "dest=" .. util.pos_str(position))
     return 0
   end
-  local center = pos_of(position)
-  local slots = orders.formation(recs, center)
-  for i, rec in ipairs(recs) do
-    claim(rec, "move", slots[i])
-    command(rec, {type = CMD.go_to_location, destination = slots[i], radius = MOVE_RADIUS,
-                  distraction = DISTRACTION.none})
+  if #recs > 0 then
+    local slots = orders.formation(recs, center)
+    for i, rec in ipairs(recs) do
+      claim(rec, "move", slots[i])
+      command(rec, {type = CMD.go_to_location, destination = slots[i], radius = MOVE_RADIUS,
+                    distraction = DISTRACTION.none})
+    end
+    bump(ostate().stats.issued, "move", #recs)
   end
-  bump(ostate().stats.issued, "move", #recs)
-  log_order(who, "move", #recs, string.format("dest=%s spacing=%.2f", util.pos_str(center), orders.spacing(recs)))
-  feedback(who, center, COLORS.move, recs[1].entity.surface)
-  return #recs
+  log_order(who, "move", #recs + n_div, string.format("dest=%s spacing=%.2f", util.pos_str(center),
+    #recs > 0 and orders.spacing(recs) or 0), n_div)
+  feedback(who, center, COLORS.move, recs[1] and recs[1].entity.surface or dsurf)
+  return #recs + n_div
 end
 
 --- Attack one entity (distraction by_enemy; see ATTACK_MODE for the command used). The order is renewed
 --- at the target's position whenever it completes and ends (units idle with stop) when the target is gone.
 function orders.attack(who, target)
   if not (target and target.valid) then return 0 end
-  local recs = resolve(who)
+  local recs, n_div = resolve(who, "attack", target)
   local detail = string.format("target=#%s %s (%s) at %s", tostring(target.unit_number), target.name,
     target.force.name, util.pos_str(target.position))
-  if #recs == 0 then
+  if #recs == 0 and n_div == 0 then
     log_order(who, "attack", 0, detail)
     return 0
   end
@@ -293,55 +561,58 @@ function orders.attack(who, target)
     claim(rec, "attack", nil, target)
     command(rec, attack_command(target))
   end
-  bump(ostate().stats.issued, "attack", #recs)
-  log_order(who, "attack", #recs, detail)
+  if #recs > 0 then bump(ostate().stats.issued, "attack", #recs) end
+  log_order(who, "attack", #recs + n_div, detail, n_div)
   feedback(who, target, COLORS.attack, target.surface)
-  return #recs
+  return #recs + n_div
 end
 
 --- Attack-move to `position` in formation (attack_area radius 8, distraction by_anything). A distraction
 --- ends attack_area early (result=success), so a unit that completes more than the radius away from its
 --- slot resumes towards it; one that arrived re-targets the nearest enemy within RETARGET_RANGE, or stops.
 function orders.attack_move(who, position)
-  local recs = resolve(who)
-  if #recs == 0 then
+  local center = pos_of(position)
+  local recs, n_div, dsurf = resolve(who, "attack_move", center)
+  if #recs == 0 and n_div == 0 then
     log_order(who, "attack-move", 0, "dest=" .. util.pos_str(position))
     return 0
   end
-  local center = pos_of(position)
-  local slots = orders.formation(recs, center)
-  for i, rec in ipairs(recs) do
-    claim(rec, "attack_move", slots[i])
-    command(rec, {type = CMD.attack_area, destination = slots[i], radius = ATTACK_MOVE_RADIUS,
-                  distraction = DISTRACTION.by_anything})
+  if #recs > 0 then
+    local slots = orders.formation(recs, center)
+    for i, rec in ipairs(recs) do
+      claim(rec, "attack_move", slots[i])
+      command(rec, {type = CMD.attack_area, destination = slots[i], radius = ATTACK_MOVE_RADIUS,
+                    distraction = DISTRACTION.by_anything})
+    end
+    bump(ostate().stats.issued, "attack_move", #recs)
   end
-  bump(ostate().stats.issued, "attack_move", #recs)
-  log_order(who, "attack-move", #recs, "dest=" .. util.pos_str(center))
-  feedback(who, center, COLORS.attack_move, recs[1].entity.surface)
-  return #recs
+  log_order(who, "attack-move", #recs + n_div, "dest=" .. util.pos_str(center), n_div)
+  feedback(who, center, COLORS.attack_move, recs[1] and recs[1].entity.surface or dsurf)
+  return #recs + n_div
 end
 
 --- Stop: drop the order and stand still (stop still returns fire). Also cancels an armed attack-move.
 function orders.stop(who)
   disarm(who, "stop")
-  local recs = resolve(who)
+  local recs, n_div = resolve(who, "stop")
   for _, rec in ipairs(recs) do release(rec) end
   bump(ostate().stats.issued, "stop", #recs)
-  log_order(who, "stop", #recs)
-  return #recs
+  log_order(who, "stop", #recs + n_div, nil, n_div)
+  return #recs + n_div
 end
 
 --- Hold position: stop, and stay claimed as "hold" so the unit is re-stopped whenever its command ends.
 function orders.hold(who)
   disarm(who, "hold")
-  local recs = resolve(who)
+  local recs, n_div = resolve(who, "hold")
   for _, rec in ipairs(recs) do
     claim(rec, "hold", pos_of(rec.entity.position))
+    orders.cancel_queued(rec.entity)
     units.stop(rec.entity)
   end
   bump(ostate().stats.issued, "hold", #recs)
-  log_order(who, "hold", #recs)
-  return #recs
+  log_order(who, "hold", #recs + n_div, nil, n_div)
+  return #recs + n_div
 end
 
 -- Re-issue the current attack-move leg towards rec.dest (it was cut short by a distraction).
@@ -355,8 +626,16 @@ end
 -- Next leg of an attack-move: the nearest enemy within RETARGET_RANGE, else stop.
 local function retarget(rec)
   local entity = rec.entity
-  local enemy = entity.surface.find_nearest_enemy({position = entity.position, max_distance = RETARGET_RANGE,
-                                                   force = entity.force})
+  local tick = game.tick
+  local enemy
+  local last = rec.target
+  if rec.retarget_tick and tick - rec.retarget_tick < RETARGET_MIN_TICKS and last and last.valid then
+    enemy = last -- throttled (Phase 5): keep the enemy found less than a second ago
+  else
+    rec.retarget_tick = tick
+    enemy = entity.surface.find_nearest_enemy({position = entity.position, max_distance = RETARGET_RANGE,
+                                               force = entity.force})
+  end
   if not enemy then
     release(rec)
     return false
@@ -650,6 +929,7 @@ function orders.reset()
   local o = ostate()
   for index in pairs(o.armed) do disarm(index, "reset") end
   o.rclick = {}
+  o.queue = nil -- Phase 5: queued commands of the old units go with them
 end
 
 return orders

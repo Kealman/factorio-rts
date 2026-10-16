@@ -46,7 +46,8 @@
 --   owner = {row strings}, city = {row strings}, fids = {[force] = id}, fnames = {[id] = force},
 --   sources = {[unit_number] = {un, force, fid, x, y, cx, cy, r (cells), s, kind, city, entity}},
 --   counts = {[fid] = owned cells}, city_cells = {[city id] = cells}, jobs = {...}, objs = {[segment key] = {LuaRenderObject}},
---   nobj, attrition = {dealt = {[unit_number] = hp}, total, hits, passes}, stats = {jobs, cells, segments}}
+--   nobj, attrition = {dealt = {[unit_number] = hp}, total, hits, passes, by_force = {[force] = {hp, hits, kills}}},
+--   stats = {jobs, cells, segments}}
 -- cleared by match teardown. Log lines "[rts] territory: ...".
 local util = require("scripts.util")
 local events = require("scripts.events")
@@ -900,16 +901,35 @@ function territory.attrition_pass()
   end
   local AT = T.attrition
   AT.passes = AT.passes + 1
+  AT.by_force = AT.by_force or {}
   for _, v in ipairs(victims) do
     local un, rec, o = v[1], v[2], v[3]
     local e = rec.entity
     if e.valid and e.health and e.max_health and e.max_health > 0 then
       local amount = e.max_health * A.share * (rec.kind == "commander" and A.commander or 1)
+      local died = e.health <= amount
       local dealt = e.damage(amount, T.fnames[o], "rts-attrition")
       AT.dealt[un] = (AT.dealt[un] or 0) + dealt
       AT.total = AT.total + dealt
       AT.hits = AT.hits + 1
+      local F = AT.by_force[rec.force]
+      if not F then
+        F = {hp = 0, hits = 0, kills = 0}
+        AT.by_force[rec.force] = F
+      end
+      F.hp, F.hits = F.hp + dealt, F.hits + 1
+      if died then F.kills = F.kills + 1 end
     end
+  end
+  -- one log line per minute while anything was hit: "territory: attrition so far: <force> <hp> hp, <hits> hits, <kills>"
+  if AT.passes % 12 == 0 and AT.hits > (AT.logged_hits or 0) then
+    AT.logged_hits = AT.hits
+    local parts = {}
+    for f, F in pairs(AT.by_force) do
+      parts[#parts + 1] = string.format("%s %.0f hp, %d hits, %d killed", f, F.hp, F.hits, F.kills)
+    end
+    table.sort(parts)
+    util.log("territory: attrition so far: %s", table.concat(parts, "; "))
   end
   return #victims
 end

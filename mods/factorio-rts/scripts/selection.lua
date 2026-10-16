@@ -20,6 +20,13 @@
 --
 -- The player index does not have to belong to a real player: the headless autotest drives index 0, whose
 -- force is rts-player, whose boxes are created invisible and whose changes never reach the HUD.
+--
+-- Phase 5 divisions (scripts/divisions.lua registers selection.set_division_hooks at load time; this module cannot
+-- require it): a plain click or drag (select) that hits any member of a division selects the whole division; Shift +
+-- click or drag (alt_select, "add") adds exactly the units hit, so Shift is how a single member is picked (deselect,
+-- then Shift + click it). Control groups also remember the divisions that were whole in the selection when the group
+-- was set (storage.players[i].group_divisions[n] = {[division id] = true}): a recall selects those divisions' current
+-- members, and a unit that joins such a division joins the group (selection.division_joined).
 local util = require("scripts.util")
 local events = require("scripts.events")
 local units = require("scripts.units")
@@ -346,6 +353,94 @@ local function copy_set(set)
 end
 
 ---------------------------------------------------------------------------
+-- Phase 5: divisions (see the header)
+---------------------------------------------------------------------------
+-- {of = fn(unit_number) -> division id | nil, members = fn(id) -> {unit_number, ...} (live members)}; nil until
+-- scripts/divisions.lua registers them.
+local division_hooks = nil
+function selection.set_division_hooks(hooks) division_hooks = hooks end
+
+-- The unit numbers plus every live member of each division any of them belongs to. Returns the list and the number
+-- of divisions expanded.
+local function expand_divisions(list)
+  if not division_hooks then return list, 0 end
+  local seen, out, n = {}, {}, 0
+  for _, un in ipairs(list) do
+    if not seen[un] then
+      local id = division_hooks.of(un)
+      if id and not seen["d" .. id] then
+        seen["d" .. id] = true
+        n = n + 1
+        for _, m in ipairs(division_hooks.members(id)) do
+          if not seen[m] then
+            seen[m] = true
+            out[#out + 1] = m
+          end
+        end
+      end
+      if not seen[un] then
+        seen[un] = true
+        out[#out + 1] = un
+      end
+    end
+  end
+  return out, n
+end
+
+-- Divisions whose every live member is in `set`.
+local function whole_divisions(set)
+  local out = {}
+  if not division_hooks then return out end
+  for un in pairs(set) do
+    local id = division_hooks.of(un)
+    if id and out[id] == nil then
+      local whole = true
+      for _, m in ipairs(division_hooks.members(id)) do
+        if not set[m] then
+          whole = false
+          break
+        end
+      end
+      out[id] = whole
+    end
+  end
+  for id, whole in pairs(out) do
+    if not whole then out[id] = nil end
+  end
+  return out
+end
+selection.whole_divisions = whole_divisions
+
+--- A unit joined division `id` (reinforcement): it joins every control group that holds the division and every
+--- selection that holds the whole division.
+function selection.division_joined(id, unit_number)
+  if not division_hooks then return end
+  for index, p in pairs(storage.players or {}) do
+    local touched = false
+    for n, divs in pairs(p.group_divisions or {}) do
+      if divs[id] and p.groups and p.groups[n] then
+        p.groups[n][unit_number] = true
+        touched = true
+      end
+    end
+    if p.selection and next(p.selection) and not p.selection[unit_number] then
+      local whole, any = true, false
+      for _, m in ipairs(division_hooks.members(id)) do
+        if m ~= unit_number then
+          if p.selection[m] then any = true else whole = false end
+        end
+      end
+      if any and whole then
+        p.selection[unit_number] = true
+        sync_boxes(index, p)
+        touched = true
+      end
+    end
+    if touched then mark_dirty(index) end
+  end
+end
+
+---------------------------------------------------------------------------
 -- Public API (also used by hud.lua, orders.lua and the autotest)
 ---------------------------------------------------------------------------
 
@@ -378,6 +473,7 @@ end
 function selection.reset(player_index)
   local p = state(player_index)
   p.groups = {}
+  p.group_divisions = nil
   p.group_recall = nil
   selection.clear(player_index)
 end
@@ -437,7 +533,16 @@ function selection.group_set(player_index, n)
   local p = state(player_index)
   prune(p.selection)
   p.groups[n] = copy_set(p.selection)
-  util.log("group set %d n=%d player=%d", n, table_size(p.groups[n]), player_index)
+  -- Phase 5: the whole divisions in it, so later reinforcements belong to the group too
+  local divs = whole_divisions(p.selection)
+  if next(divs) then
+    p.group_divisions = p.group_divisions or {}
+    p.group_divisions[n] = divs
+  elseif p.group_divisions then
+    p.group_divisions[n] = nil
+  end
+  util.log("group set %d n=%d player=%d%s", n, table_size(p.groups[n]), player_index,
+    next(divs) and string.format(" divisions=%d", table_size(divs)) or "")
   selection.notify_hud(player_index)
   return table_size(p.groups[n])
 end
@@ -458,6 +563,15 @@ function selection.group_recall(player_index, n)
   local p = state(player_index)
   local g = p.groups[n]
   if g then prune(g) end
+  -- Phase 5: the current members of the group's divisions (reinforcements included)
+  local divs = p.group_divisions and p.group_divisions[n]
+  if g and divs and division_hooks then
+    for id in pairs(divs) do
+      local members = division_hooks.members(id)
+      if #members == 0 then divs[id] = nil end
+      for _, m in ipairs(members) do g[m] = true end
+    end
+  end
   if not g or next(g) == nil then
     util.log("group recall %d empty player=%d (selection kept)", n, player_index)
     return 0
@@ -545,16 +659,18 @@ function selection.handle_area(player_index, entities, area, add, surface)
     own = {best}
   end
   local p = state(player_index)
+  local n_div = 0
   if add then
     for _, un in pairs(own) do p.selection[un] = true end
   else
+    own, n_div = expand_divisions(own) -- Phase 5: a plain select takes whole divisions
     p.selection = set_from_list(own)
   end
   changed(player_index)
-  -- QA log line: "select mode=replace|add drag|click n=<selection size> ..."
-  util.log("select mode=%s %s n=%d own_in_area=%d player=%d area=%s-%s", add and "add" or "replace",
+  -- QA log line: "select mode=replace|add drag|click n=<selection size> ..." (Phase 5: "divisions=N" when expanded)
+  util.log("select mode=%s %s n=%d own_in_area=%d player=%d area=%s-%s%s", add and "add" or "replace",
     is_click and "click" or "drag", table_size(p.selection), own_in_area, player_index, util.pos_str(lt),
-    util.pos_str(rb))
+    util.pos_str(rb), n_div > 0 and string.format(" divisions=%d", n_div) or "")
   return table_size(p.selection)
 end
 

@@ -88,7 +88,13 @@ events.on_nth_tick(30, function(e)
     shot(player, "world-gui-capital.png", home, 0.35, true)
     st.step = 5
   elseif st.step == 5 then
-    -- chart a pass and a ford for the shots
+    -- wait for the background fill, then the fog must still be local
+    st.wait = st.wait or e.tick
+    if not world.ready() and e.tick - st.wait < 150 * 60 then return end
+    local charted = fog.counts(match.PLAYER)
+    check("fog_stays_local", world.ready() and charted < 300, "%d chunks charted after the background fill (fill done: %s, "
+      .. "in %.0f s)", charted, tostring(world.ready()), (e.tick - st.wait) / 60)
+    -- chart a pass and a ford for the shots (cliffs and trees exist now)
     local surface = match.surface()
     local force = game.forces[match.PLAYER]
     st.spots = {}
@@ -100,17 +106,8 @@ events.on_nth_tick(30, function(e)
     end
     st.step = 6
   elseif st.step == 6 then
-    for kind, p in pairs(st.spots or {}) do shot(player, "world-gui-" .. kind .. ".png", p, 0.3, false) end
-    local charted = fog.counts(match.PLAYER)
-    util.log("world gui: after the spot charts %d chunks charted; fill %d/%d", charted, storage.world.fill.generated,
-      storage.world.fill.total)
-    st.step = 7
-  elseif st.step == 7 then
-    st.wait = st.wait or e.tick
-    if not world.ready() and e.tick - st.wait < 150 * 60 then return end
-    local charted = fog.counts(match.PLAYER)
-    check("fog_stays_local", charted < 300, "%d chunks charted after the background fill (fill done: %s)", charted,
-      tostring(world.ready()))
+    for kind, p in pairs(st.spots or {}) do shot(player, "world-gui-" .. kind .. ".png", p, 0.25, false) end
+    shot(player, "world-gui-capital-later.png", match.home(match.PLAYER), 0.35, true)
     util.log("RTS_WORLD_GUI_DONE")
     st.done = true
   end

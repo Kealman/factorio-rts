@@ -5,3 +5,4 @@ factorio-current.log
 
 # screenshots from QA runs are evidence, not source
 docs/qa/*screenshots*/
+*.orig

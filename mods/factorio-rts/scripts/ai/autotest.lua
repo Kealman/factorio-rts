@@ -23,6 +23,8 @@
 -- the doctrines (nil = the seeded
 -- draw); the minute report adds research, hubs, haulers, the unit mix and supply, and the perf line the AI time
 -- per tick.
+-- Phase 5 check: divisions (every force that attacked or defended did it with divisions; the order queue stayed within
+-- orders.QUEUE's per-tick budgets).
 local util = require("scripts.util")
 local events = require("scripts.events")
 local units = require("scripts.units")
@@ -38,6 +40,8 @@ local tech = require("scripts.ai.tech")
 local hubs = require("scripts.ai.hubs")
 local mix = require("scripts.ai.mix")
 local deps = require("scripts.ai.deps")
+local divisions = require("scripts.divisions") -- Phase 5: the divisions check
+local orders = require("scripts.orders")
 
 local autotest = {}
 
@@ -389,6 +393,26 @@ local function finish(s, why)
       and string.format("iron and copper lines running at %.0fs", s.lines_at[f] / 60)
       or (knocked_out and "lost its CC first" or "not both running"), table.concat(lp, ", "))
   end
+  -- Phase 5 (docs/PHASE5-M1.md section 4): attack and defence groups ran as divisions (one unit-group path each) and
+  -- the order queue kept its budgets
+  local dst, q = divisions.stats(), orders.queue_stats()
+  local fought, per_force = 0, {}
+  for _, f in ipairs(autotest.FORCES) do
+    local C = ai.get(f)
+    local groups = C and ((C.stats.attacks or 0) + (C.stats.reinforcements or 0) + (C.stats.defends or 0)) or 0
+    fought = fought + groups
+    per_force[#per_force + 1] = string.format("%s %d groups / %d divisions", f, groups,
+      dst.by_force and dst.by_force[f] or 0)
+  end
+  local kinds = {}
+  for k, n in pairs(dst.orders) do kinds[#kinds + 1] = string.format("%s=%d", k, n) end
+  table.sort(kinds)
+  check("divisions", (fought == 0 or dst.created >= 1) and q.max_u <= orders.QUEUE.unit_budget
+    and q.max_g <= orders.QUEUE.group_budget,
+    "%d divisions formed (%s), orders [%s], arrivals %d, re-targets %d, regroups %d, group fails %d; queue max %d unit "
+    .. "+ %d group commands per tick (budgets %d / %d), %d queued", dst.created, table.concat(per_force, ", "),
+    table.concat(kinds, " "), dst.arrivals, dst.retargets, dst.regroups, dst.group_fails, q.max_u, q.max_g,
+    orders.QUEUE.unit_budget, orders.QUEUE.group_budget, q.queued)
   local last = s.minute
   local producing = autotest.producing(s)
   check("outcome", ended or producing >= 2, "%s", ended and string.format("match ended at %.0fs, winner %s",
