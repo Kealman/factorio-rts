@@ -365,7 +365,9 @@ player's main stone ore.
 ## Open items for the lead
 
 - **Small maps with 3–4 players have no moats.** The centre is too crowded for fair moats. They still get lakes,
-  forests, naturals and the ruin. A smaller moat for small 1v2 and 1v3 would need the middle patches moved.
+  forests, naturals and the ruin. Wave C checked it with a model of the planner: no fair moat exists for 1v3 small
+  under any moat distance, spacing, base ring or middle layout, and 1v2 small only without the middle patches and with
+  a 50-tile base ring (`docs/qa/phase4-integration-notes.md`, "Moats on crowded small maps"). The lobby tooltip says so.
 - **Moats are finite.** Units can walk around a moat's end, and spider units cut each end by about 6 tiles. Longer
   moats channel more, but they are cut to the shortest side for fairness.
 - **The small map's natural sits 50 tiles from the CC**, not 60–80, to fit inside the moat.

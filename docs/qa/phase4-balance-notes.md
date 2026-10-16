@@ -209,3 +209,71 @@ All runs use fresh copies of the final tree.
 - **The artillery mirror ends in 6–10 s.** The first volleys decide it. It behaves the same in both variants, but it is not a long fight.
 - **Some 8-rep mirror runs favoured one force** (sim-b won 7/8 in one run), but the next run did not. Sides and issue order alternate per rep, so this is noise or an engine update-order effect, not a placement bias.
 - **Drones share one tint for both teams.** This is from the content notes.
+
+## Economy pass (Wave C, 2026-10-16)
+
+Brief from the lead: the AI's army at 8:00 on normal was small because plates go to labs, factories, hubs and science
+first. Target: 12–16 units per side at 8:00 on normal, while the AI still builds a hub and researches 2 technologies by
+6:00. Levers in order of preference: starting plates (symmetric), tier-1 research or basic kit cost about −25 %, lab
+and hub cost slightly lower. Unit and kit costs stay as this pass tuned them.
+
+### What changed
+
+| Lever | Before | After | Where |
+|---|---|---|---|
+| Starting plates in the CC stockpiles (every side) | 200 iron, 100 copper | **400 iron, 150 copper** | `scripts/match.lua` `START_PLATES` |
+| Tier-1 research (basic kits) | 20 / 15 / 10 | **15 / 11 / 8** (Attack I, Armor I, Unlock Raider 15; Mining I, Logistics I, Unlock Heavy, Hauler capacity I 11; Supply I 8) | `prototypes/research.lua` `TECHS` |
+| Lab | 30 iron, 10 copper | **24 iron, 8 copper** | `prototypes/research.lua` |
+| Hub | 40 iron, 10 copper | **32 iron, 10 copper** | `prototypes/logistics.lua` |
+
+The hard AI's `stock_bonus` (+50 %) applies on top, so hard starts with 600 iron and 225 copper.
+
+### How it was measured
+
+- **Paired seeded samples.** `tools/autotest-batch.sh <tag> 4 1v1-normal-medium 1v2-normal-medium` with
+  `KEEP_TREE=build/tree-<variant>`: 4 map seeds (`--map-gen-seed 1000 + r × 104729`) × 2 configurations = 8 AI-vs-AI
+  runs per variant at game speed 4. The same rep uses the same seed in every variant, so each pair differs only by the
+  balance numbers. Without `--map-gen-seed`, `--create` uses one default seed and repeated runs are identical (the
+  first batch showed it: rep 1 and rep 2 gave the same numbers to the unit).
+- **Doctrines.** `rts-player` economic, `rts-ai-1` aggressive (autotest default); `rts-ai-2` in 1v2 draws its own.
+- **Army** = military units alive at 8:00 (the minute report's unit mix: haulers and the Commander are not counted),
+  averaged over the forces that still have a CC. **Kits** = unit kits the force's barracks made by 8:00 (production).
+- Variants: c0 = the merged tree before the pass; c1 = 300/150 plates + the research, lab and hub cuts; c3 = 350/175;
+  c4 = 400/150; c2 = 400/200. c1–c4 all carry the research, lab and hub cuts.
+
+| Variant | Runs with a failed check | Aggressive: kits / army | Economic: kits / army | Techs by 6:00 (min) | Hub built (economic, mean) | Matches over by 8:00 |
+|---|---|---|---|---|---|---|
+| c0 (before) | 6 of 8 (9 checks) | 27.7 / 10.2 | 20.2 / 18.0 | aggressive 1.8 (1), economic 2.0 | 10/10, 272 s | 0 of 8 |
+| c1 300/150 | 1 of 8 | 37.0 / 15.1 | 21.2 / 10.7 | 2.0 / 2.6 (2) | 10/10, 234 s | 0 of 8 |
+| c3 350/175 | 1 of 8 | 39.7 / 14.4 | 25.9 / 10.0 | 2.0 / 3.0 (2) | 10/10, 209 s | 0 of 8 |
+| **c4 400/150 (chosen)** | **0 of 8** | **44.1 / 15.2** | **33.5 / 17.8** | **2.0 / 3.0 (2)** | **8/8, 210 s** | 3 of 8 |
+| c2 400/200 | 0 of 8 | 44.6 / 16.7 | 32.7 / 16.1 | 2.0 / 3.0 (2) | 7/7, 212 s | 3 of 8 |
+
+Second technology (all forces): c0 at 319 s on average (296–366 s, so some forces missed 6:00); c4 at 243 s (221–291 s).
+
+### Reading it
+
+- **Iron is the binding plate.** c4 (400/150) and c2 (400/200) measure the same, so the extra copper buys nothing;
+  150 copper stays.
+- **The economic doctrine spends a first raise on tech and hubs.** At c1 and c3 its kits barely move (20 → 21 → 26)
+  while its research and hub come earlier; its army at 8:00 even drops (fights with a stronger aggressive AI). Only at
+  400 iron do both doctrines field 15–18 units at 8:00.
+- **Faster decisive games.** With c4 the economic player beat the aggressive AI before 8:00 in 3 of 8 runs (1v1). In
+  c0 the aggressive AI also lost its CC in 5 of 20 forces by 8:00, the match just went on longer. Doctrine matchups,
+  not the start, decide these runs.
+- **Alive armies are noisy.** One run's army at 8:00 depends on whether a fight just happened (the final 1v1 matrix
+  run: economic 13, aggressive 0 while the player's army was in its base, with 55 kits made). Compare variants with kits and with
+  averages over seeds, not with one run.
+
+### After the pass (final tree, validation matrix at game speed 1, default seed)
+
+| Scenario | Kits made by 8:00 per side | Army at 8:00 per side | Technologies at 8:00 |
+|---|---|---|---|
+| 1v1 normal medium | player 28, AI 55 | 13, 0 (the player's army was in its base in minute 8; its 19 new units died defending) | 4, 3 |
+| 1v2 normal medium | player 30, AI 1 36 (CC lost 6:12), AI 2 18 | 8, 0, 17 | 4, 2, 3 |
+| 1v1 hard medium | 68, 135 | 28, 47 | 4, 3 |
+| 1v1 easy medium | 18, 21 | 21, 11 | 1, 1 |
+
+Easy keeps its single iron smelter (Phase 3 design) and does not research two technologies by 6:00; the autotest's
+Phase 4 deadlines now scale with the difficulty's pace (`orders_data.TIME_SCALE`, easy ×1.5), so on easy they are "not
+due" within 8 minutes (`scripts/ai/autotest.lua`).
