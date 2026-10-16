@@ -166,7 +166,7 @@ local RANK = {easy = 1, normal = 2, hard = 3}
 -- gates, so research starts in the second minute. Later steps never got the steel chain or the second copper smelter
 -- built by minute 8 on normal. The recipe step (unit production) is placed by the
 -- doctrine (UNITS_AFTER): the aggressive doctrine makes units at once, the others once the third iron smelter runs
--- (the 200 starting plates pay for the lab, the workshop and the core first; plates are the bottleneck of every
+-- (the starting plates pay for the lab, the workshop and the core first; plates are the bottleneck of every
 -- early step).
 local OPENING = {
   easy = {

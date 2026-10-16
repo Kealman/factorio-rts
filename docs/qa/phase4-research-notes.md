@@ -26,7 +26,7 @@ which `scripts/research.lua` sets at load time, as the logistics module does for
 | Prototype | Details |
 |---|---|
 | `rts-lab` | Clone of the vanilla lab, icon tinted like the other buildings. 600 HP, speed 1, 60 kW, no modules, `inputs = {"rts-science-basic", "rts-science-advanced"}`. Item stack 10, subgroup `rts-economy`. |
-| Recipe `rts-lab` | Factory (`rts-buildings`), 6 s, 30 iron plate + 10 copper plate |
+| Recipe `rts-lab` | Factory (`rts-buildings`), 6 s, 24 iron plate + 8 copper plate (30 + 10 before the Wave C economy pass) |
 | `rts-science-basic` | `tool` item copied from the automation science pack (red icon), stack 200, durability 1 |
 | `rts-science-advanced` | `tool` item copied from the logistic science pack (green icon) |
 | Recipe `rts-science-basic` | Factory (`rts-science`), 5 s, 1 `iron-gear-wheel` + 1 copper plate. The gear comes from the content agent's `rts-gear` recipe (`rts-intermediates`). |
@@ -37,19 +37,21 @@ the two kit recipes by itself, because it reads the machine's crafting categorie
 
 ### Technologies
 
-Every technology costs `count` kits of one kind, 10 s per kit per lab (vanilla: several labs work in parallel). They have
+Every technology costs `count` kits of one kind, 10 s per kit per lab (vanilla: several labs work in parallel).
+The Wave C economy pass (2026-10-16, `phase4-balance-notes.md`) cut the tier-1 counts by 25 %; the table shows the new
+counts. They have
 no engine `effects`: `scripts/research.lua` applies everything (see Effects). Icons are vanilla technology icons.
 
 | Technology | Tier, kit | Kits | Prerequisite | Effect |
 |---|---|---|---|---|
-| `rts-attack-1` | 1, basic | 20 | | +15 % ammo damage for every unit ammo category, +15 % turret attack for every rts turret |
-| `rts-armor-1` | 1, basic | 20 | | Tier-1 walker and heavy kits deploy mk2 units |
-| `rts-mining-1` | 1, basic | 15 | | `mining_drill_productivity_bonus` +0.25 |
-| `rts-logistics-1` | 1, basic | 15 | | `worker_robots_speed_modifier` +0.5, `worker_robots_storage_bonus` +1, +5 robots per hub (flag for logistics) |
-| `rts-supply-1` | 1, basic | 10 | | Supply cap +10 |
-| `rts-unlock-heavy` | 1, basic | 15 | | Heavy walker kits become units |
-| `rts-unlock-raider` | 1, basic | 20 | | Raider kits become units |
-| `rts-hauler-capacity-1` | 1, basic | 15 | | `storage.research.hauler_slots[force]` = 10 |
+| `rts-attack-1` | 1, basic | 15 | | +15 % ammo damage for every unit ammo category, +15 % turret attack for every rts turret |
+| `rts-armor-1` | 1, basic | 15 | | Tier-1 walker and heavy kits deploy mk2 units |
+| `rts-mining-1` | 1, basic | 11 | | `mining_drill_productivity_bonus` +0.25 |
+| `rts-logistics-1` | 1, basic | 11 | | `worker_robots_speed_modifier` +0.5, `worker_robots_storage_bonus` +1, +5 robots per hub (flag for logistics) |
+| `rts-supply-1` | 1, basic | 8 | | Supply cap +10 |
+| `rts-unlock-heavy` | 1, basic | 11 | | Heavy walker kits become units |
+| `rts-unlock-raider` | 1, basic | 15 | | Raider kits become units |
+| `rts-hauler-capacity-1` | 1, basic | 11 | | `storage.research.hauler_slots[force]` = 10 |
 | `rts-attack-2` | 2, advanced | 25 | Attack I | Another +15 % (30 % in total) |
 | `rts-attack-3` | 2, advanced | 40 | Attack II | Another +15 % (45 % in total) |
 | `rts-armor-2` | 2, advanced | 25 | Armor I | Every unit takes 10 % less damage |

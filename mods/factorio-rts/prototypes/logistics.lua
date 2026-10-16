@@ -8,7 +8,7 @@
 --   rts-hauler     small spider-vehicle (create_spidertron at scale 0.6 when base exposes it), 20 usable cargo slots,
 --                  no guns, no equipment grid, 400 hp, full damage from everything (raidable), team colour
 --                  through LuaEntity.color. Spawned by script from an rts-hauler-kit (factory recipe).
--- Items: rts-hub (placeable), rts-hauler-kit. Recipes (category rts-buildings, the factory): rts-hub 40 iron
+-- Items: rts-hub (placeable), rts-hauler-kit. Recipes (category rts-buildings, the factory): rts-hub 32 iron
 -- 10 copper, rts-hauler-kit 30 iron 10 electronic-circuit.
 -- Names come from the locale (entity-name.*, item-name.*, recipe-name.* in locale/*/factorio-rts.cfg).
 -- The RTS cursor's select filters gain "spider-vehicle" here, so haulers can be box-selected like units.
@@ -247,8 +247,8 @@ end
 
 data:extend({
   hub, hub_power, hub_pole, hub_item, hauler_kit,
-  recipe({name = "rts-hub", subgroup = "rts-economy", order = "a", time = 8,
-          cost = {["iron-plate"] = 40, ["copper-plate"] = 10}}),
+  recipe({name = "rts-hub", subgroup = "rts-economy", order = "a", time = 8, -- Wave C economy pass: was 40 iron
+          cost = {["iron-plate"] = 32, ["copper-plate"] = 10}}),
   recipe({name = "rts-hauler-kit", subgroup = "rts-economy", order = "j", time = 8,
           cost = {["iron-plate"] = 30, ["electronic-circuit"] = 10}}),
 })

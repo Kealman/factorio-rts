@@ -100,7 +100,7 @@ data:extend({
   kit(BASIC, "automation-science-pack", "a[basic]"),
   kit(ADVANCED, "logistic-science-pack", "b[advanced]"),
   recipe({name = "rts-lab", category = "rts-buildings", subgroup = "rts-economy", order = "j", time = 6,
-          cost = {{"iron-plate", 30}, {"copper-plate", 10}}}),
+          cost = {{"iron-plate", 24}, {"copper-plate", 8}}}), -- Wave C economy pass: was 30 iron, 10 copper
   -- docs/PHASE4.md 2.5: basic kit = 1 gear + 1 copper (5 s), advanced kit = 2 circuits + 1 steel (10 s).
   -- The gear and circuit come from the content agent's rts-intermediates recipes.
   recipe({name = BASIC, category = "rts-science", subgroup = "rts-science", order = "a", time = 5,
@@ -114,15 +114,16 @@ data:extend({
 -------------------------------------------------------------------------------
 local TECH_ICON = "__base__/graphics/technology/"
 local TECHS = {
-  -- name, tier, count, icon, prerequisites
-  {"rts-attack-1", 1, 20, "physical-projectile-damage-1"},
-  {"rts-armor-1", 1, 20, "heavy-armor"},
-  {"rts-mining-1", 1, 15, "mining-productivity"},
-  {"rts-logistics-1", 1, 15, "worker-robots-speed"},
-  {"rts-supply-1", 1, 10, "toolbelt"},
-  {"rts-unlock-heavy", 1, 15, "tank"},
-  {"rts-unlock-raider", 1, 20, "automobilism"},
-  {"rts-hauler-capacity-1", 1, 15, "spidertron"},
+  -- name, tier, count, icon, prerequisites. Tier-1 counts are 25 % below the first pass (Wave C economy pass,
+  -- docs/qa/phase4-balance-notes.md): 20 -> 15, 15 -> 11, 10 -> 8.
+  {"rts-attack-1", 1, 15, "physical-projectile-damage-1"},
+  {"rts-armor-1", 1, 15, "heavy-armor"},
+  {"rts-mining-1", 1, 11, "mining-productivity"},
+  {"rts-logistics-1", 1, 11, "worker-robots-speed"},
+  {"rts-supply-1", 1, 8, "toolbelt"},
+  {"rts-unlock-heavy", 1, 11, "tank"},
+  {"rts-unlock-raider", 1, 15, "automobilism"},
+  {"rts-hauler-capacity-1", 1, 11, "spidertron"},
   {"rts-attack-2", 2, 25, "physical-projectile-damage-2", {"rts-attack-1"}},
   {"rts-attack-3", 2, 40, "stronger-explosives-3", {"rts-attack-2"}},
   {"rts-armor-2", 2, 25, "power-armor", {"rts-armor-1"}},

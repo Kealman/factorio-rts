@@ -82,7 +82,10 @@ local ARMY_OFFSET = 14
 local HEAVY_FRONT = 6
 
 -- Starting plates and stock, the same for every force (lead decisions of 2026-10-15; docs/qa/phase2-economy-notes.md).
-match.START_PLATES = {{"iron-plate", 200}, {"copper-plate", 100}}
+-- Wave C balance (2026-10-16, docs/qa/phase4-balance-notes.md "Economy pass"): 400 iron and 150 copper, up from 200
+-- and 100, so labs, a hub and science do not starve the barracks in the first minutes (iron is the binding plate:
+-- 200 copper measured the same as 150).
+match.START_PLATES = {{"iron-plate", 400}, {"copper-plate", 150}}
 match.STARTING_STOCK = {
   match.START_PLATES[1], match.START_PLATES[2], {"rts-extractor", 2}, {"rts-smelter", 2}, {"rts-barracks", 1},
   {"rts-factory", 1}, {"rts-stockpile", 2}, {"transport-belt", 60}, {"fast-inserter", 16},

@@ -30,7 +30,7 @@ cursor's select filters include `spider-vehicle`. `hud.lua`, `match.lua`, `scrip
 | `rts-hauler` (spider-vehicle) | base `create_spidertron{scale = 0.6, leg_movement_speed = HAULER_LEG_SPEED}`; the full vanilla spidertron if base ever stops exporting that function | 400 hp, no resistances, no guns, no equipment grid, no trash slots, no passengers, no remote driving, trunk 40 slots of which the script uses 20 plus research, radar 1 chunk, military target, raid target, team colour via `LuaEntity.color` |
 | item `rts-hub` | roboport item, tinted icon | subgroup `rts-economy`, stack 10 |
 | item `rts-hauler-kit` | spidertron icon, tinted | subgroup `rts-units`, stack 10 |
-| recipe `rts-hub` | category `rts-buildings` (factory) | 40 iron plate, 10 copper plate, 8 s |
+| recipe `rts-hub` | category `rts-buildings` (factory) | 32 iron plate, 10 copper plate, 8 s (40 iron before the Wave C economy pass) |
 | recipe `rts-hauler-kit` | category `rts-buildings` (factory) | 30 iron plate, 10 electronic circuit, 8 s |
 
 The raid trigger target type comes from `balance.raid_target_type`. The hub and the hauler opt in only when that
