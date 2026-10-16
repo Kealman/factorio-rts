@@ -3292,9 +3292,14 @@ local function at_hauler(T, tick)
       local burnt = (logistics.stats(AT.force).fuel or 0) - T.fuel0
       local per_leg = math.ceil(T.legs * 1.1 / balance.nation.hauler_tiles_per_coal)
       local cap = logistics.capacity(AT.force)
-      -- each departure from a hub takes per_leg coal (the hauler may already have left on its next trip)
+      -- each departure from a hub takes per_leg coal (the hauler may already have left on its next trip); a leg may
+      -- cost one less when the hauler leaves from a few tiles off the approach point (it arrives within 4 tiles)
+      local legs_ok = false
+      for k = 2, 20 do
+        if burnt >= k * (per_leg - 1) and burnt <= k * per_leg then legs_ok = true end
+      end
       at_check(T, "rails_hauler_rules", iron > 0 and iron <= cap * 100 and cap == balance.nation.hauler_slots
-        and burnt >= 2 * per_leg and burnt % per_leg == 0,
+        and legs_ok,
         "hauler #%s delivered %d iron (capacity %d slots) over %.0f tiles per leg, burnt %d coal = %.1f legs of %d",
         tostring(T.hauler), iron, cap, T.legs, burnt, burnt / per_leg, per_leg)
       -- a hub with no coal: its auto hauler waits "no-fuel" and raises one alert (at most one per 2 minutes)

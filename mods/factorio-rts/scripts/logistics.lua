@@ -700,6 +700,9 @@ local function go(h, hub_un, state)
       local here = h.entity.surface.find_logistic_network_by_position(h.entity.position, h.force)
       if hn and here and here.valid and here.network_id == hn.network_id then net = hn end
     end
+    -- a walk inside one network (a new hauler from its factory to its home hub) burns nothing
+    local dest = net and logistics.hub_network(hub_un)
+    if dest and dest.valid and dest.network_id == net.network_id then net = nil end
   end
   if per and net then
     local need = math.ceil(util.distance(h.entity.position, point) * 1.1 / per)
