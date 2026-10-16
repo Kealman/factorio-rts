@@ -35,6 +35,10 @@ local phase2 = {
   {name = "rts-qa-end", key_sequence = "CONTROL + SHIFT + E", alternative_key_sequence = "COMMAND + SHIFT + E",
    consuming = "game-only"},
   {name = "rts-clear-cursor", key_sequence = "", linked_game_control = "clear-cursor", consuming = "none"},
+  -- Wave C: hover selection is off (camera.lua), so the vanilla R / Shift + R no longer reach a placed entity;
+  -- selection.lua rotates the own entity under the cursor itself (the cursor ghost still rotates the vanilla way).
+  {name = "rts-rotate", key_sequence = "", linked_game_control = "rotate", consuming = "none"},
+  {name = "rts-reverse-rotate", key_sequence = "", linked_game_control = "reverse-rotate", consuming = "none"},
 }
 for _, input in ipairs(phase2) do inputs[#inputs + 1] = input end
 

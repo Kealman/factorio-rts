@@ -37,6 +37,12 @@ local BOX_WIDTH = 2          -- pixels
 local BOX_LIGHTEN = 0.35     -- mix the force colour with white so the box stands out on tinted units
 local DEFAULT_COLOR = {r = 0.3, g = 1, b = 0.3, a = 1}
 local BUILDING_PICK_RADIUS = 1.0 -- tiles; a click this close to a building's edge still selects it
+-- Phase 4 QA step 8: a click on a pentapod's body selected nothing, because the engine's selection box (centred one
+-- torso height above the feet) and the drawn body (in the remote view about two torso heights up) do not agree, and a
+-- click between them hits no box. A click therefore picks the own unit nearest to it by position: its feet, or for
+-- spider units one or two torso heights (prototype height) above them, within CLICK_PICK_RADIUS; units win over
+-- buildings, and the engine's hits are only the fallback.
+local CLICK_PICK_RADIUS = 1.5
 -- Rally marker of a selected barracks (docs/qa/phase2-qa-results.md steps 28 and 30: the old 0.6-scale flag and
 -- 0.3-tile ring were lost under walking units). The flag is the vanilla 64 px spawn flag (red, pole at the
 -- lower left), drawn at 1.5 scale (3 tiles) with its pole foot on the point; render objects that are not on the
@@ -473,6 +479,43 @@ function selection.group_recall(player_index, n)
   return table_size(p.selection)
 end
 
+local spider_height = {} -- [prototype name] = torso height in tiles (0 when the prototype has none); derived data
+
+local function torso_height(entity)
+  local name = entity.name
+  local hgt = spider_height[name]
+  if hgt == nil then
+    local ok, value = pcall(function() return entity.prototype.height end)
+    hgt = (ok and type(value) == "number") and value or 0
+    spider_height[name] = hgt
+  end
+  return hgt
+end
+
+--- The own unit a click at `center` means: the nearest one whose feet or torso lie within CLICK_PICK_RADIUS.
+--- Returns its unit_number or nil.
+function selection.unit_at(player_index, center, surface)
+  surface = surface or util.surface()
+  if not surface then return nil end
+  local force = selection.force_name(player_index)
+  local side, down = CLICK_PICK_RADIUS + 2, CLICK_PICK_RADIUS + 7 -- feet lie below the click: torso heights up to 3
+  local best, best_d
+  for _, e in pairs(surface.find_entities_filtered({area = {{center.x - side, center.y - CLICK_PICK_RADIUS - 1},
+                                                            {center.x + side, center.y + down}},
+                                                     force = force, type = {"spider-unit", "unit", "spider-vehicle"}})) do
+    local rec = e.unit_number and units.get(e.unit_number)
+    if rec and rec.force == force then
+      local p = e.position
+      local dx2 = (p.x - center.x) ^ 2
+      local h = torso_height(e)
+      local d = math.sqrt(dx2 + (p.y - center.y) ^ 2)
+      for k = 1, (h > 0) and 2 or 0 do d = math.min(d, math.sqrt(dx2 + (p.y - k * h - center.y) ^ 2)) end
+      if d <= CLICK_PICK_RADIUS and (not best_d or d < best_d) then best, best_d = e.unit_number, d end
+    end
+  end
+  return best
+end
+
 --- Apply a selection-tool area: replace (add = false) or add (add = true). `area` is the event's
 --- BoundingBox; a click-sized area keeps only the own unit nearest to its centre. A plain click with no own
 --- unit selects the own building there (selection.building_at); `surface` defaults to the arena surface.
@@ -482,6 +525,11 @@ function selection.handle_area(player_index, entities, area, add, surface)
   local own = own_unit_numbers(player_index, entities)
   local own_in_area = #own
   local is_click = rb.x - lt.x < CLICK_SIZE and rb.y - lt.y < CLICK_SIZE
+  if is_click then
+    local center = {x = (lt.x + rb.x) / 2, y = (lt.y + rb.y) / 2}
+    local picked = selection.unit_at(player_index, center, surface)
+    if picked then own = {picked} end
+  end
   if #own == 0 and is_click and not add then
     local center = {x = (lt.x + rb.x) / 2, y = (lt.y + rb.y) / 2}
     local un = selection.building_at(player_index, center, surface)
@@ -581,6 +629,39 @@ events.on(defines.events.on_tick, function()
   if not dirty or next(dirty) == nil then return end
   for index in pairs(dirty) do selection.notify_hud(index) end
 end)
+
+-- R / Shift + R (rts-rotate, rts-reverse-rotate follow the vanilla controls): rotate the own rotatable entity or ghost
+-- under the cursor. Hover selection is off in the RTS view (camera.lua), so the vanilla rotate finds nothing on the
+-- map; while a build ghost is on the cursor the vanilla control rotates that and this handler stays out of it.
+local cursor = require("scripts.cursor")
+function selection.rotate_at(player_index, position, reverse)
+  local player = game.get_player(player_index)
+  if not (player and position) or cursor.ghost_name(player) then return nil end
+  local surface = util.surface()
+  if not surface then return nil end
+  local best, best_area
+  local function can_rotate(e)
+    local ok, yes = pcall(function() return e.rotatable and e.supports_direction end)
+    return ok and yes
+  end
+  for _, e in pairs(surface.find_entities_filtered({position = position, radius = 1, force = player.force})) do
+    if e.valid and can_rotate(e) then
+      local box = e.selection_box
+      local inside = position.x >= box.left_top.x and position.x <= box.right_bottom.x
+        and position.y >= box.left_top.y and position.y <= box.right_bottom.y
+      local area = (box.right_bottom.x - box.left_top.x) * (box.right_bottom.y - box.left_top.y)
+      if inside and (not best_area or area < best_area) then best, best_area = e, area end
+    end
+  end
+  if not best then return nil end
+  local ok = best.rotate({reverse = reverse == true, by_player = player})
+  util.log("rotate %s %s at %s ok=%s now %s player=%d", reverse and "reverse" or "forward",
+    best.type == "entity-ghost" and ("ghost of " .. best.ghost_name) or best.name, util.pos_str(best.position),
+    tostring(ok), util.define_name(defines.direction, best.direction), player_index)
+  return best
+end
+events.on("rts-rotate", function(e) selection.rotate_at(e.player_index, e.cursor_position, false) end)
+events.on("rts-reverse-rotate", function(e) selection.rotate_at(e.player_index, e.cursor_position, true) end)
 
 events.on(defines.events.on_player_selected_area, function(e)
   if e.item ~= util.CURSOR_ITEM then return end

@@ -23,12 +23,16 @@ local ZOOM_LIMITS = {closest = {zoom = 2}, furthest = {zoom = 0.15}, furthest_ga
 local PERMISSION_GROUP = "rts"
 
 -- Every GameViewSettings field that is vanilla chrome (verified in runtime-api.json 2.0.77).
--- Kept on: show_entity_info (alt mode), show_entity_tooltip, show_rail_block_visualisation,
--- update_entity_selection (hover must keep working).
+-- Kept on: show_entity_info (alt mode), show_entity_tooltip (hud.lua switches it off), show_rail_block_visualisation.
+-- update_entity_selection is off since Wave C (Phase 4 QA steps 19 and 24): in the remote view the vanilla info box
+-- for a hovered entity or ghost still appeared in the top-right corner under the HUD minimap with
+-- show_entity_tooltip off, and went stale after the ghost was built. Nothing in the RTS needs hover: clicks and drags
+-- come from the rts-cursor selection tool (selection.lua picks units and buildings by position), right clicks from
+-- its reverse selection.
 local HIDDEN_CHROME = {
   "show_controller_gui", "show_minimap", "show_research_info", "show_alert_gui", "show_crafting_queue",
   "show_tool_bar", "show_quickbar", "show_shortcut_bar", "show_side_menu", "show_map_view_options",
-  "show_surface_list", "show_hotkey_suggestions",
+  "show_surface_list", "show_hotkey_suggestions", "update_entity_selection",
 }
 
 -- Input actions that break the RTS illusion. Deliberately NOT blocked: start_walking (it may be what
@@ -373,6 +377,17 @@ commands.add_command("rts-selftest", "[on|off] - run the GUI self-test from now 
   local line = "[rts] GUI self-test " .. (on and "on (restarted for connected players)" or "off")
   if player then player.print(line) else game.print(line) end
   util.log("camera: %s", line)
+end)
+
+-- No vanilla entity window for RTS players (Phase 4 QA): if anything opens one (a click through, a script setting
+-- player.opened), close it again. The RTS panels are custom GUIs and stay.
+events.on(defines.events.on_gui_opened, function(e)
+  if e.gui_type ~= defines.gui_type.entity then return end
+  local player = game.get_player(e.player_index)
+  if not (player and player.permission_group and player.permission_group.name == PERMISSION_GROUP) then return end
+  local name = e.entity and e.entity.valid and e.entity.name or "?"
+  player.opened = nil
+  util.log("camera: closed the vanilla entity window of %s for player %d", name, player.index)
 end)
 
 ---------------------------------------------------------------------------

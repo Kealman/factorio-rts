@@ -72,6 +72,14 @@ function events.on(event_id, handler)
   labels[handler] = labels[handler] or caller_label()
 end
 
+--- Test probes only (tools/probes): run the handlers registered for an event as the engine would. Built-in events such
+--- as on_gui_click cannot be raised by script, so a GUI probe drives a button through this.
+function events.dispatch(event_id, event)
+  local list = handlers[event_id]
+  if not list then return end
+  for i = 1, #list do list[i](event) end
+end
+
 --- Register a handler that runs every n ticks (first call at tick 0). The handler receives NthTickEventData.
 function events.on_nth_tick(n, handler)
   local list = nth_handlers[n]
