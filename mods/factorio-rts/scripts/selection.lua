@@ -377,10 +377,16 @@ function selection.reset(player_index)
 end
 
 --- Select every living unit of the player's force. Returns the count.
+-- Ctrl+A is the army: haulers stay out (Wave C), so a right click on the ground after Ctrl+A does not park every
+-- hauler route. Box and click selection still pick haulers.
+selection.SELECT_ALL_SKIP = {hauler = true}
+
 function selection.select_all(player_index)
   local p = state(player_index)
   local set = {}
-  for un in units.for_force(selection.force_name(player_index)) do set[un] = true end
+  for un, rec in units.for_force(selection.force_name(player_index)) do
+    if not selection.SELECT_ALL_SKIP[rec.kind] then set[un] = true end
+  end
   p.selection = set
   changed(player_index)
   util.log("select all n=%d player=%d", table_size(set), player_index)

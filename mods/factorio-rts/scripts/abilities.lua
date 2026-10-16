@@ -12,7 +12,7 @@
 --                 visible for 30 s (force.chart again every RECHART ticks; a chart stays visible ~600 ticks, fog.lua),
 --                 then the area falls back to the last chart like any other fogged area. Cooldown 60 s.
 --   artillery  G  Targeted, needs an artillery walker. The next right click makes every own artillery walker whose
---                 range covers the point (8-40 tiles) fire a volley of SHELLS rts-artillery-shell projectiles at it
+--                 range covers the point (8-44 tiles, the walker's own range) fire a volley of SHELLS rts-artillery-shell projectiles at it
 --                 (scattered within 2 tiles); those that orders.lua may command then get orders.attack on the enemy
 --                 nearest the point (attack_area radius 4 there, renewed while it lives). No artillery in range: the
 --                 click is used up, nothing fires and no cooldown starts. Cooldown 20 s.
@@ -44,6 +44,7 @@ local selection = require("scripts.selection")
 local orders = require("scripts.orders")
 local commander = require("scripts.commander")
 local research = require("scripts.research")
+local balance = require("balance")
 
 local abilities = {}
 
@@ -56,7 +57,9 @@ abilities.DEF = {
   scanner = {input = "rts-ability-3", key = "V", cooldown = 60 * 60, tech = "rts-scanner", targeted = true, size = 48,
              duration = 30 * 60, sprite = "item/radar"},
   artillery = {input = "rts-ability-4", key = "G", cooldown = 20 * 60, targeted = true, kind = "artillery",
-               range = 40, min_range = 8, shells = 2, scatter = 2, target_radius = 4,
+               -- the artillery walker's own range and minimum range (balance.lua: 44 and 8; Wave C, was 40)
+               range = balance.units["rts-artillery"].range, min_range = balance.units["rts-artillery"].min_range,
+               shells = 2, scatter = 2, target_radius = 4,
                shell = "rts-artillery-shell", sprite = "item/artillery-targeting-remote"},
   overcharge = {cooldown = 90 * 60, tech = "rts-overcharge", duration = 10 * 60, factor = 2, drain = 1e6,
                 sprite = "item/discharge-defense-equipment"},

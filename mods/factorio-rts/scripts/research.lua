@@ -16,7 +16,7 @@
 --
 -- Barracks gate (production.kit_gate, called by production.lua before a kit becomes a unit):
 --   1. a unit locked by research (LOCKS) is refused: the kit stays in the output, rec.research_block says why;
---      forces run by an AI commander are exempt while AI_IGNORES_LOCKS is true (the AI does not research yet);
+--      AI commanders obey it like a player (they research their unlocks, ai/tech.lua);
 --   2. after Armor I the unit is replaced by its mk2 prototype (balance.units[mk2].base = unit) when MK2_AUTO is on;
 --      the mk2 kit recipes start disabled (prototypes/recipes.lua) and stay so: tier-1 kits deploy mk2 units;
 --   3. supply.can_spawn must allow it (scripts/supply.lua), else the kit waits and an alert is raised.
@@ -68,7 +68,6 @@ research.LAB_MIN = 2          -- refill a lab holding fewer kits of an ingredien
 research.LAB_FEED = 5         -- ... up to this many
 research.SYNC_PERIOD = 60
 research.ATTACK_STEP = 0.15   -- per attack level: ammo damage of the units' categories and turret attack
-research.AI_IGNORES_LOCKS = true
 research.MK2_AUTO = true      -- Armor I: tier-1 kits deploy mk2 units
 research.ARMOR_ALL_UNITS = true -- see the header (Armor II/III)
 research.LOCK_ALERT_PERIOD = 30 * 60
@@ -453,10 +452,6 @@ end
 ---------------------------------------------------------------------------
 -- Barracks gate (production.kit_gate)
 ---------------------------------------------------------------------------
-local function exempt(force_name)
-  return research.AI_IGNORES_LOCKS and storage.ai ~= nil and storage.ai[force_name] ~= nil
-end
-
 local function block(rec, b)
   local old = rec.research_block
   b.tick = game.tick
@@ -484,7 +479,7 @@ function research.gate(rec, kit, def)
   local force_name = rec.force
   ensure(force_name)
   local tech = research.LOCKS[def.unit] or research.LOCKS[kit]
-  if tech and not research.is_unlocked(force_name, def.unit) and not exempt(force_name) then
+  if tech and not research.is_unlocked(force_name, def.unit) then
     block(rec, {reason = "locked", tech = tech, unit = def.unit, kit = kit})
     return nil
   end

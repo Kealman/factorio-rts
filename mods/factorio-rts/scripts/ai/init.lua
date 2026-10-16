@@ -12,8 +12,8 @@
 -- Events: on_entity_damaged (filtered to RTS building names) feeds the army's threat; production.on_spawned gives
 -- the hard bonus units.
 -- Phase 4: at its end this file requires scripts.supply, scripts.research and scripts.logistics into ai/deps.lua
--- (research must set its damage filter after ours) and switches research.AI_IGNORES_LOCKS off: AI commanders
--- research their unlocks themselves (ai/tech.lua) and obey the barracks gate like a player.
+-- (research must set its damage filter after ours). AI commanders research their unlocks themselves (ai/tech.lua)
+-- and obey the barracks gate like a player.
 --
 -- Owns storage.ai = {[force_name] = commander state (ai/commander.lua)} and storage.ai_meta = {inserter_dir_is_pickup,
 -- doctrines = {[force] = doctrine override}, patch_claims = {[patch id] = force}}.
@@ -333,6 +333,5 @@ end
 deps.supply = require("scripts.supply")
 deps.research = require("scripts.research")
 deps.logistics = require("scripts.logistics")
-deps.research.AI_IGNORES_LOCKS = false
 
 return ai

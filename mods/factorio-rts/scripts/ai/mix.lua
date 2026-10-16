@@ -8,8 +8,8 @@
 -- Barracks recipes rotate to match the mix (mix.manage_barracks): each barracks makes the available kind furthest
 -- below its desired share, and keeps it until a unit of it spawned or, for the expensive kinds (heavy, raider,
 -- artillery), it starved for KIND_WAIT (that kind then rests for KIND_REST; walkers and drones never rest, plates
--- are always short while barracks run). "Available" = research unlocked it (research.is_unlocked; the AI obeys the locks,
--- research.AI_IGNORES_LOCKS = false) and every kit ingredient is in the network or was produced in the last minute
+-- are always short while barracks run). "Available" = research unlocked it (research.is_unlocked; the AI obeys the locks)
+-- and every kit ingredient is in the network or was produced in the last minute
 -- (heavies need steel, raiders circuits, artillery steel and explosives). Supply (supply.get): a kind that does not
 -- fit under the cap is not chosen; with no room at all the barracks stop (recipe cleared once their output is empty)
 -- and C.capped asks ai/tech.lua to research supply.
