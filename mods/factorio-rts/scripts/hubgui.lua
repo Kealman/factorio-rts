@@ -328,6 +328,9 @@ events.on_nth_tick(POLL_PERIOD, function(e)
   for _, player in pairs(game.connected_players) do
     local g = storage.players and storage.players[player.index] and storage.players[player.index].hubgui
     local key = wanted(player)
+    -- The × hides the panel until the selection changes. destroy() clears g.key, so a deselect (key nil) did not
+    -- count as a change and the same hub stayed closed when it was selected again (Phase 4 QA step 28).
+    if g and g.closed and key ~= g.closed then g.closed = nil end
     if (g and g.key) ~= key or (key and e.tick % REFRESH_PERIOD == 0) or (g and g.frame and not g.frame.valid) then
       show(player)
     end
