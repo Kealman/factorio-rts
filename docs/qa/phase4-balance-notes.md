@@ -233,8 +233,9 @@ The hard AI's `stock_bonus` (+50 %) applies on top, so hard starts with 600 iron
 - **Paired seeded samples.** `tools/autotest-batch.sh <tag> 4 1v1-normal-medium 1v2-normal-medium` with
   `KEEP_TREE=build/tree-<variant>`: 4 map seeds (`--map-gen-seed 1000 + r × 104729`) × 2 configurations = 8 AI-vs-AI
   runs per variant at game speed 4. The same rep uses the same seed in every variant, so each pair differs only by the
-  balance numbers. Without `--map-gen-seed`, `--create` uses one default seed and repeated runs are identical (the
-  first batch showed it: rep 1 and rep 2 gave the same numbers to the unit).
+  balance numbers. Without `--map-gen-seed`, `--create` draws the seed from the clock, so runs started in the same
+  second are identical (the first batch showed it: rep 1 and rep 2, launched together, gave the same numbers to the
+  unit), and runs started later are unpaired.
 - **Doctrines.** `rts-player` economic, `rts-ai-1` aggressive (autotest default); `rts-ai-2` in 1v2 draws its own.
 - **Army** = military units alive at 8:00 (the minute report's unit mix: haulers and the Commander are not counted),
   averaged over the forces that still have a CC. **Kits** = unit kits the force's barracks made by 8:00 (production).
@@ -265,7 +266,7 @@ Second technology (all forces): c0 at 319 s on average (296–366 s, so some for
   run: economic 13, aggressive 0 while the player's army was in its base, with 55 kits made). Compare variants with kits and with
   averages over seeds, not with one run.
 
-### After the pass (final tree, validation matrix at game speed 1, default seed)
+### After the pass (final tree, validation matrix at game speed 1, unseeded)
 
 | Scenario | Kits made by 8:00 per side | Army at 8:00 per side | Technologies at 8:00 |
 |---|---|---|---|

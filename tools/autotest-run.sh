@@ -19,8 +19,8 @@
 #   STOP_ON=<regex>     stop marker (default: the autotest summary line)
 #   KEEP_TREE=<dir>     take the mod from this directory instead of mods/factorio-rts
 #   EXTRA_LUA=<file>    a test-only module (tools/probes/*.lua): copied into the copy's scripts/ and required last
-#   SEED=<n>            map seed (--map-gen-seed); without it --create uses the same default seed every time, so
-#                       repeated runs of one tree are identical (the arena, doctrines and AI timings follow the seed)
+#   SEED=<n>            map seed (--map-gen-seed); without it --create draws a seed from the clock, so runs started in
+#                       the same second share a seed and are identical (the arena, doctrines and AI timings follow it)
 set -uo pipefail
 source "$(dirname "$0")/factorio-env.sh"
 NAME="${1:?name}"; MATCH="${2:?lua match table}"; CAP="${3:-640}"
