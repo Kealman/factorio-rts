@@ -323,6 +323,12 @@ end
 -- slice per side per round (fair between spawns), and stops at its first slice that breaks a keep-out rule (sample
 -- points every 2 tiles). Every side is then cut to the shortest side's length; if that is under MOAT_MIN, no spawn
 -- gets a moat (crowded maps: 1v2 and 1v3 small).
+-- Why crowded small maps get none (Wave C, 2026-10-16; docs/qa/phase4-mapgen-notes.md "Small maps with 2-3
+-- opponents"): the base ring pushes every moat to choke_a >= BASE_RING + MOAT_WIDTH / 2 = 68 from its CC, so on the
+-- small spawn circle (88) all moat lines sit 18-20 tiles from the arena centre and cross each other there. A model
+-- of this planner found no fair moat (every side >= MOAT_MIN) for 1v3 small with any choke_a, spacing or middle
+-- layout, and for 1v2 small only with a 50-tile base ring and no middle patches. Shorter sides do not help: the
+-- first slice next to the gap already collides with a neighbour's moat.
 local function plan_moats(P, spec, geo)
   local sides = {}
   for _, force in ipairs(spec.forces) do
