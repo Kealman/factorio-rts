@@ -26,7 +26,12 @@
 -- level survive deaths within a match; a new match starts at level 1.
 -- Grid (4x4, rts-commander-grid): personal roboport (0,0) and rts-commander-core (2,2) from level 1, shields at (2,0)
 -- from level 2 and (0,2) from level 3. The roboport and ROBOTS construction robots in the trunk give field
--- construction: ghosts within 15 tiles are built from items in the Commander's trunk (it starts empty).
+-- construction: ghosts within the roboport's construction radius (15 tiles) are built from items in the trunk.
+-- Field supply (Wave C): a player cannot fill the trunk (no character, remote view), and the CC's robots reach only
+-- 40 tiles, so a hub at a natural patch was out of a human's reach while the AI revives its ghosts anywhere. Every
+-- sweep therefore stocks the trunk from the force's CC network (economy.take) with the items of the ghosts near the
+-- Commander that no stocked network covers (nearest FIELD_GHOSTS), and gives back what no nearby ghost needs any
+-- more (robots excepted). So: place the ghosts, walk the Commander there, its robots build them from the pool.
 --
 -- Owns storage.commander = {
 --   match_id,                         the match the per-force records belong to (a new match resets them)
@@ -43,6 +48,7 @@ local selection = require("scripts.selection")
 local orders = require("scripts.orders")
 local supply = require("scripts.supply")
 local camera = require("scripts.camera")
+local economy = require("scripts.economy")
 local balance = require("balance")
 
 local commander = {}
@@ -68,6 +74,8 @@ commander.GRID = {
   {name = commander.SHIELD, position = {0, 2}, level = 3},
 }
 commander.ATTACK_STANDOFF = 22      -- tiles from an attacked enemy the Commander walks to
+commander.FIELD_GHOSTS = 12         -- field supply: ghosts stocked for per sweep, nearest first
+commander.FIELD_RADIUS = 15         -- fallback when the roboport cell reports no construction radius
 local FEEDBACK_COLORS = {move = {r = 0.2, g = 1, b = 0.2, a = 1}, attack = {r = 1, g = 0.2, b = 0.15, a = 1}}
 
 ---------------------------------------------------------------------------
@@ -293,6 +301,87 @@ local function credit(killer, victim)
   end
 end
 
+---------------------------------------------------------------------------
+-- Field supply (see the header)
+---------------------------------------------------------------------------
+local function item_to_place(ghost)
+  local list = ghost.ghost_prototype.items_to_place_this
+  local it = list and list[1]
+  if not it then return nil end
+  return it.name, it.count or 1
+end
+
+-- True when a logistic network other than the Commander's own covers `pos` for construction and holds the item:
+-- the base's robots build that ghost, so the trunk is not stocked for it.
+local function covered(surface, force, pos, item, own_id)
+  for _, net in pairs(surface.find_logistic_networks_by_construction_area(pos, force)) do
+    if net.valid and net.network_id ~= own_id and net.get_item_count(item) > 0 then return true end
+  end
+  return false
+end
+
+--- Stock the Commander's trunk for nearby uncovered ghosts and return the surplus to the pool. Returns the number of
+--- items moved into the trunk.
+function commander.field_supply(e, force_name)
+  local cell = e.logistic_cell
+  local trunk = e.get_inventory(defines.inventory.spider_trunk)
+  if not (cell and trunk) then return 0 end
+  local radius = cell.construction_radius
+  if not radius or radius <= 0 then radius = commander.FIELD_RADIUS end
+  local own = e.logistic_network
+  local own_id = own and own.valid and own.network_id or -1
+  local surface, force, pos = e.surface, e.force, e.position
+  local ghosts = surface.find_entities_filtered({position = pos, radius = radius, type = "entity-ghost", force = force})
+  local d2 = {}
+  for _, g in ipairs(ghosts) do
+    local gp = g.position
+    d2[g] = (gp.x - pos.x) ^ 2 + (gp.y - pos.y) ^ 2
+  end
+  table.sort(ghosts, function(a, b) return d2[a] < d2[b] end)
+  local need, n = {}, 0
+  for _, g in ipairs(ghosts) do
+    if n >= commander.FIELD_GHOSTS then break end
+    local item, count = item_to_place(g)
+    if item and not covered(surface, force, g.position, item, own_id) then
+      need[item] = (need[item] or 0) + count
+      n = n + 1
+    end
+  end
+  local moved, parts = 0, {}
+  for item, want in pairs(need) do
+    local missing = want - trunk.get_item_count(item)
+    if missing > 0 then
+      local got = economy.take(force_name, item, missing)
+      if got > 0 then
+        local put = trunk.insert({name = item, count = got})
+        if put < got then economy.give(force_name, item, got - put) end
+        if put > 0 then
+          moved = moved + put
+          parts[#parts + 1] = item .. " x" .. put
+        end
+      end
+    end
+  end
+  local back = {}
+  for _, it in pairs(trunk.get_contents()) do
+    if it.name ~= commander.ROBOTS.name and not need[it.name] then
+      local removed = trunk.remove({name = it.name, count = it.count, quality = it.quality})
+      if removed > 0 then
+        local given = economy.give(force_name, it.name, removed)
+        if given < removed then trunk.insert({name = it.name, count = removed - given}) end
+        back[#back + 1] = it.name .. " x" .. given
+      end
+    end
+  end
+  if moved > 0 or #back > 0 then
+    table.sort(parts)
+    table.sort(back)
+    util.log("commander: field supply for %s at %s: %d ghosts within %.0f tiles need the trunk; stocked [%s], "
+      .. "returned [%s]", force_name, util.pos_str(pos), n, radius, table.concat(parts, " "), table.concat(back, " "))
+  end
+  return moved
+end
+
 local function sweep(tick)
   local m = storage.match
   if not (m and m.surface and m.phase == "running") then return end
@@ -307,6 +396,7 @@ local function sweep(tick)
       local e = commander.entity(f)
       if e then
         top_up_ammo(e)
+        commander.field_supply(e, f)
       elseif not F.respawn_tick or tick >= F.respawn_tick then
         spawn(f, F)
       end

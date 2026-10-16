@@ -18,6 +18,7 @@
 #                       <n>/2 drones (/rts-spawn, at most 100 per call), which its AI commander takes into its army
 #   STOP_ON=<regex>     stop marker (default: the autotest summary line)
 #   KEEP_TREE=<dir>     take the mod from this directory instead of mods/factorio-rts
+#   EXTRA_LUA=<file>    a test-only module (tools/probes/*.lua): copied into the copy's scripts/ and required last
 #   SEED=<n>            map seed (--map-gen-seed); without it --create uses the same default seed every time, so
 #                       repeated runs of one tree are identical (the arena, doctrines and AI timings follow the seed)
 set -uo pipefail
@@ -50,6 +51,10 @@ fi
   [ "$SPEED" != "1" ] && printf 'require("scripts.events").on_init(function() game.speed = %s end)\n' "$SPEED"
   [ -n "${RESTART_AT:-}" ] && printf 'require("scripts.debug").AUTOTEST_RESTART_AT = %s\n' "$RESTART_AT"
   [ -n "${PERF:-}" ] && printf 'require("scripts.events").enable_profiling()\n'
+  if [ -n "${EXTRA_LUA:-}" ]; then
+    cp "$EXTRA_LUA" "$M/scripts/$(basename "$EXTRA_LUA")"
+    printf 'require("scripts.%s")\n' "$(basename "$EXTRA_LUA" .lua)"
+  fi
   if [ -n "${STRESS:-}" ]; then
     printf 'do\n  local at, n = %s, %s\n' "${STRESS%%:*}" "${STRESS##*:}"
     cat <<'LUA'
@@ -100,7 +105,7 @@ while true; do
 done
 kill "$PID" 2>/dev/null; wait "$PID" 2>/dev/null
 echo "=== $NAME: $STATUS (variant $VARIANT, speed $SPEED) ==="
-grep -E "\[rts\] (ai autotest (check|summary)|autotest (check .*FAIL|summary)|ai minute [0-9]+ (rts|match)|ai perf minute [0-9]+: AI time per tick|perf |restart)" "$LOG" \
+grep -E "\[rts\] (ai autotest (check|summary)|autotest (check .*FAIL|summary)|ai minute [0-9]+ (rts|match)|ai perf minute [0-9]+: AI time per tick|perf |restart|field probe)" "$LOG" \
   | sed -E 's/^ *[0-9.]+ Script @__factorio-rts__\/[^ ]+ //' || true
 echo "=== errors ==="
 grep -nE "Error|rror while running|Exception|Unknown key|missing locale" "$LOG" "$CREATE" | grep -v "Got EOF on stdin" | head -20 \
