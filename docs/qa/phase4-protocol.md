@@ -10,7 +10,7 @@ This protocol plays one Phase 4 match on a Medium Chokepoints map against one No
 - hub policies, a hauler route and research;
 - abilities, the Commander and supply;
 - alerts, control groups and a fight;
-- the match menu, the results window and the end marker.
+- the match menu, Concede, the results window and the end marker.
 
 The tester is an automated agent with computer use. It sees only the screen and uses only the mouse and the keyboard: no
 console, no log, no shell. Every step gives the input, what must be visible afterwards, and how to judge PASS or FAIL from
@@ -82,7 +82,7 @@ RTS_LOCALE=en tools/gui-run.sh build/qa-p4 3600 'RTS_QA_END'
 | Hub / hauler panel | x 1019–1273, y 183 to ≈470 | Open while a hub or the CC is the selected building, or while only haulers are selected. Close × at (1256, 198). |
 | Research panel | centred, x≈248–1032, y≈198–604 | T or Research [T]. Close × at (1013, 211). Tier-1 rows at y≈335 + 24 × row, **Research** buttons at x≈596. |
 | How to play | centred, x≈400–880 | F11 or ?. Close × at the window's top right (≈862, 217). |
-| Menu | centred, x≈482–797 | F10 or Menu. **Restart** (≈533, 438), **Resume** (≈740, 438). |
+| Menu | centred, x≈482–797 | F10 or Menu. **Restart** (≈533, 438), **Concede** (red, ≈622, 438; after the match **Results** there), **Resume** (≈745, 438). |
 | Results | centred, x≈415–865 | Only when the match ends. **Restart** (≈466, 504), **Continue** (≈810, 504). |
 
 **Factory recipe buttons** (x = 27 + 26 × index):
@@ -120,11 +120,16 @@ screen x = 640 + 16 × (world x + 152)        screen y = 400 + 16 × world y
 | The CC's power area (dark square while placing) | 36×36 tiles | x 352–928, y 112–688 |
 | **Sites used below:** factory / barracks / lab | (−146.5, 8.5) / (−146.5, −8.5) / (−158.5, −8.5) | (728, 536) / (728, 264) / (536, 264) |
 | Extractor / smelter / inserter / stockpile | (−139.5, 5.5) / (−138.5, 2.5) / (−137.5, 4.5) / (−137.5, 5.5) | (840, 488) / (856, 440) / (872, 472) / (872, 488) |
-| Hub 1, 4×4 | (−122, 6) | (1120, 496) |
+| Hub 1, 4×4 (step 23, at the natural iron) | (−91, 13) | off screen: click the minimap at (1153, 98), then the hub is ≈144 px left of the iron patch's centre |
 | Barracks rally point / army parking spot | (−132, −5) / (−130, −2) | (960, 320) / (992, 368) |
 | Empty ground (to deselect) | (−160.75, 13.75) | (500, 620) |
 
-Robots build only within 40 tiles of the CC and 22 tiles of a hub. The CC's logistic network reaches 25 tiles.
+Robots build only within 80 tiles of the CC and 40 tiles of a hub; beyond that the Commander builds ghosts next to it.
+The CC's logistic network reaches 25 tiles, so a hub more than 39 tiles away has its own network.
+
+**The natural expansion** (Medium, 1 opponent): your natural iron is a 10×10 blue-grey patch centred at world (−82, 13),
+70 tiles in front of the CC, and the natural copper 8×8 at (−82, −13). On the minimap the iron is at ≈(1153, 98). A
+minimap click there centres the camera on it within about 2 tiles (32 px).
 
 ### Glossary (English → Russian)
 
@@ -145,7 +150,7 @@ Robots build only within 40 tiles of the CC and 22 tiles of a hub. The CC's logi
 | Iron gear wheel; Basic science kit | Железная шестерня; Базовый научный набор |
 | Paused: pick a recipe.; running; waiting for; Status: Working | Пауза: выберите рецепт.; работает; ждёт; Состояние: Работает |
 | Rally; Rally point …; No rally point … | Сбор; Точка сбора …; Нет точки сбора … |
-| Hub 1: stockpile policy; Network #K, 2 hubs | Хаб 1: правила склада; Сеть №K, хабов в ней: 2 |
+| Hub 1: stockpile policy; Network #K, 1 hub | Хаб 1: правила склада; Сеть №K, хабов в ней: 1 |
 | In network; Keep; Export above | В сети; Держать; Вывоз от |
 | Hauler #N; Mode: Auto / Route; Home; Route; State | Транспортёр №N; Режим: Авто / Маршрут; Дом; Маршрут; Состояние |
 | Waiting, nothing to carry; pickup and drop-off share one network | ждёт, нечего везти; погрузка и разгрузка в одной сети |
@@ -158,6 +163,7 @@ Robots build only within 40 tiles of the CC and 22 tiles of a hub. The CC's logi
 | The selected units are at full health; Needs research: …; No artillery walker | Выбранные юниты не ранены; Нужно исследование: …; Нет артиллерийских шагоходов |
 | Base under attack; Research complete; Commander down | База атакована; Исследование завершено; Командир погиб |
 | Menu; Restart; Resume | Меню; Заново; Продолжить |
+| Concede; Really concede?; Results; Conceded at mm:ss | Сдаться; Точно сдаться?; Итоги; Сдался на mm:ss |
 | Match over; Victory; Defeat; Continue | Матч окончен; Победа; Поражение; Осмотреться |
 | How to play | Как играть |
 
@@ -178,8 +184,7 @@ Nothing has to happen fast: your units and the Commander shoot back by themselve
 1. Finish or abandon the current click. If a building ghost is on the cursor, press Q. Close the research panel or "How
    to play" if one is open.
 2. Press F3, or click the red alert line. The camera jumps to the attack.
-3. Press Ctrl+A. If you already have a hauler (step 31 on), Shift + click its card, the last card in the selection
-   panel, so the hauler does not walk into the fight.
+3. Press Ctrl+A. It selects the combat units and the Commander, never the haulers.
 4. Press F, then right-click on the enemies or on the ground next to them. Optional: press C (Shield) while the
    Commander is near the fight.
 5. Wait until "Enemies seen" shows "?" again. The AI pulls back after heavy losses.
@@ -321,7 +326,7 @@ before step 40: the factory steps need that iron.
       - **First click:** "No units selected".
       - **CC click, selection panel:** an outline around the CC, and the lines "Command Center #N", "HP 3000/3000",
         "Robots idle: construction 20/20, logistic 10/10", "Power: … / 4.00 MW used, machines at 100%" and "Robots
-        build ghosts within 40 tiles; the network reaches 25 tiles."
+        build ghosts within 80 tiles; the network reaches 25 tiles."
       - **CC click, right edge:** a panel under the minimap, "Command Center: stockpile policy", "Network #N, 1 hub",
         and an item table. Iron 400 and copper 150 are green, and "Export above" reads 100 for iron, copper and steel.
       - **Last click:** the outline and the right panel are gone; "No units selected".
@@ -488,22 +493,21 @@ Before each step of this part, press SPACE if the camera has moved.
       - `production: barracks #[0-9]+ \(rts-player\) spawned rts-walker`
       - `recipe set barracks#[0-9]+ none ok=true now=none player=1`
 
-23. **A hub ghost inside the robots' reach.**
-    - *Input:* click empty ground at (500, 620). In the Economy tab, click **Hub** (≈1252, 772). Left-click (1120, 496).
-      Press Q.
-    - *Expect:* a 4×4 hub ghost about 30 tiles right of the CC, between the iron ore and the stone. It stays a ghost
-      for now, because there is no hub in stock. While the hub was on the cursor, the game may also have drawn green and
-      orange squares (robot areas); report what you saw.
-    - *Why here and not at the natural expansion:*
-      - The CC's robots build ghosts only within 40 tiles; the CC panel says so (step 12).
-      - The natural iron lies about 70 tiles out on a Medium map, and a ghost outside every robot area is never built.
-      - The Commander can build a ghost anywhere by standing next to it (its robots take the items from your pool;
-        optional step 56), but this step keeps the hub in the CC's reach so that no later step depends on a long walk.
-      - A hub at 30 tiles gets built. Its logistic area touches the CC's (they touch up to 39 tiles apart), so it joins
-        the CC's network. It adds +10 supply, 16 robots, its own 300 kW power, and robots reach 22 tiles further from
-        it.
+23. **A hub ghost at the natural expansion.**
+    - *Input:*
+      1. Click empty ground at (500, 620). Click the minimap at (1153, 98): the camera jumps to your natural iron, a
+         10×10 blue-grey ore patch near the screen centre (about 160 px wide).
+      2. In the Economy tab, click **Hub** (≈1252, 772). Left-click the map about 144 px (9 tiles) left of the iron
+         patch's centre, at the same height: on bare ground, with about 2 tiles of grass between the ghost and the ore.
+      3. Press Q, then SPACE.
+    - *Expect:* a 4×4 hub ghost just left of the natural iron. It stays a ghost for now: there is no hub in stock yet.
+      While the hub was on the cursor, the game may also have drawn green and orange squares (robot areas); report
+      what you saw.
+    - *Why there:* the CC's robots build up to 80 tiles out, and the natural lies 70 tiles out. The CC's logistic area
+      (25) and the hub's (14) do not touch at that distance, so Hub 1 gets its own network, and step 33 moves cargo
+      between the two networks.
     - *Log check (lead):* `hud click build rts-hub player=1 in_network=0 ghost=true`,
-      `build ghost rts-hub player=1 at \(-122\.0, 6\.0\)`
+      `build ghost rts-hub player=1 at \(-9[0-9]\.0, 1[0-9]\.0\)`
 
 24. **Factory: a hub, then a lab.**
     - *Input:*
@@ -528,36 +532,36 @@ Before each step of this part, press SPACE if the camera has moved.
       - `recipe set factory#[0-9]+ none ok=true`
 
 25. **The hub and the lab get built.**
-    - *Input:* click empty ground at (500, 620), press SPACE and wait 20 s.
+    - *Input:* click empty ground at (500, 620), press SPACE and wait 40 s (the robots fly 60 tiles to the hub). Then
+      click the minimap at (1153, 98) and take a screenshot. Press SPACE.
     - *Expect:*
-      - **Hub.** A real hub (a warm-tinted roboport) at (1120, 496), with a small stockpile on each side.
       - **Lab.** A lab at (536, 264).
-      - **Strip.** "Supply N/50" instead of /40. Robots read about 46/46: 20 + 10 from the CC and 10 + 6 from the hub.
-        Power reads "…/4.3 MW", because the hub adds 300 kW.
+      - **Hub.** At the natural: a real hub (a warm-tinted roboport) where the ghost was, with a small stockpile on each
+        side.
+      - **Strip.** "Supply N/50" instead of /40. Power reads "…/4.3 MW", because the hub adds 300 kW. The robot count
+        stays about 30: the strip counts the robots of the CC's network, and the hub's 16 work in its own network.
     - *Log check (lead):*
       - `production: factory #[0-9]+ \(rts-player\) moved 1 rts-hub into the network`
-      - `robot built rts-hub #[0-9]+ at \(-122\.0, 6\.0\)`
-      - `logistics: hub #[0-9]+ \(Hub 1\) of rts-player at \(-122\.0, 6\.0\): power=true pole=true stockpiles=2 robots=16`
+      - `robot built rts-hub #[0-9]+ at \(-9[0-9]\.0, 1[0-9]\.0\)`
+      - `logistics: hub #[0-9]+ \(Hub 1\) of rts-player at \(-9[0-9]\.0, 1[0-9]\.0\): power=true pole=true stockpiles=2 robots=16`
       - `robot built rts-lab #[0-9]+ at \(-158\.5, -8\.5\)`
       - `hud resources player=1 .* supply=[0-9]+/50`
 
 ### Part F: hub panel and policies
 
 26. **Select the hub.**
-    - *Input:* left-click the hub (1120, 505).
+    - *Input:* click the minimap at (1153, 98). Left-click the hub (≈144 px left of the iron patch's centre).
     - *Expect:*
-      - **Building page:** "Hub #N", "HP 1200/1200", "Status: Working", "Supply +10. Its own logistic network, power and
-        robots." and "Set what it keeps and exports in the panel on the right."
-      - **Right panel:** "Hub 1: stockpile policy", "Network #K, 2 hubs", "Auto haulers based here: 0. Arriving with
+      - **Building page:** "Hub #N", "HP 1200/1200", "Status: Working", "Supply +10. Its own power and robots; its
+        own logistic network unless its area touches the Command Center's or another hub's." and "Set what it keeps
+        and exports in the panel on the right."
+      - **Right panel:** "Hub 1: stockpile policy", "Network #K, 1 hub", "Auto haulers based here: 0. Arriving with
         cargo: 0." and a grey hint.
       - **Item table:** "In network | Keep | Export above", with rows iron (Keep 50), copper (Keep 20), steel, stone,
         coal, and more further down (scroll).
-    - *Pass/Fail:*
-      - PASS if the panel opens and reads "2 hubs": the hub shares the CC's network. Report the building page's "Its own
-        logistic network" as a text issue, since it is wrong for this hub.
-      - FAIL if no panel opens.
-      - If it reads "1 hub", report it: the hub then has its own network, and step 33 should show cargo moving.
-    - *Log check (lead):* `select building hub unit=[0-9]+ player=1 at \(-122\.0, 6\.0\)`,
+    - *Pass/Fail:* PASS if the panel opens and reads "1 hub" (its own network). FAIL if no panel opens. If it reads
+      "2 hubs", report it: the hub then shares the CC's network and step 34 cannot move cargo.
+    - *Log check (lead):* `select building hub unit=[0-9]+ player=1 at \(-9[0-9]\.0, 1[0-9]\.0\)`,
       `hubgui: hub panel for #[0-9]+ player=1`
 
 27. **Edit two policies.**
@@ -572,18 +576,21 @@ Before each step of this part, press SPACE if the camera has moved.
       `hubgui policy hub=#[0-9]+ coal export_above=10 ok=true`
 
 28. **Close and reopen the panel.**
-    - *Input:* click the panel's × (1256, 198). Click empty ground at (500, 620). Click the hub (1120, 505) again.
+    - *Input:* click the panel's × (1256, 198). Click empty ground left of the hub. Click the hub again.
     - *Expect:* × closes the panel while the hub stays selected. After you deselect and select the hub again, the panel
       opens with Keep 30 for stone and Export above 10 for coal.
     - *Log check (lead):* `hubgui click close hub:[0-9]+ player=1`
 
-29. **The CC's policy: the same network.**
-    - *Input:* click the CC (640, 400). Then click empty ground at (500, 620).
+29. **The CC's policy: a second network; export iron.**
+    - *Input:* press SPACE and click the CC (640, 400). Click the **Export above** field of the iron row (1st row,
+      ≈1200, 314), select its text, type 0 and press Enter. Then click empty ground at (500, 620).
     - *Expect:*
-      - "Command Center: stockpile policy" and "Network #K, 2 hubs", with the same K as in step 26.
-      - Export above reads 100 for iron, copper and steel, with no Keep values.
-      - The stone count is yellow here too: a network keeps the largest Keep of its hubs.
-    - *Log check (lead):* `select building cc unit=[0-9]+ player=1`
+      - "Command Center: stockpile policy" and "Network #M, 1 hub", with M different from Hub 1's K in step 26: two
+        networks.
+      - Export above read 100 for iron, copper and steel, with no Keep values. After the edit, iron reads 0 and its
+        count turns green: everything above 0 is offered to haulers.
+      - The stone count is not yellow here: Hub 1's Keep 30 belongs to Hub 1's network only.
+    - *Log check (lead):* `select building cc unit=[0-9]+ player=1`, `hubgui policy hub=#[0-9]+ iron-plate export_above=0 ok=true`
 
 ### Part G: hauler
 
@@ -622,35 +629,44 @@ Before each step of this part, press SPACE if the camera has moved.
         - the hint "Right-click a hub: pickup. Shift + right-click: drop-off. Right-click the ground: move and park."
     - *Log check (lead):* `select mode=replace click n=1 `, `hubgui: hauler panel for #[0-9]+ player=1`
 
-33. **Pickup: right-click the hub.**
-    - *Input:* right-click the hub (1120, 505).
-    - *Expect:* **Route** is pressed. The panel reads "Route: Hub 1 → Command Center" and, in yellow, "State: Waiting,
-      pickup and drop-off share one network". The hauler does not move: both hubs are in one network, so there is
-      nothing to carry (see step 23).
-    - *Log check (lead):* `order route-pickup n=1 hub=#[0-9]+ \(hub\) player=1`,
-      `\(rts-player, manual\) waiting \(same-network\)`
+33. **Pickup: right-click the CC.**
+    - *Input:* with the hauler still selected, right-click the CC (640, 400).
+    - *Expect:* **Route** is pressed. The panel reads "Route: Command Center → Command Center" or "Route: Command
+      Center → …" with the state "Waiting, set a pickup … and a drop-off …" or "Idle": the drop-off is still missing.
+    - *Log check (lead):* `order route-pickup n=1 hub=#[0-9]+ \(cc\) player=1`
 
-34. **Drop-off: Shift + right-click; then pickup at the CC.**
-    - *Input:* hold Shift and right-click the hub (1120, 505). Then right-click the CC (640, 400).
-    - *Expect:* after the Shift + right click, "Route: Hub 1 → Hub 1". After the right click on the CC, "Route: Command
-      Center → Hub 1". The state stays "Waiting, pickup and drop-off share one network", and no unit moves.
+34. **Drop-off: Shift + right-click Hub 1; cargo moves.**
+    - *Input:*
+      1. Click the minimap at (1153, 98). The hauler stays selected.
+      2. Hold Shift and right-click Hub 1 (≈144 px left of the iron patch's centre).
+      3. Wait 20 s and watch the hauler panel. Then left-click Hub 1 and look at its iron row.
+    - *Expect:*
+      - The panel reads "Route: Command Center → Hub 1". The state goes "To pickup", "To drop-off: Hub 1 (N tiles)",
+        and after the hauler arrives (it walks about 60 tiles in a few seconds, around the water if needed),
+        "Trips: 1. Delivered: [iron] N" with N up to 50.
+      - Hub 1's panel shows iron "In network" N (yellow while below its Keep 50). The strip's iron, which counts only
+        the CC's network, went down by N.
+      - Afterwards the hauler goes back to the CC and waits there with "Waiting, nothing to carry" once Hub 1 holds 50.
+    - *Pass/Fail:* PASS when Hub 1's network holds the delivered iron. FAIL if the state stays "Waiting, pickup and
+      drop-off share one network" (the hub joined the CC's network) or nothing moves within 60 s.
     - *Log check (lead):* `order route-dropoff n=1 hub=#[0-9]+ \(hub\) player=1`,
-      `order route-pickup n=1 hub=#[0-9]+ \(cc\) player=1`
+      `logistics: hauler #[0-9]+ delivered [0-9]+ iron-plate to hub #[0-9]+ \(trip 1\)`
 
 35. **Auto mode.**
-    - *Input:* click **Auto** in the hauler panel (≈1083, 220). Wait 10 s.
-    - *Expect:* Auto is pressed, and the panel reads "Home: Hub 1": the drop-off became home. The hauler walks to the
-      hub and stops just below it (≈1120, 568). The state reads "Going home: Hub 1 (N tiles)", then "Waiting, nothing
-      to carry".
+    - *Input:* select the hauler again (click it, wherever it is: press SPACE if it went back to the CC). Click
+      **Auto** in the hauler panel (≈1083, 220). Wait 20 s.
+    - *Expect:* Auto is pressed, and the panel reads "Home: Hub 1": the drop-off became home. The hauler walks to Hub 1
+      and stops just below it. The state reads "Going home: Hub 1 (N tiles)", then it serves Hub 1's Keep from the
+      CC's exports ("To pickup …"), or "Waiting, nothing to carry" when Hub 1 already holds 50 iron and 20 copper.
     - *Log check (lead):* `hubgui click mode auto haulers=1 player=1`, `logistics: hauler #[0-9]+ mode auto`
 
 36. **Park, Resume, Return home.**
     - *Input:*
-      1. Right-click ground at (1000, 620). Wait 5 s.
+      1. Click the minimap at (1153, 98). Right-click ground about 100 px left of Hub 1. Wait 5 s.
       2. Click **Resume** (≈1130, 329). Wait 5 s.
-      3. Right-click ground at (1000, 620) again and wait 5 s.
+      3. Right-click the same ground again and wait 5 s.
       4. Click **Return home** (≈1062, 329). Wait 10 s.
-      5. Click empty ground at (500, 620).
+      5. Click empty ground and press SPACE.
     - *Expect:*
       - After each ground right click, the hauler walks there and stops. The panel reads "State: Parked" in yellow, and
         Resume is enabled.
@@ -902,28 +918,27 @@ Before each step of this part, press SPACE if the camera has moved.
     - *Log check (lead):* `ability shield player=1`, `ability stim player=1 .* healed=[1-9]`, `commander: rts-player level 2`,
       `commander: #[0-9]+ of rts-player died`
 
-56. **Optional: a hub at the natural expansion, built by the Commander.** Only if the strip timer is below 35:00.
+56. **Optional: a hub at the middle iron, built by the Commander.** Only if the strip timer is below 35:00.
     - *Input:*
       1. Click the barracks and click Pause, so that the factory gets the iron.
-      2. If the Hub button in the Economy tab shows no number (no spare hub from step 24), click the factory and the
-         Hub recipe, wait until the Hub button shows 1, then click Pause.
-      3. Click the minimap at your natural expansion (≈1155, 92). Find the natural iron: a blue-grey ore patch about
-         10×10 tiles, 70 tiles in front of your CC.
-      4. In the Economy tab, click **Hub**. Left-click the map about 6 tiles (≈100 px) from the edge of that ore patch,
-         on bare ground. Press Q. The hub ghost stays a ghost: no robot reaches it.
-      5. Click the Commander icon on the ability bar (486, 753) once, so that only the Commander is selected. Right-click
-         the ground right next to the hub ghost. Wait until the Commander stands there, then wait 20 s more.
-      6. Press SPACE, click the barracks and click the walker kit again.
+      2. If the Hub button in the Economy tab shows no number, click the factory and the Hub recipe, wait until the Hub
+         button shows 1, then click Pause.
+      3. Click the Commander icon on the ability bar (486, 753) once, so that only the Commander is selected.
+      4. Click the minimap at your moat's gap (≈1162, 92): the land between two water bands in front of your base.
+         Right-click that land. Wait until the Commander stands there (water stops it, so it goes through the gap).
+      5. Click the minimap at the middle iron (≈1188, 82): a 14×14 blue-grey patch north of the ruin in the arena centre.
+         In the Economy tab, click **Hub** and left-click the map about 3 tiles (≈48 px) left of the patch's left edge.
+         Press Q. The ghost stays a ghost: it is 140 tiles from the CC and 90 from Hub 1.
+      6. Right-click the ground right next to the ghost. Wait until the Commander stands there, then wait 20 s more.
+      7. Press SPACE, click the barracks and click the walker kit again.
     - *Expect:*
-      - **Walk.** The Commander walks from the base to the ghost (about 50 tiles, 5 s).
-      - **Build.** A few seconds after it arrives, small robots fly out of the Commander and build the hub: a warm-tinted
-        roboport with a stockpile on each side. The Hub count in the build menu goes down by 1: the pool paid for it.
+      - **Build.** A few seconds after the Commander arrives, small robots fly out of it and build the hub. The Hub
+        count in the build menu goes down by 1: the CC's pool paid for it.
       - **Supply.** The strip's supply cap rises by 10.
-      - **Own network.** Left-click the new hub: the panel reads "Hub 2: stockpile policy", and its network line shows
-        a different network number than Hub 1, with 1 hub in it (it is too far from the CC to join its network).
-    - *Pass/Fail:* PASS if the hub is built within 30 s of the Commander's arrival. FAIL if it stays a ghost.
-    - *Log check (lead):* `build ghost rts-hub player=1 at`,
-      `commander: field supply for rts-player at .* stocked \[rts-hub x1\]`,
+      - **Panel.** Left-click the new hub: "Hub 2: stockpile policy", "Network #…, 1 hub".
+    - *Pass/Fail:* PASS if the hub is built within 30 s of the Commander's arrival. FAIL if it stays a ghost. SKIP if the
+      Commander cannot reach the patch; say where it stopped.
+    - *Log check (lead):* `commander: field supply for rts-player at .* stocked \[rts-hub x1\]`,
       `logistics: hub #[0-9]+ \(Hub 2\) of rts-player`
 
 ### Part O: menu, help, results, end
@@ -935,9 +950,8 @@ Before each step of this part, press SPACE if the camera has moved.
       3. Click **Menu** on the strip, then press Escape.
     - *Expect:*
       - A dialog "Menu" with "1 opponent · Normal · Medium (384×384) · Chokepoints", "Match time: mm:ss", and the
-        buttons **Restart** (left) and **Resume** (right).
-      - There is no button to give up or end the match: the results window comes only with a victory or a defeat.
-      - Resume and Escape close the dialog, and the camera does not move.
+        buttons **Restart** (left), **Concede** (red, middle) and **Resume** (right).
+      - Resume and Escape close the dialog, and the camera does not move. Do not click Concede yet (step 59).
     - *Log check (lead):*
       - `lobby: rts-menu \(F10\) player=1`
       - `lobby: menu opened by player 1`
@@ -949,25 +963,28 @@ Before each step of this part, press SPACE if the camera has moved.
     - *Input:* press F11, or click **?** on the strip. Take a screenshot. Press F11 again, or Escape, or the window's ×.
     - *Expect:* a centred window "How to play" with 10 paragraphs headed Goal, Controls, Economy, Build order, Hubs,
       Haulers, Research, Supply, Counters and Alerts. It closes again.
-    - *Pass/Fail:* PASS if it opens and closes. Report any clipped text. Also report that the Hubs paragraph says to put
-      a hub "at the next patch", which step 23 showed robots cannot reach directly.
+    - *Pass/Fail:* PASS if it opens and closes. Report any clipped text.
     - *Log check (lead):* `hud help opened player=1 \((F11|\? button)\): 10 lines`, `hud help closed player=1`
 
-59. **The results window (only if the match ended).**
-    - *Input:* only if a "Match over" window appeared at any time, because you or the AI lost everything. Take a
-      screenshot of it, then click **Continue**.
+59. **Concede, the results window, Results again.**
+    - *Input:*
+      1. Click **Menu** on the strip (or press F10). Click **Concede** (red, ≈622, 438) once. Take a screenshot.
+      2. Click the same button, which now reads **Really concede?**, within 5 s.
+      3. Take a screenshot of the "Match over" window, then click **Continue**.
+      4. Click **Menu** again. Click **Results** (middle button). Take a screenshot, then click **Continue**.
     - *Expect:*
-      - **Title.** "Match over" and a big "Victory" (green), "Defeat" (red) or "Draw".
-      - **Lines.** "Victory! The enemy base and army are destroyed." (or the defeat line), "Match time: mm:ss" and the
-        settings line.
-      - **Table.** The columns are Side, Units built / lost, Buildings built / lost and Status. The rows are "You" and
-        "AI 1 (Normal)", with Status "Winner", "Still in" or "Out at mm:ss".
-      - **Buttons.** **Restart** and **Continue**.
-      - **After Continue.** The window closes and cannot be opened again. The minimap shows the whole arena, and the
-        strip reads "Enemies: N" and the result message.
-      - **After a defeat**, click Menu, Restart and Start match, then go on with the next step. Redo any earlier steps
-        you still need (see Recovery).
-    - *Log check (lead):* `lobby: results shown to player 1: (victory|defeat|draw)`, `lobby click continue player=1`
+      - **First click.** The match goes on; the button turns into "Really concede?". A second click more than 5 s
+        later only asks again.
+      - **Second click.** The menu closes and a centred window "Match over" opens: a big red "Defeat", "Defeat. You
+        conceded the match.", "Match time: mm:ss" and the settings line. The table has the columns Side, Units built /
+        lost, Buildings built / lost and Status; "You" reads "Conceded at mm:ss" and "AI 1 (Normal)" reads "Winner".
+        The strip's message line reads "Defeat. You conceded the match." in red. Buttons: **Restart** and **Continue**.
+      - **Continue** closes the window; the arena stays visible.
+      - **Menu after the match** has **Restart**, **Results** and **Resume**, and no Concede. **Results** opens the same
+        window again.
+    - *Log check (lead):* `lobby: concede armed by player 1`, `match: rts-player concedes at`,
+      `match: ended at tick [0-9]+ .* winner=rts-ai-1, result for rts-player=defeat`,
+      `lobby: results shown to player 1: defeat` (twice), `lobby click results player=1`
 
 60. **Restart with Ctrl+Shift+R.**
     - *Input:* press Ctrl+Shift+R. Wait 5 s.
@@ -1036,14 +1053,14 @@ Before each step of this part, press SPACE if the camera has moved.
 
 ## Not covered
 
-- **Hauling cargo between separate networks.** Step 56 builds a hub with its own network at the natural expansion,
-  but an outpost that mines there and a hauler route that brings the plates home take several more minutes. The
-  headless logistics autotest and the economic AI cover cargo delivery and the moat routes.
+- **A mining outpost at the natural.** Step 34 moves iron from the CC to Hub 1; extractors and smelters at Hub 1
+  with an export policy that ships their plates home take several more minutes. The headless logistics autotest and
+  the economic AI cover that loop and the moat routes.
 - **Tier-2 research and what it unlocks.** Advanced kits need steel from a second smelter fed with plates. That includes
   Scanner sweep and Overcharge casts, the targeted-ability arm and cancel, laser turrets, steam power and artillery.
   Heavy walkers and raiders are tier 1 but are not researched here. The headless research and abilities probes cover
   these.
 - **Other buildings:** turrets, walls, radar, solar arrays, accumulators, belts and poles.
 - **Other map features and setups:** the ruin capture, depletion alerts, the Large map, 2 or 3 opponents, Open field.
-- **A real victory:** destroying a Normal AI takes far longer than this session.
+- **A real victory:** destroying a Normal AI takes far longer than this session; step 59 covers the defeat path.
 - **Multiplayer and save/load.**

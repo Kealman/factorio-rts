@@ -78,7 +78,7 @@ patch, moat gap and the ruin can be reached on land. Every run below reported al
 | Kind | Where | Size | Total | Notes |
 |---|---|---|---|---|
 | Main | `match.ORE_PATCHES` per spawn (iron 17/10, copper 17/−10, stone 28/16, coal 36/16) | 12×12, 8×8, 6×6, 6×6 | iron 6000, copper 4000, stone 3000, coal 3000 | same positions as Phase 3 |
-| Natural | a pair 48–84 tiles from its CC, between the base ring and the moat | iron 10×10, copper 8×8 | iron 8000, copper 4000 | first choice: natural_a tiles out, iron 13 tiles to one side, copper 13 to the other |
+| Natural | a pair 48–80 tiles from its CC (84 before Wave C; 80 = the CC's construction radius), between the base ring and the moat | iron 10×10, copper 8×8 | iron 8000, copper 4000 | first choice: natural_a tiles out, iron 13 tiles to one side, copper 13 to the other |
 | Middle | iron (0, −24), copper (0, 24), coal (0, 44) | 14×14, 10×10, 8×8 | 12000, 8000, 6000 | contested |
 
 - **Amounts per tile.** Patches are richer in the middle (weight 1.5 − d², at least 0.35) and add up to the total
@@ -92,7 +92,7 @@ patch, moat gap and the ruin can be reached on land. Every run below reported al
   - half-spacing 13 or 9;
   - iron on either side.
 
-  Every candidate must lie 48–84 tiles from its own CC and out of every other base ring (≥ 62 tiles from any other
+  Every candidate must lie 48–80 tiles from its own CC (within the CC's construction radius) and out of every other base ring (≥ 62 tiles from any other
   spawn, so also outside the AI's `HOSTILE_RADIUS` 45). It must keep 4 tiles from any other patch and 3 from a moat.
   In 1v1 the first choice fits; on crowded maps the pair shifts sideways.
 - **The AI finds the naturals by itself** (resource search within 100 tiles).

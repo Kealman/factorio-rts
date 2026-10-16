@@ -199,7 +199,7 @@ Element names start with `rts_tech_`. Clicks carry `tags.rts_tech` = `research`,
 | `techgui.toggle/open/close(player)`, `techgui.is_open(player)` | HUD button, tutorial | The panel |
 
 **HUD agent.** Three things are needed:
-- Add `rts-lab` to `BUILD_ITEMS`; the lab is not in the build menu yet.
+- Add `rts-lab` to `BUILD_ITEMS`. Done: the Production tab has the lab.
 - Grey out recipes whose `player.force.recipes[name].enabled` is false in the barracks and factory grids. The mk2 kits
   and the laser turret and steam plant before research are such recipes. A click on one is refused and logged, and
   nothing else happens.

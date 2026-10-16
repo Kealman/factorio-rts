@@ -31,7 +31,7 @@ Every side starts with a Command Center (CC), the same stock and 6 walkers. Huma
 | Left click | Select one unit; if no unit is there, select your own building |
 | Left drag | Box-select units |
 | Shift + left click / drag | Add to the selection |
-| Ctrl+A | Select every unit you own, including haulers and the Commander |
+| Ctrl+A | Select your army: every combat unit and the Commander, not the haulers |
 | Ctrl+1..5 / 1..5 | Assign / recall a control group (double tap: camera jumps to it) |
 | Click / Shift + click a unit card | Keep only that unit type / drop it from the selection |
 | Right click | Move, or attack the enemy under the cursor |
@@ -48,13 +48,13 @@ Every side starts with a Command Center (CC), the same stock and 6 walkers. Huma
 | Q or right click | Stop placing |
 | T | Research panel |
 | F3 | Jump to the newest alert (press again for older ones) |
-| F10 | Match menu (resume, restart) |
+| F10 | Match menu: resume, restart, concede (click twice); after the match, the results again |
 | F11 | How to play |
 | F1 | Get the RTS cursor back |
 | Ctrl+Shift+R | QA: restart the current match with the same settings (admin) |
 | Ctrl+Shift+E | QA: write a state summary and the `RTS_QA_END` marker to the log |
 
-On macOS, every Ctrl chord also works with Cmd. You can rebind keys under Settings → Controls; the mod's controls are named "RTS: …", "Ability: …" and "Research panel". Watch out: Ctrl+A also selects your haulers, so a right click on the ground parks them too.
+On macOS, every Ctrl chord also works with Cmd. You can rebind keys under Settings → Controls; the mod's controls are named "RTS: …", "Ability: …" and "Research panel". Haulers are left out of Ctrl+A; select them with a click or a box.
 
 Abilities are on the bar at the bottom centre. Cooldowns are per side.
 
@@ -63,14 +63,14 @@ Abilities are on the bar at the bottom centre. Cooldowns are per side.
 | Z | Stim | Damaged units selected; 10 iron per unit | Heals 30 % of max HP; drones and the Commander also move 50 % faster for 8 s | 30 s |
 | C | Shield | A live Commander | The Commander and your units within 8 tiles take half damage for 10 s | 45 s |
 | V | Scanner sweep | *Scanner sweep* research; then right-click a target | Reveals a 48×48 area for 30 s | 60 s |
-| G | Artillery strike | An artillery walker 8–40 tiles from the target; then right-click a target | Each one fires 2 shells, then keeps attacking there | 20 s |
+| G | Artillery strike | An artillery walker 8–44 tiles from the target (its own range); then right-click a target | Each one fires 2 shells, then keeps attacking there | 20 s |
 | (button only) | Overcharge | *Overcharge* research and a CC | Turrets deal double damage for 10 s while the CC's buffer loses 1 MW | 90 s |
 
 After you press V or G, the ability waits for your target. Pressing the key again, X or F cancels it.
 
 ## How the economy works
 
-**The pool.** Your CC is a roboport with 3,000 HP, 20 construction and 10 logistic robots, 4 stockpiles and a 4 MW power core. Its logistic network covers 25 tiles in every direction, and its robots build up to 40 tiles out. Stockpiles inside a logistic area belong to that network, and barracks, factories, labs and turrets pull what they need from the network they stand in. A building outside every logistic area gets nothing. Everything you order is a ghost. Construction robots build a ghost from items in the network, but only inside a construction area; the CC's panel shows both ranges.
+**The pool.** Your CC is a roboport with 3,000 HP, 20 construction and 10 logistic robots, 4 stockpiles and a 4 MW power core. Its logistic network covers 25 tiles in every direction, and its robots build up to 80 tiles out, far enough for your natural expansion on every map size. Stockpiles inside a logistic area belong to that network, and barracks, factories, labs and turrets pull what they need from the network they stand in. A building outside every logistic area gets nothing. Everything you order is a ghost. Construction robots build a ghost from items in the network, but only inside a construction area; the CC's panel shows both ranges.
 
 **Chains.** Extractors mine 1 ore/s from the 5×5 tiles under them. Each one drops its ore onto a belt or straight into a smelter. A smelter makes 0.625 plates/s, so one extractor keeps about 1.6 smelters busy. Smelters also turn stone into bricks and iron plates into steel (2 plates per steel, 3.2 s). A fast inserter moves the output into a stockpile. Stone and coal need no smelting: run them on a belt, then an inserter, into a stockpile. The **factory** repeats the recipe you pick in its panel and sends the output to the network. It makes buildings, belts, inserters, poles, magazines, intermediates (gears, cable, circuits, explosives from coal and iron), science kits and hauler kits. The **barracks** turns plates into unit kits, and each finished kit walks out to the rally point.
 
@@ -84,11 +84,11 @@ After you press V or G, the ability waits for your target. Pressing the key agai
 | Laser turret (research) | 20 iron, 10 circuits | Radar | 20 iron, 10 circuits |
 | 5 walls | 5 stone bricks | 10 belts / 10 magazines | 10 iron |
 
-**Hubs** are forward bases. A hub has 1,200 HP, a logistic radius of 14 and a construction radius of 22. It comes with 10 construction and 6 logistic robots, plus 5 more logistic robots after *Logistics I*. Two stockpiles appear beside it, and an internal 300 kW generator powers the hub and about two extractors through its own 16×16 pole. Every hub adds +10 supply. Hubs whose logistic areas touch share one network. The CC's area and a hub's touch when the hub is within 39 tiles of the CC; two hubs touch within 28 tiles. Each hub or CC has a **stockpile policy** in its panel. *Keep N* means haulers bring the item until the network holds N. *Export above N* means anything over N is offered to haulers. By default, a CC exports iron, copper and steel above 100, and a new hub keeps 50 iron and 20 copper but exports nothing. To ship a hub's output home, set its *Export above*.
+**Hubs** are forward bases. A hub has 1,200 HP, a logistic radius of 14 and a construction radius of 40. It comes with 10 construction and 6 logistic robots, plus 5 more logistic robots after *Logistics I*. Two stockpiles appear beside it, and an internal 300 kW generator powers the hub and about two extractors through its own 16×16 pole. Every hub adds +10 supply. Hubs whose logistic areas touch share one network. The CC's area and a hub's touch when the hub is within 39 tiles of the CC; two hubs touch within 28 tiles. Each hub or CC has a **stockpile policy** in its panel. *Keep N* means haulers bring the item until the network holds N. *Export above N* means anything over N is offered to haulers. By default, a CC exports iron, copper and steel above 100, and a new hub keeps 50 iron and 20 copper but exports nothing. To ship a hub's output home, set its *Export above*.
 
-**Building at the natural expansion.** Your natural iron and copper pair lies 50 tiles out on a small map, 70 on medium and 76 on large. The CC's robots reach only 40 tiles and a hub's 22, so a ghost out there waits for the **Commander**: its personal roboport builds every ghost within 15 tiles of it, and while it stands there its trunk is stocked from your CC's pool with the items those ghosts need (anything left over goes back when you walk away). So: let the factory make a hub (and the extractors, smelters, belts and poles for the outpost), place the ghosts at the patch, and walk the Commander next to them. The pool pays exactly what a CC robot would take.
+**Building at the natural expansion.** Your natural iron and copper pair lies 50 tiles out on a small map, 70 on medium and 76 on large, always inside the CC's 80-tile robot reach. Let the factory make a hub, place its ghost next to the natural ore, and the CC's robots fly out and build it (about 20–30 s). Then place the extractors, smelters and inserters around it; the hub's own robots reach 40 tiles. Beyond every robot area (the middle patches, the ruin), walk the **Commander** there: its personal roboport builds every ghost within 15 tiles of it, and while it stands there its trunk is stocked from your CC's pool with the items those ghosts need (anything left over goes back when you walk away).
 
-A hub at the natural has its own network. Its stockpiles start empty, so mined plates stay there until a **hauler** takes them home: set the hub's *Export above* (for example iron above 20), make a hauler, and give it a route: right-click the natural hub (pickup), then Shift + right-click the CC (drop-off). Or keep a hub within 39 tiles of the CC (logistic areas touch) or of another joined hub to make one big network that needs no haulers.
+A hub at the natural is more than 39 tiles from the CC, so it has its own network. Its stockpiles start empty, and mined plates stay there until a **hauler** takes them home: set the hub's *Export above* (for example iron above 20), make a hauler, and give it a route: right-click the natural hub (pickup), then Shift + right-click the CC (drop-off). A hub within 39 tiles of the CC (logistic areas touch) or 28 tiles of another joined hub joins that network instead and needs no haulers.
 
 **Haulers** carry items between separate networks: a hub at a natural or middle patch, the ruin's stockpiles, or a chain of hubs cut because its middle hub died. The factory makes a hauler from a hauler kit (30 iron, 10 circuits). It walks out in **auto** mode, homed at the hub of the factory's network. An auto hauler fills its home's *Keep* amounts from the nearest network that exports the item. For a **manual route**, right-click the pickup hub and Shift + right-click the drop-off hub. The hauler loads what the pickup exports and the drop-off wants (a drop-off with no *Keep* set takes every export), and loops until you change it. Haulers have 400 HP, 20 cargo slots (+10 with *Hauler capacity I*), no weapons and about twice a walker's speed, and they path around water. Raiders deal 2.5× damage to them and drones hunt them; each loss raises an alert.
 
@@ -122,7 +122,7 @@ A hub at the natural has its own network. Its stockpiles start empty, so mined p
 
 A main iron patch at full speed lasts 50 minutes with 2 extractors, 25 with 4, about 17 with 6 and 12.5 with 8. An extractor that feeds a single smelter only drains 0.625 ore/s, so 4 such lines last 40 minutes. The normal AI's main iron lasts about half an hour. Extractors on the thin edge of a patch run dry first. A *patch depleted* alert tells you when a patch is empty.
 
-**The ruin** sits in the middle of the map: a dead CC with two stockpiles holding 200 steel plates and 50 circuits. A unit standing within 4 tiles of a ruin stockpile for 10 s captures both stockpiles, as long as no other side's units are there. A rival can take them back the same way. The stockpiles only join a network if a hub stands next to them: walk the Commander there to build one, then haul the steel and circuits home.
+**The ruin** sits in the middle of the map: a dead CC with two stockpiles holding 200 steel plates and 50 circuits. A unit standing within 4 tiles of a ruin stockpile for 10 s captures both stockpiles, as long as no other side's units are there. A rival can take them back the same way. The stockpiles only join a network if a hub stands next to them: build one from a hub at the natural (40-tile reach) or with the Commander, then haul the steel and circuits home.
 
 ## Your first match
 
@@ -134,9 +134,11 @@ You start with 400 iron, 150 copper, 2 extractors, 2 smelters, 1 barracks, 1 fac
 4. **1:45–3:00** Add iron smelters 3 and 4 and a copper extractor with its smelter. Start the barracks on walker kits once 3 or 4 iron smelters run: a busy barracks eats about 200 iron per minute, and one smelter makes 37. Put two turrets towards the enemy and make magazines.
 5. **3:00** The first attack can come now if you face an aggressive normal AI (see below). Your walkers, the Commander's rockets, Shield (C) and Stim (Z) hold it.
 6. **3:30** Set up a steel smelter that gets iron plates from another smelter by inserter; heavies need steel. Add a second lab and a feeder factory for gears or circuits.
-7. **~4:00** First hub at the natural: the factory makes it, you place the ghost and walk the Commander there (see above). Then extractors and smelters on the natural feeding the hub's stockpiles, *Export above* on the hub and a hauler to bring the plates home.
+7. **~4:00** First hub at the natural: the factory makes it, you place the ghost next to the ore and the CC's robots build it (see above). Then extractors and smelters on the natural feeding the hub's stockpiles, *Export above* on the hub and a hauler to bring the plates home.
 8. **By 6:00** Aim to have Supply I and one unlock (Heavy walkers or Raiders) done, and to mix units by counter. Walkers and drones need no research, and walkers are your default unit.
 9. **6:00–10:00** Make advanced kits (cable, circuits and steel) for Artillery walkers, Laser turrets and Supply II, expand to the middle patches and contest the ruin.
+
+**Winning.** A side is out when it has no CC, barracks or factory and no combat units left (haulers and the Commander do not count). You win when every AI is out and you are not. The results window lists every side's units and buildings built and lost; **Concede** in the F10 menu ends the match as a defeat, and the menu's **Results** button shows the window again after you closed it.
 
 ## Units
 
@@ -176,7 +178,7 @@ Each AI side draws a **doctrine** at match start. The draw is seeded by the map 
 | Vision | what its units and buildings see | what its units and buildings see | the whole map |
 | Bonuses | – | – | +50 % starting stock, +25 % mining, every 4th unit free |
 
-Easy opens with one iron and one copper smelter, and only half of its idle army defends. Hard runs the normal build order with time gates ×0.7, and its economic and turtle doctrines add a second barracks. At every difficulty the AI is not held to unit unlocks: it can deploy heavies, raiders and artillery before it has researched them.
+Easy opens with one iron and one copper smelter, and only half of its idle army defends. Hard runs the normal build order with time gates ×0.7, and its economic and turtle doctrines add a second barracks. The AI researches its unlocks like a player and its barracks obey the same locks.
 
 ## Development
 
@@ -195,5 +197,6 @@ Easy opens with one iron and one copper smelter, and only half of its idle army 
 - `tools/saveload-check.sh <name> '<lua match table>' [seconds]` saves a running match at minute 3, reloads it and reports errors from both halves.
 - `tools/balance-sim/run.sh <name> [sa|base]` and `tools/balance-sim/both.sh` run the equal-cost unit fight simulator that checks the counter table (`docs/qa/phase4-balance-notes.md`).
 - `tools/locale-probe/gen.py <mod dir> <out.lua>` generates a probe that makes a GUI client translate every locale key the mod uses and logs the missing ones.
+- `tools/probes/*.lua` are test-only modules: `EXTRA_LUA=tools/probes/wavec_headless.lua` (a hub at the natural built by the CC's robots, hauler cargo between two networks, Concede) and `commander_field.lua` (Commander field construction) run headless through `tools/autotest-run.sh`; `menu_gui.lua` drives the F10 menu, Concede and Results in a GUI client.
 - Admin console: `/rts-match`, `/rts-give <item> [n]`, `/rts-dump`, `/rts-mapgen`, `/rts-ai-doctrine`, `/rts-qa-reset`, `/rts-qa-end`.
 - Interactive QA protocols and results are in `docs/qa/` (`phase1-protocol.md` to `phase3-protocol.md`, and `phase4-protocol.md`). Mod layout, storage schema and module contracts are in `docs/PHASE1.md` to `docs/PHASE4.md`; per-module notes are in `docs/qa/*-notes.md`.

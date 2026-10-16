@@ -92,7 +92,7 @@ items in the Commander's trunk, which starts empty.
 | Stim | Z | Own units selected | Damaged units heal 30 % of max health for 10 iron each from the CC networks, most damaged first, as many as the iron pays for. Drones and the Commander also get `rts-stim-sticker`: speed ×1.5 for 8 s. | 30 s |
 | Shield | C | A live Commander | The Commander and own units within 8 tiles get 10 s of 50 % damage reduction | 45 s |
 | Scanner sweep | V | `rts-scanner` | Targeted: charts 48×48 tiles for 30 s | 60 s |
-| Artillery strike | G | An own artillery walker | Targeted: each artillery walker 8–40 tiles from the point fires 2 shells there, then attacks the enemy there | 20 s |
+| Artillery strike | G | An own artillery walker | Targeted: each artillery walker 8–44 tiles from the point (its own range; 40 before Wave C) fires 2 shells there, then attacks the enemy there | 20 s |
 | Overcharge | button | `rts-overcharge` and a CC | Turrets ×2 damage for 10 s; the CC buffer loses 1 MW meanwhile | 90 s |
 
 **Stim (choice).** The 2.0.77 docs say `LuaEntity.speed` "Only the speed of units, cars, and projectiles are writable".
@@ -210,8 +210,8 @@ collected into one table, and anything missing or invalid, or a layout change, m
 - The unit card can show the level from `commander.card`.
 - The alert kinds are `commander-down` and `commander-ready`.
 - The bar's screen area must stay clear.
-- The HUD's own Stop and Hold buttons call `orders.stop` and `orders.hold`, which skip the Commander. If they should
-  also stop the Commander, call `commander.stop(player_index)` there. Only X and H do it today.
+- The HUD's Stop and Hold buttons now run the same key handlers as X and H (`hud.lua` `COMMANDS`), so they stop and
+  hold the Commander too.
 
 ## Validation
 

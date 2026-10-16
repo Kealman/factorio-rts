@@ -23,7 +23,7 @@ Direction from the owner (2026-10-15): do not limit content. Take what made Star
 ## 2. The economy (the core)
 
 ### 2.1 Hubs and networks
-- **Hub** (`rts-hub`): a small roboport (logistic radius 14, construction radius 22, 10 robots) + 2 attached stockpiles + a 300 kW internal generator (enough for itself and two extractors). Cost 40 iron 10 copper, built like any building.
+- **Hub** (`rts-hub`): a small roboport (logistic radius 14, construction radius 22, raised to 40 in Wave C along with the CC's to 80; 10 robots) + 2 attached stockpiles + a 300 kW internal generator (enough for itself and two extractors). Cost 40 iron 10 copper, built like any building.
 - Each hub forms its own logistic **network** unless its roboport area overlaps another hub/CC (vanilla behaviour). Consumers (barracks, factory, labs, turrets) pull only from the network they stand in. A base is therefore a graph of networks.
 - **Stockpile policies** per hub (GUI on the hub): for each item a *keep* threshold (import until N) and an *export above* threshold. Items above export are offered to haulers; below keep they are requested. This is the distribution game.
 
