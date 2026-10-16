@@ -122,6 +122,7 @@ buildings.KIND_BY_NAME[logistics.HUB] = "hub"
 
 -- Phase 5 M1 (m1-rails): Nation mode (storage.match.config.mode; in the rails autotest only its own test forces)
 -- changes hauler fuel and cargo slots (balance.nation).
+logistics.FUEL_ALERT_TICKS = 2 * 60 * 60 -- a hauler waiting for coal raises its "no fuel" alert at most this often
 local function nation_mode(force_name)
   local m = storage.match
   local c = m and m.config
@@ -689,6 +690,12 @@ local function go(h, hub_un, state)
     if got < need then
       if got > 0 then net.insert({name = "coal", count = got}) end
       set_state(h, "waiting", "no-fuel")
+      -- one alert per hauler per FUEL_ALERT_TICKS: "Hauler N: no fuel at <hub>"
+      if not h.fuel_alert or game.tick - h.fuel_alert >= logistics.FUEL_ALERT_TICKS then
+        h.fuel_alert = game.tick
+        local entry = logistics.alert(h.force, "hauler-no-fuel", h.entity.position, "rts.alert-hauler-no-fuel")
+        entry.params = {h.entity.unit_number, logistics.hub_name(h.at_hub)}
+      end
       return false
     end
     local stats = logistics.stats(h.force)

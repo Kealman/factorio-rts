@@ -2665,6 +2665,7 @@ local AT = {
   gen_main = {{-128, -256}, {928, 256}}, gen_bridge = {{-96, 224}, {416, 576}}, gen_ai = {{-128, -544}, {576, -288}},
   -- Nation hauler rules: a hub pair 220 tiles apart
   gen_hauler = {{-96, 640}, {352, 800}}, hauler_s = {x = 0, y = 720}, hauler_t = {x = 220, y = 720},
+  hauler_u = {x = 220, y = 770},              -- a hub without coal: its hauler must raise one "no fuel" alert
 }
 
 rails.AUTOTEST_CONFIG = AT -- test copies (tools/probes) may move the depots or the lake
@@ -2680,7 +2681,9 @@ local function at_shift()
   local function move(p)
     if p.x then p.x = p.x + AT_SHIFT else p[1] = p[1] + AT_SHIFT end
   end
-  for _, k in ipairs({"a", "b", "bridge_a", "bridge_b", "ai_anchor", "ai_far", "hauler_s", "hauler_t"}) do move(AT[k]) end
+  for _, k in ipairs({"a", "b", "bridge_a", "bridge_b", "ai_anchor", "ai_far", "hauler_s", "hauler_t", "hauler_u"}) do
+    move(AT[k])
+  end
   for _, k in ipairs({"lake", "foreign", "band", "gen_main", "gen_bridge", "gen_ai", "gen_hauler"}) do
     move(AT[k][1])
     move(AT[k][2])
@@ -3147,8 +3150,33 @@ local function at_hauler(T, tick)
         and burnt >= 2 * per_leg and burnt % per_leg == 0,
         "hauler #%s delivered %d iron (capacity %d slots) over %.0f tiles per leg, burnt %d coal = %.1f legs of %d",
         tostring(T.hauler), iron, cap, T.legs, burnt, burnt / per_leg, per_leg)
-      T.stage = "done"
+      -- a hub with no coal: its auto hauler waits "no-fuel" and raises one alert (at most one per 2 minutes)
+      local s = game.surfaces[T.surface]
+      at_ground(s, AT.hauler_u, 20, 14)
+      local hu = s.create_entity({name = logistics.HUB, position = AT.hauler_u, force = AT.force, raise_built = true})
+      if hu then
+        logistics.set_policy(hu.unit_number, "keep", "copper-plate", nil)
+        logistics.set_policy(hu.unit_number, "keep", "iron-plate", 1000)
+        local hn = logistics.spawn_hauler(s, logistics.approach_point(hu.unit_number), AT.force, hu.unit_number)
+        T.nofuel = hn and hn.unit_number
+      end
+      T.t_nofuel = tick
+      T.stage = "hauler_nofuel"
     end
+  elseif T.stage == "hauler_nofuel" then
+    if tick - T.t_nofuel < 20 * 60 then return end
+    local h = T.nofuel and logistics.hauler(T.nofuel)
+    local n, text = 0, nil
+    for _, a in ipairs(storage.alerts or {}) do
+      if a.kind == "hauler-no-fuel" and a.params and a.params[1] == T.nofuel then
+        n = n + 1
+        text = a.text
+      end
+    end
+    at_check(T, "rails_hauler_no_fuel_alert", h ~= nil and h.state == "waiting" and h.reason == "no-fuel" and n == 1,
+      "hauler #%s %s (%s) after 20 s; %d alert(s) %s for it", tostring(T.nofuel), h and h.state or "gone",
+      h and tostring(h.reason) or "-", n, tostring(text))
+    T.stage = "done"
   end
 end
 
@@ -3181,7 +3209,7 @@ events.on_nth_tick(60, function(e)
     if stage_on("bridge") then at_bridge(T, e.tick) else T.stage = "ai_setup" end
   elseif T.stage == "ai_setup" or T.stage == "ai" then
     if stage_on("ai") then at_ai(T, e.tick) else T.stage = "hauler_setup" end
-  elseif T.stage == "hauler_setup" or T.stage == "hauler" then
+  elseif T.stage == "hauler_setup" or T.stage == "hauler" or T.stage == "hauler_nofuel" then
     if stage_on("hauler") then at_hauler(T, e.tick) else T.stage = "done" end
   elseif T.stage == "done" then
     if not T.summary then

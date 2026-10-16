@@ -122,10 +122,10 @@ its first feasible recipe (built for its goods, it works without targets); every
 | Test | Command | Result |
 |---|---|---|
 | Data stage, Space Age and base only | map creation with the tree, `VARIANT` sa / base | both load, 0 errors |
-| Economy fixture (world map, Nation 1v1) | `KEEP_TREE=<tree> EXTRA_LUA=tools/probes/economy_e1.lua STOP_ON=RTS_ECONOMY_E1_DONE DURATION_MIN=30 SEED=202 tools/autotest-run.sh p5e2-fixture '{opponents = 1, difficulty = "normal", size = "large", enemy_brain = "ai", mode = "nation"}' 900` | see section 7 |
-| AI age-up, 5 seeds | `KEEP_TREE=<tree> DURATION_MIN=21 SEED=<s> PERF=1 tools/autotest-run.sh p5e2-ai-s<s> '{..., mode = "nation"}' 1700` | see section 7 |
-| Skirmish unchanged | the same seed with the tree before and after E1: `SEED=11` 1v1 normal medium and the legacy units autotest | see section 7 |
-| Save / load in Nation mode | `EXTRA_LUA=... tools/saveload-check.sh p5e-saveload '{..., mode = "nation"}' 200` | 0 errors before and after the load; the economy keeps running after it |
+| Economy fixture (world map, Nation 1v1) | `EXTRA_LUA=tools/probes/economy_e1.lua STOP_ON=RTS_ECONOMY_E1_DONE DURATION_MIN=30 SEED=202 tools/autotest-run.sh p5e4-fixture '{opponents = 1, difficulty = "normal", size = "large", enemy_brain = "ai", mode = "nation"}' 900` | 12/12 (section 7) |
+| AI age-up, 5 seeds | `DURATION_MIN=21 SEED=<401..405> PERF=1 tools/autotest-run.sh p5e3-ai-s<seed> '{opponents = 1, difficulty = "normal", size = "large", enemy_brain = "ai", mode = "nation"}' 1800` | 10/10 AIs in Age II by 20:00 (section 7) |
+| Skirmish unchanged | `KEEP_TREE=<tree before / after E1> SEED=11` 1v1 normal medium and the legacy units autotest, logs compared | identical (section 7) |
+| Save / load in Nation mode | `EXTRA_LUA=tools/probes/economy_e1.lua DURATION_MIN=30 SEED=202 tools/saveload-check.sh p5e3-saveload '{..., mode = "nation"}' 200` | 0 errors before and after the load (section 7) |
 | GUI | `tools/gui-run.sh build/p5e-gui 300 RTS_E1_GUI_DONE` with `tools/probes/economy_gui.lua` copied into the copy's `scripts/` and required from its `control.lua` | 5/5 on the world map; screenshots `build/shots-p5e-gui/` (site, badge, districts at zoom 0.5 and 1, ledger, Age II tab, district panel with Auto on and off) |
 
 ## 7. Results
@@ -146,29 +146,37 @@ one-city shim on the 512 arena, Space Age and base only): 12/12.
 | oil_b_makes_plastic | city B: two oil wells, a petrochemical works on Auto: 40 plastic (its target), 10 sulfur |
 | oil_route_circuit_3min | hauler route B -> A: plastic in A after 4.7 s, an advanced circuit after 11.8 s |
 
-**AI age-up** (world map, Nation 1v1, normal vs normal, economic vs aggressive doctrine, 21-minute autotest):
+**AI age-up** (world map 1536, Nation 1v1, normal vs normal, economic (rts-player) vs aggressive (rts-ai-1) doctrine,
+21-minute autotest, the shared tree after the rails sync, `build/p5e3-ai-s<seed>*`):
 
-| Seed | rts-player (economic) | rts-ai-1 (aggressive) | Districts built (player / AI) |
+| Seed | rts-player: Industrialisation, Age II | rts-ai-1: Industrialisation, Age II | Districts (player / AI) |
 |---|---|---|---|
-| 401 | Age II 18:07 (Industrialisation 12:27) | Age II 13:50 | 1 / 3 |
-| 402 | Age II 13:45 | lost its CC at 15:20, Age I | 2 / 0 |
-| 403 | Age II 15:01 | lost its CC at 17:11 (Charter razed at 38 %) | 1 / 0 |
-| 404 | Age II 16:28 | Age II 14:50 | 3 / 3 |
-| 405 | Age II 13:56 | Age II 16:40 | 3 / 3 |
+| 401 | 11:14, **15:02** | 11:29, **14:11** | 3 / 3 |
+| 402 | 10:08, **13:30** | 13:07, **16:03** | 3 / 1 |
+| 403 | 9:49, **13:49** | 16:15, **19:03** | 3 / 2 |
+| 404 | 10:26, **15:58** | 10:30, **13:55** | 3 / 3 |
+| 405 | 9:58, **13:48** | 11:49, **14:33** | 3 / 3 |
 
-Every AI that kept its capital reached Age II by 20:00 (8 of 8; 5 of 5 seeds); the two that did not were destroyed
-before 20:00. On the 512 arena (first runs, seeds 301-305) 1v1 matches ended at 9-16 minutes; the winner reached
-Age II at 12:17 and 13:49 where the match lasted long enough. After these runs the AI's Charter stockpile was moved to
-start with the Industrialisation research (it took plates from the army from minute 4) and the works factory to 5:00;
-the re-run is below.
+10 of 10 AIs reached Age II by 20:00 (13:30-19:03); the Charter takes 2.7-5.5 minutes after Industrialisation. The
+`age2_<force>` check passes in every seed; `districts_<force>` (2 districts within 5 minutes of Age II) too.
+The run before the last AI change (the Charter stockpile started at minute 4, `build/p5e2-ai-s<seed>*`) gave 13:45 to
+18:07 for the 8 AIs that kept their capital (two were destroyed before 20:00). On the 512 arena (seeds 301-305) 1v1
+matches ended at 9-16 minutes, so the arena is not a fair place for this test.
+
+Other autotest checks in these runs: `hub_rts-player` fails in 5 of 5 seeds since the rails sync (the economic AI's
+haulers wait for coal: Nation-mode hauler fuel in `logistics.lua`; the same seeds passed 5 of 5 just before it; reported
+to m1-rails), and `kinds_8min_rts-player` fails in seed 401 in both runs (the third unit kind came after 8:00). Every
+other check passes.
 
 **Skirmish unchanged.** The tree before and after E1 (both with the other M1 packages), same seed: 1v1 normal medium
 23/23 and legacy units 65/65 in both, and the production, autotest and minute lines are identical (2147 and 329
 lines).
 
-**Performance** (world, 2 nations, PERF=1, per minute averages): production.lua (including the auto-recipe pass)
-0.005-0.17 ms/tick, districts.lua at most 0.002, ages.lua at most 0.001, ledgergui.lua 0.00004. The 21-minute runs took
-1267 s of wall time for 1260 s of game time with nine other servers on the machine: 60 UPS.
+**Performance** (world, 2 nations, PERF=1, per-minute averages over the five 21-minute runs): districts.lua mean
+0.0012 ms/tick (max 0.0025), ages.lua mean 0.0005 (max 0.0023), ledgergui.lua below 0.0001, production.lua mean
+0.025-0.08 (max 0.34 in the minutes of heaviest unit production; the module's time includes the `on_spawned` callbacks
+of other modules, and the auto-recipe pass switched at most 17 times a minute). Each 21-minute run took 1268 s of wall
+time for 1260 s of game time while other servers ran on the machine: 60 UPS.
 
 **Save / load** (world, Nation): `tools/saveload-check.sh` with the fixture (saved at minute 3 after 12/12, loaded,
 200 s on): no errors on either side, the Auto petrochemical works kept following its target after the load. A second
@@ -193,4 +201,6 @@ site finished the Charter after the load (Age II at 0:36).
 - Labor: `districts.staffing_factor` is the M2 hook (hidden labor modules, study section 5.5).
 - The ledger counts flows where the script moves goods (pull, hand-off, labs, the site, oil wells) and smelter crafts;
   extractors, belts and robots between buildings are not counted (stock shows them).
-- Hard and easy AIs use the normal AI's age-up hooks unchanged.
+- Hard and easy AIs use the normal AI's age-up hooks unchanged; only normal was measured.
+- In Nation mode the AI researches Industrialisation as soon as it can make advanced kits; the Phase 4 check
+  `kinds_8min` failed for the economic AI in 1 of 5 seeds (third unit kind after 8:00).

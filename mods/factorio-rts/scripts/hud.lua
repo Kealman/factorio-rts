@@ -284,6 +284,7 @@ P4.ALERT_STYLE = {
   ["commander-ready"] = {icons = {"entity/rts-commander", "utility/check_mark_green"}, color = "green"},
   -- Phase 5 M1 (m1-rails): rail lines and trains
   ["line-open"] = {icons = {"item/rail", "utility/check_mark_green"}, color = "green"},
+  ["hauler-no-fuel"] = {icons = {"item/coal", "utility/warning_icon"}, color = "yellow"},
   ["line-cut"] = {icons = {"item/rail", "utility/danger_icon"}, color = "red", sound = "utility/alert_destroyed"},
   ["line-blocked"] = {icons = {"item/rail", "utility/warning_icon"}, color = "yellow"},
   ["line-failed"] = {icons = {"item/rail", "utility/warning_icon"}, color = "yellow"},

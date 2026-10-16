@@ -397,7 +397,7 @@ balance.nation.rails = {
   starter_fuel = 10,       -- coal a new locomotive takes from the depot network
   cargo_wagons = 2,        -- a cargo train is locomotive + 2 wagons + locomotive (double-headed, single track)
   signal_spacing = 80,     -- tiles of ground track between bidirectional signal pairs
-  ai_min_distance = 300,   -- AI: a hub or city this far from the capital gets a line
+  ai_min_distance = 150,   -- AI: a hub or city this far from the capital gets a line (lead, 2026-10-16)
 }
 -- The depot is a hub subtype (kind "hub"), so scripts/supply.lua already counts it like a hub (+10). Listed here so the
 -- on_entity_damaged filter (scripts/research.lua) covers it: the AI defends its depots like its hubs.
