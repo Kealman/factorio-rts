@@ -309,13 +309,23 @@ and its unlocks to `research.EFFECTS` / `research.LOCKS` at load), buildings.lua
    contract's (1 coal per 40 tiles from the departing hub) and stays; a stalled hauler now raises "Hauler N: no fuel at
    <hub>". The AI's coal keep at its hubs and CC in Nation mode is assigned to the integration wave (lead). Locomotives
    burn coal from depot networks too.
+   **Resolved in the integration wave** (`docs/qa/phase5-m1-integration-notes.md`): the Nation AI mines coal from the
+   start, a hauler leaving for a pickup tanks the coal of its way back (only the end a round trip starts from needs
+   coal), and a train is not deployed with less than 2 coal in its depot network (an AI crew stood on its platform with
+   0 coal for half an hour); a train stranded on a platform without coal tanks as soon as coal arrives.
 3. **Factory grid in Nation mode.** Rails adds 5 factory recipes (cities 2, economy more) to the 25 Skirmish ones; the
    factory grid holds 2 rows of 14. The HUD layout in Nation mode needs a look (integration).
+   **Resolved:** the factory page in Nation mode shows one category at a time (the economy package's tab row:
+   Buildings, Logistics, Intermediates, Science, Age II); the largest tab holds 21 of 28 buttons. Districts have at
+   most three recipes and no tabs; depots have no recipes.
 4. **Build grid built in the lobby.** `P4.NATION_ONLY` filters the build grid when it is filled; the GUI probe needed a
    tab switch after the mode changed. The HUD should refill the grid when a Nation match starts (cities' items too).
+   **Resolved:** the HUD refills the grid whenever the mode changes.
 5. **Demolish on rolling stock.** The HUD building page offers m1's "Demolish" for a selected locomotive or wagon
    (kind `train`). Demolishing one breaks the train. demolish.lua should skip kind `train`, or call a rails function
    that puts the whole train back into kits.
+   **Resolved:** `buildings.demolish_blocked` refuses kind `train` ("Locomotive cannot be demolished.") and the
+   building page hides its Demolish button for rolling stock. Turning a train back into kits is open (M2).
 6. **Trains kill units on the track (probe P4).** No hazard overlay yet; armies that cross a line can lose units.
 7. **One line per depot in M1** ("depot-busy" otherwise); junctions, double track, yards and the dispatcher are R2.
 8. **Crews live in depot networks.** A repair comes from the depot on the free side of the cut and needs a crew (2
@@ -328,3 +338,7 @@ and its unlocks to `research.EFFECTS` / `research.LOCKS` at load), buildings.lua
     AIs planned their lines at minutes 8-9 and placed their first depot at minute 12 (that run paid the far depot from
     the new city's empty network; the AI now pays from its capital). In another seed the AIs planned second cities but
     never founded them, so there was nothing to connect. The full program is covered by the autotest's `rails_ai`.
+    **Integration wave:** the AI's second city is now a mining town 170-560 tiles out (`scripts/ai/towns.lua`); in the
+    final 60-minute runs every AI opened its line (19:19-27:23) and its freight train moved its town's ore and plates.
+    Two bugs were fixed on the way: the module lookups through `package.loaded` never matched (the survey ignored
+    foreign land), and a crew short of rails placed half a signal pair, which made a finished line one-way.
