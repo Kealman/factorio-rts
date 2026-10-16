@@ -22,9 +22,10 @@ research panel, the depot, rail and kit recipes from the build menu and the fact
 | `rails_bridge` (elevated spans, Space Age) | PASS | 70-tile water band: 2 ramps, 22 elevated pieces, 8 supports, 296 tiles, built in 74 s |
 | `rails_ai` (AI rail program) | PASS | rts-ai-2: two depots, 391-tile line, freight train, first delivery 169 s after the start |
 | `rails_hauler_rules` (Nation hauler fuel and slots) | PASS | 1,000 iron per trip (10 slots); 21 coal = 3 departures × 7 for 220-tile legs |
+| `rails_hauler_no_fuel_alert` | PASS | A hauler at a hub without coal waits "no-fuel" and raises exactly one alert in 20 s |
 
-Summary line: `[rts] rails autotest summary 11/11 (all passed)`, 0 Lua errors; the Skirmish AI autotest running in
-the same game: 23/23. Further results: section 9.
+Summary line: `[rts] rails autotest summary 12/12 (all passed)` (run `p5live-rails5`), 0 Lua errors; the Skirmish AI
+autotest running in the same game: 23/23. Further results: section 9.
 
 ## 2. Day-1 probes
 
@@ -173,7 +174,7 @@ depot A's platform) ↔ `cut` (a line rail died); `failed` when no route exists.
 | Key | Value | Effect (Nation mode only) |
 |---|---|---|
 | `balance.nation.hauler_slots` | 10 | `logistics.capacity` base (research still adds its bonus) |
-| `balance.nation.hauler_tiles_per_coal` | 40 | a hauler leaving a hub takes ceil(1.1 × distance / 40) coal from that hub's network; without it it waits ("no-fuel", shown in the hauler panel) |
+| `balance.nation.hauler_tiles_per_coal` | 40 | a hauler leaving a hub takes ceil(1.1 × distance / 40) coal from that hub's network; without it it waits ("no-fuel", shown in the hauler panel) and raises the alert "Hauler N: no fuel at <hub>" (kind `hauler-no-fuel`, at most once per hauler per 2 minutes, `logistics.FUEL_ALERT_TICKS`) |
 | `balance.nation.rails.*` | see section 4 and 5 | recipe costs, bill, build rate and reach, transfer rate, fuel, train length, signal spacing, AI distance |
 
 ### 5.8 Research and Skirmish gating
@@ -188,8 +189,9 @@ depot A's platform) ↔ `cut` (a line rail died); `failed` when no route exists.
 ### 5.9 AI hook
 
 `scripts/ai/commander.lua` calls `deps.rails.ai_step(C)` after `hubs.step(C)` (rails.lua sets `deps.rails`). Nation
-mode only, every 600 ticks: a hub or city (cities.lua capital when loaded, else the main CC) at least 300 tiles from
-the capital gets a depot next to each end (a site where the depot and a platform fit, 26-74 tiles out), one line, a
+mode only, every 600 ticks: a hub or city (cities.lua capital when loaded, else the main CC) at least
+`ai_min_distance` (150 tiles; the contract said 300, lowered by the lead because the AIs' second cities stand about 183
+tiles out) from the capital gets a depot next to each end (a site where the depot and a platform fit, 26-74 tiles out), one line, a
 crew and rails at the capital end, then a freight train from the far depot to the capital depot with export 100 /
 keep 3,000 for iron, copper and steel plates, and a spare crew and 60 rails at both ends for repairs. The AI pays the
 factory recipes' ingredients from the anchor's network, one recipe per 5 s, instead of queueing factory work (the
@@ -281,13 +283,13 @@ coordinates (ai/hubs.lua compares building positions across surfaces), and the n
 | `control.lua:34` | 4 | require `scripts.rails` and `scripts.railgui` after hubgui |
 | `data.lua:15` | 2 | require `prototypes.rails` after prototypes.logistics |
 | `scripts/logistics.lua:61` | 1 | `local balance = require("balance")` |
-| `scripts/logistics.lua:123` | 10 | `nation_mode(force)` (match mode; in the rails autotest its test forces only) |
-| `scripts/logistics.lua:682` | 15 | hauler fuel in `go()`: 1 coal per 40 tiles from the departure hub, else waiting "no-fuel" |
-| `scripts/logistics.lua:777` | 3 | `logistics.capacity`: base 10 slots in Nation mode |
+| `scripts/logistics.lua:123` | 11 | `logistics.FUEL_ALERT_TICKS`, `nation_mode(force)` (match mode; in the rails autotest its test forces only) |
+| `scripts/logistics.lua:683` | 21 | hauler fuel in `go()`: 1 coal per 40 tiles from the departure hub, else waiting "no-fuel" with one alert per 2 minutes |
+| `scripts/logistics.lua:784` | 3 | `logistics.capacity`: base 10 slots in Nation mode |
 | `scripts/hubgui.lua:230` | 1 | hauler reason "no-fuel" in the hauler panel |
 | `scripts/hud.lua:146` | 2 | rail item and recipes added to m1-cities' `P4.NATION_ONLY` |
 | `scripts/hud.lua:238` | 1 | `rts-depot` in the Economy build tab |
-| `scripts/hud.lua:285` | 7 | alert styles `line-open`, `line-cut`, `line-blocked`, `line-failed`, `train-lost` |
+| `scripts/hud.lua:285` | 8 | alert styles `line-open`, `hauler-no-fuel`, `line-cut`, `line-blocked`, `line-failed`, `train-lost` |
 | `scripts/ai/commander.lua:518` | 1 | `deps.rails.ai_step(C)` after `hubs.step(C)` |
 | `scripts/ai/deps.lua:9` | 1 | comment: `deps.rails` |
 
@@ -299,14 +301,14 @@ and its unlocks to `research.EFFECTS` / `research.LOCKS` at load), buildings.lua
 
 ## 11. Open issues
 
-1. **The AI line never triggers in today's Nation match.** The contract trigger is a hub or city ≥ 300 tiles from the
-   capital; cities.lua puts the AI's second city on a world site 183 tiles out. Either cities choose a site ≥ 300 tiles
-   away or `balance.nation.rails.ai_min_distance` goes down (a test run with 150 is reported to the lead separately).
-   The M1 end-to-end goal ("open ≥ 1 rail line, move ≥ 20,000 items by train") depends on this choice.
+1. **AI line trigger.** The contract said ≥ 300 tiles; cities.lua puts the AI's second city on a world site about 183
+   tiles out, so the lead set `balance.nation.rails.ai_min_distance` to 150. Whether an AI line opens in the M1
+   end-to-end match now depends on the AI founding its second city and having coal (issue 2).
 2. **Nation hauler fuel stalls the AI's haulers.** In the 1v1 Nation match the AI kept no coal in its CC and hub
    networks, so 3 haulers waited "no-fuel" and the AI autotest check `hub_rts-player` failed (31/32). The rule is the
-   contract's (1 coal per 40 tiles from the departing hub); the Nation AI economy needs a coal supply or a coal keep at
-   its hubs. Locomotives burn coal from depot networks too.
+   contract's (1 coal per 40 tiles from the departing hub) and stays; a stalled hauler now raises "Hauler N: no fuel at
+   <hub>". The AI's coal keep at its hubs and CC in Nation mode is assigned to the integration wave (lead). Locomotives
+   burn coal from depot networks too.
 3. **Factory grid in Nation mode.** Rails adds 5 factory recipes (cities 2, economy more) to the 25 Skirmish ones; the
    factory grid holds 2 rows of 14. The HUD layout in Nation mode needs a look (integration).
 4. **Build grid built in the lobby.** `P4.NATION_ONLY` filters the build grid when it is filled; the GUI probe needed a
