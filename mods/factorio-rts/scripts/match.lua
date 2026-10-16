@@ -40,6 +40,7 @@ local buildings = require("scripts.buildings")
 local production = require("scripts.production")
 local basetemplate = require("scripts.basetemplate")
 local mapgen = require("scripts.mapgen")
+local world = require("scripts.world") -- Phase 5 M1: Nation-mode worlds (config.mode == "nation")
 
 local match = {}
 
@@ -69,7 +70,8 @@ match.AI_ANGLES = {[1] = {0}, [2] = {-70, 70}, [3] = {-60, 0, 60}}
 
 -- Phase 1 QA follow-up 2 timing for the legacy wave brain; Phase 3 defaults for the match.
 match.DEFAULT_CONFIG = {opponents = 1, difficulty = "normal", size = "small", map = mapgen.DEFAULT_LAYOUT, enemy_brain = "ai",
-                        enemy_difficulty = "normal", first_wave_ticks = 3 * 60 * 60, wave_period_ticks = 2 * 60 * 60}
+                        enemy_difficulty = "normal", first_wave_ticks = 3 * 60 * 60, wave_period_ticks = 2 * 60 * 60,
+                        mode = "skirmish"}
 
 -- Starting armies, ARMY_OFFSET tiles in front of the CC (along the force's facing): ARMY.walkers walkers in
 -- ARMY_COLUMNS columns and ARMY.heavies heavies in a column in front of them. Grid spacing per unit: 3.5 tiles for
@@ -147,6 +149,7 @@ function match.on_force_out(fn) out_callbacks[#out_callbacks + 1] = fn end
 --- fn(old_surface_name) at the end of match.teardown (restart, back to the lobby, a new match): modules drop their
 --- per-match state there (logistics: alerts, hauler stats, hub numbers; hud: kill feed). Load time only.
 function match.on_teardown(fn) teardown_callbacks[#teardown_callbacks + 1] = fn end
+match.on_teardown(function() world.reset() end) -- Phase 5 M1: storage.world (scripts/world.lua)
 
 ---------------------------------------------------------------------------
 -- Config
@@ -169,6 +172,14 @@ function match.normalize_config(c)
     if not c.size then out.size = "legacy" end
   end
   if out.size == "legacy" then out.map = "open" end -- the Phase 2 geometry has no terrain
+  -- Phase 5 M1 (docs/PHASE5-M1.md §1): mode "skirmish" (the arenas above) or "nation" (an engine-generated world,
+  -- scripts/world.lua, map "world", sized by nation count unless world_size names a valid size). Nation needs the AI.
+  out.mode = (c.mode == "nation" and out.enemy_brain == "ai") and "nation" or "skirmish"
+  if out.mode == "nation" then
+    out.world_size = world.normalize_size(c.world_size, out.opponents + 1)
+    out.map = "world"
+    if out.size == "legacy" then out.size = d.size end
+  end
   out.enemy_difficulty = out.difficulty
   out.first_wave_ticks = tonumber(c.first_wave_ticks) or d.first_wave_ticks
   out.wave_period_ticks = tonumber(c.wave_period_ticks) or d.wave_period_ticks
@@ -428,6 +439,14 @@ local function create_arena(m, tile_at)
   return surface
 end
 
+-- Phase 5 M1: the Nation world's surface, created with the world's MapGenSettings; world.apply generates it.
+local function create_world(m, P)
+  local name = match.ARENA_PREFIX .. m.match_id
+  local old = game.surfaces[name]
+  if old then game.delete_surface(old) end -- a leftover from an older save; never the live arena
+  return game.create_surface(old and (name .. "b") or name, world.map_gen_settings(P))
+end
+
 --- Delete an old arena surface (deferred by the engine to a later tick). Move every player off it first.
 function match.delete_arena(name)
   local s = name and game.surfaces[name]
@@ -678,20 +697,29 @@ function match.start(cfg)
     m.ai_forces[#m.ai_forces + 1] = ai_force_name(i)
   end
   m.spawns = spawn_points(c.opponents, size.radius)
+  -- Phase 5 M1: a Nation world plans its own spawns, scored for fairness (scripts/world.lua)
+  local wplan = c.mode == "nation" and world.plan(c, arena_seed(m)) or nil
+  if wplan then
+    m.arena_half = wplan.half
+    m.spawns = {}
+    for _, sp in ipairs(wplan.spawns) do m.spawns[sp.force] = {x = sp.x, y = sp.y} end
+  end
   m.facing = {}
   for _, f in ipairs(m.forces) do m.facing[f] = facing_of(f, m.spawns) end
   m.out, m.winner, m.ended_tick, m.tick_started = {}, nil, nil, nil
   m.wave, m.waves_off, m.enemy_next_wave = 0, nil, nil
   m.stats = fresh_stats(m.forces)
   util.log("match: starting match %d: %d opponent(s), %s, %s (%dx%d), map %s, brain %s", m.match_id, c.opponents,
-    c.difficulty, c.size, 2 * size.half, 2 * size.half, c.map, c.enemy_brain)
+    c.difficulty, c.size, 2 * m.arena_half, 2 * m.arena_half, c.map, c.enemy_brain)
 
   -- Map generation (scripts/mapgen.lua): planned before the arena exists (ground tiles), built before the CCs.
-  local plan = c.size ~= "legacy" and mapgen.plan(mapgen_spec(m, c)) or nil
-  local surface = create_arena(m, plan and mapgen.tile_function(plan))
+  local plan = c.size ~= "legacy" and not wplan and mapgen.plan(mapgen_spec(m, c)) or nil
+  local surface = wplan and create_world(m, wplan) or create_arena(m, plan and mapgen.tile_function(plan))
   m.surface = surface.name
   setup_forces(m.forces)
-  if plan then mapgen.build(surface, plan) else mapgen.reset() end
+  if wplan then
+    world.apply(surface, wplan) -- blocking core around the spawns; the rest fills in the background
+  elseif plan then mapgen.build(surface, plan) else mapgen.reset() end
   m.placing = true
   place_bases(surface)
   m.placing = nil
@@ -787,6 +815,7 @@ end
 ---------------------------------------------------------------------------
 function match.init()
   mapgen.init()
+  world.init()
   local m = storage.match
   if m and m.version == 3 then
     config()

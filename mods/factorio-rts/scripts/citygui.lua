@@ -114,6 +114,7 @@ local function build_panel(player, g, c)
   rename.add({type = "sprite-button", name = PREFIX .. "rename", sprite = "utility/rename_icon",
               style = "tool_button", tooltip = {"rts.citygui-rename"}, tags = {rts_citygui = "rename", city = c.id}})
   el.tier = label(frame, "rts_hud_label")
+  el.age = label(frame, "rts_hud_label")
   el.land = label(frame, "rts_hud_label")
   el.supply = label(frame, "rts_hud_label")
   el.next = label(frame, "rts_hud_label")
@@ -140,6 +141,11 @@ local function refresh_panel(player, g)
   local el = g.el
   el.title.caption = {"rts.citygui-title", cities.display_name(c), tier_name(c.tier)}
   el.tier.caption = {"rts.citygui-tier", tier_name(c.tier), c.radius, c.capital and {"rts.citygui-capital"} or ""}
+  -- the nation's age: storage.ages (scripts/ages.lua, m1-economy), else storage.nations[force].age
+  local ages = storage.ages and storage.ages[c.force]
+  local nation = storage.nations and storage.nations[c.force]
+  local age = (type(ages) == "table" and ages.age) or (nation and nation.age) or 1
+  el.age.caption = {"rts.citygui-age", age}
   local cells = territory.city_cells(c.id)
   local own = math.max(1, territory.cells(c.force))
   el.land.caption = {"rts.citygui-land", cells, string.format("%d", math.floor(cells * 100 / own + 0.5))}

@@ -22,6 +22,7 @@ local fog = {}
 
 fog.PERIOD = 300            -- ticks between re-charts (a chart stays visible ~600 ticks)
 fog.START_RADIUS = 64       -- tiles charted around each CC at match start
+fog.NATION_START_RADIUS = 160 -- Phase 5 M1: in Nation mode the capital's start kit (scripts/world.lua, 150 tiles)
 fog.BUILDING_RADIUS = 40    -- tiles around each own building
 fog.UNIT_RADIUS = 24        -- tiles around each own unit (radar_range already covers 3x3 chunks)
 fog.STATS_PERIOD = 60 * 60  -- a "fog:" stats line per minute
@@ -105,7 +106,8 @@ function fog.start()
   for _, f in ipairs(fog.charted_forces()) do
     local force = game.forces[f]
     local set = {}
-    add_square(set, match.home(f), fog.START_RADIUS, match.arena_half())
+    local r = match.config().mode == "nation" and fog.NATION_START_RADIUS or fog.START_RADIUS
+    add_square(set, match.home(f), r, match.arena_half())
     parts[#parts + 1] = string.format("%s %d chunks around %s", f, chart_set(force, surface, set),
       util.pos_str(match.home(f)))
   end

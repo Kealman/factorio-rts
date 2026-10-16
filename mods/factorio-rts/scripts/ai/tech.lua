@@ -16,13 +16,19 @@ local tech = {}
 
 tech.PERIOD = 5 * 60
 tech.SUPPLY = {"rts-supply-1", "rts-supply-2"}
+-- Phase 5 E1: in Nation mode these come before the doctrine's order (Industrialisation opens the Railway Charter)
+tech.NATION_FIRST = {"rts-industrialisation"}
 local ADVANCED = "rts-science-advanced"
+local INDUSTRIAL = "rts-science-industrial"
 
 local tiers -- [tech] = {kit, tier} from research.list(), built on first use (static prototype data)
 local function info(name)
   if not tiers then
     tiers = {}
-    for _, t in ipairs(deps.research.list()) do tiers[t.name] = t end
+    -- every technology of both modes (Phase 5: the cache outlives a Skirmish match)
+    for _, t in ipairs(deps.research.list_all and deps.research.list_all() or deps.research.list()) do
+      tiers[t.name] = t
+    end
   end
   return tiers[name]
 end
@@ -31,6 +37,8 @@ end
 local function producible(C, name)
   local t = info(name)
   if not t then return false end
+  -- Phase 5 E1: industrial kits come from the factory or a science campus only when their Age II parts exist
+  if t.kit == INDUSTRIAL then return construction.have(C, INDUSTRIAL) > 0 end
   if t.kit ~= ADVANCED then return true end
   local function ok(item) return construction.have(C, item) > 0 or construction.flowing(C, item) end
   return ok("steel-plate") and ok("copper-plate")
@@ -44,6 +52,11 @@ function tech.next(C)
   end
   if C.capped then
     for _, name in ipairs(tech.SUPPLY) do
+      if try(name) then return name end
+    end
+  end
+  if deps.ages and deps.ages.is_nation() then
+    for _, name in ipairs(tech.NATION_FIRST) do
       if try(name) then return name end
     end
   end

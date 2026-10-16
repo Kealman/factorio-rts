@@ -62,7 +62,7 @@ local research = {}
 
 research.PREFIX = "rts-"
 research.LAB = "rts-lab"
-research.KITS = {"rts-science-basic", "rts-science-advanced"}
+research.KITS = {"rts-science-basic", "rts-science-advanced", "rts-science-industrial"}
 research.LAB_PERIOD = 60
 research.LAB_MIN = 2          -- refill a lab holding fewer kits of an ingredient than this
 research.LAB_FEED = 5         -- ... up to this many
@@ -98,6 +98,18 @@ research.EFFECTS = {
   ["rts-scanner"] = {flag = "scanner"},
 }
 
+-- Phase 5 E1 (scripts/ages.lua fills these at load, docs/qa/phase5-economy-notes.md): NATION_ONLY technologies are
+-- left out of research.list() and disabled outside Nation mode; AGE_REQUIRED[tech, unit or kit] = the age a force
+-- must have reached (research.status says "age", the barracks gate refuses the kit with reason "age").
+-- research.age_of(force_name) -> age and research.is_nation() -> bool are set by ages.lua (nil: everything Age I,
+-- Skirmish). ages.lua also adds the age technologies' effects to EFFECTS.
+research.NATION_ONLY = {}
+research.AGE_REQUIRED = {}
+research.age_of = nil
+research.is_nation = nil
+research.INDUSTRIAL = "rts-science-industrial"
+research.AGE_LOCKS = {} -- [recipe] = pseudo technology name ("rts-age-2") the HUD shows for a recipe an age locks
+
 -- name -> technology that unlocks it
 research.LOCKS = {}
 for tech, eff in pairs(research.EFFECTS) do
@@ -117,7 +129,8 @@ local derived
 
 local function derive()
   if derived then return derived end
-  derived = {techs = {}, unit_categories = {}, turrets = {}, mk2 = {}, units = {}, armored = {}, locked_recipes = {}}
+  derived = {techs = {}, unit_categories = {}, turrets = {}, mk2 = {}, units = {}, armored = {}, locked_recipes = {},
+             techs_skirmish = {}}
   -- technologies, in prototype order (tier 1 first)
   for name, proto in pairs(prototypes.technology) do
     if is_rts_name(name) then
@@ -127,12 +140,16 @@ local function derive()
         order = proto.order,
         count = proto.research_unit_count,
         kit = ing and ing.name,
-        tier = (ing and ing.name == "rts-science-advanced") and 2 or 1,
+        tier = (ing and ing.name == research.INDUSTRIAL) and 3 or ((ing and ing.name == "rts-science-advanced") and 2
+          or 1),
         prerequisites = proto.prerequisites,
       }
     end
   end
   table.sort(derived.techs, function(a, b) return a.order < b.order end)
+  for _, t in ipairs(derived.techs) do
+    if not research.NATION_ONLY[t.name] then derived.techs_skirmish[#derived.techs_skirmish + 1] = t end
+  end
   -- our units and their ammo categories; turrets
   local cats = {}
   for name, proto in pairs(prototypes.get_entity_filtered({{filter = "type", type = "spider-unit"},
@@ -172,8 +189,22 @@ local function derive()
   return derived
 end
 
---- Ordered list of {name, order, count, kit, tier, prerequisites} for every rts-* technology.
-function research.list() return derive().techs end
+--- Ordered list of {name, order, count, kit, tier, prerequisites} for every rts-* technology of the current mode (the
+--- Nation-only ones are left out outside Nation mode).
+function research.list()
+  if research.is_nation and research.is_nation() then return derive().techs end
+  return derive().techs_skirmish
+end
+
+--- Every rts-* technology, both modes (static).
+function research.list_all() return derive().techs end
+
+--- Highest tier among research.list() (the research panel's columns).
+function research.max_tier()
+  local n = 1
+  for _, t in ipairs(research.list()) do n = math.max(n, t.tier) end
+  return n
+end
 
 --- The mk2 prototype name of a unit, or nil.
 function research.mk2_of(unit_name) return derive().mk2[unit_name] end
@@ -272,6 +303,12 @@ function research.apply(force)
     local want = t.unlocked[recipe_name] == true
     if recipe and recipe.enabled ~= want then recipe.enabled = want end
   end
+  -- Phase 5 E1: Nation-only technologies exist in Nation mode only
+  local nation = research.is_nation ~= nil and research.is_nation() or false
+  for tech_name in pairs(research.NATION_ONLY) do
+    local tech = force.technologies[tech_name]
+    if tech and tech.enabled ~= nation then tech.enabled = nation end
+  end
   return t
 end
 
@@ -311,7 +348,7 @@ function research.reset_force(force)
   local r = R()
   if not r.forces[force.name] then research.init_force(force) end
   force.research_queue = {}
-  local list = research.list()
+  local list = research.list_all() -- Phase 5: the Nation-only technologies too
   local undone = 0
   r.resetting = true
   for i = #list, 1, -1 do -- successors first
@@ -364,7 +401,7 @@ function research.is_unlocked(force_name, name)
 end
 
 --- Technology that unlocks `name`, or nil.
-function research.lock_of(name) return research.LOCKS[name] end
+function research.lock_of(name) return research.LOCKS[name] or research.AGE_LOCKS[name] end
 
 --- True when the force has researched the technology.
 function research.has(force_name, tech_name)
@@ -404,6 +441,8 @@ function research.status(force_name, tech_name, queue_set)
   end
   if queue_set[tech_name] then return "queued" end
   if not tech.enabled then return "disabled" end
+  local need = research.AGE_REQUIRED[tech_name] -- Phase 5 E1
+  if need and research.age_of and research.age_of(force_name) < need then return "age" end
   for _, pre in pairs(tech.prerequisites) do
     if not pre.researched then return "locked" end
   end
@@ -478,6 +517,11 @@ end
 function research.gate(rec, kit, def)
   local force_name = rec.force
   ensure(force_name)
+  local age = research.AGE_REQUIRED[def.unit] or research.AGE_REQUIRED[kit] -- Phase 5 E1: Age II units
+  if age and research.age_of and research.age_of(force_name) < age then
+    block(rec, {reason = "age", tech = "age " .. age, age = age, unit = def.unit, kit = kit})
+    return nil
+  end
   local tech = research.LOCKS[def.unit] or research.LOCKS[kit]
   if tech and not research.is_unlocked(force_name, def.unit) then
     block(rec, {reason = "locked", tech = tech, unit = def.unit, kit = kit})
@@ -534,6 +578,7 @@ local function feed_lab(rec, current)
       if got > 0 then
         local put = inv.insert({name = ing.name, count = got})
         if put < got then network.insert({name = ing.name, count = got - put}) end
+        if put > 0 and production.on_flow then production.on_flow(rec, ing.name, put, "used") end -- Phase 5 ledger
       end
       if have + got == 0 then short = ing.name end
     end

@@ -180,7 +180,8 @@ mode, while the city list (`rts_citygui_list`, m1-cities, at 8, 128) is open, th
   icon).
 - Refresh: hud.lua's refresh hook (selection changes and every 30 ticks). The panel is rebuilt only when its
   signature changes.
-- Screenshots: `build/shots-p5div-gui/rts-divgui-{1-selected,2-formed,3-moving,4-barracks}.png` (Russian client, 1280×800).
+- Screenshots (Russian client, 1280×800):
+  `build/shots-p5div-gui/rts-divgui-{1-selected,2-formed,3-moving,4-barracks}.png`.
 
 ## AI (`ai/army.lua`)
 
@@ -209,8 +210,8 @@ Contract limits: mean ≤ 6 ms and no order tick > 20 ms (PASS in every row); an
 requests per tick (PASS: 100). Rerun:
 
 ```sh
-tools/divisions-bench.sh div-march '{mode = "march", forces = 4, divs = 12, half = 1024, leg = 400, start = 120, burst = 3600,
-  comp = {{"rts-walker", 10}, {"rts-walker-heavy", 3}, {"rts-raider", 3}}}' 7200
+tools/divisions-bench.sh div-march '{mode = "march", forces = 4, divs = 12, half = 1024, leg = 400, start = 120,
+  burst = 3600, comp = {{"rts-walker", 10}, {"rts-walker-heavy", 3}, {"rts-raider", 3}}}' 7200
 tools/divisions-bench.sh div-mass '{mode = "mass", n = 1000, half = 512, start = 120}' 1800
 tools/divisions-bench.sh div-massdiv '{mode = "mass_div", n = 1008, half = 512, start = 120}' 1800
 MODULE=divisions_func tools/divisions-bench.sh div-func '{}' 9000 99 99
@@ -248,11 +249,15 @@ Matrix and regression (Skirmish behaviour with AI armies in divisions):
 | 1v3 normal small, seed 1111 | pristine tree 38/38, divisions 38/38 |
 | 1v3 normal small, seed 2222 | pristine tree 38/39 (outcome FAIL), divisions 38/38 |
 | 1v3 normal small, clock seed | divisions 38/39: outcome FAIL, three AIs lost their CCs and rts-ai-2 kept 4 units, so the match did not end |
+| Synced tree (with territory, cities, demolish, world), 1v3 small, seed 1111 | without my hunks 38/38, with divisions 37/39 (produce rts-ai-3, outcome) |
+| Synced tree, 1v3 small, seed 2222 | without my hunks 38/39 (outcome), with divisions 39/39 |
+| Synced tree: legacy units; 1v1 normal medium; functional; GUI probe | 65/65; 23/23 (the new `divisions` check: 6 divisions, 0 group fails, queue max 15 unit + 1 group per tick); 18/18; 9/9 |
 | 1v1 normal small restart (RESTART_AT 240, speed 3) | 22/22; audit after the restart 94 LuaObjects, 0 invalid |
 | Save/load, 1v1 normal medium + 2 marching divisions | 0 errors in both halves; the groups saved mid-march (#1031, #1037) went on after the load, arrivals 4 → 9 |
 
-The 1v3 small "outcome" failure is the matrix's known flakiness, not a divisions regression: the pristine tree fails it
-the same way on seed 2222 (`build/matrix-final2` had 37/39 there too).
+The 1v3 small "outcome" and "produce" failures are the matrix's known flakiness (`build/matrix-final2` had 37/39
+there too), not a divisions regression. Over four seeded pairs, the tree without divisions failed 2 of 4 and the tree
+with divisions 1 of 4.
 
 ## Open issues
 

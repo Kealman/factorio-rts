@@ -38,6 +38,7 @@ local doctrine = require("scripts.ai.doctrine")
 local hubs = require("scripts.ai.hubs")
 local mix = require("scripts.ai.mix")
 local tech = require("scripts.ai.tech")
+local age_up = require("scripts.ai.age_up") -- Phase 5 E1: Nation mode age-up and make targets
 local deps = require("scripts.ai.deps")
 local balance = require("balance")
 
@@ -439,7 +440,10 @@ end
 
 local function manage_factories(C)
   local list = {}
-  for un, rec in buildings.for_force(C.force, "factory") do list[#list + 1] = {un, rec} end
+  for un, rec in buildings.for_force(C.force, "factory") do
+    -- Phase 5 E1: a factory on Auto (the Nation-mode works factory, ai/age_up.lua) follows the make targets
+    if rec.recipe_mode ~= "auto" then list[#list + 1] = {un, rec} end
+  end
   if #list == 0 then return end
   table.sort(list, function(a, b) return a[1] < b[1] end)
   local hungry = false
@@ -518,6 +522,7 @@ function commander.run(C)
       C.next_tech = tick + tech.PERIOD
       tech.step(C)
     end
+    if deps.ages and deps.ages.is_nation() then age_up.step(C, surface) end -- Phase 5 E1
     manage_production(C)
     stop("production")
   end

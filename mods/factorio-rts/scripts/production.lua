@@ -20,12 +20,37 @@
 --
 -- Cadence: network pull and factory hand-off every PULL_PERIOD ticks; barracks are checked at their predicted
 -- completion tick plus a SWEEP_PERIOD fallback sweep; turrets every FEED_PERIOD ticks.
+--
+-- Phase 5 E1 (docs/PHASE5-M1.md section 3, docs/qa/phase5-economy-notes.md):
+--   * Districts (kind "district", scripts/districts.lua registers the names) are fed and emptied like factories.
+--   * Recipe mode, rec.recipe_mode: "fixed" (a player or the AI chose the recipe, or paused the machine: it behaves as
+--     before), "auto" (the auto-recipe pass picks it), nil = "auto" for factories and districts while
+--     production.auto_active() (Nation mode), else "fixed". production.set_recipe marks the machine "fixed";
+--     production.set_auto switches. Every AUTO_PERIOD ticks an auto machine makes the largest shortfall (target minus
+--     the stock of its logistic network, as a share of the target) among its city's make targets
+--     (production.targets_of) that it can make with what the network holds; a met target switches it on the next
+--     pass. See auto_choose for the rules.
+--   * production.on_flow(rec, item, count, "made" | "used") is called for items a producer hands to the network and
+--     ingredients it takes from it (the city ledger, scripts/districts.lua).
 local util = require("scripts.util")
 local events = require("scripts.events")
 local units = require("scripts.units")
 local buildings = require("scripts.buildings")
 
 local production = {}
+
+-- Phase 5 E1: producers with a recipe (barracks, factory, district) and the network-fed crafters among them.
+local PRODUCER = {barracks = true, factory = true, district = true}
+local CRAFTER = {factory = true, district = true}
+production.AUTO_PERIOD = 60
+production.AUTO_DWELL = 30 * 60   -- a still-short auto recipe is kept this long ...
+production.AUTO_MARGIN = 0.25     -- ... before a shortfall larger by this share of its target takes over
+production.AUTO_RESUME = 0.1      -- a recipe that is not running starts only below (1 - this) of its target (hysteresis)
+production.AUTO_FINISH = 3        -- seconds: a craft this close to done finishes before its met recipe is switched
+-- Hooks (scripts/districts.lua sets them; nil = no auto recipes and no flow counting):
+production.auto_active = nil      -- fn() -> true while factories and districts default to auto (Nation mode)
+production.targets_of = nil       -- fn(entity) -> {[item] = n} make targets of the entity's city, or nil
+production.on_flow = nil          -- fn(rec, item, count, "made" | "used")
 
 production.PULL_PERIOD = 30
 production.SWEEP_PERIOD = 60
@@ -101,10 +126,10 @@ end
 --- Set (recipe name) or clear (nil) the recipe of a barracks / factory, given an entity or a unit number.
 --- set_recipe with a recipe from another crafting category silently does nothing (prototype notes gotcha 1),
 --- so the result is read back. Returns true when the machine now has the requested recipe (or none).
-function production.set_recipe(target, recipe_name)
+function production.set_recipe(target, recipe_name, opts)
   local rec = type(target) == "number" and buildings.get(target)
     or (target and target.valid and buildings.get(target.unit_number))
-  if not rec or (rec.kind ~= "barracks" and rec.kind ~= "factory") then return false end
+  if not rec or not PRODUCER[rec.kind] then return false end
   local e = rec.entity
   -- Phase 4: LuaEntity.set_recipe accepts a recipe the force has disabled (research locks, scripts/research.lua)
   local force_recipe = recipe_name and e.force.recipes[recipe_name]
@@ -129,6 +154,7 @@ function production.set_recipe(target, recipe_name)
   local got = now and now.name or nil
   if ok and got == recipe_name then
     rec.pull_state = nil
+    if not (opts and opts.auto) then rec.recipe_mode = "fixed" end -- Phase 5: a chosen (or paused) recipe stays
     if rec.kind == "barracks" and recipe_name then production.schedule_check(rec, game.tick + 1) end
     util.log("production: %s #%d (%s) recipe -> %s", rec.kind, e.unit_number, rec.force, tostring(recipe_name))
     return true
@@ -138,12 +164,13 @@ function production.set_recipe(target, recipe_name)
   return false
 end
 
---- HUD-facing state of a barracks / factory: {recipe, progress (0..1), crafting, state, rally, spawned}.
+--- HUD-facing state of a barracks / factory / district: {recipe, progress (0..1), crafting, state, rally, spawned,
+--- auto (Phase 5: the auto-recipe pass picks the recipe)}.
 function production.status(unit_number)
   local rec = buildings.get(unit_number)
   if not rec then return nil end
   local e = rec.entity
-  local recipe = (rec.kind == "barracks" or rec.kind == "factory") and e.get_recipe() or nil
+  local recipe = PRODUCER[rec.kind] and e.get_recipe() or nil
   return {
     recipe = recipe and recipe.name or nil,
     progress = recipe and e.crafting_progress or 0,
@@ -151,7 +178,34 @@ function production.status(unit_number)
     state = rec.pull_state or (recipe and "supplied" or "idle"),
     rally = rec.kind == "barracks" and buildings.rally_point(unit_number) or nil,
     spawned = rec.spawned or 0,
+    auto = production.is_auto(rec),
   }
+end
+
+---------------------------------------------------------------------------
+-- Phase 5 E1: recipe modes
+---------------------------------------------------------------------------
+--- True when the auto-recipe pass picks the recipe of this factory / district record (see the header).
+function production.is_auto(rec)
+  if not (rec and CRAFTER[rec.kind]) then return false end
+  if rec.recipe_mode then return rec.recipe_mode == "auto" end
+  return production.auto_active ~= nil and production.auto_active() == true
+end
+
+--- Switch a factory or district (entity, unit number or record) to auto (true) or fixed (false: keeps its recipe).
+--- Returns true when the record exists.
+function production.set_auto(target, on)
+  local rec = type(target) == "number" and buildings.get(target)
+    or (type(target) == "table" and target.entity and target)
+    or (target and target.valid and buildings.get(target.unit_number))
+  if not (rec and CRAFTER[rec.kind]) then return false end
+  local mode = on and "auto" or "fixed"
+  if rec.recipe_mode ~= mode then
+    rec.recipe_mode = mode
+    rec.auto_set = nil
+    util.log("production: %s #%d (%s) recipe mode -> %s", rec.kind, rec.entity.unit_number, rec.force, mode)
+  end
+  return true
 end
 
 ---------------------------------------------------------------------------
@@ -219,6 +273,7 @@ local function pull(rec, reserved)
       if got > 0 then
         local put = input.insert({name = ing.name, count = got})
         if put < got then network.insert({name = ing.name, count = got - put}) end
+        if put > 0 and production.on_flow then production.on_flow(rec, ing.name, put, "used") end
       end
     end
   end
@@ -340,7 +395,8 @@ local function hand_off(rec)
       out.remove({name = item.name, count = moved, quality = item.quality})
       stats.items = stats.items + moved
       rec.moved = (rec.moved or 0) + moved
-      util.log("production: factory #%d (%s) moved %d %s into the network", e.unit_number, rec.force, moved,
+      if production.on_flow then production.on_flow(rec, item.name, moved, "made") end
+      util.log("production: %s #%d (%s) moved %d %s into the network", rec.kind, e.unit_number, rec.force, moved,
         item.name)
     end
   end
@@ -401,7 +457,7 @@ events.on_nth_tick(production.PULL_PERIOD, function(e)
   if not storage.buildings then return end
   local consumers = {}
   for _, rec in buildings.all() do
-    if rec.kind == "barracks" or rec.kind == "factory" then consumers[#consumers + 1] = rec end
+    if PRODUCER[rec.kind] then consumers[#consumers + 1] = rec end
   end
   table.sort(consumers, by_starvation)
   local reserved = {}
@@ -428,6 +484,204 @@ end)
 events.on_nth_tick(production.FEED_PERIOD, function()
   if not storage.buildings then return end
   for _, rec in buildings.all("turret") do feed_turret(rec) end
+end)
+
+---------------------------------------------------------------------------
+-- Phase 5 E1: auto-recipe from make targets
+---------------------------------------------------------------------------
+-- Recipes each crafter prototype can run: {name, products = {item...}, ingredients = {{name, amount}...}} (static
+-- prototype data, identical on every client; not saved).
+local machine_recipes = {}
+local machine_recipes_flat -- see below
+local function recipes_of(entity)
+  local list = machine_recipes[entity.name]
+  if list then return list end
+  list = {}
+  local cats = entity.prototype.crafting_categories or {}
+  for name, r in pairs(prototypes.recipe) do
+    if cats[r.category] and not r.parameter and not r.hidden then
+      local entry = {name = name, products = {}, ingredients = {}, order = r.order or ""}
+      for _, p in ipairs(r.products) do
+        if p.type == "item" then entry.products[#entry.products + 1] = p.name end
+      end
+      for _, ing in ipairs(r.ingredients) do
+        entry.ingredients[#entry.ingredients + 1] = {name = ing.name, amount = ing.amount}
+      end
+      if #entry.products > 0 then list[#list + 1] = entry end
+    end
+  end
+  table.sort(list, function(a, b)
+    if a.order ~= b.order then return a.order < b.order end
+    return a.name < b.name
+  end)
+  machine_recipes[entity.name] = list
+  return list
+end
+production.recipes_of = recipes_of
+
+-- [recipe name] = {product item, ...} (static; the auto log line)
+machine_recipes_flat = setmetatable({}, {__index = function(t, name)
+  local r = prototypes.recipe[name]
+  local list = {}
+  for _, p in ipairs(r and r.products or {}) do list[#list + 1] = p.name end
+  t[name] = list
+  return list
+end})
+
+-- {[item] = count} of a network, read once per pass.
+local function stock_of(cache, network)
+  local c = cache[network.network_id]
+  if c then return c end
+  c = {}
+  for _, item in pairs(network.get_contents()) do c[item.name] = (c[item.name] or 0) + item.count end
+  cache[network.network_id] = c
+  return c
+end
+
+-- Shortfall of a recipe: the largest (target - stock) / target over its products that have a target; nil when none
+-- of its products has a target, 0 when every such target is met.
+local function shortfall(entry, targets, stock)
+  local best
+  for _, item in ipairs(entry.products) do
+    local t = targets[item]
+    if t and t > 0 then
+      local f = math.max(0, (t - (stock[item] or 0)) / t)
+      if not best or f > best then best = f end
+    end
+  end
+  return best
+end
+
+-- The network (plus the machine's input, for its current recipe) holds one craft's worth of every ingredient.
+local function feasible(entry, stock, input)
+  for _, ing in ipairs(entry.ingredients) do
+    if (stock[ing.name] or 0) + (input and input.get_item_count(ing.name) or 0) < ing.amount then return false end
+  end
+  return true
+end
+
+-- The recipe an auto machine should run, or false to idle (nil = leave it as it is). Rules:
+--   0. a met recipe whose craft ends within AUTO_FINISH seconds finishes it (set_recipe would drop the progress), once;
+--   1. keep a recipe whose product is still short while it can run (or is crafting), unless it ran AUTO_DWELL and
+--      another feasible recipe is short by AUTO_MARGIN more;
+--   2. else the feasible recipe with the largest shortfall (ties: recipe order);
+--   3. else (nothing short is feasible) a feasible recipe for a missing ingredient of the most short recipe;
+--   4. else a district none of whose products has any target runs its first feasible recipe (a district built for
+--      its goods works without targets); everything else idles (the current recipe stays while it is still short).
+local function auto_choose(rec, cache)
+  local e = rec.entity
+  local network = production.network_for(e)
+  if not network then return nil end
+  local targets = (production.targets_of and production.targets_of(e)) or {}
+  local stock = stock_of(cache, network)
+  local list = recipes_of(e)
+  local fr = e.force.recipes
+  local cur = e.get_recipe()
+  local cur_name = cur and cur.name
+  local input = e.get_inventory(defines.inventory.crafter_input)
+  local by_name, cands, any_target = {}, {}, false
+  for _, entry in ipairs(list) do
+    local r = fr[entry.name]
+    if r and r.enabled then
+      by_name[entry.name] = entry
+      local f = shortfall(entry, targets, stock)
+      if f ~= nil then any_target = true end
+      if f and f > 0 and (entry.name == cur_name or f >= production.AUTO_RESUME) then
+        cands[#cands + 1] = {entry = entry, f = f}
+      end
+    end
+  end
+  table.sort(cands, function(a, b)
+    if a.f ~= b.f then return a.f > b.f end
+    return a.entry.order < b.entry.order or (a.entry.order == b.entry.order and a.entry.name < b.entry.name)
+  end)
+  local cur_entry = cur_name and by_name[cur_name]
+  local cur_f = cur_entry and shortfall(cur_entry, targets, stock)
+  if cur_entry and not (cur_f and cur_f > 0) and rec.auto_defer ~= cur_name and e.is_crafting()
+     and e.crafting_speed > 0 and (1 - e.crafting_progress) * cur.energy / e.crafting_speed <= production.AUTO_FINISH then
+    rec.auto_defer = cur_name -- once per met recipe: the next pass switches
+    return cur_name
+  end
+  if cur_entry and cur_f and cur_f > 0 and (e.is_crafting() or feasible(cur_entry, stock, input)) then
+    local young = game.tick - (rec.auto_set or 0) < production.AUTO_DWELL
+    if young then return cur_name end
+    for _, c in ipairs(cands) do
+      if c.entry ~= cur_entry and c.f >= cur_f + production.AUTO_MARGIN and feasible(c.entry, stock) then
+        return c.entry.name
+      end
+    end
+    return cur_name
+  end
+  for _, c in ipairs(cands) do
+    if feasible(c.entry, stock, c.entry == cur_entry and input or nil) then return c.entry.name end
+  end
+  -- 3. a missing ingredient this machine can make
+  local top = cands[1]
+  if top then
+    for _, ing in ipairs(top.entry.ingredients) do
+      if (stock[ing.name] or 0) < ing.amount then
+        for _, entry in ipairs(list) do
+          local r = fr[entry.name]
+          if r and r.enabled and entry ~= top.entry and feasible(entry, stock) then
+            for _, p in ipairs(entry.products) do
+              if p == ing.name then return entry.name end
+            end
+          end
+        end
+      end
+    end
+    if cur_entry and cur_f and cur_f > 0 then return cur_name end -- still short: wait for its inputs
+    return false
+  end
+  if rec.kind == "district" and not any_target then
+    if cur_entry and feasible(cur_entry, stock, input) then return cur_name end
+    for _, entry in ipairs(list) do
+      local r = fr[entry.name]
+      if r and r.enabled and feasible(entry, stock) then return entry.name end
+    end
+    return cur_name or false
+  end
+  return false
+end
+
+-- "iron-gear-wheel 30/30" for the products of a recipe that have a target (the switch log line)
+local function target_text(name, targets, stock)
+  local parts = {}
+  for _, entry in ipairs(name and machine_recipes_flat[name] or {}) do
+    if targets[entry] then parts[#parts + 1] = string.format("%s %d/%d", entry, stock[entry] or 0, targets[entry]) end
+  end
+  return table.concat(parts, " ")
+end
+
+local function auto_pass()
+  if not storage.buildings then return end
+  local cache = {}
+  for _, rec in buildings.all() do
+    if CRAFTER[rec.kind] and production.is_auto(rec) then
+      local want = auto_choose(rec, cache)
+      if want ~= nil then
+        local e = rec.entity
+        local cur = e.get_recipe()
+        local cur_name = cur and cur.name or false
+        if want ~= cur_name then
+          local name = want or nil
+          if production.set_recipe(e, name, {auto = true}) then
+            rec.auto_set, rec.auto_defer = game.tick, nil
+            local targets = (production.targets_of and production.targets_of(e)) or {}
+            local net = production.network_for(e)
+            local stock = net and stock_of(cache, net) or {}
+            util.log("production: auto %s #%d (%s) recipe %s -> %s [%s | %s]", rec.kind, e.unit_number, rec.force,
+              tostring(cur_name or "none"), tostring(name or "none"), target_text(cur_name or nil, targets, stock),
+              target_text(name, targets, stock))
+          end
+        end
+      end
+    end
+  end
+end
+
+events.on_nth_tick(production.AUTO_PERIOD, function()
+  if production.auto_active and production.auto_active() then auto_pass() end
 end)
 
 return production

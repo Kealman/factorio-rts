@@ -8,3 +8,8 @@ local factory = data.raw["assembling-machine"]["rts-factory"]
 assert(factory, "factorio-rts: rts-factory must exist before data-updates")
 factory.crafting_categories = factory.crafting_categories or {}
 table.insert(factory.crafting_categories, "rts-science")
+
+-- Phase 5 E1 (docs/qa/phase5-economy-notes.md): Age II goods, buildings, technologies and the ten districts. After the
+-- research prototypes (rts-lab, kits, the factory's rts-science category) and after every data.lua (m1-rails' rts-rail).
+require("prototypes.age2")
+require("prototypes.districts")

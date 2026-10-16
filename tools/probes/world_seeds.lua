@@ -38,6 +38,7 @@ events.on_nth_tick(1, function(e)
   local st = S()
   if not st or st.done or e.tick < 150 then return end
   world.write_images = CFG.images
+  world.QA_COUNTS = true
   if st.step == "start" then
     local nations, k = current()
     if not nations then

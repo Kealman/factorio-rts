@@ -213,4 +213,166 @@ balance.smelting = {
   ["steel-plate"] = {cost = {["iron-plate"] = 2}, time = 6.4},
 }
 
+---------------------------------------------------------------------------
+-- Phase 5 Nation mode (docs/PHASE5-M1.md section 1). Every work package adds its own keys to balance.nation; never
+-- replace the table. Modules read these numbers only in Nation mode.
+---------------------------------------------------------------------------
+balance.nation = balance.nation or {}
+
+-- E1 economy (m1-economy, docs/qa/phase5-economy-notes.md): ages, Age II goods and buildings, districts, the Railway
+-- Charter, make targets. Prototypes (prototypes/age2.lua, prototypes/districts.lua) read costs, times and health from
+-- here; scripts/ages.lua, scripts/districts.lua and scripts/ai/age_up.lua read the rest.
+--
+-- recipes[name] = {category, cost = {item = n}, results = {item = n}, time (s), order}. Every recipe here starts
+--   disabled and is enabled for a force when it reaches Age II (scripts/ages.lua), like the building recipes below.
+--   Categories: rts-age2 (factory), rts-oil (refinery), rts-chemistry (chemical plant), rts-science (factory, the
+--   industrial kit) and one rts-district-<id> per district.
+-- buildings[name] = {kind, family, cost, time, health, power?, size?, categories?, mining_speed?}: Age II buildings,
+--   made by the factory (rts-buildings), placed like any building. kind "district" (network-fed crafting machine,
+--   scripts/districts.lua) or "pumpjack" (crude oil into the network as rts-crude-oil items). They are copied into
+--   balance.buildings at the end of this file (registry kinds, health, the on_entity_damaged filter).
+local E = {}
+balance.nation.economy = E
+
+E.crude_per_item = 10        -- crude oil (fluid units) per rts-crude-oil item drained from a pumpjack
+E.pumpjack_period = 60       -- ticks between pumpjack drains
+E.auto_period = 60           -- ticks between auto-recipe passes (production.lua): a met target switches within ~1 s
+E.auto_dwell = 30 * 60       -- an auto machine keeps a still-short recipe this long before a much larger shortfall
+E.auto_margin = 0.25         --   (by at least this share of its target) takes over
+E.default_targets = {}       -- make targets a new city starts with (the player sets the rest in the ledger, L)
+
+-- Industrialisation (advanced kits) unlocks the Railway Charter; the Charter (deliveries to a site in the capital)
+-- brings Age II. Age I goods only: Age II recipes stay locked until the Charter is done.
+E.charter = {
+  tech = "rts-industrialisation",
+  required = {["steel-plate"] = 100, ["electronic-circuit"] = 100, ["iron-gear-wheel"] = 100, ["stone"] = 150},
+  pull_per_second = 10,      -- per item and second, from the site's logistic network
+  build_seconds = 20,        -- countdown once everything is delivered
+  raze_loss = 0.5,           -- share of the delivered goods lost when the site is destroyed
+  site_health = 4000,
+}
+
+-- Technologies (prototypes/age2.lua; effects applied by scripts/research.lua through research.EFFECTS). Nation mode
+-- only. age = the age the force must have reached before it can research the technology.
+E.techs = {
+  {name = "rts-industrialisation", kit = "rts-science-advanced", count = 20, icon = "railway", age = 1,
+   effect = {flag = "industrialisation"}},
+  {name = "rts-supply-3", kit = "rts-science-industrial", count = 15, icon = "toolbelt", age = 2,
+   prerequisites = {"rts-industrialisation"}, effect = {supply = 15}},
+  {name = "rts-mining-3", kit = "rts-science-industrial", count = 15, icon = "mining-productivity", age = 2,
+   prerequisites = {"rts-industrialisation"}, effect = {mining = 0.25}},
+  {name = "rts-hauler-capacity-2", kit = "rts-science-industrial", count = 15, icon = "logistics-3", age = 2,
+   prerequisites = {"rts-industrialisation"}, effect = {hauler_slots = 10}},
+  {name = "rts-attack-4", kit = "rts-science-industrial", count = 25, icon = "stronger-explosives-3", age = 2,
+   prerequisites = {"rts-industrialisation"}, effect = {attack = 1}},
+}
+
+local DISTRICT_COST = {["iron-plate"] = 80, ["steel-plate"] = 20, ["electronic-circuit"] = 15}
+E.buildings = {
+  ["rts-pumpjack"] = {kind = "pumpjack", family = "oil", cost = {["iron-plate"] = 30, ["steel-plate"] = 5,
+                      ["electronic-circuit"] = 5}, time = 6, health = 600, mining_speed = 0.5},
+  ["rts-refinery"] = {kind = "district", family = "oil", cost = {["iron-plate"] = 60, ["steel-plate"] = 15,
+                      ["electronic-circuit"] = 10}, time = 10, health = 1500, power = "300kW", categories = {"rts-oil"}},
+  ["rts-chemical-plant"] = {kind = "district", family = "chemistry", cost = {["iron-plate"] = 30, ["steel-plate"] = 5,
+                            ["electronic-circuit"] = 5}, time = 6, health = 800, power = "200kW",
+                            categories = {"rts-chemistry"}},
+}
+-- The ten districts: 5x5 assembling machines with compressed multi-stage recipes (one category each).
+E.districts = {
+  {id = "smelting", family = "metallurgy"}, {id = "steel", family = "metallurgy"},
+  {id = "circuits", family = "electronics"}, {id = "electronics", family = "electronics"},
+  {id = "petrochem", family = "chemistry"}, {id = "engines", family = "machinery"},
+  {id = "munitions", family = "military"}, {id = "rails", family = "machinery"},
+  {id = "construction", family = "construction"}, {id = "science", family = "science"},
+}
+for _, d in ipairs(E.districts) do
+  local cost = {}
+  for item, n in pairs(DISTRICT_COST) do cost[item] = n end
+  if d.id == "science" then cost["copper-plate"], cost["electronic-circuit"] = 40, 25 end
+  E.buildings["rts-district-" .. d.id] = {kind = "district", family = d.family, cost = cost, time = 12, health = 2500,
+                                          power = "400kW", size = 5, categories = {"rts-district-" .. d.id}}
+end
+
+E.recipes = {
+  -- Age II intermediates (factory, refinery, chemical plant). Vanilla items, ingredient structure kept, amounts and
+  -- times scaled down as balance.smelting does for steel.
+  ["rts-oil-processing"] = {category = "rts-oil", cost = {["rts-crude-oil"] = 4}, results = {["rts-petroleum"] = 3},
+                            time = 3, order = "a"},
+  ["rts-plastic"] = {category = "rts-chemistry", cost = {["rts-petroleum"] = 1, coal = 1},
+                     results = {["plastic-bar"] = 2}, time = 2, order = "b"},
+  ["rts-sulfur"] = {category = "rts-chemistry", cost = {["rts-petroleum"] = 1}, results = {sulfur = 2}, time = 2,
+                    order = "c"},
+  ["rts-engine"] = {category = "rts-age2", cost = {["steel-plate"] = 1, ["iron-gear-wheel"] = 1, ["iron-plate"] = 2},
+                    results = {["engine-unit"] = 1}, time = 6, order = "d"},
+  ["rts-advanced-circuit"] = {category = "rts-age2", cost = {["electronic-circuit"] = 2, ["plastic-bar"] = 2,
+                              ["copper-cable"] = 3}, results = {["advanced-circuit"] = 1}, time = 6, order = "e"},
+  ["rts-steel-beam"] = {category = "rts-age2", cost = {["steel-plate"] = 3}, results = {["rts-steel-beam"] = 2},
+                        time = 4, order = "f"},
+  ["rts-concrete"] = {category = "rts-age2", cost = {["stone-brick"] = 4, stone = 2}, results = {concrete = 4},
+                      time = 4, order = "g"},
+  -- Age II science kit: an engine (steel, gear), an advanced circuit (plastic from oil, circuits from copper and iron)
+  -- and sulfur (oil): goods from at least three production stages.
+  ["rts-science-industrial"] = {category = "rts-science", cost = {["engine-unit"] = 1, ["advanced-circuit"] = 1,
+                                sulfur = 1}, results = {["rts-science-industrial"] = 2}, time = 12, order = "c"},
+
+  -- Districts (compressed recipes; first guesses for the balance pass, about 2x the output of the machines they
+  -- replace, with the intermediate steps skipped)
+  ["rts-dsm-iron"] = {category = "rts-district-smelting", cost = {["iron-ore"] = 10},
+                      results = {["iron-plate"] = 10}, time = 8, order = "a"},
+  ["rts-dsm-copper"] = {category = "rts-district-smelting", cost = {["copper-ore"] = 10},
+                        results = {["copper-plate"] = 10}, time = 8, order = "b"},
+  ["rts-dsm-brick"] = {category = "rts-district-smelting", cost = {stone = 10}, results = {["stone-brick"] = 5},
+                       time = 6, order = "c"},
+  ["rts-dst-steel"] = {category = "rts-district-steel", cost = {["iron-plate"] = 8},
+                       results = {["steel-plate"] = 4}, time = 8, order = "a"},
+  ["rts-dst-steel-ore"] = {category = "rts-district-steel", cost = {["iron-ore"] = 8, coal = 1},
+                           results = {["steel-plate"] = 4}, time = 10, order = "b"},
+  ["rts-dci-circuit"] = {category = "rts-district-circuits", cost = {["iron-plate"] = 2, ["copper-plate"] = 3},
+                         results = {["electronic-circuit"] = 2}, time = 3, order = "a"},
+  ["rts-dci-cable"] = {category = "rts-district-circuits", cost = {["copper-plate"] = 5},
+                       results = {["copper-cable"] = 10}, time = 2, order = "b"},
+  ["rts-del-advanced-circuit"] = {category = "rts-district-electronics", cost = {["electronic-circuit"] = 2,
+                                  ["plastic-bar"] = 2, ["copper-plate"] = 2}, results = {["advanced-circuit"] = 1},
+                                  time = 4, order = "a"},
+  ["rts-dpe-plastic"] = {category = "rts-district-petrochem", cost = {["rts-crude-oil"] = 4, coal = 1},
+                         results = {["plastic-bar"] = 4, sulfur = 1}, time = 4, order = "a"},
+  ["rts-dpe-sulfur"] = {category = "rts-district-petrochem", cost = {["rts-crude-oil"] = 3}, results = {sulfur = 3},
+                        time = 3, order = "b"},
+  ["rts-den-engine"] = {category = "rts-district-engines", cost = {["steel-plate"] = 2, ["iron-plate"] = 6},
+                        results = {["engine-unit"] = 2}, time = 8, order = "a"},
+  ["rts-dmu-magazine"] = {category = "rts-district-munitions", cost = {["iron-plate"] = 10},
+                          results = {["firearm-magazine"] = 15}, time = 4, order = "a"},
+  ["rts-dmu-explosives"] = {category = "rts-district-munitions", cost = {coal = 4, ["iron-plate"] = 2},
+                            results = {["rts-explosives"] = 4}, time = 4, order = "b"},
+  ["rts-dra-rail"] = {category = "rts-district-rails", cost = {["steel-plate"] = 4, stone = 2},
+                      results = {rail = 5}, time = 4, order = "a"}, -- vanilla rail (m1-rails' item)
+  ["rts-dra-beam"] = {category = "rts-district-rails", cost = {["steel-plate"] = 3},
+                      results = {["rts-steel-beam"] = 3}, time = 3, order = "b"},
+  ["rts-dco-concrete"] = {category = "rts-district-construction", cost = {["stone-brick"] = 5, stone = 2},
+                          results = {concrete = 6}, time = 4, order = "a"},
+  ["rts-dco-wall"] = {category = "rts-district-construction", cost = {["stone-brick"] = 8},
+                      results = {["rts-wall"] = 10}, time = 4, order = "b"},
+  ["rts-dsc-basic"] = {category = "rts-district-science", cost = {["iron-plate"] = 4, ["copper-plate"] = 2},
+                       results = {["rts-science-basic"] = 3}, time = 8, order = "a"},
+  ["rts-dsc-advanced"] = {category = "rts-district-science", cost = {["electronic-circuit"] = 4, ["steel-plate"] = 2},
+                          results = {["rts-science-advanced"] = 3}, time = 12, order = "b"},
+  ["rts-dsc-industrial"] = {category = "rts-district-science", cost = {["engine-unit"] = 2, ["advanced-circuit"] = 2,
+                            sulfur = 2}, results = {["rts-science-industrial"] = 6}, time = 18, order = "c"},
+}
+
+-- The normal AI (scripts/ai/age_up.lua): make targets of its capital per age (an archetype template), the districts
+-- it builds once it reaches Age II, and when its "works" factory (an auto-recipe factory for those targets) goes up.
+E.ai = {
+  works_after = 4 * 60,      -- seconds after the commander started
+  district_gap = 60,         -- seconds between two district orders
+  capital = {
+    [1] = {["iron-gear-wheel"] = 20, ["electronic-circuit"] = 30},
+    [2] = {["iron-gear-wheel"] = 20, ["electronic-circuit"] = 60, ["steel-plate"] = 40, ["rts-science-advanced"] = 10},
+  },
+  districts = {"rts-district-circuits", "rts-district-steel", "rts-district-science"},
+}
+
+for name, b in pairs(E.buildings) do balance.buildings[name] = b end
+balance.buildings["rts-project-site"] = {kind = "project", health = E.charter.site_health}
+
 return balance

@@ -758,8 +758,10 @@ local function build_forests(surface, P)
 end
 
 --- Place a patch with a fixed total: the tiles of basetemplate.place_ore's round shape, richer in the middle.
---- Returns the number of resource tiles and the amount placed.
-function mapgen.place_patch(surface, name, center, w, h, total)
+--- Returns the number of resource tiles and the amount placed. opts.land_only (Nation worlds, scripts/world.lua):
+--- skip tiles that cannot hold ore (water, rts-mountain, rts-ford, rts-marsh: the resource collision layer).
+function mapgen.place_patch(surface, name, center, w, h, total, opts)
+  local land_only = opts and opts.land_only
   local cx, cy = center.x, center.y
   local x0, y0 = math.floor(cx - w / 2 + 0.5), math.floor(cy - h / 2 + 0.5)
   local cells, weight = {}, 0
@@ -768,7 +770,8 @@ function mapgen.place_patch(surface, name, center, w, h, total)
       local px, py = tx + 0.5, ty + 0.5
       local nx, ny = (px - cx) / (w / 2), (py - cy) / (h / 2)
       local d2 = nx * nx + ny * ny
-      if d2 <= 1.15 and surface.count_entities_filtered({position = {px, py}, type = "resource"}) == 0 then
+      if d2 <= 1.15 and surface.count_entities_filtered({position = {px, py}, type = "resource"}) == 0
+         and not (land_only and surface.get_tile(tx, ty).collides_with("resource")) then
         local wt = math.max(0.35, 1.5 - d2)
         cells[#cells + 1] = {px, py, wt}
         weight = weight + wt
@@ -788,9 +791,13 @@ function mapgen.place_patch(surface, name, center, w, h, total)
 end
 
 -- The neutral ruin: a dead Command Center and two stockpiles with the loot, all of the neutral force and
--- indestructible until captured.
-local function build_ruin(surface, P)
-  local pos = P.ruin
+-- indestructible until captured. opts (Nation worlds, scripts/world.lua): stock = {{item, count}, ...} (default
+-- RUIN_STOCK), keys = {label, owned, capturing} locale keys (default the ruin's), kind = "ruin" | "port".
+local RUIN_KEYS = {label = "rts.ruin-label", owned = "rts.ruin-owned", capturing = "rts.ruin-capturing"}
+local function make_ruin(surface, pos, opts)
+  opts = opts or {}
+  local stock = opts.stock or mapgen.RUIN_STOCK
+  local keys = opts.keys or RUIN_KEYS
   local cc = surface.create_entity({name = "rts-command-center", position = {pos.x, pos.y}, force = "neutral",
                                     create_build_effect_smoke = false})
   if cc then
@@ -807,16 +814,18 @@ local function build_ruin(surface, P)
     if s then
       s.destructible = false
       s.minable = false
-      local item = mapgen.RUIN_STOCK[i]
+      local item = stock[i]
       if item then s.insert({name = item[1], count = item[2]}) end
       chests[#chests + 1] = s
     end
   end
-  local label = rendering.draw_text({text = {"rts.ruin-label"}, surface = surface, target = {pos.x, pos.y - 3.2},
+  local label = rendering.draw_text({text = {keys.label}, surface = surface, target = {pos.x, pos.y - 3.2},
                                      color = {0.85, 0.8, 0.6}, scale = 1.6, alignment = "center",
                                      vertical_alignment = "middle"})
-  return {position = {x = pos.x, y = pos.y}, cc = cc, chests = chests, progress = 0, label = label}
+  return {position = {x = pos.x, y = pos.y}, cc = cc, chests = chests, progress = 0, label = label,
+          keys = opts.keys, kind = opts.kind}
 end
+local function build_ruin(surface, P) return make_ruin(surface, P.ruin) end
 
 --- Build the planned map on the arena (before the CCs are placed). Records patches and the ruin in storage.mapgen.
 function mapgen.build(surface, P)
@@ -870,6 +879,30 @@ end
 --- Forget the data of a torn-down match (match.teardown).
 function mapgen.reset()
   storage.mapgen = {patches = {}}
+end
+
+-- Nation worlds (scripts/world.lua, Phase 5 M1): the world places its own ore and sites and records them here, so
+-- depletion alerts, the "ore remaining" report, ruin capture and /rts-mapgen work unchanged.
+--- Start the records of a world surface (instead of mapgen.build).
+function mapgen.adopt(surface_name, layout, size)
+  storage.mapgen = {surface = surface_name, layout = layout, size = size, patches = {}, ruins = {}, counts = {},
+                    next_report = game.tick + mapgen.REPORT_PERIOD}
+end
+
+--- Record a placed patch: {id, kind, force?, name, center, box = {x0, y0, x1, y1}, total, tiles, remaining}.
+function mapgen.record_patch(rec)
+  local s = storage.mapgen
+  s.patches[#s.patches + 1] = rec
+  s.counts.patches = #s.patches
+end
+
+--- Place a ruin (or a port: opts.kind, opts.stock, opts.keys) and record it for capture. Returns the record.
+function mapgen.add_ruin(surface, pos, opts)
+  local s = storage.mapgen
+  local r = make_ruin(surface, pos, opts)
+  s.ruins = s.ruins or {}
+  s.ruins[#s.ruins + 1] = r
+  return r
 end
 
 ---------------------------------------------------------------------------
@@ -1022,7 +1055,7 @@ local function capture(ruin, force_name)
       for _, item in ipairs(mapgen.RUIN_STOCK) do counts[item[1]] = (counts[item[1]] or 0) + inv.get_item_count(item[1]) end
     end
   end
-  set_label(ruin, {"rts.ruin-owned", label_of(force_name)})
+  set_label(ruin, {(ruin.keys or RUIN_KEYS).owned, label_of(force_name)})
   util.log("mapgen: ruin at %s captured by %s (from %s): steel %d, circuits %d", util.pos_str(ruin.position),
     force_name, previous or "neutral", counts["steel-plate"] or 0, counts["electronic-circuit"] or 0)
   mapgen.alert(force_name, "ruin-captured", "rts.alert-ruin-captured",
@@ -1035,11 +1068,20 @@ end
 --- One capture step (every CAPTURE_PERIOD ticks): a single force (not the owner) with units within CAPTURE_RANGE
 --- of a ruin stockpile, while no unit of the owner is there, gains progress; CAPTURE_TICKS of it captures the
 --- stockpiles. Nobody there resets the progress; several forces there hold it.
+local capture_one -- one ruin's step (below)
 function mapgen.capture_step(dt)
   local surface = live_surface()
   local s = storage.mapgen
-  local ruin = s and s.ruin
-  if not (surface and ruin and storage.match.phase == "running") then return end
+  if not (surface and s and storage.match.phase == "running") then return end
+  if s.ruins then -- a Nation world: every ruin and port
+    for _, ruin in ipairs(s.ruins) do capture_one(surface, ruin, dt) end
+  elseif s.ruin then
+    capture_one(surface, s.ruin, dt)
+  end
+end
+
+capture_one = function(surface, ruin, dt)
+  local keys = ruin.keys or RUIN_KEYS
   local alive = false
   for _, chest in ipairs(ruin.chests or {}) do
     if chest.valid then alive = true end
@@ -1049,7 +1091,7 @@ function mapgen.capture_step(dt)
   if not any then
     if ruin.capturing then
       ruin.capturing, ruin.progress = nil, 0
-      set_label(ruin, ruin.owner and {"rts.ruin-owned", label_of(ruin.owner)} or {"rts.ruin-label"})
+      set_label(ruin, ruin.owner and {keys.owned, label_of(ruin.owner)} or {keys.label})
     end
     return
   end
@@ -1064,7 +1106,7 @@ function mapgen.capture_step(dt)
   if ruin.progress >= mapgen.CAPTURE_TICKS then
     capture(ruin, f)
   else
-    set_label(ruin, {"rts.ruin-capturing", label_of(f), math.floor(100 * ruin.progress / mapgen.CAPTURE_TICKS)})
+    set_label(ruin, {keys.capturing, label_of(f), math.floor(100 * ruin.progress / mapgen.CAPTURE_TICKS)})
   end
 end
 
@@ -1088,9 +1130,8 @@ function mapgen.dump(player)
       lines[#lines + 1] = string.format("[rts] mapgen: %s %s %s at %s: %d/%d%s", p.kind, p.force or "middle", p.name,
         util.pos_str(p.center), left, p.total, p.depleted_tick and " (depleted)" or "")
     end
-    local r = s.ruin
-    if r then
-      lines[#lines + 1] = string.format("[rts] mapgen: ruin at %s: owner %s, capturing %s (%d ticks)",
+    for _, r in ipairs(s.ruins or {s.ruin}) do
+      lines[#lines + 1] = string.format("[rts] mapgen: %s at %s: owner %s, capturing %s (%d ticks)", r.kind or "ruin",
         util.pos_str(r.position), tostring(r.owner or "neutral"), tostring(r.capturing or "-"), r.progress or 0)
     end
   end

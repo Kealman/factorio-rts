@@ -119,7 +119,7 @@ function techgui.open(player)
   cols.style.top_margin = 8
   local rows = {}
   local tables = {}
-  for tier = 1, 2 do
+  for tier = 1, research.max_tier() do -- Phase 5 E1: Nation mode adds tier 3 (Age II, industrial kits)
     local col = cols.add({type = "frame", style = "inside_shallow_frame_with_padding", direction = "vertical"})
     col.style.vertically_stretchable = true
     local head = col.add({type = "label", caption = {"rts.tech-tier-" .. tier}, style = "caption_label"})

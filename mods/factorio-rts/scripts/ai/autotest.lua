@@ -40,8 +40,10 @@ local tech = require("scripts.ai.tech")
 local hubs = require("scripts.ai.hubs")
 local mix = require("scripts.ai.mix")
 local deps = require("scripts.ai.deps")
+local age_up = require("scripts.ai.age_up") -- Phase 5 E1
 local divisions = require("scripts.divisions") -- Phase 5: the divisions check
 local orders = require("scripts.orders")
+local world = require("scripts.world") -- Phase 5 M1: world checks of a Nation match (docs/PHASE5-M1.md §4)
 
 local autotest = {}
 
@@ -51,6 +53,10 @@ autotest.BUILD_DEADLINE = 3 * 60 * 60
 autotest.TECH_DEADLINE = 6 * 60 * 60
 autotest.KINDS_DEADLINE = 8 * 60 * 60
 autotest.END_GRACE = 60 * 60 -- at DURATION, a side that stopped producing gets this long for the match to end
+-- Phase 5 E1 (Nation mode only): Age II by AGE_DEADLINE (normal pace), DISTRICTS districts within DISTRICT_WINDOW of it
+autotest.AGE_DEADLINE = 20 * 60 * 60
+autotest.DISTRICTS = 2
+autotest.DISTRICT_WINDOW = 5 * 60 * 60
 autotest.FORCES = {util.PLAYER_FORCE, util.ENEMY_FORCE}
 -- The player commander's difficulty; nil = the same as the enemy's (storage.match.config.enemy_difficulty), so
 -- one setting runs easy-vs-easy, normal-vs-normal or hard-vs-hard.
@@ -254,6 +260,13 @@ local function minute_report(s, n)
         C.stats.builder_yields or 0)
     end
   end
+  if deps.ages and deps.ages.is_nation() then -- Phase 5 E1
+    for _, f in ipairs(autotest.FORCES) do
+      local C = ai.get(f)
+      util.log("ai minute %d %s nation: %s | %s | districts %d", n, f, deps.ages.describe(f),
+        C and age_up.describe(C) or "-", buildings.count(f, "district"))
+    end
+  end
   util.log("ai minute %d match: phase=%s winner=%s", n, tostring(m and m.phase), tostring(m and m.winner))
   local p = ai.perf()
   if wall then
@@ -393,6 +406,27 @@ local function finish(s, why)
       and string.format("iron and copper lines running at %.0fs", s.lines_at[f] / 60)
       or (knocked_out and "lost its CC first" or "not both running"), table.concat(lp, ", "))
   end
+  if deps.ages and deps.ages.is_nation() then -- Phase 5 E1
+    for _, f in ipairs(autotest.FORCES) do
+      local C = ai.get(f)
+      local lost = s.cc_lost_at[f]
+      local deadline = scaled(C, autotest.AGE_DEADLINE)
+      local at = s.age2_at and s.age2_at[f]
+      local nd = not at and game.tick - s.started < deadline and string.format(", not due (deadline %.1f min)",
+        deadline / autotest.MINUTE) or ""
+      check("age2_" .. f, (at ~= nil and at <= deadline) or (lost ~= nil and lost < deadline) or nd ~= "",
+        "%s: %s; industrialisation %s, charter started %s%s%s; %s", f,
+        at and string.format("Age II at %d:%02d", math.floor(at / 3600), math.floor(at / 60) % 60) or "no Age II",
+        s.indust_at and s.indust_at[f] and string.format("%.0fs", s.indust_at[f] / 60) or "-",
+        s.charter_at and s.charter_at[f] and string.format("%.0fs", s.charter_at[f] / 60) or "-",
+        lost and string.format(" (lost its CC at %.0fs)", lost / 60) or "", nd, deps.ages.describe(f))
+      local nd2 = (not at or game.tick - s.started < at + autotest.DISTRICT_WINDOW) and ", not due" or ""
+      local nd_ok = buildings.count(f, "district") >= autotest.DISTRICTS
+      check("districts_" .. f, nd_ok or nd2 ~= "" or buildings.count(f, "cc") == 0,
+        "%s: %d districts%s; %s", f, buildings.count(f, "district"), nd_ok and "" or nd2,
+        C and age_up.describe(C) or "-")
+    end
+  end
   -- Phase 5 (docs/PHASE5-M1.md section 4): attack and defence groups ran as divisions (one unit-group path each) and
   -- the order queue kept its budgets
   local dst, q = divisions.stats(), orders.queue_stats()
@@ -413,6 +447,9 @@ local function finish(s, why)
     .. "+ %d group commands per tick (budgets %d / %d), %d queued", dst.created, table.concat(per_force, ", "),
     table.concat(kinds, " "), dst.arrivals, dst.retargets, dst.regroups, dst.group_fails, q.max_u, q.max_g,
     orders.QUEUE.unit_budget, orders.QUEUE.group_budget, q.queued)
+  -- Phase 5 M1: in a Nation match, the world checks (connectivity on samples and real tiles, start kits, spawn
+  -- score spread, background fill) join the summary
+  if m and m.config and m.config.mode == "nation" then world.autotest_checks(check) end
   local last = s.minute
   local producing = autotest.producing(s)
   check("outcome", ended or producing >= 2, "%s", ended and string.format("match ended at %.0fs, winner %s",
@@ -455,6 +492,21 @@ function autotest.tick(tick)
     end
     if age >= scaled(C, autotest.KINDS_DEADLINE) and s.kinds_at_deadline[f] == nil then
       s.kinds_at_deadline[f] = table_size(s.kinds[f] or {})
+    end
+    if deps.ages and deps.ages.is_nation() then -- Phase 5 E1
+      s.age2_at, s.indust_at, s.charter_at = s.age2_at or {}, s.indust_at or {}, s.charter_at or {}
+      if not s.indust_at[f] and deps.research and deps.research.has(f, "rts-industrialisation") then
+        s.indust_at[f] = age
+        util.log("ai autotest: %s researched Industrialisation at %.0fs", f, age / 60)
+      end
+      if not s.charter_at[f] and deps.ages.project(f) then
+        s.charter_at[f] = age
+        util.log("ai autotest: %s started the Railway Charter at %.0fs", f, age / 60)
+      end
+      if not s.age2_at[f] and deps.ages.of(f) >= 2 then
+        s.age2_at[f] = age
+        util.log("ai autotest: %s reached Age II at %.0fs", f, age / 60)
+      end
     end
     if not s.lines_at[f] and autotest.lines_running(f) then
       s.lines_at[f] = age

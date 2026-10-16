@@ -16,7 +16,7 @@ the new buttons and recipes. The Skirmish runs in "Validation" behave exactly as
 | `scripts/cities.lua` | new | Cities and nations, founding, losing, tiers, supply hook, make targets, alerts, the AI's second city |
 | `scripts/citygui.lua` | new | City panel and city list |
 | `prototypes/cities.lua` | new | `rts-attrition` damage type, `rts-city-center`, `rts-city-power`, `rts-city-charter`, `rts-fort`, recipes |
-| `locale/en/cities.cfg`, `locale/ru/cities.cfg` | new | 61 keys each, same keys and parameters |
+| `locale/en/cities.cfg`, `locale/ru/cities.cfg` | new | 62 keys each, same keys and parameters |
 | `tools/probes/territory_autotest.lua` | new | Headless autotest of this package (`EXTRA_LUA`) |
 | `tools/probes/territory_saveload.lua` | new | Grid checksum and render object count before the save and after the load |
 | `tools/probes/territory_grid2048.lua` | new | A 2048-tile grid on any arena, plus a log line with the time of every job-queue tick |
@@ -174,7 +174,8 @@ signals: "rts_territory_changed" {force, cells, delta, lost, lost_at, lost_city,
 - **City list** (top left, under the kill feed). One row per own city: a jump button with its name, then tier and
   land cells, and a magnifier that opens the city panel.
 - **City panel** (left of the hub panel). It opens while an own City Center or the capital is selected, or from the
-  list. It shows name and tier, a rename field, tier and radius, land cells and their share of the nation, supply, the
+  list. It shows name and tier, a rename field, tier and radius, the nation's age (`storage.ages[force].age`, else
+  `storage.nations[force].age`), land cells and their share of the nation, supply, the
   next tier's requirements, the logistic networks on its land, and the make-target table with a choose-item button.
 
 ### GUI check
@@ -213,8 +214,9 @@ visible again, at zoom 0.15 over the capital's border:
 | hidden | 23.7 % |
 | visible again | 19.2 % |
 
-The difference is inside the run's noise (the client also simulates the AI match), so no cost is measurable: below
-about 0.5 ms per frame. The study's 55,000-object stress case was not repeated in the GUI.
+A second GUI run on the merged tree (with the divisions and demolish work and the age line) measured 25.3 / 24.4 /
+23.8 %, with 0 Lua errors, and the city panel showed "Nation age: 1". The difference is inside the run's noise (the
+client also simulates the AI match), so no cost is measurable: below about 0.5 ms per frame. The study's 55,000-object stress case was not repeated in the GUI.
 
 ## AI
 

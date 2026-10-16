@@ -44,6 +44,9 @@ local modules = {
   require("scripts.divisiongui"), -- Phase 5: division panel; after the HUD (hud.on_refresh hook)
   require("scripts.lobby"),    -- Phase 3 start dialog, menu, results; match start / restart
   require("scripts.techgui"),  -- Phase 4 research panel (T)
+  require("scripts.ages"),      -- Phase 5 E1: ages and the Railway Charter (after research, supply, match)
+  require("scripts.districts"), -- Phase 5 E1: districts, oil, make targets, ledger data (after ages, production)
+  require("scripts.ledgergui"), -- Phase 5 E1: city ledger (L) and age badge (after hud: its styles)
   require("scripts.debug"),
 }
 

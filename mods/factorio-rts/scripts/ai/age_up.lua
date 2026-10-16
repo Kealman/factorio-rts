@@ -1,0 +1,165 @@
+-- Phase 5 E1: the AI's age-up and make targets in Nation mode (docs/PHASE5-M1.md section 2; the full economy planner
+-- is M3). ai/commander.lua calls age_up.step(C, surface) on every run while deps.ages.is_nation(); ai/tech.lua puts
+-- Industrialisation first in Nation mode. Numbers: balance.nation.economy.ai.
+--
+--   1. Factories: the commander's own factories (builder, workshops) are "fixed" (it sets their recipes,
+--      production.lua); one extra "works" factory, queued works_after seconds in, runs on Auto for the make targets.
+--   2. Make targets (every PERIOD): the capital template of the force's age (ai.capital[age]); while the Railway
+--      Charter runs, also what it still needs of the goods a factory makes (gears, circuits; steel and stone come from
+--      the lines). Other cities of the force (cities.lua) get ai.town.
+--   3. The Railway Charter: started on a spot layout.find_spot reserves near the CC once Industrialisation is done,
+--      started again when razed.
+--   4. Age II: the districts of ai.districts, one every district_gap seconds, near the CC (districts run on Auto).
+-- State: C.nation = {works_key, works_un, districts = {plan keys}, district_at, targets = {[item] = n}, next}.
+local util = require("scripts.util")
+local buildings = require("scripts.buildings")
+local production = require("scripts.production")
+local data = require("scripts.ai.orders_data")
+local layout = require("scripts.ai.layout")
+local construction = require("scripts.ai.construction")
+local deps = require("scripts.ai.deps")
+local balance = require("balance")
+
+local A = balance.nation.economy.ai
+
+local age_up = {}
+
+age_up.PERIOD = 5 * 60
+age_up.FACTORY_GOODS = {["iron-gear-wheel"] = true, ["electronic-circuit"] = true}
+age_up.CHARTER_CAP = 50 -- at most this much of a Charter good is a make target at once
+
+-- The builder factory makes the district items for the construction queue (orders_data.FACTORY_RECIPE).
+for _, name in ipairs(A.districts) do data.FACTORY_RECIPE[name] = name end
+
+local function plan_entity(C, key)
+  local e = key and C.plan[key]
+  if e and e.status == "built" and e.entity and e.entity.valid then return e.entity end
+  return nil
+end
+
+local function queue_building(C, surface, name)
+  local pos, pole = layout.find_spot(C, surface, name, "cc")
+  if not pos then return nil end
+  if pole then construction.queue(C, construction.add(C, {name = layout.POLE, x = pole.x, y = pole.y})) end
+  local key = construction.add(C, {name = name, x = pos.x, y = pos.y})
+  construction.queue(C, key)
+  util.log("ai %s: age-up: %s queued at %s (t=%ds)", C.force, name, util.pos_str(pos), (game.tick - C.started) / 60)
+  return key
+end
+
+-- Factory modes: own factories fixed, the works factory on Auto.
+local function factory_modes(C, N)
+  if N.works_un and not buildings.get(N.works_un) then N.works_un = nil end
+  if N.works_key and not N.works_un then
+    local e = plan_entity(C, N.works_key)
+    if e then N.works_un = e.unit_number end
+  end
+  for un, rec in buildings.for_force(C.force, "factory") do
+    if un == N.works_un then
+      if rec.recipe_mode ~= "auto" then production.set_auto(rec, true) end
+    elseif rec.recipe_mode == nil then
+      rec.recipe_mode = "fixed"
+    end
+  end
+end
+
+local function set_targets(C, N, city, want)
+  local districts = deps.districts
+  N.targets = N.targets or {}
+  local cur = districts.make_targets(city)
+  for item, n in pairs(want) do
+    if cur[item] ~= n then districts.set_make_target(city, item, n) end
+  end
+  for item in pairs(N.targets) do
+    if not want[item] and cur[item] then districts.set_make_target(city, item, nil) end
+  end
+  N.targets = want
+end
+
+local function capital_city(C)
+  local cc = buildings.main_cc(C.force)
+  return cc and deps.districts.city_of(cc.entity)
+end
+
+--- One pass (ai/commander.lua, every commander run in Nation mode).
+function age_up.step(C, surface)
+  local ages, districts = deps.ages, deps.districts
+  if not (ages and districts and ages.is_nation()) then return end
+  local N = C.nation
+  if not N then
+    N = {districts = {}}
+    C.nation = N
+  end
+  factory_modes(C, N)
+  if game.tick < (N.next or 0) then return end
+  N.next = game.tick + age_up.PERIOD
+  local secs = (game.tick - C.started) / 60
+  local age = ages.of(C.force)
+
+  -- 1. the works factory
+  if not N.works_key and secs >= A.works_after then N.works_key = queue_building(C, surface, "rts-factory") end
+
+  -- 2. make targets
+  local city = capital_city(C)
+  if city then
+    local want = {}
+    for item, n in pairs(A.capital[age] or {}) do want[item] = n end
+    local p = ages.project(C.force)
+    if age < 2 then
+      for item, n in pairs(ages.required()) do
+        local left = n - ((p and p.delivered[item]) or 0)
+        if left > 0 and age_up.FACTORY_GOODS[item] then
+          want[item] = math.max(want[item] or 0, math.min(left, age_up.CHARTER_CAP))
+        end
+      end
+    end
+    set_targets(C, N, city, want)
+    if A.town then
+      for _, c in ipairs(districts.cities(C.force)) do
+        if c.id ~= city then
+          local cur = districts.make_targets(c.id)
+          for item, n in pairs(A.town) do
+            if cur[item] ~= n then districts.set_make_target(c.id, item, n) end
+          end
+        end
+      end
+    end
+  end
+
+  -- 3. the Railway Charter
+  if age < 2 and ages.can_start(C.force) then
+    local pos = layout.find_spot(C, surface, ages.SITE, "cc")
+    local p, why = ages.start_project(C.force, pos)
+    util.log("ai %s: age-up: Railway Charter %s at %s (t=%ds)", C.force, p and "started" or ("refused: " .. tostring(why)),
+      util.pos_str(pos), secs)
+  end
+
+  -- 4. districts in Age II
+  if age >= 2 then
+    local name = A.districts[#N.districts + 1]
+    if name and game.tick >= (N.district_at or 0) then
+      local key = queue_building(C, surface, name)
+      if key then
+        N.districts[#N.districts + 1] = key
+        N.district_at = game.tick + A.district_gap * 60
+      end
+    end
+  end
+end
+
+--- "works #N auto, districts 2/3 built, targets [...]" (ai dump, autotest minute line).
+function age_up.describe(C)
+  local N = C.nation
+  if not N then return "-" end
+  local built = 0
+  for _, key in ipairs(N.districts) do
+    if plan_entity(C, key) then built = built + 1 end
+  end
+  local t = {}
+  for item, n in pairs(N.targets or {}) do t[#t + 1] = string.format("%s=%d", item, n) end
+  table.sort(t)
+  return string.format("works %s, districts %d/%d built, targets [%s]", N.works_un and ("#" .. N.works_un) or "-",
+    built, #N.districts, table.concat(t, " "))
+end
+
+return age_up

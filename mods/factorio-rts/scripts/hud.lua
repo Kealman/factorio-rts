@@ -131,6 +131,9 @@ local P4 = {
   FEED_PERIOD = 10, -- ticks; alert lines and kill feed (fading) refresh
   HELP_WIDTH = 640, HELP_LINES = 10, -- "How to play": rts.help-1 .. rts.help-10
   DEMOLISH_HEIGHT = 22, -- the building page's Demolish button (header row)
+  -- Phase 5 E1: the factory / district Auto button (recipe tag) and the Nation-only Age II build tab (two rows when it
+  -- holds more than BUILD_COLUMNS items; the frame grows upwards by BUILD_ROW per extra row)
+  AUTO = "*auto*", BUILD_ROW = 42, AGE2_TAB_WIDTH = 26, TAB_PADDING_NATION = 5, -- (the text tabs narrow a little)
 }
 P4.CARDS_WIDTH = P4.CARD_MAX * P4.CARD_SIZE + (P4.CARD_MAX - 1) * P4.CARD_SPACING -- 190
 -- Phase 5 M1 (scripts/cities.lua, scripts/territory.lua): build items and factory recipes shown in Nation mode only;
@@ -140,6 +143,7 @@ P4.nation = function()
   local m = storage.match
   return m ~= nil and m.config ~= nil and m.config.mode == "nation"
 end
+P4.crafter = function(kind) return kind == "factory" or kind == "district" end -- Phase 5 E1: districts are producers
 -- Recipe grid of a barracks / factory: Pause first, then the recipes (group, subgroup, recipe order), at most
 -- RECIPE_COLUMNS per row, so a new recipe never moves Pause and only shifts the recipes after it.
 local RECIPE_COLUMNS = 6
@@ -235,6 +239,11 @@ local BUILD_TABS = {
   {key = "defence", caption = "rts.build-tab-defence", tooltip = "rts.build-tab-defence-tooltip",
    items = {"rts-turret", "rts-laser-turret", "rts-wall", "rts-solar-array", "rts-steam-plant", "rts-accumulator",
             "rts-radar"}},
+  -- Phase 5 E1: Age II buildings, Nation mode only (an icon tab: the three text tabs fill the width in Russian)
+  {key = "age2", sprite = "item/rts-science-industrial", tooltip = "rts.build-tab-age2-tooltip", nation = true,
+   items = {"rts-pumpjack", "rts-refinery", "rts-chemical-plant", "rts-district-smelting", "rts-district-steel",
+            "rts-district-circuits", "rts-district-electronics", "rts-district-petrochem", "rts-district-engines",
+            "rts-district-munitions", "rts-district-rails", "rts-district-construction", "rts-district-science"}},
 }
 local BUILD_TAB_BY_KEY = {}
 for _, tab in ipairs(BUILD_TABS) do BUILD_TAB_BY_KEY[tab.key] = tab end
@@ -608,7 +617,8 @@ local function place(player, h)
   h.minimap.location = {mx, m + pad}
   h.minimap_frame.location = {mx - pad, m}
   h.panel.location = {m, res.height - px(PANEL_HEIGHT, s) - m}
-  h.build.location = {res.width - px(BUILD_WIDTH, s) - m, res.height - px(BUILD_HEIGHT, s) - m}
+  h.build.location = {res.width - px(BUILD_WIDTH, s) - m,
+                      res.height - px(BUILD_HEIGHT + (h.build_extra_rows or 0) * P4.BUILD_ROW, s) - m}
   -- Centred, but never under the minimap (at large UI scales on narrow windows the centred strip would reach it).
   local sw = px(STRIP_WIDTH, s)
   local sx = math.floor((res.width - sw) / 2 + 0.5)
@@ -830,7 +840,9 @@ end
 
 local function build_tab(player_index)
   local key = prefs(player_index).build_tab
-  return BUILD_TAB_BY_KEY[key] or BUILD_TABS[1]
+  local tab = BUILD_TAB_BY_KEY[key]
+  if tab and tab.nation and not P4.nation() then tab = nil end -- Phase 5: the Age II tab exists in Nation mode only
+  return tab or BUILD_TABS[1]
 end
 
 --- (Re)fill the build grid with the buttons of the player's current tab.
@@ -845,6 +857,19 @@ local function fill_build_grid(player_index, h)
                                       tags = {rts_hud = "build", item = item}})
   end
   for key, button in pairs(h.el.build_tabs or {}) do button.toggled = key == tab.key end
+  -- Phase 5 E1: a tab with more than BUILD_COLUMNS items takes more rows; the frame grows upwards
+  local extra = math.max(0, math.ceil(#build_items(tab) / BUILD_COLUMNS) - 1)
+  if h.build_extra_rows ~= extra then
+    h.build_extra_rows = extra
+    h.build.style.height = BUILD_HEIGHT + extra * P4.BUILD_ROW
+    local player = game.get_player(player_index)
+    if player then
+      local res, sc = player.display_resolution, player.display_scale
+      local m = math.floor(MARGIN * sc + 0.5)
+      h.build.location = {res.width - math.floor(BUILD_WIDTH * sc + 0.5) - m,
+                          res.height - math.floor((BUILD_HEIGHT + extra * P4.BUILD_ROW) * sc + 0.5) - m}
+    end
+  end
 end
 
 -- Build menu: "Build [B]" ...... "Q / right-click: done"; [Economy] [Production] [Defence]; one row of slot buttons.
@@ -862,9 +887,18 @@ local function build_build_menu(screen, h, player_index)
   tabs.style.horizontal_spacing = 2
   h.el.build_tabs = {}
   for _, tab in ipairs(BUILD_TABS) do
-    h.el.build_tabs[tab.key] = tabs.add({type = "button", name = PREFIX .. "build_tab_" .. tab.key,
-      style = "rts_hud_tab_button", caption = {tab.caption}, tooltip = {tab.tooltip},
-      tags = {rts_hud = "build_tab", tab = tab.key}})
+    if tab.sprite then -- Phase 5 E1: the Age II tab
+      local b = tabs.add({type = "sprite-button", name = PREFIX .. "build_tab_" .. tab.key, style = "rts_hud_tab_button",
+        sprite = tab.sprite, tooltip = {tab.tooltip}, tags = {rts_hud = "build_tab", tab = tab.key}})
+      b.style.width = P4.AGE2_TAB_WIDTH
+      b.style.padding = 0
+      b.visible = not tab.nation or P4.nation()
+      h.el.build_tabs[tab.key] = b
+    else
+      h.el.build_tabs[tab.key] = tabs.add({type = "button", name = PREFIX .. "build_tab_" .. tab.key,
+        style = "rts_hud_tab_button", caption = {tab.caption}, tooltip = {tab.tooltip},
+        tags = {rts_hud = "build_tab", tab = tab.key}})
+    end
   end
   local grid = frame.add({type = "table", column_count = BUILD_COLUMNS})
   grid.style.horizontal_spacing = 2
@@ -1151,7 +1185,7 @@ end
 ---------------------------------------------------------------------------
 local function rebuild_recipe_buttons(player, h, un, rec)
   local el = h.el
-  local factory = rec.kind == "factory"
+  local factory = P4.crafter(rec.kind) -- Phase 5 E1: districts too
   local columns = factory and P4.FACTORY_COLUMNS or RECIPE_COLUMNS
   local grid = el.b_columns == columns and el.b_buttons or new_recipe_grid(el, columns)
   grid.clear()
@@ -1173,6 +1207,11 @@ local function rebuild_recipe_buttons(player, h, un, rec)
   h.recipe_buttons[""] = grid.add({type = "sprite-button", name = PREFIX .. "recipe_pause",
     style = "rts_hud_recipe_button", sprite = "utility/pause", tooltip = {"rts.pause-tooltip"},
     tags = {rts_hud = "recipe", recipe = ""}})
+  if factory and P4.nation() then -- Phase 5 E1: Auto (make targets pick the recipe)
+    h.recipe_buttons[P4.AUTO] = grid.add({type = "sprite-button", name = PREFIX .. "recipe_auto",
+      style = "rts_hud_recipe_button", sprite = "utility/refresh", tooltip = {"rts.recipe-auto-tooltip"},
+      tags = {rts_hud = "recipe", recipe = P4.AUTO}})
+  end
   local names = {}
   for _, r in ipairs(machine_recipes(rec.entity)) do
     if not P4.NATION_ONLY[r.name] or P4.nation() then -- Phase 5 M1: Nation-only recipes
@@ -1197,11 +1236,11 @@ local function update_recipe_buttons(player, h, rec, active)
   local changed
   for name, button in pairs(h.recipe_buttons or {}) do
     if button.valid then
-      local lock = name ~= "" and recipe_lock(force, name) or false
+      local lock = name ~= "" and name ~= P4.AUTO and recipe_lock(force, name) or false
       local style = name == active and "rts_hud_recipe_button_active"
         or (lock and "rts_hud_recipe_button_locked" or "rts_hud_recipe_button")
       set_style(button, style)
-      if name ~= "" and h.recipe_locks[name] ~= lock then
+      if name ~= "" and name ~= P4.AUTO and h.recipe_locks[name] ~= lock then
         h.recipe_locks[name] = lock
         button.enabled = not lock or name == active
         button.tooltip = recipe_tooltip(prototypes.recipe[name], lock)
@@ -1257,7 +1296,7 @@ end
 
 local function update_producer(player, h, un, rec)
   local el = h.el
-  local factory = rec.kind == "factory"
+  local factory = P4.crafter(rec.kind) -- Phase 5 E1: districts too
   local line1, progress = factory and el.f_line1 or el.b_line1, factory and el.f_progress or el.b_progress
   local st = production.status(un) or {}
   local recipe = st.recipe and prototypes.recipe[st.recipe]
@@ -1268,9 +1307,14 @@ local function update_producer(player, h, un, rec)
     line1.caption = {"rts.paused"}
     line1.style.font_color = COLOR.dim
   end
+  if st.auto then line1.caption = {"rts.recipe-auto-line", line1.caption} end -- Phase 5 E1
   progress.visible = recipe ~= nil
   progress.value = math.max(0, math.min(1, st.progress or 0))
   update_recipe_buttons(player, h, rec, st.recipe or "")
+  local auto_button = h.recipe_buttons and h.recipe_buttons[P4.AUTO]
+  if auto_button and auto_button.valid then
+    set_style(auto_button, st.auto and "rts_hud_recipe_button_active" or "rts_hud_recipe_button")
+  end
   local stats = production.stats(rec.force)
   if not factory then
     -- Phase 4: a kit waiting for research or for supply takes the counters' line (research.block_of).
@@ -1420,7 +1464,7 @@ local function update_building(player, h, un, rec)
   el.b_hp.caption = max > 0 and {"rts.hp-value", math.floor(hp + 0.5), math.floor(max + 0.5)} or ""
   local ratio = max > 0 and hp / max or 1
   el.b_hp.style.font_color = ratio >= 0.66 and COLOR.green or (ratio >= 0.33 and COLOR.yellow or COLOR.red)
-  if rec.kind == "barracks" or rec.kind == "factory" then
+  if rec.kind == "barracks" or P4.crafter(rec.kind) then
     update_producer(player, h, un, rec)
   elseif rec.kind == "cc" then
     update_cc(player, h, un, rec)
@@ -1581,6 +1625,21 @@ local function update_build_menu(player, h)
   if not h.build.visible then return end
   local snap = snapshot(player.force.name)
   local ghost = cursor.ghost_name(player)
+  local nation = P4.nation() -- Phase 5 E1: the Age II tab follows the mode
+  if h.build_nation ~= nation then
+    h.build_nation = nation
+    for key, button in pairs(h.el.build_tabs or {}) do
+      local tab = BUILD_TAB_BY_KEY[key]
+      if tab.nation then
+        button.visible = nation
+        if not nation and prefs(player.index).build_tab == key then fill_build_grid(player.index, h) end
+      else
+        -- room for the Age II icon tab next to three text tabs (Russian captions fill the row)
+        button.style.left_padding = nation and P4.TAB_PADDING_NATION or 8
+        button.style.right_padding = nation and P4.TAB_PADDING_NATION or 8
+      end
+    end
+  end
   for item, button in pairs(h.build_buttons or {}) do
     if button.valid then
       local n = snap and snap.items[item] or 0
@@ -1895,6 +1954,13 @@ end
 function hud.recipe_click(player, recipe)
   local un, rec = selected_building(player)
   if not rec then return false end
+  if recipe == P4.AUTO then -- Phase 5 E1: toggle Auto
+    local on = not production.is_auto(rec)
+    local done = production.set_auto(un, on)
+    util.log("recipe auto %s#%d %s ok=%s player=%d", rec.kind, un, on and "on" or "off", tostring(done),
+      player.index)
+    return done
+  end
   local name = (recipe ~= nil and recipe ~= "") and recipe or nil
   local ok = production.set_recipe(un, name)
   local now = rec.entity.valid and rec.entity.get_recipe()
