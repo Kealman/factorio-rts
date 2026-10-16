@@ -1,9 +1,10 @@
 -- Phase 5 M1 protocol coordinates, GUI probe (test copy for tools/gui-run.sh with the self-test off; copy this file
 -- into the copy's scripts/ and append require("scripts.m1_docs_gui") to its control.lua). Run with RTS_LOCALE=en.
 -- Drives the real client through the functions the input handlers call, the way docs/qa/phase5-m1-protocol.md plays:
--- the lobby in Nation mode, the capital HUD, the city panel and list, the factory's tabs, the build menu tabs, a second
--- city, a hauler without coal and with a tank, depots, a line, a freight train, rolling stock, a division, the Railway
--- Charter and Age II, a district, the army surcharge, demolish (a barracks and the second city's City Center).
+-- the lobby in Nation mode, the capital HUD, the city panel and list (a make target through the item picker), the
+-- factory's tabs, the build menu tabs, a second city, a hauler without coal and with a tank, depots, a line, a freight
+-- train, rolling stock, a division, the Railway Charter and Age II, a district, the Age II ledger (Plastic bar through
+-- the picker), the army surcharge, demolish (a barracks and the second city's City Center).
 -- Screenshots rts-m1d-<tag>.png (1280x800, GUI on); log lines "[rts] m1d probe ..." and the stop marker
 -- RTS_M1D_GUI_DONE. Measures nothing by itself: the screenshots give the coordinates.
 local events = require("scripts.events")
@@ -195,11 +196,26 @@ snap("build-defence")
 step(function(player, P) hud.set_build_tab(player, "economy") return 30 end)
 snap("build-economy", nil, nil, 15, true)
 step(function(player, P)
-  -- a make target in the capital, then the capital panel again
+  -- a make target in the capital through the panel's item picker (QA round 1: scripts/itempicker.lua)
   P.capital_id = storage.nations[P.F].capital
-  cities.set_make_target(P.capital_id, "iron-gear-wheel", 20)
   selection.select_building(player.index, P.cc.unit_number)
   return 60
+end)
+step(function(player, P)
+  click(player, find(player.gui.screen, "rts_citygui_add"))
+  return 15
+end)
+snap("cc-picker", nil, nil, 15, true)
+step(function(player, P)
+  click(player, find(player.gui.screen.rts_itempicker, "rts_itempicker_pick_iron-gear-wheel"))
+  local tf = find(player.gui.screen, "rts_citygui_target_iron-gear-wheel")
+  if tf then
+    tf.text = "20"
+    events.dispatch(defines.events.on_gui_text_changed, {element = tf, player_index = player.index, text = "20",
+      name = defines.events.on_gui_text_changed})
+  end
+  note("capital targets %s", serpent.line(cities.make_targets(P.capital_id)))
+  return 30
 end)
 snap("cc-target")
 step(function(player, P)
@@ -481,6 +497,28 @@ end)
 snap("district-page")
 step(function(player, P) hud.recipe_click(player, "*auto*") return 60 end)
 snap("district-fixed")
+step(function(player, P)
+  -- QA round 1: the Age II ledger's item picker, Plastic bar 10 (protocol step 43)
+  selection.clear(player.index)
+  ledgergui.open(player)
+  local g = util.pstorage(player.index).ledger.gui
+  click(player, g and g.chooser)
+  return 15
+end)
+snap("ledger-age2-picker", nil, nil, 15, true)
+step(function(player, P)
+  local g = util.pstorage(player.index).ledger.gui
+  click(player, find(player.gui.screen.rts_itempicker, "rts_itempicker_pick_plastic-bar"))
+  if g then
+    g.amount.text = "10"
+    for _, el in pairs(g.amount.parent.children) do
+      if el.tags and el.tags.rts_ledger == "add" then click(player, el) end
+    end
+  end
+  return 120
+end)
+snap("ledger-age2-target", nil, nil, 15, true)
+step(function(player, P) ledgergui.close(player) return 15 end)
 step(function(player, P)
   selection.clear(player.index)
   camera.jump_to(player, P.home)
