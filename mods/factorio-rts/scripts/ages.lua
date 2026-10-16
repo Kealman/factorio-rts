@@ -68,8 +68,15 @@ end
 
 -- Recipes a force gets at Age II (static: balance data).
 ages.AGE2_RECIPES = {}
-for name in pairs(E.recipes) do ages.AGE2_RECIPES[#ages.AGE2_RECIPES + 1] = name end
-for name in pairs(E.buildings) do ages.AGE2_RECIPES[#ages.AGE2_RECIPES + 1] = name end
+-- Phase 5 M2 integration: the Rail works and its rail recipe unlock with Railways in Age I (scripts/rails.lua), so lines
+-- can open before minute 20; they are no Age II recipes
+ages.RAILWAYS_EARLY = {["rts-district-rails"] = true, ["rts-dra-rail"] = true}
+for name in pairs(E.recipes) do
+  if not ages.RAILWAYS_EARLY[name] then ages.AGE2_RECIPES[#ages.AGE2_RECIPES + 1] = name end
+end
+for name in pairs(E.buildings) do
+  if not ages.RAILWAYS_EARLY[name] then ages.AGE2_RECIPES[#ages.AGE2_RECIPES + 1] = name end
+end
 table.sort(ages.AGE2_RECIPES)
 for _, name in ipairs(ages.AGE2_RECIPES) do research.AGE_LOCKS[name] = "rts-age-2" end -- HUD: "locked: Age II"
 

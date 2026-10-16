@@ -149,9 +149,93 @@ function demolish.click(player, list)
   return result, n
 end
 
+---------------------------------------------------------------------------
+-- Phase 5 M2 integration: disband selected units (Nation mode). The bin button on the HUD's units page, or Delete with
+-- units and no building selected. Two presses like Demolish; the units are removed, their recruits go back to their
+-- home city (labor.disband; the nearest own city when it is gone), nothing else is refunded. The Commander stays.
+---------------------------------------------------------------------------
+local function nation()
+  local m = storage.match
+  return m ~= nil and m.config ~= nil and m.config.mode == "nation"
+end
+demolish.nation = nation
+
+-- Own disbandable units of the selection (unit numbers ascending), and how many Commanders were left out.
+local function disband_list(player_index)
+  local force = selection.force_name and selection.force_name(player_index)
+  local out, kept = {}, 0
+  for _, e in ipairs(selection.get(player_index)) do
+    local rec = storage.units[e.unit_number]
+    if rec and (not force or rec.force == force) then
+      if rec.kind == "commander" then kept = kept + 1 else out[#out + 1] = e.unit_number end
+    end
+  end
+  table.sort(out)
+  return out, kept
+end
+
+--- Press of the Disband button (or Delete with units selected). Returns "none" | "blocked" | "armed" | "done", n.
+--- QA log lines: "disband: armed|done player=N units=M ...".
+function demolish.disband(player_index)
+  if not nation() then return "none", 0 end
+  local list, kept = disband_list(player_index)
+  if #list == 0 then
+    if kept > 0 then
+      say(player_index, {"rts.disband-commander"})
+      return "blocked", 0
+    end
+    return "none", 0
+  end
+  local p = util.pstorage(player_index)
+  local key = table.concat(list, ",")
+  local st = p.disband
+  if not (st and st.key == key and game.tick - st.tick <= demolish.CONFIRM_TICKS) then
+    p.disband = {key = key, tick = game.tick}
+    say(player_index, {"rts.disband-armed", #list})
+    util.log("disband: armed player=%d units=%d", player_index, #list)
+    selection.notify_hud(player_index)
+    return "armed", #list
+  end
+  p.disband = nil
+  local labor = package.loaded["__" .. script.mod_name .. "__/scripts/labor.lua"] or package.loaded["scripts.labor"]
+  local n, back = 0, 0
+  for _, un in ipairs(list) do
+    local rec = storage.units[un]
+    if rec and rec.entity.valid then
+      local before = 0
+      if labor and labor.home_of then
+        local _, r = labor.home_of(un)
+        before = r or 0
+      end
+      local ok = labor and labor.disband and labor.disband(un)
+      if not ok and rec.entity.valid then
+        rec.entity.destroy({raise_destroy = true})
+        ok = true
+      end
+      if ok then
+        n = n + 1
+        back = back + before
+      end
+    end
+  end
+  if kept > 0 then say(player_index, {"rts.disband-commander"}) end
+  say(player_index, {"rts.disband-done", n, math.floor(back + 0.5)})
+  util.log("disband: done player=%d units=%d recruits back %.1f", player_index, n, back)
+  selection.notify_hud(player_index)
+  return "done", n
+end
+
+--- True while a Disband press waits for its second press (the HUD shows the bin armed).
+function demolish.disband_armed(player_index)
+  local st = util.pstorage(player_index).disband
+  return st ~= nil and game.tick - st.tick <= demolish.CONFIRM_TICKS
+end
+
 events.on("rts-demolish", function(e)
   if not real_player(e.player_index) then return end
-  demolish.request(e.player_index)
+  local result = demolish.request(e.player_index)
+  -- Phase 5 M2 integration: Delete with units (and no building) selected disbands them in Nation mode
+  if result == "none" and nation() and selection.count(e.player_index) > 0 then demolish.disband(e.player_index) end
 end)
 
 return demolish

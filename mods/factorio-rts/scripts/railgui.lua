@@ -212,7 +212,13 @@ local function refresh_depot(player, g)
     el.platform.style.font_color = COLOR.red
   end
   local st = rails.depot_stock(g.id) or {loco = 0, wagon = 0, cwagon = 0, rails = 0, coal = 0}
-  el.stock.caption = {"rts.railgui-stock", st.loco, st.wagon, st.cwagon, st.rails, st.coal}
+  local stock = {"rts.railgui-stock", st.loco, st.wagon, st.cwagon, st.rails, st.coal}
+  -- Phase 5 M2 integration: the troop wagon kits too (the troop train's Deploy needs one)
+  local tnet = rails.TWAGON_KIT and logistics.hub_network(g.id)
+  if tnet and tnet.valid then
+    stock = {"", stock, " | ", {"rts-war.troop-kits", tnet.get_item_count(rails.TWAGON_KIT)}}
+  end
+  el.stock.caption = stock
   local line = d.line and rails.lines[d.line]
   el.line.caption = line_caption(line)
   el.line.style.font_color = line and LINE_COLOR[line.state] or COLOR.white

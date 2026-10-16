@@ -291,6 +291,9 @@ local function build(player, g, ds, whole, form, bun, city)
   place(player, frame, el.list)
 end
 
+-- Phase 5 M2 integration: the card's state line in low (amber) and out of supply (red)
+local STATE_COLOR = {normal = {0.72, 0.72, 0.72}, low = {1, 0.75, 0.3}, out = {1, 0.42, 0.36}}
+
 local function update(g, ds)
   local el = g.el
   local ws = war_mod("warsupply") -- Phase 5 M2 war
@@ -309,12 +312,18 @@ local function update(g, ds)
       c.bar.style.color = health_color(ratio)
       c.bar.tooltip = {"rts-div.hp-tooltip", math.floor(ratio * 100 + 0.5)}
       c.state.caption = order_caption(D)
+      c.state.style.font_color = STATE_COLOR.normal
       if c.sp and c.sp.valid and ws then -- Phase 5 M2 war
         local sp = ws.sp(D.id)
         local st = ws.state(D.id)
         c.sp.value = sp / 100
         c.sp.style.color = SP_COLORS[st] or SP_COLORS.supplied
         c.sp.tooltip = {"rts-war.sp-tooltip", math.floor(sp + 0.5), {"rts-war.sp-state-" .. st}}
+        -- Phase 5 M2 integration: low / out of supply is written on the card (a tester cannot hover the bar)
+        if st ~= "supplied" then
+          c.state.caption = {"", order_caption(D), " · ", {"rts-war.sp-short-" .. st, math.floor(sp + 0.5)}}
+          c.state.style.font_color = STATE_COLOR[st] or STATE_COLOR.normal
+        end
       end
     end
   end

@@ -391,8 +391,10 @@ E.recipes = {
                           results = {["firearm-magazine"] = 15}, time = 4, order = "a"},
   ["rts-dmu-explosives"] = {category = "rts-district-munitions", cost = {coal = 4, ["iron-plate"] = 2},
                             results = {["rts-explosives"] = 4}, time = 4, order = "b"},
-  ["rts-dra-rail"] = {category = "rts-district-rails", cost = {["steel-plate"] = 4, stone = 2},
-                      results = {rail = 8}, time = 4, order = "a"}, -- vanilla rail (m1-rails' item)
+  -- vanilla rail (m1-rails' item). Phase 5 M2 integration: 3 rails per steel (the factory makes 2) and unlocked by
+  -- Railways in Age I (scripts/ages.lua RAILWAYS_EARLY)
+  ["rts-dra-rail"] = {category = "rts-district-rails", cost = {["steel-plate"] = 4, stone = 4},
+                      results = {rail = 12}, time = 4, order = "a"},
   ["rts-dra-beam"] = {category = "rts-district-rails", cost = {["steel-plate"] = 3},
                       results = {["rts-steel-beam"] = 4}, time = 3, order = "b"},
   ["rts-dco-concrete"] = {category = "rts-district-construction", cost = {["stone-brick"] = 5, stone = 2},
@@ -442,7 +444,9 @@ balance.nation.rails = {
   -- factory recipes (category rts-buildings), unlocked by the Railways technology
   depot = {cost = {["iron-plate"] = 40, ["steel-plate"] = 10, ["copper-plate"] = 10}, time = 10, health = 1500,
            supply_cap = 10},
-  rail = {cost = {["steel-plate"] = 2, ["stone"] = 1}, count = 2, time = 2},  -- recipe rts-rail -> 2 "rail"
+  -- recipe rts-rail -> 2 "rail" (Phase 5 M2 integration: 1 steel, was 2; steel was what kept AI lines closed until
+  -- minute 24-27)
+  rail = {cost = {["steel-plate"] = 1, ["stone"] = 1}, count = 2, time = 2},
   locomotive_kit = {cost = {["iron-plate"] = 40, ["steel-plate"] = 10, ["electronic-circuit"] = 10}, time = 10},
   cargo_wagon_kit = {cost = {["iron-plate"] = 20, ["steel-plate"] = 5}, time = 6},
   construction_wagon_kit = {cost = {["iron-plate"] = 30, ["steel-plate"] = 10}, time = 8},
@@ -682,7 +686,9 @@ balance.nation.diplomacy = {
   },
   victory = {
     step_ticks = 600,            -- wars.victory_step every 10 s
-    territory_share = 0.60, territory_minutes = 3,
+    -- Phase 5 M2 integration: 45 % of the claimable cells (60 % is about 53 % of a 2048 world, out of reach), or twice
+    -- the land of the next coalition with at least 3 % of the claimable cells (a capital and five towns), for 3 minutes
+    territory_share = 0.45, territory_lead = 2, territory_lead_min = 0.03, territory_minutes = 3,
     modes = {"conquest", "territory", "score"}, default_mode = "conquest",
     time_limits = {60, 90, 120, 0}, default_time_limit = 0, score_default_limit = 60, -- minutes; 0 = unlimited
   },
@@ -744,7 +750,11 @@ balance.nation.treasury = {
     -- capital Command Center, City Centers and trade posts (the state's own buildings), project sites
     skip_kinds = {wall = true, stockpile = true, solar = true, accumulator = true, train = true, project = true,
                   cc = true},
-    skip_names = {["rts-city-center"] = true, ["rts-trade-post"] = true},
+    skip_names = {["rts-city-center"] = true, ["rts-trade-post"] = true,
+                  -- Phase 5 M2 integration: homes and food pay no upkeep (residents already cost needs; a farm is
+                  -- labor, and the treasury curve must not punish feeding a city)
+                  ["rts-house"] = true, ["rts-apartment"] = true, ["rts-farm"] = true, ["rts-bakery"] = true,
+                  ["rts-fishing-hut"] = true},
     crafter_kinds = {factory = true, barracks = true, district = true},
   },
   army = {per_supply = 1, free = 0}, -- cr per supply point of military units per minute (haulers excluded)
@@ -870,7 +880,9 @@ balance.nation.world = {
   city_states = {[2] = 4, [3] = 5, [4] = 6},  -- per nation count: copper, the oil swamp, the coast, passes and fords
   city_state = {
     tier = 1,                                 -- village: 48 tiles of land (a town's 72 would reach the marching lines)
-    garrison = 4, garrison_every = 10 * 3600, garrison_max = 10, -- turrets: 4 + 1 per 10 minutes, at most 10
+    -- turrets: 6 + 1 per 8 minutes, at most 10 (Phase 5 M2 integration: 4 + 1 per 10 minutes fell to 2-3 passing units)
+    garrison = 6, garrison_every = 8 * 3600, garrison_max = 10,
+    armor = 0.5,                              -- its City Center heals back this share of every hit (2x effective HP)
     turret = "rts-turret", ring = 10,         -- around the City Center, fed from its network
     ammo_keep = 200,                          -- magazines kept in its network
     spawn_gap = 300, spacing = 200, port_gap = 150, -- tiles to spawns, other city-states, ports

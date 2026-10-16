@@ -58,6 +58,7 @@ local selection = require("scripts.selection")
 local buildings = require("scripts.buildings")
 local cursor = require("scripts.cursor")
 local diplomacy = require("scripts.diplomacy") -- Phase 5 M2 diplomacy: hostile(a, b), the only force-relation question
+local targeting = require("scripts.targeting") -- Phase 5 M2 integration: Nation attack-moves spare rails and poles
 
 local orders = {}
 
@@ -606,6 +607,7 @@ orders.refuse_peaceful = refuse_peaceful
 function orders.attack(who, target)
   if not (target and target.valid) then return 0 end
   if refuse_peaceful(who, target.force.name) then return 0 end -- Phase 5 M2 diplomacy
+  targeting.expose(target) -- Phase 5 M2 integration: an explicit attack may hit a protected rail, signal or pole
   local recs, n_div = resolve(who, "attack", target)
   local detail = string.format("target=#%s %s (%s) at %s", tostring(target.unit_number), target.name,
     target.force.name, util.pos_str(target.position))
@@ -637,8 +639,10 @@ function orders.attack_move(who, position)
     local slots = orders.formation(recs, center)
     for i, rec in ipairs(recs) do
       claim(rec, "attack_move", slots[i])
-      command(rec, {type = CMD.attack_area, destination = slots[i], radius = ATTACK_MOVE_RADIUS,
-                    distraction = DISTRACTION.by_anything})
+      -- Phase 5 M2 integration: Nation mode walks with by_enemy (targeting.lua); raiders and Skirmish as before
+      command(rec, targeting.leg(rec.entity.name, slots[i])
+        or {type = CMD.attack_area, destination = slots[i], radius = ATTACK_MOVE_RADIUS,
+            distraction = DISTRACTION.by_anything})
     end
     bump(ostate().stats.issued, "attack_move", #recs)
   end
@@ -673,8 +677,9 @@ end
 
 -- Re-issue the current attack-move leg towards rec.dest (it was cut short by a distraction).
 local function resume_attack_move(rec)
-  command(rec, {type = CMD.attack_area, destination = rec.dest, radius = ATTACK_MOVE_RADIUS,
-                distraction = DISTRACTION.by_anything})
+  command(rec, targeting.leg(rec.entity.name, rec.dest) -- Phase 5 M2 integration
+    or {type = CMD.attack_area, destination = rec.dest, radius = ATTACK_MOVE_RADIUS,
+        distraction = DISTRACTION.by_anything})
   local stats = ostate().stats
   stats.resumed = (stats.resumed or 0) + 1
 end
@@ -689,16 +694,18 @@ local function retarget(rec)
     enemy = last -- throttled (Phase 5): keep the enemy found less than a second ago
   else
     rec.retarget_tick = tick
-    enemy = entity.surface.find_nearest_enemy({position = entity.position, max_distance = RETARGET_RANGE,
-                                               force = entity.force})
+    -- Phase 5 M2 integration: in Nation mode the nearest military enemy, else an enemy building close by
+    enemy = targeting.next_enemy(entity.surface, entity.position, entity.force, RETARGET_RANGE,
+                                 targeting.careful(entity.name))
   end
   if not enemy then
     release(rec)
     return false
   end
   rec.target, rec.dest = enemy, pos_of(enemy.position)
-  command(rec, {type = CMD.attack_area, destination = rec.dest, radius = ATTACK_MOVE_RADIUS,
-                distraction = DISTRACTION.by_anything})
+  command(rec, targeting.strike(entity.name, enemy) -- Phase 5 M2 integration: that enemy, not the rails beside it
+    or {type = CMD.attack_area, destination = rec.dest, radius = ATTACK_MOVE_RADIUS,
+        distraction = DISTRACTION.by_anything})
   local stats = ostate().stats
   stats.retargets = stats.retargets + 1
   return true
@@ -969,6 +976,8 @@ local function done_waiting(rec)
   if rec.order ~= "attack_move" or not rec.dest or util.distance(entity, rec.dest) > ATTACK_MOVE_RADIUS then
     return false
   end
+  -- Phase 5 M2 integration: a unit striking a building (not a military target) is not done while it stands
+  if rec.target and rec.target.valid and targeting.careful(entity.name) then return false end
   return entity.surface.find_nearest_enemy({position = entity.position, max_distance = RETARGET_RANGE,
                                             force = entity.force}) == nil
 end

@@ -42,7 +42,10 @@ cities.CENTER = "rts-city-center"
 cities.POWER = "rts-city-power"
 cities.CHARTER = "rts-city-charter"
 cities.CHECK_PERIOD = 600          -- ticks between the tier checks of one city
-cities.NAMES = 12                  -- default names rts.city-name-1 .. 12
+cities.NAMES = 24                  -- default names rts.city-name-1 .. 24 (Phase 5 M2 integration: 12 -> 24)
+-- Phase 5 M2 integration: one name counter for every nation (each nation's first town was "Ironford"); city-states
+-- keep their own titles and counter
+local function name_key(force_name) return force_name == "rts-neutral" and force_name or "*" end
 cities.LOST_ALERT_PERIOD = 30 * 60 -- "territory lost" at most this often per force
 cities.LOST_ALERT_MIN = 4          -- cells
 cities.SKIP_KINDS = {wall = true, stockpile = true} -- not counted for the tier-up
@@ -222,8 +225,9 @@ local function register(entity, opts)
   local tier = opts.tier or (capital and CB.capital_tier or 1)
   local name_index = 0
   if not capital then
-    S.names[force_name] = (S.names[force_name] or 0) + 1
-    name_index = S.names[force_name]
+    local k = name_key(force_name)
+    S.names[k] = (S.names[k] or 0) + 1
+    name_index = S.names[k]
   end
   local p = entity.position
   local c = {id = id, force = force_name, name_index = name_index, capital = capital or nil,
@@ -346,8 +350,9 @@ function cities.change_owner(city_id, force_name, opts)
   if c.archetype == "capital" then c.archetype = "city" end
   if was_capital or (c.name_index or 0) == 0 then -- a capital has no city name of its own: it gets one of the winner
     local S = cstate()
-    S.names[force_name] = (S.names[force_name] or 0) + 1
-    c.name_index = S.names[force_name]
+    local k = name_key(force_name)
+    S.names[k] = (S.names[k] or 0) + 1
+    c.name_index = S.names[k]
   end
   local nation = storage.nations[force_name]
   if not (nation and nation.capital and cities.get(nation.capital)) then
@@ -395,18 +400,60 @@ buildings.on_removed(function(un)
 end)
 
 -- Phase 5 M1 integration: the capital's centre (CC or City Center) heals back balance.nation.cities.capital_armor of
--- every hit (the shared on_entity_damaged filter of scripts/research.lua lists every RTS building)
+-- every hit (the shared on_entity_damaged filter of scripts/research.lua lists every RTS building).
+-- Phase 5 M2 integration: a city-state's centre (archetype "city_state" while rts-neutral holds it) heals back
+-- balance.nation.world.city_state.armor (2x effective HP): 2-3 passing units took them before.
+local CS_ARMOR = balance.nation.world and balance.nation.world.city_state and balance.nation.world.city_state.armor
 events.on(defines.events.on_entity_damaged, function(e)
   local entity = e.entity
   if not (entity and entity.valid and e.final_health > 0 and storage.cities) then return end
-  local share = CB.capital_armor
-  if not share or share <= 0 or e.damage_type.name == "rts-attrition" then return end
+  if e.damage_type.name == "rts-attrition" then return end
   local un = entity.unit_number
   local id = un and storage.city_state and storage.city_state.by_center[un]
   local c = id and storage.cities[id]
-  if not (c and c.capital) then return end
+  if not c then return end
+  local share
+  if c.capital then
+    share = CB.capital_armor
+  elseif c.archetype == "city_state" and c.force == "rts-neutral" then
+    share = CS_ARMOR
+  end
+  if not share or share <= 0 then return end
   entity.health = entity.health + e.final_damage_amount * share
 end)
+
+-- Phase 5 M2 integration: attacks on a city (the city panel's "under attack" line and the list, the AI's relief). An own
+-- registered building on the city's land damaged by another force records {tick, position, by} at most every
+-- ATTACK_THROTTLE ticks per city. storage.city_attacks = {[city_id] = {tick, position, by}}, cleared at teardown.
+cities.ATTACK_THROTTLE = 30
+events.on(defines.events.on_entity_damaged, function(e)
+  local entity = e.entity
+  local by = e.force
+  if not (entity and entity.valid and by and storage.cities and buildings.KIND_BY_NAME[entity.name]) then return end
+  if by.name == entity.force.name or e.damage_type.name == "rts-attrition" then return end
+  local id = territory.city_at(entity.position)
+  local c = id and storage.cities[id]
+  if not (c and c.force == entity.force.name) then return end
+  local A = storage.city_attacks
+  if not A then
+    A = {}
+    storage.city_attacks = A
+  end
+  local last = A[id]
+  if last and game.tick - last.tick < cities.ATTACK_THROTTLE then return end
+  local p = entity.position
+  A[id] = {tick = game.tick, position = {x = p.x, y = p.y}, by = by.name, owner = c.force}
+end)
+
+--- The last attack on a city within `window` ticks (default 30 s): {tick, position, by, owner} or nil. An attack on the
+--- city's previous owner (before a capture) does not count.
+function cities.under_attack(city_id, window)
+  local a = storage.city_attacks and storage.city_attacks[city_id]
+  if not a or game.tick - a.tick > (window or 1800) then return nil end
+  local c = storage.cities and storage.cities[city_id]
+  if not c or a.owner ~= c.force then return nil end
+  return a
+end
 
 logistics.NAME_HOOKS[cities.CENTER] = function(un)
   local c = cities.of_center(un)
@@ -682,6 +729,7 @@ match.on_teardown(function()
   storage.cities = {}
   storage.nations = {}
   storage.city_state = nil
+  storage.city_attacks = nil -- Phase 5 M2 integration
   cstate()
 end)
 

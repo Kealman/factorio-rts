@@ -239,7 +239,7 @@ function territory.claimable_cells(force_name)
 end
 
 --- Fraction of the claimable cells a force owns. Phase 5 M2 world: claimable = land and marsh cells off the map rim
---- (world.claimable_count); M1 counted every grid cell, so the Territory victory's 60 % was out of reach.
+--- (world.claimable_count); M1 counted every grid cell, so the Territory victory's share was out of reach.
 function territory.share(force_name)
   local T = grid()
   if not T then return 0 end

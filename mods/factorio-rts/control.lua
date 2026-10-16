@@ -77,6 +77,10 @@ local modules = {
   require("scripts.debug"),
 }
 
+-- Phase 5 M2 integration: the protected rails, signals and poles join the shared on_entity_damaged filter after every
+-- module set its part of it (scripts/research.lua, scripts/abilities.lua)
+require("scripts.targeting").install_damage_filters()
+
 for _, module in ipairs(modules) do
   if module.init then
     events.on_init(module.init)

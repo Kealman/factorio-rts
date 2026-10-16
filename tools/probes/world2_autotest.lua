@@ -1,7 +1,7 @@
 -- Phase 5 M2 world functional probe (test copy only; tools/autotest-run.sh with EXTRA_LUA=tools/probes/world2_autotest.lua
 -- and a Nation match table, STOP_ON='world2 autotest summary'). Once the world's fill is done it checks what the seed
 -- matrix does not: the Geology gate on uranium (an extractor ghost of rts-player over uranium is refused, accepted
--- after Geology), city-state garrison growth (4 + 1 per 10 minutes) and its magazines, region names for alerts, the
+-- after Geology), city-state garrison growth (6 + 1 per 8 minutes since the M2 integration) and its magazines, region names for alerts, the
 -- strategic label API (a route label with a line; remove), the region record (owner share of the home region, bbox,
 -- sites), the scarcity record, and the per-force label counts after a refresh. Log lines "[rts] world2 autotest ...",
 -- checks "[rts] autotest check w2_<name>: PASS|FAIL", the last line "[rts] world2 autotest summary P/T".

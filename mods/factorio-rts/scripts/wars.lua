@@ -28,8 +28,8 @@
 --
 -- Victory (D6, lobby: Victory = Conquest | Territory | Score, Time limit = 60 | 90 | 120 | unlimited): Conquest is
 -- always on (every nation outside the winner's alliance eliminated or its original capital held by the alliance; an
--- alliance of every remaining nation wins together), Territory adds 60 % of the claimable cells held by an alliance
--- for 3 minutes, and at the time limit the highest score wins (with its allies; a tie is a draw). Annihilation stays
+-- alliance of every remaining nation wins together), Territory adds 45 % of the claimable cells held by an alliance
+-- for 3 minutes, or twice the land of the next alliance with at least 3 % (Phase 5 M2 integration), and at the time limit the highest score wins (with its allies; a tie is a draw). Annihilation stays
 -- match.lua's fallback.
 --
 -- Owns storage.wars = {[id] = W} and storage.war_meta = {next_id, first_capital = {[force] = city_id}, holder =
@@ -719,18 +719,35 @@ function wars.victory_step()
       return how
     end
   end
-  -- Territory: an alliance holds VB.territory_share of the claimable cells for VB.territory_minutes
+  -- Territory: an alliance holds VB.territory_share of the claimable cells for VB.territory_minutes.
+  -- Phase 5 M2 integration: or VB.territory_lead times the land of the next coalition, with at least
+  -- VB.territory_lead_min of the claimable cells (four nations of ten cities own about 20 % of a 2048 world, so a share
+  -- alone is out of reach before the late game; the lead rule lets a conqueror win).
   local M = meta()
   if c.victory == "territory" then
     local territory = loaded("scripts.territory")
-    local best, best_share, best_list
+    local coals, seen = {}, {}
     for _, x in ipairs(alive) do
       local _, list = coalition(x, alive)
       table.sort(list)
-      local share = 0
-      for _, f in ipairs(list) do share = share + (territory and territory.share and territory.share(f) or 0) end
-      if share >= VB.territory_share and (not best_share or share > best_share) then
-        best, best_share, best_list = table.concat(list, "+"), share, list
+      local key = table.concat(list, "+")
+      if not seen[key] then
+        seen[key] = true
+        local share = 0
+        for _, f in ipairs(list) do share = share + (territory and territory.share and territory.share(f) or 0) end
+        coals[#coals + 1] = {key = key, list = list, share = share}
+      end
+    end
+    local best, best_share, best_list
+    for _, k in ipairs(coals) do
+      local next_share = 0
+      for _, o in ipairs(coals) do
+        if o.key ~= k.key and o.share > next_share then next_share = o.share end
+      end
+      k.next = next_share
+      local lead = k.share >= (VB.territory_lead_min or 1) and k.share >= (VB.territory_lead or math.huge) * next_share
+      if (k.share >= VB.territory_share or lead) and (not best_share or k.share > best_share) then
+        best, best_share, best_list = k.key, k.share, k.list
       end
     end
     if best then

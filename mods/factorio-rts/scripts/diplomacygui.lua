@@ -105,7 +105,7 @@ local function add_nation_row(tbl, me, f)
   local name = tbl.add({type = "label", caption = diplomacy.label(f)})
   name.style.font = "default-bold"
   name.style.font_color = force_color(f)
-  name.style.width = 90
+  name.style.width = 150 -- Phase 5 M2 integration: "Free City of X" was cut at 90
   r.state = tbl.add({type = "label", caption = ""})
   r.state.style.width = 80
   local rel = tbl.add({type = "flow", direction = "horizontal"})
@@ -134,7 +134,7 @@ local function add_city_state_row(tbl, c)
   local cities = loaded("scripts.cities")
   local name = tbl.add({type = "label", caption = {"", "[img=utility/warning_icon] ",
     cities and cities.display_name(c) or tostring(c.id)}, tooltip = {"rts.diplomacy-city-state-tooltip"}})
-  name.style.width = 90
+  name.style.width = 150 -- Phase 5 M2 integration
   name.style.font_color = force_color(diplomacy.NEUTRAL)
   local st = tbl.add({type = "label", caption = {"rts.diplomacy-state-war"}, tooltip = {"rts.diplomacy-city-state-tooltip"}})
   st.style.font_color = COLOR.war

@@ -140,7 +140,8 @@ end
 
 -- Research (scripts/research.lua): Railways unlocks the depot, rails and kits; Bridges lets the planner fly over water.
 -- Both technologies are Nation-only.
-local UNLOCKS = {rails.DEPOT, "rts-rail", rails.LOCO_KIT, rails.WAGON_KIT, rails.CWAGON_KIT}
+local UNLOCKS = {rails.DEPOT, "rts-rail", rails.LOCO_KIT, rails.WAGON_KIT, rails.CWAGON_KIT,
+                 "rts-district-rails", "rts-dra-rail"} -- Phase 5 M2 integration: the Rail works in Age I (scripts/ages.lua)
 if research then
   research.EFFECTS["rts-railways"] = {unlock = UNLOCKS}
   research.EFFECTS["rts-bridges"] = {flag = "bridges"}

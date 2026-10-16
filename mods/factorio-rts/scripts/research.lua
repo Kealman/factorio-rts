@@ -318,10 +318,18 @@ function research.apply(force)
   r.hub_robots[name] = t.hub_robots > 0 and t.hub_robots or nil
   r.armor[name] = t.armor > 0 and t.armor or nil
   r.mk2[name] = t.mk2 or nil
-  for _, recipe_name in ipairs(d.locked_recipes) do
-    local recipe = force.recipes[recipe_name]
-    local want = t.unlocked[recipe_name] == true
-    if recipe and recipe.enabled ~= want then recipe.enabled = want end
+  -- Phase 5 M2 integration: every locked recipe of research.LOCKS as it is now. The cached d.locked_recipes was built
+  -- before scripts/rails.lua added the Railways unlocks, so Railways never enabled the depot, rail and kit recipes for
+  -- the factory (the AI pays them from plates, the M1 protocol gave them by console; probe: recipe disabled after
+  -- research.apply, is_unlocked true).
+  local recipes = force.recipes
+  for recipe_name in pairs(research.LOCKS) do
+    local proto = prototypes.recipe[recipe_name]
+    local recipe = proto and not proto.enabled and recipes[recipe_name]
+    if recipe then
+      local want = t.unlocked[recipe_name] == true
+      if recipe.enabled ~= want then recipe.enabled = want end
+    end
   end
   -- Phase 5 E1: Nation-only technologies exist in Nation mode only
   local nation = research.is_nation ~= nil and research.is_nation() or false

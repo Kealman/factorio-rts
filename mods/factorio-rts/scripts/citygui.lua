@@ -26,6 +26,8 @@ local cities = require("scripts.cities")
 local demolish = require("scripts.demolish") -- Phase 5 M1 integration: the panel's Demolish button
 local hubgui = require("scripts.hubgui") -- Phase 5 M1 integration: its title follows a rename
 local itempicker = require("scripts.itempicker") -- QA round 1: the make-target picker
+local match = require("scripts.match") -- Phase 5 M2 integration: the capturing nation's name
+local CAPTURE_TICKS = require("balance").nation.war.capture.ticks -- Phase 5 M2 integration
 
 local citygui = {}
 
@@ -144,7 +146,8 @@ local function build_people(frame, el, c)
     caption = {"rts-people.citygui-priorities"}, tooltip = {"rts-people.citygui-priorities-tooltip"},
     tags = {rts_citygui = "prio_toggle", city = c.id}})
   el.p_prio_toggle.style.height = 24
-  el.p_prio = frame.add({type = "table", column_count = 3})
+  -- Phase 5 M2 integration: two families per row (nine rows pushed the panel over the ability bar at 1280x800)
+  el.p_prio = frame.add({type = "table", column_count = 6})
   el.p_prio.style.horizontal_spacing = 4
   el.p_prio.style.vertical_spacing = 0
   el.p_prio_key = nil
@@ -165,7 +168,7 @@ local function refresh_priorities(g, c, open)
   for i, fam in ipairs(list) do
     local l = tbl.add({type = "label", style = "rts_hud_label", caption = {"rts-people.citygui-priority-row", i,
                        family_name(fam)}, tooltip = {"rts-people.family-" .. fam .. "-tooltip"}})
-    l.style.width = WIDTH - 90
+    l.style.width = math.floor(WIDTH / 2) - 62
     tbl.add({type = "sprite-button", name = PREFIX .. "prio_up_" .. fam, sprite = "utility/hint_arrow_up",
              style = "frame_action_button", tooltip = {"rts-people.citygui-priority-up"},
              tags = {rts_citygui = "prio_up", city = c.id, family = fam}}).enabled = i > 1
@@ -289,6 +292,18 @@ local function build_panel(player, g, c)
   row.add({type = "empty-widget", style = "rts_hud_filler"})
   row.add({type = "sprite-button", name = PREFIX .. "close", sprite = "utility/close", style = "frame_action_button",
            tooltip = {"rts.citygui-close"}, tags = {rts_citygui = "close"}})
+  -- Phase 5 M2 integration: "Under attack" (the last 30 s, or the centre subdued / being captured) and a Jump button
+  local attack = frame.add({type = "flow", direction = "horizontal", style = "rts_hud_row"})
+  el.attack_row = attack
+  el.attack = attack.add({type = "label", style = "rts_hud_label", caption = ""})
+  el.attack.style.font_color = COLOR.red
+  el.attack.style.maximal_width = WIDTH - 80
+  attack.add({type = "empty-widget", style = "rts_hud_filler"})
+  el.attack_jump = attack.add({type = "button", name = PREFIX .. "attack_jump", style = "rts_hud_button",
+    caption = {"rts.citygui-attack-jump"}, tooltip = {"rts.citygui-attack-jump-tooltip"},
+    tags = {rts_citygui = "attack_jump", city = c.id}})
+  el.attack_jump.style.height = 24
+  attack.visible = false
   local rename = frame.add({type = "flow", direction = "horizontal", style = "rts_hud_row"})
   el.name = rename.add({type = "textfield", name = PREFIX .. "name", text = c.name or "", lose_focus_on_confirm = true,
     tooltip = {"rts.citygui-rename-tooltip"}, tags = {rts_citygui = "name", city = c.id}})
@@ -324,11 +339,37 @@ local function build_panel(player, g, c)
   place_panel(player, frame)
 end
 
+-- Phase 5 M2 integration: what the "under attack" line says for city c (own cities only), or nil.
+local function attack_text(c)
+  local cap = package.loaded["__" .. script.mod_name .. "__/scripts/capture.lua"]
+  local cs = cap and cap.of and cap.of(c.id)
+  if cs and cs.subdued then
+    if cs.capturing and cs.progress then
+      return {"rts.citygui-attack-capture", match.label(cs.capturing),
+              math.floor(100 * cs.progress / math.max(1, CAPTURE_TICKS))}
+    end
+    return {"rts.citygui-attack-subdued"}
+  end
+  local a = cities.under_attack(c.id)
+  if a then return {"rts.citygui-attack", math.floor((game.tick - a.tick) / 60)} end
+  return nil
+end
+
+local function attack_position(c)
+  local a = storage.city_attacks and storage.city_attacks[c.id]
+  return a and a.position or c.position
+end
+
 local function refresh_panel(player, g)
   local c = cities.get(g.city)
   if not c then return false end
   local el = g.el
   el.title.caption = {"rts.citygui-title", cities.display_name(c), tier_name(c.tier)}
+  if el.attack_row and el.attack_row.valid then -- Phase 5 M2 integration
+    local text = c.force == player.force.name and attack_text(c) or nil
+    el.attack_row.visible = text ~= nil
+    if text then el.attack.caption = text end
+  end
   el.tier.caption = {"rts.citygui-tier", tier_name(c.tier), c.radius, c.capital and {"rts.citygui-capital"} or ""}
   -- the nation's age: storage.ages (scripts/ages.lua, m1-economy), else storage.nations[force].age
   local ages = storage.ages and storage.ages[c.force]
@@ -382,6 +423,8 @@ local function show_panel(player, force_rebuild)
   local key = c and ("sel:" .. c.id) or nil
   if not c and g.pinned then
     c = cities.get(g.pinned)
+    -- Phase 5 M2 integration: a pinned city that changed hands (captured) closes its panel
+    if c and c.force ~= player.force.name then c = nil end
     key = c and ("pin:" .. c.id) or nil
     if not c then g.pinned = nil end
   end
@@ -455,6 +498,11 @@ local function show_list(player)
     local r = g.list_rows[c.id]
     if r and r.info.valid then
       r.info.caption = {"rts.citygui-list-row", tier_name(c.tier), territory.city_cells(c.id)}
+      -- Phase 5 M2 integration: a city under attack (or subdued) is marked; the button jumps to the attack
+      -- (a red caption was unreadable on the grey button: a danger icon before the name instead)
+      local hit = attack_text(c) ~= nil
+      r.jump.caption = hit and {"", "[img=utility/danger_icon] ", cities.display_name(c)} or cities.display_name(c)
+      r.jump.tooltip = hit and {"rts.citygui-jump-attack-tooltip"} or {"rts.citygui-jump-tooltip"}
     end
   end
   if g.list_share and g.list_share.valid then
@@ -546,7 +594,11 @@ events.on(defines.events.on_gui_click, function(e)
     show_panel(player, true)
   elseif action == "jump" then
     local c = cities.get(tags.city)
-    if c then camera.jump_to(player, c.position) end
+    -- Phase 5 M2 integration: a city under attack jumps to the attack
+    if c then camera.jump_to(player, attack_text(c) and attack_position(c) or c.position) end
+  elseif action == "attack_jump" then -- Phase 5 M2 integration
+    local c = cities.get(tags.city)
+    if c then camera.jump_to(player, attack_position(c)) end
   elseif action == "open" then
     citygui.open(player, tags.city)
   elseif action == "prio_toggle" then -- Phase 5 M2 people

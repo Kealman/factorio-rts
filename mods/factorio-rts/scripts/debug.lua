@@ -32,6 +32,7 @@ local basetemplate = require("scripts.basetemplate")
 local ai_autotest = require("scripts.ai.autotest")
 local lobby = require("scripts.lobby")
 local fog = require("scripts.fog")
+local balance = require("balance") -- Phase 5 M2 integration: /rts-supply
 
 local debug_tools = {}
 
@@ -1303,6 +1304,12 @@ local function command_force(cmd)
   return player and player.force.name or PLAYER
 end
 
+-- Phase 5 M2 integration: modules loaded before this one (control.lua lists debug last), looked up at run time
+local function loaded_module(name)
+  local l = package.loaded
+  return l["__" .. script.mod_name .. "__/" .. string.gsub(name, "%.", "/") .. ".lua"] or l[name]
+end
+
 local COMMANDS = {
   ["rts-spawn"] = {
     help = "<name> <count> <force> - spawn RTS units at the camera (or the force's spawn)",
@@ -1509,6 +1516,96 @@ local COMMANDS = {
       reply(cmd, string.format("rts-wave-timing: first wave %.0fs after the armies spawn, then every %.0fs; next %s",
         c.first_wave_ticks / 60, c.wave_period_ticks / 60, m.enemy_next_wave
         and string.format("in %.0fs", (m.enemy_next_wave - game.tick) / 60) or "not scheduled"))
+    end,
+  },
+  -- Phase 5 M2 integration: QA shortcuts for the M2 GUI protocol (docs/qa/phase5-m2-protocol.md)
+  ["rts-supply"] = {
+    help = "<sp> [division id] - set the supply points of your divisions (or one), 0..100 (admin, QA)",
+    run = function(cmd)
+      if not admin_only(cmd) then return end
+      local args = {}
+      for word in string.gmatch(cmd.parameter or "", "%S+") do args[#args + 1] = word end
+      local sp, id = tonumber(args[1] or ""), tonumber(args[2] or "")
+      local divisions = loaded_module("scripts.divisions")
+      if not (sp and divisions) then
+        reply(cmd, "rts-supply: usage /rts-supply <0..100> [division id]")
+        return
+      end
+      local W = balance.nation.war
+      sp = math.max(0, math.min(W.sp_max, sp))
+      local force_name, n = command_force(cmd), 0
+      for _, D in ipairs(divisions.for_force(force_name)) do
+        if not id or D.id == id then
+          D.sp = sp
+          n = n + 1
+        end
+      end
+      reply(cmd, string.format("rts-supply: %d division(s) of %s set to %d SP", n, force_name, sp))
+    end,
+  },
+  ["rts-goto"] = {
+    help = "<city-state|port|ai> - move the camera to the nearest city-state, trade port or rival city (QA)",
+    run = function(cmd)
+      local player = cmd.player_index and game.get_player(cmd.player_index)
+      if not player then return end
+      local what = (cmd.parameter or ""):match("^%s*(%S+)") or "city-state"
+      local cities, world, market = loaded_module("scripts.cities"), loaded_module("scripts.world"),
+        loaded_module("scripts.market")
+      local from = player.position
+      local best, bd
+      local function consider(pos)
+        if not pos then return end
+        local d = util.distance(from, pos)
+        if not bd or d < bd then best, bd = pos, d end
+      end
+      if what == "city-state" and world and cities then
+        for _, rec in ipairs(world.city_states()) do
+          local c = rec.city_id and cities.get(rec.city_id)
+          if c and c.force == "rts-neutral" then consider(c.position) end
+        end
+      elseif what == "port" and market then
+        for _, p in ipairs(market.all_ports()) do consider(p.entity.position) end
+      elseif what == "ai" and cities then
+        for _, c in pairs(storage.cities or {}) do
+          if c.force ~= player.force.name and match.is_participant(c.force) then consider(c.position) end
+        end
+      else
+        reply(cmd, "rts-goto: usage /rts-goto city-state|port|ai")
+        return
+      end
+      if not best then
+        reply(cmd, "rts-goto: no " .. what .. " found")
+        return
+      end
+      camera.jump_to(player, best)
+      reply(cmd, string.format("rts-goto: %s at %s (%d tiles)", what, util.pos_str(best), math.floor(bd + 0.5)))
+    end,
+  },
+  ["rts-diplomacy"] = {
+    help = "[propose <from> <to> <peace|ceasefire|alliance>] - list states and relations, or make a proposal (admin, QA)",
+    run = function(cmd)
+      local diplomacy = loaded_module("scripts.diplomacy")
+      if not diplomacy then return end
+      local args = {}
+      for word in string.gmatch(cmd.parameter or "", "%S+") do args[#args + 1] = word end
+      if args[1] == "propose" then
+        if not admin_only(cmd) then return end
+        local from, to, kind = args[2], args[3], args[4] or "peace"
+        local terms = kind == "peace" and {kind = "white"} or {}
+        local id, why = diplomacy.propose(from, to, kind, terms)
+        reply(cmd, id and string.format("rts-diplomacy: proposal #%d %s %s -> %s", id, kind, tostring(from), tostring(to))
+          or string.format("rts-diplomacy: proposal %s %s -> %s refused (%s)", kind, tostring(from), tostring(to),
+            tostring(why)))
+        return
+      end
+      local list = diplomacy.nations()
+      for i, a in ipairs(list) do
+        for j = i + 1, #list do
+          local b = list[j]
+          reply(cmd, string.format("rts-diplomacy: %s - %s: %s, relation %d / %d", a, b, tostring(diplomacy.state(a, b)),
+            math.floor(diplomacy.relation(a, b) + 0.5), math.floor(diplomacy.relation(b, a) + 0.5)))
+        end
+      end
     end,
   },
   ["rts-autotest"] = {

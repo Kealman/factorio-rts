@@ -130,6 +130,10 @@ local P4 = {
   KILL_WIDTH = 260, KILL_SHOWN = 5, KILL_TICKS = 20 * 60, KILL_FADE_TICKS = 5 * 60, KILL_KEEP = 30,
   FEED_PERIOD = 10, -- ticks; alert lines and kill feed (fading) refresh
   HELP_WIDTH = 640, HELP_LINES = 10, -- "How to play": rts.help-1 .. rts.help-10
+  -- Phase 5 M2 integration: the Nation page (goal, controls, people, treasury, diplomacy and war, supply, rails and
+  -- ages, every hotkey; P4.KEYS are its panel keys)
+  HELP_NATION = {"rts.help-nation-1", "rts.help-2", "rts.help-nation-2", "rts.help-nation-3", "rts.help-nation-4",
+                 "rts.help-nation-5", "rts.help-nation-6", "rts.help-nation-keys"},
   DEMOLISH_HEIGHT = 22, -- the building page's Demolish button (header row)
   -- Phase 5 E1: the factory / district Auto button (recipe tag) and the Nation-only Age II build tab (two rows when it
   -- holds more than BUILD_COLUMNS items; the frame grows upwards by BUILD_ROW per extra row)
@@ -143,7 +147,8 @@ P4.nation = function()
   local m = storage.match
   return m ~= nil and m.config ~= nil and m.config.mode == "nation"
 end
-for _, name in ipairs({"rts-depot", "rts-rail", "rts-locomotive-kit", "rts-cargo-wagon-kit", "rts-construction-wagon-kit"}) do
+for _, name in ipairs({"rts-depot", "rts-rail", "rts-locomotive-kit", "rts-cargo-wagon-kit", "rts-construction-wagon-kit",
+                       "rts-district-rails", "rts-dra-rail"}) do -- Phase 5 M2 integration: the Rail works (Railways)
   P4.NATION_ONLY[name] = true end -- Phase 5 M1 (m1-rails): the depot item, the rail and kit recipes
 for _, name in ipairs({"rts-house", "rts-apartment", "rts-farm", "rts-bakery", "rts-fishing-hut", "rts-goods",
                        "rts-brick"}) do
@@ -268,7 +273,8 @@ local GROUP_COUNT = 5
 local BUILD_TABS = {
   {key = "economy", caption = "rts.build-tab-economy", tooltip = "rts.build-tab-economy-tooltip",
    items = {"rts-extractor", "rts-smelter", "rts-stockpile", "transport-belt", "fast-inserter", "medium-electric-pole",
-            "rts-hub", "rts-depot"}}, -- Phase 5 M1: rts-depot is Nation-only (P4.NATION_ONLY)
+            "rts-hub", "rts-depot", -- Phase 5 M1: rts-depot is Nation-only (P4.NATION_ONLY)
+            "rts-district-rails"}}, -- Phase 5 M2 integration: the Rail works comes with Railways in Age I
   {key = "production", caption = "rts.build-tab-production", tooltip = "rts.build-tab-production-tooltip",
    items = {"rts-barracks", "rts-factory", "rts-lab", "rts-city-charter", "rts-fort", -- Phase 5 M1: Nation only
             "rts-house", "rts-apartment", "rts-farm", "rts-bakery", "rts-fishing-hut", -- Phase 5 M2 people: Nation only
@@ -280,7 +286,7 @@ local BUILD_TABS = {
   {key = "age2", sprite = "item/rts-science-industrial", tooltip = "rts.build-tab-age2-tooltip", nation = true,
    items = {"rts-pumpjack", "rts-refinery", "rts-chemical-plant", "rts-district-smelting", "rts-district-steel",
             "rts-district-circuits", "rts-district-electronics", "rts-district-petrochem", "rts-district-engines",
-            "rts-district-munitions", "rts-district-rails", "rts-district-construction", "rts-district-science",
+            "rts-district-munitions", "rts-district-construction", "rts-district-science",
             "rts-bunker"}},
 }
 local BUILD_TAB_BY_KEY = {}
@@ -751,6 +757,11 @@ local function build_unit_page(panel, h)
   el.health = header.add({type = "label", style = "rts_hud_mono_label", tooltip = {"rts.hp-tooltip"}})
   el.order = header.add({type = "label", style = "rts_hud_label", tooltip = {"rts.order-tooltip"}})
   el.order.style.maximal_width = 250 -- "Order: Idle 6 / Commander 1" was cut at 200 (Phase 4 QA)
+  -- Phase 5 M2 integration: Disband (Nation mode only; demolish.disband, two presses)
+  el.disband = header.add({type = "sprite-button", name = PREFIX .. "disband", sprite = "utility/trash",
+                           style = "tool_button_red", tooltip = {"rts.disband-tooltip"}, tags = {rts_hud = "disband"}})
+  el.disband.style.size = 24
+  el.disband.visible = false
 
   local kinds_row = page.add({type = "flow", direction = "horizontal", style = "rts_hud_row"})
   el.cards = kinds_row.add({type = "flow", direction = "horizontal"})
@@ -1217,6 +1228,7 @@ local function update_units(player, h)
   local names = sorted_names(by_name)
   update_cards(h, names, by_name, player.force.name)
   if n == 0 then
+    if el.disband and el.disband.valid then el.disband.visible = false end -- Phase 5 M2 integration
     el.sel_count.caption = {"rts.sel-none"}
     el.hint.caption = {"rts.sel-hint-empty"}
     el.health.caption = ""
@@ -1227,6 +1239,11 @@ local function update_units(player, h)
   -- One prototype: "Raider ×6"; mixed: "9 units selected"
   el.sel_count.caption = #names == 1 and {"rts.kind-count", unit_name(names[1]), n} or {"rts.sel-count", n}
   el.hint.caption = {"rts.sel-hint"}
+  if el.disband and el.disband.valid then -- Phase 5 M2 integration: Nation mode only; red while armed
+    el.disband.visible = P4.nation()
+    local armed_fn = optional_fn("scripts.demolish", {"disband_armed"})
+    el.disband.toggled = armed_fn ~= nil and armed_fn(player.index) == true
+  end
   if health_n > 0 then
     local avg = health_sum / health_n
     el.health.caption = {"rts.hp-percent", string.format("%3d", math.floor(avg * 100 + 0.5))}
@@ -2206,13 +2223,24 @@ function hud.toggle_help(player, source)
   local inner = frame.add({type = "frame", direction = "vertical", style = "inside_shallow_frame_with_padding"})
   inner = inner.add({type = "flow", direction = "vertical"}) -- a frame style has no vertical_spacing
   inner.style.vertical_spacing = 6
-  for i = 1, P4.HELP_LINES do
-    local line = inner.add({type = "label", caption = {"rts.help-" .. i}})
+  -- Phase 5 M2 integration: a Nation match (or the lobby with Mode = Nation) gets the Nation page with every hotkey
+  local lobby_mode = storage.lobby and storage.lobby.pending and storage.lobby.pending.mode
+  local m = storage.match
+  local running = m and m.phase == "running"
+  local nation = (running and P4.nation()) or (not running and lobby_mode == "nation")
+  local keys = {}
+  if nation then
+    for _, k in ipairs(P4.HELP_NATION) do keys[#keys + 1] = k end
+  else
+    for i = 1, P4.HELP_LINES do keys[#keys + 1] = "rts.help-" .. i end
+  end
+  for _, key in ipairs(keys) do
+    local line = inner.add({type = "label", caption = {key}})
     line.style.single_line = false
     line.style.maximal_width = P4.HELP_WIDTH - 48
   end
   player.opened = frame
-  util.log("hud help opened player=%d (%s): %d lines", player.index, source or "?", P4.HELP_LINES)
+  util.log("hud help opened player=%d (%s): %d lines%s", player.index, source or "?", #keys, nation and " (nation)" or "")
   return true
 end
 
@@ -2282,6 +2310,9 @@ local function on_click(e)
     hud.toggle_help(player, element.name == PREFIX .. "help_close" and "close button" or "? button")
   elseif action == "demolish" then
     demolish.click(player)
+  elseif action == "disband" then -- Phase 5 M2 integration: Disband the selected units (Nation mode)
+    local result, n = demolish.disband(player.index)
+    util.log("disband: click player=%d result=%s n=%d", player.index, result, n)
   elseif action == "alert" then
     local target = h.alert_targets and h.alert_targets[element.tags.line]
     if target then

@@ -178,7 +178,8 @@ function lobby.show_lobby(player)
               selected_index = index_of(VICTORY.time_limits, p.time_limit or 0), tags = {rts_lobby = "time_limit"},
               tooltip = {"rts.lobby-time-limit-tooltip"}})
   end
-  local hint = inner.add({type = "label", caption = {"rts.lobby-hint"}})
+  -- Phase 5 M2 integration: the Nation hint (peace at the start, out without a city, the Victory rule)
+  local hint = inner.add({type = "label", caption = {nation and "rts.lobby-hint-nation" or "rts.lobby-hint"}})
   hint.style.single_line = false
   hint.style.maximal_width = DIALOG_WIDTH - 40
   hint.style.font_color = COLOR.dim

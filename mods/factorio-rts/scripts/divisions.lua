@@ -60,6 +60,7 @@ local selection = require("scripts.selection")
 local buildings = require("scripts.buildings")
 local production = require("scripts.production")
 local match = require("scripts.match")
+local targeting = require("scripts.targeting") -- Phase 5 M2 integration: Nation attack-moves spare rails and poles
 
 local divisions = {}
 
@@ -563,6 +564,17 @@ function divisions.order(id, kind, target, opts)
     local cmd
     if kind == "move" or kind == "retreat" then
       cmd = {type = CMD.go_to_location, destination = pos, radius = move_radius(n), distraction = DIS.none}
+    elseif targeting.careful_group(recs) then
+      -- Phase 5 M2 integration (scripts/targeting.lua): in Nation mode a division marches fighting military targets
+      -- only and never clears an area, so rails, signals and poles on the way and at the point survive; when an enemy
+      -- building stands at the point (an AI target, or arrive()'s re-target) it strikes that building alone. arrive()
+      -- re-targets as before. All-raider divisions keep the compound below.
+      local surface = recs[1].entity.surface
+      local bld = targeting.nearest_building(surface, pos, D.force, targeting.ATTACK_RADIUS + 1)
+      local go = {type = CMD.go_to_location, destination = pos, radius = ATTACK_GOTO_RADIUS, distraction = DIS.by_enemy}
+      cmd = bld and {type = CMD.compound, structure_type = defines.compound_command.return_last, commands = {go,
+        {type = CMD.attack_area, destination = bld.position, radius = targeting.ATTACK_RADIUS, distraction = DIS.by_enemy},
+      }} or go
     else
       -- QA round 1 (protocol step 33): march to the point first (fighting what it meets), then clear the area
       cmd = {type = CMD.compound, structure_type = defines.compound_command.return_last, commands = {
@@ -709,8 +721,9 @@ local function arrive(D, why)
     if game.tick - (D.last_retarget or -RETARGET_TICKS) < RETARGET_TICKS then return end -- throttled: next pass
     local recs = live_members(D)
     local at = (D.group and D.group.valid and D.group.position) or centroid(recs)
-    local enemy = at and recs[1] and recs[1].entity.surface.find_nearest_enemy({position = at,
-      max_distance = RETARGET_RANGE, force = D.force})
+    -- Phase 5 M2 integration: in Nation mode an enemy building close by when no military target is left
+    local enemy = at and recs[1] and targeting.next_enemy(recs[1].entity.surface, at, D.force, RETARGET_RANGE,
+      targeting.careful_group(recs))
     if enemy then
       D.last_retarget = game.tick
       bump("retargets")
