@@ -44,8 +44,9 @@ age_up.BUNKER_TARGETS = {["stone-brick"] = 20, concrete = 40, ["rts-steel-beam"]
 data.FACTORY_RECIPE["rts-bunker"] = "rts-bunker"
 -- the plate a mining town's ore becomes in the capital's Smelting works (a target keeps the works on that recipe);
 -- once the capital's warehouse stands (WAREHOUSE stockpiles, from WAREHOUSE_AFTER districts on) the target and the
--- capital's ore keep rise to the _STORED values: the town's ore keeps coming by train and is stored as plates
-age_up.TOWN_PLATE = {["iron-ore"] = {"iron-plate", 2000, 8000}, ["copper-ore"] = {"copper-plate", 2000, 6000}}
+-- capital's ore keep rise to the stored values: the Smelting works then run while ore comes (the capital of a copper
+-- town held more copper plates than its target, so its trains stopped), and the town's ore is stored as plates
+age_up.TOWN_PLATE = {["iron-ore"] = {"iron-plate", 2000, 20000}, ["copper-ore"] = {"copper-plate", 2000, 20000}}
 age_up.WAREHOUSE, age_up.WAREHOUSE_AFTER = 6, 3
 age_up.ORE_KEEP_STORED = 6000
 
@@ -226,8 +227,11 @@ function age_up.step(C, surface)
     if not N.warehouse_ready and built >= math.ceil(age_up.WAREHOUSE * 2 / 3) then
       N.warehouse_ready = true
       local cc = buildings.main_cc(C.force)
+      local tp = age_up.TOWN_PLATE[C.town.ore]
       if cc and deps.logistics then
         deps.logistics.set_policy(cc.entity.unit_number, "keep", C.town.ore, age_up.ORE_KEEP_STORED)
+        -- the town's plates too (copper piles up in the capital, so its train stopped at the depot's 3000)
+        if tp then deps.logistics.set_policy(cc.entity.unit_number, "keep", tp[1], tp[3]) end
       end
       util.log("ai %s: age-up: warehouse ready (%d stockpiles): the capital keeps %d %s", C.force, built,
         age_up.ORE_KEEP_STORED, C.town.ore)
@@ -263,10 +267,28 @@ function age_up.step(C, surface)
   if age >= 2 then
     -- Phase 5 M1 integration: a force whose mining town ships ore builds a Smelting works too (balance town_districts)
     local list = (C.town and C.town.status == "ok" and A.town_districts) or A.districts
-    local name = list[#N.districts + 1]
+    -- the names still to queue (built from the list once; a town that comes later appends its extra districts)
+    N.district_todo = N.district_todo or {}
+    N.district_seen = N.district_seen or 0
+    if #list > N.district_seen then
+      for i = N.district_seen + 1, #list do N.district_todo[#N.district_todo + 1] = list[i] end
+      N.district_seen = #list
+    end
+    -- the Rail works first while the rail line still waits for rails (2 rails per steel instead of 1)
+    if rail_state == "building" or rail_state == "depots" then
+      for i, n in ipairs(N.district_todo) do
+        if n == "rts-district-rails" and i > 1 then
+          table.remove(N.district_todo, i)
+          table.insert(N.district_todo, 1, n)
+          break
+        end
+      end
+    end
+    local name = N.district_todo[1]
     if name and game.tick >= (N.district_at or 0) then
       local key = queue_building(C, surface, name)
       if key then
+        table.remove(N.district_todo, 1)
         N.districts[#N.districts + 1] = key
         N.district_at = game.tick + A.district_gap * 60
       end
