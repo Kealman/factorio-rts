@@ -1053,6 +1053,14 @@ local function restart_now()
     if nu ~= ARMY_SIZE or bu > 0 or bb > 0 or cc ~= 1 then ok = false end
   end
   check("restart_registries", ok, "%s", table.concat(parts, "; "))
+  -- per-match state of other modules (match.on_teardown): alerts, hauler counters, hub numbering, kill feed
+  local L = storage.logistics or {}
+  local trips = 0
+  for _, st in pairs(L.stats or {}) do trips = trips + (st.trips or 0) + (st.lost or 0) end
+  local kills = storage.hud and storage.hud.kills and #storage.hud.kills or 0
+  check("restart_match_state", #(storage.alerts or {}) == 0 and trips == 0 and table_size(L.hub_counter or {}) == 0
+    and kills == 0, "alerts %d, hauler trips+losses %d, hub counters %d, kill feed %d", #(storage.alerts or {}), trips,
+    table_size(L.hub_counter or {}), kills)
   d.restart_audit_tick = game.tick + RESTART_AUDIT_DELAY
   -- the AI autotest again, on the new match (the lobby started the AI forces' commanders)
   local forces = {}

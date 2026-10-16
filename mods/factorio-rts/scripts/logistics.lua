@@ -57,6 +57,7 @@ local buildings = require("scripts.buildings")
 local production = require("scripts.production")
 local selection = require("scripts.selection")
 local orders = require("scripts.orders")
+local match = require("scripts.match") -- on_teardown only (match.lua does not require this module)
 -- Research bonuses (scripts/research.lua: hauler_slots, robots_per_hub_bonus). Optional, loaded earlier by control.lua.
 local research
 do
@@ -144,6 +145,15 @@ local function alerts()
   storage.alerts = storage.alerts or {}
   return storage.alerts
 end
+
+-- A new match starts clean (Wave C): before this, the alert list, the hauler counters and the "Hub n" numbering
+-- survived match.teardown, so after Ctrl+Shift+R or a new match from the lobby F3 jumped to positions of the old arena,
+-- the hauler panel and the AI autotest counted the old match's trips, and the first new hub was "Hub 3".
+match.on_teardown(function()
+  storage.alerts = {}
+  local L = lstate()
+  L.stats, L.hub_counter, L.net_cache, L.path_cache, L.path_requests = {}, {}, {}, {}, {}
+end)
 
 --- Counters of a force: {trips, delivered = {[item] = n}, lost, deployed}.
 function logistics.stats(force_name)

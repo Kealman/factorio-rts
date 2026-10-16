@@ -1724,6 +1724,16 @@ function hud.refresh(player_index)
   update(player, h)
 end
 
+-- A torn-down match takes its kill feed, attack-alert rate limits and pings with it (Wave C).
+match.on_teardown(function()
+  local hs = storage.hud
+  if not hs then return end
+  for _, ping in ipairs(hs.pings or {}) do
+    if ping.tag and ping.tag.valid then ping.tag.destroy() end
+  end
+  hs.kills, hs.attack_alert, hs.pings = {}, {}, {}
+end)
+
 function hud.init()
   storage.hud = storage.hud or {wave_seen = storage.match and storage.match.wave or 0}
   local hs = storage.hud

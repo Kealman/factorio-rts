@@ -139,11 +139,14 @@ end
 ---------------------------------------------------------------------------
 -- Callbacks (registered at load time by lobby.lua, fog.lua)
 ---------------------------------------------------------------------------
-local ended_callbacks, out_callbacks = {}, {}
+local ended_callbacks, out_callbacks, teardown_callbacks = {}, {}, {}
 --- fn(storage.match) once the match ended (phase "ended"). Load time only.
 function match.on_ended(fn) ended_callbacks[#ended_callbacks + 1] = fn end
 --- fn(force_name) when a force is out while the match goes on. Load time only.
 function match.on_force_out(fn) out_callbacks[#out_callbacks + 1] = fn end
+--- fn(old_surface_name) at the end of match.teardown (restart, back to the lobby, a new match): modules drop their
+--- per-match state there (logistics: alerts, hauler stats, hub numbers; hud: kill feed). Load time only.
+function match.on_teardown(fn) teardown_callbacks[#teardown_callbacks + 1] = fn end
 
 ---------------------------------------------------------------------------
 -- Config
@@ -738,6 +741,7 @@ function match.teardown(reason)
   m.tick_started, m.ended_tick, m.winner = nil, nil, nil
   m.wave, m.enemy_next_wave, m.waves_off = 0, nil, nil
   m.out = {}
+  for _, fn in ipairs(teardown_callbacks) do fn(old) end
   util.log("match: match %s torn down (%s): %d AI commanders stopped, %d units and %d buildings removed, arena %s",
     tostring(m.match_id), reason or "-", stopped, removed_units, removed_buildings, tostring(old))
   return old
