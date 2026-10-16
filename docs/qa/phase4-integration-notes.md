@@ -100,7 +100,7 @@ not counted). The first matrix (`final`, before round two) had the same errors, 
    descriptions, the Ctrl+Shift+R control text, Select all, the extractor hint (no pole needed in a power area), the
    power and build-menu tooltips, the lobby's difficulty and map tooltips, the help paragraphs Build order, Hubs (the
    home ore lasts 12–25 minutes, not 12) and Counters, Scanner sweep (30 s, 48×48), the Commander, the ruin alert.
-6. **Tooling:** parallel headless runs collided on UDP ports (hash modulo 300); `tools/autotest-run.sh` now probes for a
+5. **Tooling:** parallel headless runs collided on UDP ports (hash modulo 300); `tools/autotest-run.sh` now probes for a
    free port. `--create` without `--map-gen-seed` draws its seed from the clock, so samples launched in the same
    second were identical and later ones were unpaired; the batch runner now passes seeds.
 
