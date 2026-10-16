@@ -79,8 +79,11 @@ local function D()
   return storage.districts
 end
 
---- M2 labor hook: the share of its workers a district has (1 = full speed). No labor in M1.
-function districts.staffing_factor(entity) return 1 end
+--- M2 labor hook: the share of its workers a district has (1 = full speed).
+function districts.staffing_factor(entity)
+  -- Phase 5 M2 people: the staffing step of scripts/labor.lua (production.staffing = labor.staffing)
+  return production.staffing and production.staffing(entity) or 1
+end
 
 ---------------------------------------------------------------------------
 -- Cities (cities.lua or the shim)

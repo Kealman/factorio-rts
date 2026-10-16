@@ -47,6 +47,9 @@ cities.LOST_ALERT_PERIOD = 30 * 60 -- "territory lost" at most this often per fo
 cities.LOST_ALERT_MIN = 4          -- cells
 cities.SKIP_KINDS = {wall = true, stockpile = true} -- not counted for the tier-up
 cities.TIER_KEYS = {"rts.city-tier-1", "rts.city-tier-2", "rts.city-tier-3"}
+-- Phase 5 M2 people: "population" when scripts/population.lua decides the tiers (cities.set_tier); M1's buildings +
+-- delivered rule in cities.check then only measures (the panel's land networks)
+cities.tier_rule = nil
 
 ---------------------------------------------------------------------------
 -- State
@@ -362,6 +365,12 @@ end
 --- Re-measure one city and raise its tier when the next tier's requirements are met. Returns true on a tier-up.
 function cities.check(c)
   if not (c.entity and c.entity.valid) then return false end
+  -- Phase 5 M2 people: with tiers by population only the land networks are measured (the building count walked every
+  -- building of the force per city: 40 cities x 2,000 buildings)
+  if cities.tier_rule then
+    c.networks = land_networks(c)
+    return false
+  end
   local total = network_total(c)
   if total then
     if c.last_total and total > c.last_total then c.delivered = c.delivered + (total - c.last_total) end
@@ -371,12 +380,26 @@ function cities.check(c)
   c.networks = land_networks(c)
   local req = cities.next_tier(c)
   if not (req and c.buildings >= req.buildings and c.delivered >= req.delivered) then return false end
-  c.tier = c.tier + 1
+  return cities.set_tier(c, c.tier + 1, string.format("%d buildings, %d delivered", c.buildings, c.delivered))
+end
+
+-- Phase 5 M2 people: one tier change (up or down): land radius, territory source, alert, signal "rts_city_tier".
+--- Set a city's tier (1..3). Returns true when it changed.
+function cities.set_tier(c, tier, why)
+  tier = math.max(1, math.min(#cities.TIER_KEYS, tier))
+  if not c or c.tier == tier then return false end
+  local up = tier > c.tier
+  c.tier = tier
   c.radius = cities.radius_of(c.tier, c.capital)
   territory.update_source(c.center, c.radius, strength_of(c))
-  util.log("cities: city %d of %s reached tier %d (%d buildings, %d delivered): radius %d", c.id, c.force, c.tier,
-    c.buildings, c.delivered, c.radius)
-  alert(c.force, "city-tier", "rts.alert-city-tier", {cities.display_name(c), {cities.TIER_KEYS[c.tier]}}, c.position)
+  util.log("cities: city %d of %s %s tier %d (%s): radius %d", c.id, c.force, up and "reached" or "dropped to", c.tier,
+    why or "-", c.radius)
+  if up then
+    alert(c.force, "city-tier", "rts.alert-city-tier", {cities.display_name(c), {cities.TIER_KEYS[c.tier]}}, c.position)
+  else
+    alert(c.force, "city-tier", "rts-people.alert-city-shrank", {cities.display_name(c), {cities.TIER_KEYS[c.tier]}},
+      c.position)
+  end
   events.emit("rts_city_tier", {city = c.id, tier = c.tier})
   return true
 end

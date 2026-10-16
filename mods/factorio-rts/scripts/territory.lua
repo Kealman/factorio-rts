@@ -57,6 +57,7 @@ local production = require("scripts.production")
 local economy = require("scripts.economy")
 local match = require("scripts.match")
 local balance = require("balance")
+local diplomacy = require("scripts.diplomacy") -- Phase 5 M2 diplomacy: attrition hits hostile units only
 
 local territory = {}
 
@@ -886,7 +887,8 @@ function territory.attrition_pass()
       local cx, cy = cell_of(T, p.x, p.y)
       if cx then
         local o = owner_byte(T, cx, cy)
-        if o ~= 0 and o ~= fid and deep(T, cx, cy, o, A.depth_cells) then
+        if o ~= 0 and o ~= fid and diplomacy.hostile(f, T.fnames[o]) -- Phase 5 M2 diplomacy: no attrition at peace
+           and deep(T, cx, cy, o, A.depth_cells) then
           local supplied = false
           for _, s in ipairs(points or {}) do
             local dx, dy = s.x - p.x, s.y - p.y

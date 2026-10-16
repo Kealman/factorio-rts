@@ -2590,6 +2590,7 @@ function rails.ai_step(C)
     local best_rank
     for un, rec in buildings.for_force(C.force) do
       if (rec.kind == "hub" or rec.kind == "cc") and un ~= cc_un and not rails.depot(un)
+         and rec.entity.name ~= "rts-trade-post" -- Phase 5 M2 treasury: a captured port is no city to connect
          and rec.entity.surface == cc.entity.surface then
         local r, d = rank(un, rec)
         if d >= CFG.ai_min_distance and (not best_rank or r < best_rank) then best, bd, best_rank = un, d, r end

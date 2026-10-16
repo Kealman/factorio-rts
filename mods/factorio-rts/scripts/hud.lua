@@ -145,6 +145,9 @@ P4.nation = function()
 end
 for _, name in ipairs({"rts-depot", "rts-rail", "rts-locomotive-kit", "rts-cargo-wagon-kit", "rts-construction-wagon-kit"}) do
   P4.NATION_ONLY[name] = true end -- Phase 5 M1 (m1-rails): the depot item, the rail and kit recipes
+for _, name in ipairs({"rts-house", "rts-apartment", "rts-farm", "rts-bakery", "rts-fishing-hut", "rts-goods",
+                       "rts-brick"}) do
+  P4.NATION_ONLY[name] = true end -- Phase 5 M2 people: houses, the food chain, goods and factory bricks
 P4.crafter = function(kind) return kind == "factory" or kind == "district" end -- Phase 5 E1: districts are producers
 -- Phase 5 E1: recipes an age locks (research.AGE_LOCKS: Age II goods, buildings, the Armoured car kit) exist in Nation
 -- mode only, like P4.NATION_ONLY.
@@ -262,7 +265,8 @@ local BUILD_TABS = {
    items = {"rts-extractor", "rts-smelter", "rts-stockpile", "transport-belt", "fast-inserter", "medium-electric-pole",
             "rts-hub", "rts-depot"}}, -- Phase 5 M1: rts-depot is Nation-only (P4.NATION_ONLY)
   {key = "production", caption = "rts.build-tab-production", tooltip = "rts.build-tab-production-tooltip",
-   items = {"rts-barracks", "rts-factory", "rts-lab", "rts-city-charter", "rts-fort"}}, -- Phase 5 M1: Nation only
+   items = {"rts-barracks", "rts-factory", "rts-lab", "rts-city-charter", "rts-fort", -- Phase 5 M1: Nation only
+            "rts-house", "rts-apartment", "rts-farm", "rts-bakery", "rts-fishing-hut"}}, -- Phase 5 M2 people: Nation only
   {key = "defence", caption = "rts.build-tab-defence", tooltip = "rts.build-tab-defence-tooltip",
    items = {"rts-turret", "rts-laser-turret", "rts-wall", "rts-solar-array", "rts-steam-plant", "rts-accumulator",
             "rts-radar"}},
@@ -322,6 +326,24 @@ P4.ALERT_STYLE = {
   ["city-lost"] = {icons = {"item/rts-city-charter", "utility/danger_icon"}, color = "red",
                    sound = "utility/alert_destroyed"},
   ["territory-lost"] = {icons = {"utility/warning_icon"}, color = "yellow"},
+  -- Phase 5 M2 treasury (scripts/treasury.lua, scripts/market.lua)
+  ["treasury-stage"] = {icons = {"entity/rts-trade-post", "utility/danger_icon"}, color = "red",
+                        sound = "utility/alert_destroyed"},
+  ["treasury-recovered"] = {icons = {"entity/rts-trade-post", "utility/check_mark_green"}, color = "green"},
+  ["port-captured"] = {icons = {"entity/rts-trade-post", "utility/check_mark_green"}, color = "green"},
+  ["port-lost"] = {icons = {"entity/rts-trade-post", "utility/danger_icon"}, color = "red",
+                   sound = "utility/alert_destroyed"},
+  ["import-arrived"] = {icons = {"entity/rts-trade-post", "utility/check_mark_green"}, color = "green"},
+  ["import-lost"] = {icons = {"entity/rts-trade-post", "utility/warning_icon"}, color = "yellow"},
+  -- Phase 5 M2 diplomacy (scripts/diplomacy.lua, scripts/wars.lua); proposals also show Accept / Decline under the lines
+  ["diplomacy-war"] = {icons = {"utility/danger_icon"}, color = "red", sound = "utility/alert_destroyed"},
+  ["diplomacy-ceasefire"] = {icons = {"utility/warning_icon"}, color = "yellow"},
+  ["diplomacy-peace"] = {icons = {"utility/check_mark_green"}, color = "green"},
+  ["diplomacy-alliance"] = {icons = {"utility/check_mark_green"}, color = "green"},
+  ["diplomacy-proposal"] = {icons = {"utility/warning_icon"}, color = "yellow", sound = "utility/new_objective"},
+  ["diplomacy-answer"] = {icons = {"utility/check_mark_green"}, color = "green"},
+  ["diplomacy-declined"] = {icons = {"utility/warning_icon"}, color = "yellow"},
+  ["diplomacy-news"] = {icons = {"utility/warning_icon"}, color = "white"},
 }
 P4.ALERT_DEFAULT_STYLE = {icons = {"utility/warning_icon"}, color = "white"}
 -- A text that overrides its kind's style: the ruin's previous owner gets kind "ruin-captured" with this text.
@@ -885,6 +907,10 @@ local function build_strip(screen, h)
   h.res.power = power
   h.res.power_sat = pair.add({type = "label", style = "rts_hud_mono_label", caption = "", tooltip = power_tip})
   h.res.bots = resource_pair(res, "item/construction-robot", {"rts.bots-tooltip"})
+  -- Phase 5 M2 treasury: "₡ 1,240 (+35/min)" (scripts/treasury.lua); a click opens the market (Nation mode only)
+  el.treasury = res.add({type = "label", name = PREFIX .. "treasury", style = "rts_hud_mono_label", caption = "",
+                         tags = {rts_hud = "market"}})
+  el.treasury.visible = false
 
   local message_row = strip.add({type = "flow", direction = "horizontal", style = "rts_hud_centered_row"})
   el.message = message_row.add({type = "label", style = "rts_hud_message_label"})
@@ -1357,6 +1383,8 @@ end
 
 -- The vanilla entity status text (entity-status.<name> in the core locale), e.g. "Working".
 local function status_name(entity)
+  local custom = entity.custom_status -- Phase 5 M2 people: "No workers" (scripts/labor.lua)
+  if custom then return custom.label end
   local status = entity.status
   if not status then return "-" end
   local name = util.define_name(defines.entity_status, status)
@@ -1380,6 +1408,11 @@ local function block_text(un)
            {"rts.barracks-blocked-surcharge-tooltip", unit, pct}
   elseif b.reason == "age" then -- Phase 5 E1: an Age II unit before Age II
     return {"rts.barracks-blocked-age", unit}, {"rts.barracks-blocked-age-tooltip", unit}
+  elseif b.reason == "recruits" then -- Phase 5 M2 people: the barracks' city has no worker to draft (scripts/labor.lua)
+    return {"rts-people.barracks-blocked-recruits", unit, b.have or 0, b.need or 1},
+           {"rts-people.barracks-blocked-recruits-tooltip", unit, b.need or 1}
+  elseif b.reason == "unpaid" then -- Phase 5 M2 treasury: wages unpaid (debt stage 2 or 3)
+    return {"rts-treasury.barracks-unpaid", unit}, {"rts-treasury.barracks-unpaid-tooltip", unit}
   end
   return {"rts.barracks-blocked-other", tostring(b.reason)}, ""
 end
@@ -1627,8 +1660,8 @@ local function match_message(m, own)
   if not (m and m.phase) or m.phase == "setup" then return {"rts.match-preparing"}, COLOR.yellow end
   if m.phase == "lobby" then return {"rts.match-lobby-help"}, COLOR.yellow end
   local result = result_for(m, own)
-  if result == "victory" then return {"rts.match-victory"}, COLOR.green end
-  if result == "draw" then return {"rts.match-draw"}, COLOR.yellow end
+  if result == "victory" then return {match.result_text_key(own) or "rts.match-victory"}, COLOR.green end -- Phase 5 M2 diplomacy
+  if result == "draw" then return {match.result_text_key(own) or "rts.match-draw"}, COLOR.yellow end -- Phase 5 M2 diplomacy
   if result == "defeat" then return {match.result_text_key(own) or "rts.match-defeat"}, COLOR.red end
   local hs = storage.hud
   if (m.wave or 0) > 0 and hs and hs.wave_tick and game.tick - hs.wave_tick < WAVE_ALERT_TICKS then
@@ -1638,6 +1671,12 @@ local function match_message(m, own)
     return {"rts.wave-next", (m.wave or 0) + 1, clock((m.enemy_next_wave - game.tick) / 60)}, COLOR.yellow
   end
   if m.waves_off then return {"rts.waves-off"}, COLOR.yellow end
+  local c = m.config -- Phase 5 M2 diplomacy: a Nation match names its victory mode and time limit
+  if c and c.mode == "nation" and c.victory then
+    local limit = c.time_limit or 0
+    return {"rts.match-goal-nation-" .. c.victory, limit > 0 and clock(limit * 60 - match.elapsed_seconds())
+      or {"rts.time-limit-none"}}, COLOR.yellow
+  end
   return {"rts.match-goal"}, COLOR.yellow
 end
 
@@ -1687,6 +1726,16 @@ local function update_strip(player, h)
     el.cities.visible = nation
     local share = nation and optional_fn("scripts.territory", {"share"})
     if share then el.cities.caption = {"rts.territory-share", string.format("%.1f", share(own) * 100)} end
+  end
+  if el.treasury and el.treasury.valid then -- Phase 5 M2 treasury: balance and net per minute, red in deficit
+    local strip_fn = nation and optional_fn("scripts.treasury", {"strip"})
+    local caption, color, tip
+    if strip_fn then caption, color, tip = strip_fn(own) end
+    el.treasury.visible = caption ~= nil
+    if caption then
+      el.treasury.caption, el.treasury.tooltip = caption, tip
+      el.treasury.style.font_color = color
+    end
   end
 
   local snap = snapshot(own)
@@ -2206,6 +2255,9 @@ local function on_click(e)
   elseif action == "cities" then -- Phase 5 M1: city list (scripts/citygui.lua)
     local toggle = optional_fn("scripts.citygui", {"toggle_list"})
     if toggle then toggle(player) end
+  elseif action == "market" then -- Phase 5 M2 treasury: market panel (scripts/marketgui.lua, M)
+    local toggle = optional_fn("scripts.marketgui", {"toggle"})
+    if toggle then toggle(player) end
   elseif action == "help" then
     hud.toggle_help(player, element.name == PREFIX .. "help_close" and "close button" or "? button")
   elseif action == "demolish" then
@@ -2278,6 +2330,21 @@ events.on("rts-build-menu", function(e)
 end)
 
 -- Phase 4: F3 jumps to the newest alert (again: the next older one), F11 toggles "How to play".
+-- Phase 5 M2 (docs/PHASE5-M2.md §5): panel hotkeys. Each M2 panel adds one entry {input, key, module, fn}: the custom
+-- input (prototypes/inputs.lua) calls module.fn(player), looked up at call time like the strip buttons.
+P4.KEYS = {
+  {input = "rts-diplomacy", key = "F4", module = "scripts.diplomacygui", fn = "toggle"}, -- Phase 5 M2 diplomacy
+  {input = "rts-market", key = "M", module = "scripts.marketgui", fn = "toggle"}, -- Phase 5 M2 treasury
+}
+for _, k in ipairs(P4.KEYS) do
+  events.on(k.input, function(e)
+    local player = game.get_player(e.player_index)
+    local fn = player and optional_fn(k.module, {k.fn})
+    util.log("hud: hotkey %s (%s) player=%d%s", k.input, k.key, e.player_index, fn and "" or " (module missing)")
+    if fn then fn(player) end
+  end)
+end
+
 events.on("rts-alert-jump", function(e)
   local player = game.get_player(e.player_index)
   if player then hud.alert_hotkey(player) end

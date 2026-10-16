@@ -51,6 +51,7 @@ local supply = require("scripts.supply")
 local camera = require("scripts.camera")
 local economy = require("scripts.economy")
 local balance = require("balance")
+local diplomacy = require("scripts.diplomacy") -- Phase 5 M2 diplomacy: kills and targets must be hostile
 
 local commander = {}
 
@@ -276,7 +277,7 @@ end
 -- Kill credit: enemy RTS units and buildings (not walls, not legs).
 local function counts_as_kill(killer, victim)
   if victim.type == "spider-leg" or victim.type == "wall" then return false end
-  if not killer.force.is_enemy(victim.force) then return false end
+  if not diplomacy.hostile(killer.force.name, victim.force.name) then return false end -- Phase 5 M2 diplomacy
   local name = victim.name
   return balance.units[name] ~= nil or buildings.KIND_BY_NAME[name] ~= nil or balance.buildings[name] ~= nil
 end
@@ -446,7 +447,7 @@ end
 local function pick_enemy(force, entities)
   local best, best_unit
   for _, e in pairs(entities or {}) do
-    if e.valid and e.force and force.is_enemy(e.force) and e.type ~= "spider-leg" then
+    if e.valid and e.force and diplomacy.hostile(force.name, e.force.name) and e.type ~= "spider-leg" then -- Phase 5 M2 diplomacy
       local is_unit = e.unit_number ~= nil and storage.units[e.unit_number] ~= nil
       if not best or (is_unit and not best_unit) then best, best_unit = e, is_unit end
     end

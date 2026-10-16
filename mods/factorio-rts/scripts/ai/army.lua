@@ -32,6 +32,7 @@ local divisions = require("scripts.divisions") -- Phase 5: attack and defence gr
 local scout = require("scripts.ai.scout")
 local raids = require("scripts.ai.raids")
 local deps = require("scripts.ai.deps") -- Phase 5 M1 integration: deps.ages (Nation Age I reach)
+local diplomacy = require("scripts.diplomacy") -- Phase 5 M2 diplomacy: a target's nation may make peace
 
 local army = {}
 
@@ -239,7 +240,7 @@ function army.step(C, surface)
   -- the pool: own units in no group (haulers and the commander never)
   local pool, far = {}, {}
   for un, rec in units.for_force(C.force) do
-    if not a.member[un] and not army.POOL_SKIP[rec.kind] then
+    if not a.member[un] and not army.POOL_SKIP[rec.kind] and rec.issuer ~= "market" then -- Phase 5 M2 treasury: envoys
       pool[#pool + 1] = rec.entity
       if rec.order == units.IDLE and util.distance(rec.entity, a.rally) > army.RALLY_RADIUS
          and tick - (a.sent[un] or -army.RALLY_RESEND_TICKS) >= army.RALLY_RESEND_TICKS then
@@ -404,13 +405,15 @@ function army.step(C, surface)
       local centroid = util.centroid(list)
       if G.state == "attack" or G.state == "defend" then
         local hp = hp_of(list)
+        -- Phase 5 M2 diplomacy: the target's nation is no longer at war with us: re-target now (scout filters it out)
+        local stale = G.target and G.target.force and not diplomacy.hostile(C.force, G.target.force)
         if G.state == "attack" and G.initial_hp > 0 and hp < (C.cfg.retreat_ratio or 0.4) * G.initial_hp then
           send_home(C, G, list, "retreat")
           a.hold_until = tick + army.REGROUP_TICKS
           C.stats.retreats = C.stats.retreats + 1
           util.log("ai %s: group #%d retreats: %.0f of %.0f hp left, %d units", C.force, gid, hp, G.initial_hp,
             #list)
-        elseif tick - G.last_order >= army.RETARGET_TICKS then
+        elseif stale or tick - G.last_order >= army.RETARGET_TICKS then
           local target
           if G.state == "defend" then
             if threat_fresh(C, home) then target = {position = a.threat.position, kind = "threat"} end

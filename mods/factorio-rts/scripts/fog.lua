@@ -6,6 +6,9 @@
 -- the chunks around the force's own buildings (and, as a margin, its units) every PERIOD ticks: own bases stay
 -- live, everything else falls back to the last chart (the remote view shows the chart there, not entities).
 -- Charts are not shared (share_chart = false on every RTS force, set by match.lua; forces are not friends).
+-- Phase 5 M2 diplomacy: allies share charts (scripts/diplomacy.lua sets set_friend and share_chart for an alliance), so
+-- an ally of a charted force is charted too (its buildings, not only its units' radar); rts-neutral (the city-states)
+-- is never charted by script and shares nothing.
 --
 -- Only forces that people look at are charted by script: rts-player, plus any force that has players. AI forces
 -- need no chart: their scouting is sight-based (ai/scout.lua), and hard AI sees the whole map by itself.
@@ -20,6 +23,13 @@ local match = require("scripts.match")
 
 local fog = {}
 
+-- Phase 5 M2 diplomacy: scripts/diplomacy.lua, looked up at call time (no load-order change for this module)
+local NEUTRAL = match.NEUTRAL
+local function diplomacy_module()
+  local l = package and package.loaded
+  return l and (l["__" .. script.mod_name .. "__/scripts/diplomacy.lua"] or l["scripts.diplomacy"]) or nil
+end
+
 fog.PERIOD = 300            -- ticks between re-charts (a chart stays visible ~600 ticks)
 fog.START_RADIUS = 64       -- tiles charted around each CC at match start
 fog.NATION_START_RADIUS = 160 -- Phase 5 M1: in Nation mode the capital's start kit (scripts/world.lua, 150 tiles)
@@ -31,13 +41,30 @@ function fog.init()
   storage.fog = storage.fog or {last = {}}
 end
 
---- Forces whose chart is kept by this module: rts-player and every match force that has players.
+--- Forces whose chart is kept by this module: rts-player and every match force that has players, plus (Phase 5 M2
+--- diplomacy) every ally of one of them. Never rts-neutral.
 function fog.charted_forces()
   local out = {util.PLAYER_FORCE}
+  local seen = {[util.PLAYER_FORCE] = true}
   for _, f in ipairs(match.forces()) do
     if f ~= util.PLAYER_FORCE then
       local force = game.forces[f]
-      if force and #force.players > 0 then out[#out + 1] = f end
+      if force and #force.players > 0 then
+        out[#out + 1] = f
+        seen[f] = true
+      end
+    end
+  end
+  local diplomacy = diplomacy_module()
+  if diplomacy and diplomacy.nation() then -- Phase 5 M2 diplomacy: allies of a charted force share its chart
+    local n = #out
+    for i = 1, n do
+      for _, ally in ipairs(diplomacy.allies(out[i])) do
+        if not seen[ally] and ally ~= NEUTRAL then
+          out[#out + 1] = ally
+          seen[ally] = true
+        end
+      end
     end
   end
   return out
@@ -102,6 +129,7 @@ function fog.start()
     local force = game.forces[f]
     if force then force.share_chart = false end
   end
+  if NEUTRAL and game.forces[NEUTRAL] then game.forces[NEUTRAL].share_chart = false end -- Phase 5 M2 diplomacy
   local parts = {}
   for _, f in ipairs(fog.charted_forces()) do
     local force = game.forces[f]

@@ -13,3 +13,6 @@ table.insert(factory.crafting_categories, "rts-science")
 -- research prototypes (rts-lab, kits, the factory's rts-science category) and after every data.lua (m1-rails' rts-rail).
 require("prototypes.age2")
 require("prototypes.districts")
+-- Phase 5 M2 people (docs/qa/phase5-people-notes.md): houses, the food chain, goods, hidden labor modules and the labor
+-- slot on every staffed machine (after the districts: they get the slot too).
+require("prototypes.people")

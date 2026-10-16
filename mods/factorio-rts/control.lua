@@ -51,6 +51,22 @@ local modules = {
   require("scripts.ages"),      -- Phase 5 E1: ages and the Railway Charter (after research, supply, match)
   require("scripts.districts"), -- Phase 5 E1: districts, oil, make targets, ledger data (after ages, production)
   require("scripts.ledgergui"), -- Phase 5 E1: city ledger (L) and age badge (after hud: its styles)
+  require("scripts.population"), -- Phase 5 M2 people: residents, needs, growth, tiers by population, houses, food
+                                 -- (after cities and districts: founding signals, the city ledger)
+  require("scripts.labor"),      -- Phase 5 M2 people: staffing through labor modules, priorities, recruits (after
+                                 -- population; production.lua's recruit gate and staffing hooks)
+  -- Phase 5 M2 treasury: the treasury (after research: it wraps production.kit_gate for "unpaid"), the world market and
+  -- trade ports (after logistics, world and the AI deps: ports are hub subtypes, ai/commander.lua calls deps.market),
+  -- the market panel (M, after the HUD)
+  require("scripts.treasury"),
+  require("scripts.market"),
+  require("scripts.marketgui"),
+  -- Phase 5 M2 diplomacy: states, relations, proposals (diplomacy.lua is already loaded by orders.lua and the AI, whose
+  -- targeting asks diplomacy.hostile; listed here for its init), wars and victory (after cities, territory and lobby),
+  -- and the F4 panel (after the HUD: hud.lua's key table calls diplomacygui.toggle)
+  require("scripts.diplomacy"),
+  require("scripts.wars"),
+  require("scripts.diplomacygui"),
   require("scripts.debug"),
 }
 

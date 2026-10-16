@@ -462,4 +462,302 @@ balance.nation.rails = {
 -- on_entity_damaged filter (scripts/research.lua) covers it: the AI defends its depots like its hubs.
 balance.buildings["rts-depot"] = {kind = "hub", supply_cap = balance.nation.rails.depot.supply_cap}
 
+-- Phase 5 M2 people (m2-people, docs/PHASE5-M2.md section 3 "population.lua / labor.lua", docs/qa/phase5-people-notes.md):
+-- residents, needs, growth, tiers by population, housing, the food chain, goods, staffing through hidden labor modules,
+-- recruits. Nation mode only: scripts/population.lua and scripts/labor.lua do nothing in Skirmish.
+balance.nation.people = {
+  -- Residents. A city's population is a script number (storage.population[city_id].pop).
+  -- Residents at founding (a new city: the settlers it receives). The capital starts with 200 in a 200-resident centre
+  -- instead of the contract's 120: with 120 (72 workers) the AI's opening (3-4 factories, 2 labs, 11 extractors and
+  -- smelters: 108 jobs at 5:00) left its labs and factories empty, and it researched nothing by 6:00 and missed Age II.
+  start = {capital = 200, city = 40, city_state = 120},
+  settlers = 40,           -- residents a founding moves out of the source city (the charter stands for them)
+  -- Food and goods a city starts with in its market network (a new city's settlers bring 10 minutes of rations), so
+  -- nobody starves before the first farm and bakery stand
+  start_stock = {capital = {["rts-rations"] = 300, ["rts-goods"] = 100}, city = {["rts-rations"] = 40}},
+  min_pop = 20,            -- founding and the draft never take a city below this many residents
+  workforce = 0.6,         -- share of the residents who work
+  housing = {capital = 200, city = 40}, -- the capital's centre and a City Center house this many by themselves
+  -- Tiers by population: village from 20, town from 100, city from 400. A higher tier is reached at the next growth
+  -- pass; a city drops a tier only after `down_ticks` below `down_share` of its tier's threshold (study 3.4).
+  tiers = {20, 100, 400},
+  down_share = 0.8,
+  down_ticks = 2 * 60 * 60,
+  -- Growth per minute while every need is met at grow_at or more and housing has room: `growth` of the housing
+  -- capacity (a city with room fills in 25 minutes; a full one grows as fast as it builds houses), scaled by the mood
+  -- (happiness / mood_base, clamped to mood_max). Between hold_at and grow_at nothing changes. Below hold_at rations:
+  -- -starve of the residents per minute; without power at town tier and above: -dark per minute; residents beyond
+  -- the housing leave at `homeless` of the excess per minute.
+  growth = 0.04, grow_at = 0.9, hold_at = 0.5, starve = 0.03, dark = 0.01, homeless = 0.1,
+  mood_base = 75, mood_max = 1.25,
+  -- Below hold_at rations only this share of the workforce works (hungry workers: the lowest-priority buildings stop
+  -- at once, not after the residents have left).
+  starving_work = 0.5,
+  -- Needs: per[n] residents use 1 item per minute, from tier `from` on; keep = the default keep policy of the city's
+  -- market network (the City Center's or the capital CC's hub policy). Consumed every needs_period ticks.
+  needs = {
+    {item = "rts-rations", per = 10, from = 1, keep = 50},
+    {item = "rts-goods", per = 25, from = 2, keep = 20},
+  },
+  needs_period = 60 * 60,
+  growth_period = 10 * 60,   -- one growth / tier pass per city this often (staggered by city id)
+  -- Happiness 0..100: base, + rations (-1..+1 around hold_at..1 met) x rations, + goods x goods (town tier and above),
+  -- + power (town tier and above, -power without), + crowded when residents exceed the housing. External moods
+  -- (population.set_mood: taxes, debt, unrest) are added. It drives growth (mood) and taxes (treasury.lua) only.
+  happiness = {base = 50, rations = 25, goods = 15, power = 10, crowded = -10},
+  -- Power: a 1 kW hidden consumer (rts-city-demand, 2 kW input) under every centre; its 2 kJ buffer below `power_ok`
+  -- = no power, which happens only while the network meets less than half of its demand.
+  power_ok = 0.5,
+  -- Housing buildings: residents each houses (only on its city's land); apartments need Age II and a town.
+  houses = {["rts-house"] = 20, ["rts-apartment"] = 80},
+  apartment_tier = 2,
+  -- Food chain (base game): the farm makes 1 grain every farm_time s (no input), limited per city by tier farm slots;
+  -- the bakery turns 2 grain into 3 rations in 3 s; the fishing hut makes fishing_per_minute rations with water within
+  -- fishing_water tiles of its edge. Factory recipes: goods (household goods) and bricks from stone (the AI never
+  -- smelts bricks, and the goods need one).
+  farm_time = 4,
+  farm_slots = {3, 6, 10},
+  bakery = {grain = 2, rations = 3, time = 3},
+  fishing_per_minute = 6,
+  fishing_water = 3,
+  goods = {cost = {["iron-plate"] = 1, ["copper-cable"] = 2, ["stone-brick"] = 1}, count = 2, time = 4},
+  brick = {cost = {stone = 2}, count = 1, time = 2},
+  spoil_minutes = 15,       -- rations spoil (into nothing) only with the "spoiling" feature flag (Space Age)
+  buildings = {
+    -- Small house: stone + iron instead of the contract's stone brick (the AI mines stone but makes no bricks in Age I,
+    -- as for the City charter); apartment: Age II, bricks + steel + goods.
+    ["rts-house"] = {kind = "house", cost = {stone = 15, ["iron-plate"] = 5}, time = 4, health = 400, size = 3},
+    ["rts-apartment"] = {kind = "house", cost = {["stone-brick"] = 30, ["steel-plate"] = 10, ["rts-goods"] = 10},
+                         time = 8, health = 1200, size = 5, age = 2},
+    -- farms and bakeries need no electricity (their cost is labor): 150 + 200 kW per pair pushed the AI capitals into
+    -- brownouts, and a brownout stops city growth (-1 %/min at town tier and above)
+    -- (iron is what every early build order lacks; stone piles up)
+    ["rts-farm"] = {kind = "farm", cost = {["iron-plate"] = 20, stone = 30}, time = 6, health = 600, size = 5},
+    ["rts-bakery"] = {kind = "bakery", cost = {["iron-plate"] = 20, ["copper-plate"] = 10, stone = 15}, time = 6,
+                      health = 500, size = 3},
+    ["rts-fishing-hut"] = {kind = "fishing", cost = {["iron-plate"] = 20, stone = 10}, time = 4, health = 300, size = 3},
+  },
+  -- Labor. Jobs per building (by registry kind, entity names override); 0 = no workers (turrets, walls, poles,
+  -- stockpiles, rails, hubs, depots, houses, City Centers).
+  jobs = {
+    kind = {extractor = 4, smelter = 4, factory = 12, barracks = 12, lab = 8, farm = 6, bakery = 6, fishing = 4,
+            district = 16, ["steam-plant"] = 4, pumpjack = 4},
+    name = {["rts-refinery"] = 8, ["rts-chemical-plant"] = 8},
+  },
+  -- Labor families (the priority list) by kind, entity names override.
+  families = {
+    kind = {barracks = "military", ["steam-plant"] = "power", farm = "food", bakery = "food", fishing = "food",
+            extractor = "extraction", pumpjack = "extraction", smelter = "metallurgy", lab = "research",
+            factory = "services", district = "services"},
+    name = {["rts-refinery"] = "chemistry", ["rts-chemical-plant"] = "chemistry",
+            ["rts-district-smelting"] = "metallurgy", ["rts-district-steel"] = "metallurgy",
+            ["rts-district-engines"] = "metallurgy", ["rts-district-rails"] = "metallurgy",
+            ["rts-district-circuits"] = "electronics", ["rts-district-electronics"] = "electronics",
+            ["rts-district-petrochem"] = "chemistry", ["rts-district-munitions"] = "military",
+            ["rts-district-construction"] = "services", ["rts-district-science"] = "research"},
+  },
+  priorities = {"military", "power", "food", "extraction", "metallurgy", "chemistry", "electronics", "research",
+                "services"},
+  staffing_period = 5 * 60,   -- every city's staffing is recomputed this often (staggered)
+  steps = 5,                  -- staffing steps of 1 / steps (20 %): hidden modules rts-labor-20 .. rts-labor-80
+  -- Draft: recruits = unemployed workers + `draft` of the employed ones. Levels the panel offers; AI by doctrine.
+  draft = {default = 0.2, levels = {0, 0.1, 0.2, 0.3, 0.5},
+           doctrine = {economic = 0.1, turtle = 0.2, aggressive = 0.3}},
+  -- AI governor (scripts/population.lua people_ai): keep rations / goods for keep_minutes of need, one farm per
+  -- farm_per residents of the nation (a bakery per bakery_farms farms), a house when free housing < free_housing,
+  -- labor priorities, a supply hauler from the capital to every other city.
+  ai = {
+    -- start_after: the start stock (300 rations, 15 minutes for 200 residents) carries the capital through the AI's
+    -- opening; a farm, bakery and houses at 2:00 cost it a minute of its first iron and delayed its Age II
+    -- houses from house_after (10 iron + 10 stone each; residents need housing ahead of them to grow)
+    keep_minutes = 2, farm_per = 150, bakery_farms = 2.5, free_housing = 20, start_after = 300, house_after = 150,
+    period = 5 * 60, house_gap = 10, max_queued = 3, export_extra = 50, brick_target = 20,
+    -- from start_after, houses while the housing is below the city's jobs / workforce share + job_margin residents
+    -- (the margin keeps recruits for the army; houses beyond it only fed goods demand)
+    job_margin = 80, house_radius = {24, 40, 56},
+    -- a second factory on Auto at the capital from start_after: goods and their bricks took the works factory's time
+    -- from the circuits of the Industrialisation kits (the economic AI researched it in 7.5 minutes instead of 3.5)
+    goods_works = true,
+    -- houses in stock at the capital from start_after (a make target: the Auto factories make them, so the builder
+    -- factory keeps to the build order)
+    house_stock = 3,
+    priorities = {"power", "food", "extraction", "metallurgy", "research", "military", "services", "electronics",
+                  "chemistry"},
+    -- pinned first: the builder and workshop factories (the two lowest fixed ones), the works factory (Auto) and the
+    -- first `pin_labs` labs; nothing else gets built or researched without them
+    pin_labs = 1,
+  },
+}
+for name, b in pairs(balance.nation.people.buildings) do balance.buildings[name] = b end
+-- Phase 5 M2 diplomacy (docs/PHASE5-M2.md §3 "diplomacy.lua / wars.lua"; scripts/diplomacy.lua, scripts/wars.lua). Pure
+-- data, read in Nation mode only. Relation events and the AI decision table follow docs/research/scale/rails-trade.md
+-- §5.2-5.3; war score, weariness and victory war-ai-performance.md §2.8 and decision D6.
+balance.nation = balance.nation or {}
+balance.nation.diplomacy = {
+  start_state = "peace",       -- every pair of nations at match start ("war" = the M1 free-for-all)
+  ceasefire_minutes = 3,       -- a ceasefire becomes peace (white treaty) after this long unless the war resumes
+  truce_minutes = 10,          -- after a treaty the AI declares no war on the same nation for this long
+  alliance_lock_minutes = 10,  -- no betrayal: the AI leaves no alliance younger than this
+  answer_ticks = {600, 1200},  -- an AI answers a proposal after 10-20 s
+  proposal_ttl = 120 * 60,     -- a proposal to a player expires (declined) after this long
+  relation = {
+    trade_per_1000 = 1, trade_cap_per_min = 10,
+    contract_delivered = 3, contract_missed = -8,
+    common_enemy_per_min = 2,
+    border_per_10_supply = -5,     -- per minute: their units on my land (not allies, not at war with me)
+    attacked_first = -20, attacked_per_1000 = -1,
+    gift_per_1000 = 4,             -- halved for every gift of the last 10 minutes
+    declared_on = -30,             -- the victim's opinion of the aggressor
+    declared_others = -5,          -- every other nation (not at war with the victim) about the aggressor
+    ceasefire_broken = -20,        -- a war declared during a ceasefire, on top of declared_on
+    alliance_left = -20,           -- the left ally's opinion
+    decay_per_min = 1,             -- towards the doctrine baseline
+    -- rivalry (war-ai-performance.md §4.5 "border friction"): per minute towards the nearest neighbour by capital
+    -- distance (nearest), half towards any other within near_factor times that distance (near), times the doctrine
+    -- weaker: towards any nation it out-powers (ratio above its war_ratio) and can reach (opportunism)
+    friction = {nearest = 1, near = 0.5, near_factor = 1.5, weaker = 1},
+    friction_doctrine = {economic = 0.5, aggressive = 2, turtle = 0.5, human = 0},
+  },
+  baseline = {economic = 10, aggressive = -10, turtle = 5, human = 0},
+  -- the AI decision table: declare war when relation < war_r and power ratio > war_ratio; offer or accept a ceasefire
+  -- when ratio < cf_ratio or weariness > cf_weary (%); offer an alliance when relation > ally_r with a common enemy
+  doctrine = {
+    economic = {war_r = -50, war_ratio = 1.4, cf_ratio = 0.8, cf_weary = 30, ally_r = 40},
+    aggressive = {war_r = -20, war_ratio = 1.0, cf_ratio = 0.5, cf_weary = 50, ally_r = 60},
+    turtle = {war_r = -60, war_ratio = 1.6, cf_ratio = 0.9, cf_weary = 25, ally_r = 30},
+  },
+  min_war_minutes = 5,           -- the AI offers no ceasefire before its war is this old
+  offer_cooldown_minutes = 2,    -- the AI repeats a declined offer to the same nation no sooner than this
+  long_war_minutes = 30,         -- a war this old: the AI accepts a white peace unless its war score is above
+  long_war_score = 20,           --   this
+  peace_from_ceasefire_r = -60,  -- during a ceasefire the AI accepts a white peace above this relation
+  terms_weary_factor = 1.5,      -- the AI pays tribute / accepts paying terms past this times its cf_weary
+  tribute_offer = {cr_per_min = 40, minutes = 10}, -- what a weary AI offers after two declined ceasefires
+  break_alliance_r = -10,        -- the AI leaves an alliance (after the lock) below this relation
+  ally_accept_slack = 10,        -- the AI accepts an alliance from ally_r - this
+  contract_min_r = 0,            -- the AI accepts contracts from this relation
+  border_decline_supply = 10,    -- "you have N units inside our border": declines alliances and contracts
+  power = {
+    turret = 2, production_divisor = 500, cache_ticks = 300,
+    turret_kinds = {turret = true, ["laser-turret"] = true}, -- registry kinds (the Bunker is "turret")
+    skip_kinds = {hauler = true, commander = true},
+    values = {["iron-plate"] = 1, ["copper-plate"] = 1, ["steel-plate"] = 5, ["electronic-circuit"] = 4,
+              ["rts-explosives"] = 3, ["plastic-bar"] = 3},
+  },
+  -- wars (scripts/wars.lua): war score per event, weariness, goals
+  wars = {
+    unit_supply = 1,             -- per supply point of enemy units destroyed
+    building = {default = 1, wall = 0, extractor = 2, smelter = 2, factory = 4, barracks = 4, district = 6, lab = 3,
+                hub = 3, cc = 10, turret = 2},
+    city = 20, city_per_pop = 0.1, -- per captured city, plus per resident
+    city_pop_fallback = {40, 150, 400}, -- residents by tier while scripts/population.lua is absent
+    capital_per_min = 5,         -- holding the other side's original capital
+    weariness = {window_minutes = 5, grace_minutes = 10, per_minute = 1, per_city = 15, capital = 20},
+    capital_hold_minutes = 10,   -- goal "capital": hold the capital this long
+    tribute = {cr_per_min = 50, minutes = 10, score = 30}, -- goal "tribute": war score needed and the treaty's terms
+    border_score = 25,           -- goal "border" without cities in it: war score needed
+    max_minutes = 45,            -- a war this old ends in a white peace
+  },
+  victory = {
+    step_ticks = 600,            -- wars.victory_step every 10 s
+    territory_share = 0.60, territory_minutes = 3,
+    modes = {"conquest", "territory", "score"}, default_mode = "conquest",
+    time_limits = {60, 90, 120, 0}, default_time_limit = 0, score_default_limit = 60, -- minutes; 0 = unlimited
+  },
+}
+
+-- Phase 5 M2 treasury (m2-treasury, docs/PHASE5-M2.md section 3 "treasury.lua / market.lua", decisions D1 and D5;
+-- docs/qa/phase5-treasury-notes.md). The treasury is a script number per nation (crowns, cr); nothing is built with
+-- money. Nation mode only. Read by scripts/treasury.lua, scripts/market.lua, scripts/marketgui.lua and
+-- prototypes/trade.lua.
+balance.nation = balance.nation or {}
+balance.nation.treasury = {
+  start = 1500,                -- cr every nation starts with
+  step = 600,                  -- ticks between two flow applications (tax and upkeep are per-minute rates / 6)
+  tax = {
+    per_resident = 0.2,        -- cr per resident per minute (workers)
+    levels = {low = 0.6, normal = 1.0, high = 1.4},
+    happiness = {at0 = 0.5, at100 = 1.2}, -- tax multiplier at happiness 0 and 100 (linear between)
+    default_happiness = 70,    -- without scripts/population.lua
+    hard_bonus = 0.2,          -- hard AI: +20 % tax income (the only M2 cheat)
+    mood = {low = 8, normal = 0, high = -8}, -- happiness from the tax level (population.set_mood(force, "tax", n))
+  },
+  -- Residents per city when scripts/population.lua is not loaded (M2 people): by city tier, the capital at least
+  -- `capital`. population.of(city_id).pop wins when that module exists.
+  fallback_pop = {capital = 200, tier = {40, 120, 400}},
+  upkeep = {
+    age1 = 1, age2 = 4,        -- cr per building per minute (Age II: the names in balance.nation.economy.buildings)
+    paused = 0.5,              -- a crafting machine without a recipe or switched off by script pays this share
+    -- kinds and names that pay nothing: walls, stockpiles, power and rolling stock (transport pays for trains), the
+    -- capital Command Center, City Centers and trade posts (the state's own buildings), project sites
+    skip_kinds = {wall = true, stockpile = true, solar = true, accumulator = true, train = true, project = true,
+                  cc = true},
+    skip_names = {["rts-city-center"] = true, ["rts-trade-post"] = true},
+    crafter_kinds = {factory = true, barracks = true, district = true},
+  },
+  army = {per_supply = 1, free = 0}, -- cr per supply point of military units per minute (haulers excluded)
+  transport = {locomotive = 2, rail_tiles = 100}, -- cr per locomotive per minute, 1 cr per this many tiles of line
+  interest = {rate = 0.05, period = 5 * 60 * 60}, -- 5 % of the debt every 5 minutes
+  credit = {minutes = 10, min = 500}, -- credit line: 10 minutes of gross income (tax + exports), at least `min`
+  stages = {unpaid = 60, unrest = 180}, -- seconds below 0 before stage 2 (unpaid wages) and stage 3 (unrest)
+  unrest_happiness = -25,      -- stage 3: population.set_mood(force, "debt", -25) (scripts/population.lua)
+}
+balance.nation.market = {
+  -- Anchors (deep-economy.md section 4.2); every other tradeable good is derived at match start:
+  -- p0 = markup x (sum of the ingredients' p0 + per_second x recipe seconds) / products.
+  p0 = {
+    ["iron-ore"] = 0.4, ["copper-ore"] = 0.4, coal = 0.5, stone = 0.3, ["iron-plate"] = 1, ["copper-plate"] = 1,
+    ["steel-plate"] = 3.3, ["electronic-circuit"] = 4, ["plastic-bar"] = 3, sulfur = 2, ["engine-unit"] = 14,
+    ["advanced-circuit"] = 18, ["processing-unit"] = 70, ["low-density-structure"] = 40, ["rts-explosives"] = 2,
+    ["rts-crude-oil"] = 0.5, ["stone-brick"] = 0.7,
+    -- M2 people goods (prototypes/people.lua), when they exist
+    ["rts-rations"] = 1.5, ["rts-goods"] = 15, ["rts-grain"] = 0.4,
+  },
+  derive = {markup = 1.1, per_second = 0.1, depth = 8},
+  -- World stock S0 per good: about an hour of world trade, S0 = value / p0 clamped (steel 3,000 by override).
+  s0 = {value = 10000, min = 200, max = 20000, override = {["steel-plate"] = 3000}},
+  exponent = 0.6,              -- p = p0 x (S0 / S) ^ exponent
+  clamp = {0.4, 3},            -- ... clamped to this range of p0
+  drift = 0.05,                -- every drift_period, S moves this share back towards S0
+  drift_period = 60 * 60,
+  history = 10,                -- price samples kept (one per drift_period: the last 10 minutes)
+  sell_factor = 0.9,           -- exports pay 0.9 x the curve price
+  buy_factor = 1.1,            -- imports cost 1.1 x
+  import_delay = 30 * 60,      -- ticks until bought goods appear at the port
+  -- commerce cap: cr traded (sold + bought) per minute, rolling 60 s
+  cap = {base = 300, per_port = 150, per_level = 0.25, window = 60 * 60},
+  capture = {range = 4, ticks = 600, period = 30}, -- like the ruin: a unit within 4 tiles for 10 s
+  port_stock = {{"steel-plate", 300}, {"electronic-circuit", 100}, {"coal", 100}}, -- loot in a new trade post
+  contract = {late_grace = 2 * 60 * 60, min_interval = 30, max_deliveries = 100},
+  -- Commerce I / II (prototypes/trade.lua; Nation-only technologies): +per_level of the cap each
+  commerce = {
+    {name = "rts-commerce-1", kit = "rts-science-basic", count = 20, icon = "logistics-2"},
+    {name = "rts-commerce-2", kit = "rts-science-advanced", count = 30, icon = "logistics-3",
+     prerequisites = {"rts-commerce-1"}},
+  },
+  -- Normal AI (scripts/market.lua market.ai_step)
+  ai = {
+    period = 600,              -- ticks between two trade passes of one AI
+    capture_timeout = 5 * 60 * 60, -- an envoy that has not taken its port in this long is released
+    capture_retry = 60 * 60,   -- ticks between two envoys
+    ports_wait = 3 * 60 * 60,  -- the first envoy waits for the world fill (every port placed) or this long
+    surplus = {stone = 300, coal = 500, ["iron-ore"] = 800, ["copper-ore"] = 800, ["stone-brick"] = 200,
+               ["iron-plate"] = 700, ["copper-plate"] = 600, ["steel-plate"] = 400},
+    hauler_after = 12 * 60 * 60, -- the port route asks for its own hauler kit from then on (earlier only when the AI
+                               -- wants haulers for its hubs anyway)
+    port_keep = 400,           -- the port asks the hauler for this much of every surplus good
+    coal_keep = 60,            -- coal the port keeps for the haulers' return trips (never sold)
+    buy_after = 3 * 60 * 60,   -- a shortfall the AI cannot fill within this long is bought
+    buy_horizon = 3,           -- minutes: a shortfall short > made per minute x horizon cannot be filled in time
+    reserve = 500,             -- the AI never buys below this balance
+    spend_share = 0.25,        -- share of the balance one purchase may cost
+    keep_minutes = 10,         -- a raised Command Center keep for an import is restored after this long
+    deficit_floor = 1500,      -- below this balance with a negative net: tax high, no imports, deficit mode
+    deficit_surplus = 0.5,     -- deficit mode: the capital exports from this share of the surplus thresholds
+    happy_low = 40,            -- tax low below this happiness
+    war_window = 2 * 60 * 60,  -- without diplomacy: "at war" while an own group attacked or defended this recently
+  },
+}
+balance.buildings["rts-trade-post"] = {kind = "hub", supply_cap = 0}
+
 return balance

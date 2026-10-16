@@ -26,6 +26,8 @@ local orders = require("scripts.orders")
 local hud = require("scripts.hud")
 local mapgen = require("scripts.mapgen")
 local world = require("scripts.world") -- Phase 5 M1: Nation mode (world sizes)
+local balance = require("balance") -- Phase 5 M2 diplomacy: victory modes and time limits (D6)
+local VICTORY = balance.nation.diplomacy.victory -- Phase 5 M2 diplomacy
 
 local lobby = {}
 
@@ -47,6 +49,8 @@ local function pending()
   end
   if not l.pending.map then l.pending.map = match.DEFAULT_CONFIG.map end -- saves from before the Map choice
   if not l.pending.mode then l.pending.mode = "skirmish" end -- Phase 5 M1: saves from before the Mode choice
+  if not l.pending.victory then l.pending.victory = VICTORY.default_mode end -- Phase 5 M2 diplomacy (D6)
+  if not l.pending.time_limit then l.pending.time_limit = VICTORY.default_time_limit end
   return l.pending
 end
 
@@ -66,7 +70,12 @@ end
 --- "Nation · 3 nations · Normal · World 2048×2048".
 function lobby.config_text(c)
   if c.mode == "nation" then
-    return {"rts.config-line-nation", c.opponents + 1, {"rts.difficulty-" .. c.difficulty}, c.world_size or 0}
+    local line = {"rts.config-line-nation", c.opponents + 1, {"rts.difficulty-" .. c.difficulty}, c.world_size or 0}
+    if c.victory then -- Phase 5 M2 diplomacy: "... · Territory · 90 min"
+      return {"", line, " · ", {"rts.victory-" .. c.victory}, " · ", (c.time_limit or 0) > 0
+        and {"rts.time-limit-minutes", c.time_limit} or {"rts.time-limit-none"}}
+    end
+    return line
   end
   return {"", {"rts.config-line", c.opponents, {"rts.difficulty-" .. c.difficulty}, size_caption(c.size)}, " · ",
           {"rts.map-" .. (c.map or match.DEFAULT_CONFIG.map)}}
@@ -153,6 +162,22 @@ function lobby.show_lobby(player)
   grid.add({type = "drop-down", name = PREFIX .. "map", items = maps,
             selected_index = nation and 1 or index_of(match.MAPS, p.map), tags = {rts_lobby = "map"},
             tooltip = nation and {"rts.lobby-map-nation-tooltip"} or {"rts.lobby-map-tooltip"}}).enabled = not nation
+  if nation then -- Phase 5 M2 diplomacy (D6): Victory and Time limit, Nation mode only
+    grid.add({type = "label", caption = {"rts.lobby-victory"}, tooltip = {"rts.lobby-victory-tooltip"}})
+    local vitems = {}
+    for i, v in ipairs(VICTORY.modes) do vitems[i] = {"rts.victory-" .. v} end
+    grid.add({type = "drop-down", name = PREFIX .. "victory", items = vitems,
+              selected_index = index_of(VICTORY.modes, p.victory), tags = {rts_lobby = "victory"},
+              tooltip = {"rts.lobby-victory-tooltip"}})
+    grid.add({type = "label", caption = {"rts.lobby-time-limit"}, tooltip = {"rts.lobby-time-limit-tooltip"}})
+    local titems = {}
+    for i, t in ipairs(VICTORY.time_limits) do
+      titems[i] = t > 0 and {"rts.time-limit-minutes", t} or {"rts.time-limit-none"}
+    end
+    grid.add({type = "drop-down", name = PREFIX .. "time_limit", items = titems,
+              selected_index = index_of(VICTORY.time_limits, p.time_limit or 0), tags = {rts_lobby = "time_limit"},
+              tooltip = {"rts.lobby-time-limit-tooltip"}})
+  end
   local hint = inner.add({type = "label", caption = {"rts.lobby-hint"}})
   hint.style.single_line = false
   hint.style.maximal_width = DIALOG_WIDTH - 40
@@ -164,8 +189,9 @@ function lobby.show_lobby(player)
                          caption = {"rts.lobby-start"}, tags = {rts_lobby = "start"}})
   start.enabled = can_control(player)
   if p.mode == "nation" then -- Phase 5 M1 integration: the Nation line names the world, not the Skirmish size and map
-    util.log("lobby: dialog shown to player %d (%d opponent(s), %s, nation, world %s)", player.index, p.opponents,
-      p.difficulty, tostring(p.world_size or "default"))
+    util.log("lobby: dialog shown to player %d (%d opponent(s), %s, nation, world %s, victory %s, time limit %s)",
+      player.index, p.opponents, p.difficulty, tostring(p.world_size or "default"), tostring(p.victory),
+      tostring(p.time_limit)) -- Phase 5 M2 diplomacy: victory and time limit
   else
     util.log("lobby: dialog shown to player %d (%d opponent(s), %s, %s, %s, %s)", player.index, p.opponents,
       p.difficulty, p.size, p.map, p.mode)
@@ -243,10 +269,31 @@ function lobby.show_results(player)
   sub.style.maximal_width = DIALOG_WIDTH - 40
   inner.add({type = "label", caption = {"rts.results-time", clock(match.elapsed_seconds())}})
   inner.add({type = "label", caption = lobby.config_text(m.config)}).style.font_color = COLOR.dim
-  local t = inner.add({type = "table", column_count = 4, style = "bordered_table"})
+  -- Phase 5 M2 diplomacy: a Nation match names its victory and adds the score (D6) and the war score per nation
+  local nation = m.config and m.config.mode == "nation"
+  local l = package and package.loaded
+  local wars = nation and l and (l["__" .. script.mod_name .. "__/scripts/wars.lua"] or l["scripts.wars"]) or nil
+  if nation then frame.style.width = 720 end
+  if nation and m.victory and m.victory.how then
+    local names = {""}
+    for i, f in ipairs(m.victory.winners or {}) do
+      if i > 1 then names[#names + 1] = ", " end
+      names[#names + 1] = match.label(f)
+    end
+    local key = #(m.victory.winners or {}) > 0 and "rts.results-victory-" or "rts.results-draw-"
+    local how = inner.add({type = "label", caption = {key .. m.victory.how, names}})
+    how.style.single_line = false
+    how.style.maximal_width = 560
+  end
+  local t = inner.add({type = "table", column_count = wars and 6 or 4, style = "bordered_table"})
   t.style.top_margin = 8
   t.style.horizontally_stretchable = true
-  for _, key in ipairs({"results-force", "results-units", "results-buildings", "results-status"}) do
+  local headers = {"results-force", "results-units", "results-buildings", "results-status"}
+  if wars then
+    headers[#headers + 1] = "results-score"
+    headers[#headers + 1] = "results-war-score"
+  end
+  for _, key in ipairs(headers) do
     local l = t.add({type = "label", caption = {"rts." .. key}})
     l.style.font = "default-bold"
     l.style.single_line = false
@@ -261,12 +308,19 @@ function lobby.show_results(player)
     local status
     if m.out[f] then
       status = {m.conceded == f and "rts.results-conceded" or "rts.results-out", clock((m.out[f] - m.tick_started) / 60)}
-    elseif m.winner == f then
+    elseif m.winner == f or (m.winners and m.winners[f]) then -- Phase 5 M2 diplomacy: shared victories
       status = {"rts.results-winner"}
     else
       status = {"rts.results-alive"}
     end
     t.add({type = "label", caption = status})
+    if wars then -- Phase 5 M2 diplomacy
+      local score, parts = wars.nation_score(f)
+      t.add({type = "label", caption = tostring(score), tooltip = {"rts.results-score-tooltip", math.floor(parts.pop),
+        math.floor(parts.treasury), math.floor(parts.land), math.floor(parts.supply)}})
+      local ws = wars.war_score(f)
+      t.add({type = "label", caption = string.format("%+d", math.floor(ws + 0.5)), tooltip = {"rts.results-war-score-tooltip"}})
+    end
   end
   local row = button_row(frame)
   row.add({type = "button", name = PREFIX .. "results_restart", style = "back_button", caption = {"rts.menu-restart"},
@@ -324,6 +378,7 @@ function lobby.start_match(cfg, who)
   pending().opponents, pending().difficulty = c.opponents, c.difficulty
   if c.size ~= "legacy" and c.mode ~= "nation" then pending().size, pending().map = c.size, c.map end
   pending().mode = c.mode or "skirmish"
+  if c.mode == "nation" then pending().victory, pending().time_limit = c.victory, c.time_limit end -- Phase 5 M2 diplomacy
   if c.mode == "nation" then
     util.log("lobby: match %d started by %s on %s: %d opponent(s), %s, nation, world %dx%d, brain %s", m.match_id,
       tostring(who), surface.name, c.opponents, c.difficulty, c.world_size, c.world_size, c.enemy_brain)
@@ -363,7 +418,7 @@ local function on_click(e)
     if not can_control(player) then return end
     local p = pending()
     lobby.start_match({opponents = p.opponents, difficulty = p.difficulty, size = p.size, map = p.map,
-                       enemy_brain = "ai", mode = p.mode,
+                       enemy_brain = "ai", mode = p.mode, victory = p.victory, time_limit = p.time_limit, -- Phase 5 M2 diplomacy
                        world_size = p.mode == "nation" and (p.world_size or world.size_for(p.opponents + 1)) or nil},
                       "player " .. player.index)
   elseif action == "restart" then
@@ -409,6 +464,10 @@ events.on(defines.events.on_gui_selection_state_changed, function(e)
     if p.mode ~= "nation" then p.map = match.MAPS[el.selected_index] or p.map end
   elseif what == "mode" then
     p.mode = el.selected_index == 2 and "nation" or "skirmish"
+  elseif what == "victory" then -- Phase 5 M2 diplomacy (D6)
+    p.victory = VICTORY.modes[el.selected_index] or p.victory
+  elseif what == "time_limit" then
+    p.time_limit = VICTORY.time_limits[el.selected_index] or p.time_limit
   elseif what == "world_size" then
     local ws = world.SIZES[el.selected_index]
     p.world_size = (ws and ws ~= world.size_for(p.opponents + 1)) and ws or nil -- the default follows the nations
@@ -475,7 +534,7 @@ match.on_force_out(function(force_name)
 end)
 
 commands.add_command("rts-match",
-  "<opponents 1-3> <easy|normal|hard> <small|medium|large> [chokes|open] [waves] [nation [1536|2048|3072]] - start a new match",
+  "<opponents 1-3> <easy|normal|hard> <small|medium|large> [chokes|open] [waves] [nation [1536|2048|3072] [conquest|territory|score] [t60|t90|t120]] - start a new match",
   function(cmd)
     local player = cmd.player_index and game.get_player(cmd.player_index)
     if player and not player.admin then
@@ -489,6 +548,8 @@ commands.add_command("rts-match",
       if args[i] == "waves" then cfg.enemy_brain = "waves" end
       if args[i] == "open" or args[i] == "chokes" then cfg.map = args[i] end
       if args[i] == "nation" then cfg.mode = "nation" end -- Phase 5 M1
+      if args[i] == "conquest" or args[i] == "territory" or args[i] == "score" then cfg.victory = args[i] end -- Phase 5 M2 diplomacy
+      if string.match(args[i], "^t%d+$") then cfg.time_limit = tonumber(string.sub(args[i], 2)) end -- t60: time limit
       if tonumber(args[i]) and i > 3 then cfg.world_size = tonumber(args[i]) end
     end
     local c = match.normalize_config(cfg)

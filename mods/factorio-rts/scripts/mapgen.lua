@@ -1113,8 +1113,13 @@ capture_one = function(surface, ruin, dt)
     return
   end
   local challengers = {}
+  -- Phase 5 M2 diplomacy: only a force at war with the owner can take an owned ruin or port (Skirmish: every force)
+  local l = package and package.loaded
+  local diplomacy = l and (l["__" .. script.mod_name .. "__/scripts/diplomacy.lua"] or l["scripts.diplomacy"])
   for f in pairs(present) do
-    if f ~= ruin.owner then challengers[#challengers + 1] = f end
+    if f ~= ruin.owner and (not ruin.owner or not diplomacy or diplomacy.hostile(f, ruin.owner)) then
+      challengers[#challengers + 1] = f
+    end
   end
   if #challengers ~= 1 or (ruin.owner and present[ruin.owner]) then return end -- contested or defended: hold
   local f = challengers[1]

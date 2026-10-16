@@ -586,6 +586,7 @@ function commander.run(C)
     if deps.rails then deps.rails.ai_step(C) end -- Phase 5 M1 (m1-rails): a line to a far hub/city, Nation mode only
     if deps.cities then deps.cities.ai_step(C, surface) end -- Phase 5 M1: Nation mode second city (no-op in Skirmish)
     towns.step(C, surface) -- Phase 5 M1 integration: the town's mining line (Nation mode only)
+    if deps.market then deps.market.ai_step(C) end -- Phase 5 M2 treasury: ports, sales, imports, taxes (Nation only)
     stop("construction")
     start("production")
     if tick >= (C.next_tech or 0) then
@@ -593,6 +594,7 @@ function commander.run(C)
       tech.step(C)
     end
     if deps.ages and deps.ages.is_nation() then age_up.step(C, surface) end -- Phase 5 E1
+    if deps.population then deps.population.ai_step(C, surface) end -- Phase 5 M2 people: houses, food, draft (Nation)
     manage_production(C)
     stop("production")
   end

@@ -65,6 +65,14 @@ end
 inputs[#inputs + 1] = {name = "rts-demolish", key_sequence = "DELETE", alternative_key_sequence = "BACKSPACE",
                        consuming = "game-only"}
 
+-- Phase 5 M2 diplomacy: F4 toggles the diplomacy panel (scripts/diplomacygui.lua via hud.lua's key table P4.KEYS).
+-- Vanilla F4 is the debug settings window, which the RTS game does not need.
+inputs[#inputs + 1] = {name = "rts-diplomacy", key_sequence = "F4", consuming = "game-only"}
+
+-- Phase 5 M2 treasury: M toggles the market panel (scripts/marketgui.lua via hud.lua's key table P4.KEYS). Vanilla M
+-- (the map) stays reachable by zooming out of the remote view.
+inputs[#inputs + 1] = {name = "rts-market", key_sequence = "M", consuming = "game-only"}
+
 for i, input in ipairs(inputs) do
   input.type = "custom-input"
   input.order = string.format("z[rts]-%02d", i)

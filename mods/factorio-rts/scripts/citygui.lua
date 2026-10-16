@@ -41,6 +41,16 @@ local POLL_PERIOD = 10
 local REFRESH_PERIOD = 30
 local FIELD_WIDTH = 72
 local COLOR = {white = {1, 1, 1}, dim = {0.72, 0.72, 0.72}, yellow = {1, 0.85, 0.3}, green = {0.5, 1, 0.5}}
+-- Phase 5 M2 people: the panel's people section (residents and housing, growth, happiness and power, one bar per need,
+-- workforce / jobs / free / recruits, the draft drop-down, the nation's labor priorities with up / down buttons) and
+-- the staffing box over the HUD's building page for a selected staffed building (staff %, workers, city, family, Pin).
+-- scripts/population.lua and scripts/labor.lua load after this module and set cities.people / cities.labor.
+local PB = require("balance").nation.people
+local STAFF = "rts_citygui_staff"
+local STAFF_WIDTH = 420
+local HUD_PANEL_HEIGHT = 126   -- hud.lua PANEL_HEIGHT: the staffing box sits right above the building page
+COLOR.red = {1, 0.45, 0.4}
+local function people() return cities.people, cities.labor end
 
 local function pstate(player_index)
   local p = util.pstorage(player_index)
@@ -101,6 +111,172 @@ local function add_target_row(g, item, n)
   g.targets[item] = tf
 end
 
+-- Phase 5 M2 people ---------------------------------------------------------------------------------------------
+local function build_people(frame, el, c)
+  local pop = people()
+  if not pop then return end
+  label(frame, "rts_hud_heading_label", {"rts-people.citygui-people"})
+  el.p_pop = label(frame, "rts_hud_label")
+  el.p_mood = label(frame, "rts_hud_label")
+  local needs = frame.add({type = "table", column_count = 3})
+  needs.style.horizontal_spacing = 6
+  needs.style.vertical_spacing = 2
+  el.p_bars = {}
+  for _, spec in ipairs(PB.needs) do
+    local icon = needs.add({type = "sprite", sprite = "item/" .. spec.item, tooltip = {"item-name." .. spec.item}})
+    local bar = needs.add({type = "progressbar", style = "rts_hud_progressbar", value = 0,
+                           tooltip = {"rts-people.citygui-need-tooltip", {"item-name." .. spec.item}, spec.per}})
+    bar.style.width = 110
+    local text = needs.add({type = "label", style = "rts_hud_dim_label", caption = ""})
+    el.p_bars[spec.item] = {icon = icon, bar = bar, text = text}
+  end
+  el.p_work = label(frame, "rts_hud_label")
+  el.p_work.tooltip = {"rts-people.citygui-work-tooltip"}
+  local row = frame.add({type = "flow", direction = "horizontal", style = "rts_hud_row"})
+  row.add({type = "label", style = "rts_hud_label", caption = {"rts-people.citygui-draft"},
+           tooltip = {"rts-people.citygui-draft-tooltip"}})
+  local items = {}
+  for i, v in ipairs(PB.draft.levels) do items[i] = {"rts-people.citygui-draft-level", math.floor(v * 100 + 0.5)} end
+  el.p_draft = row.add({type = "drop-down", name = PREFIX .. "draft", items = items, selected_index = 1,
+                        tooltip = {"rts-people.citygui-draft-tooltip"}, tags = {rts_citygui = "draft", city = c.id}})
+  row.add({type = "empty-widget", style = "rts_hud_filler"})
+  el.p_prio_toggle = row.add({type = "button", name = PREFIX .. "prio_toggle", style = "rts_hud_button",
+    caption = {"rts-people.citygui-priorities"}, tooltip = {"rts-people.citygui-priorities-tooltip"},
+    tags = {rts_citygui = "prio_toggle", city = c.id}})
+  el.p_prio_toggle.style.height = 24
+  el.p_prio = frame.add({type = "table", column_count = 3})
+  el.p_prio.style.horizontal_spacing = 4
+  el.p_prio.style.vertical_spacing = 0
+  el.p_prio_key = nil
+end
+
+local function family_name(fam) return {"rts-people.family-" .. fam} end
+
+local function refresh_priorities(g, c, open)
+  local el = g.el
+  local _, lab = people()
+  local tbl = el.p_prio
+  if not (lab and tbl and tbl.valid) then return end
+  local list = open and lab.priorities(c.force) or {}
+  local key = table.concat(list, ",")
+  if el.p_prio_key == key then return end
+  el.p_prio_key = key
+  tbl.clear()
+  for i, fam in ipairs(list) do
+    local l = tbl.add({type = "label", style = "rts_hud_label", caption = {"rts-people.citygui-priority-row", i,
+                       family_name(fam)}, tooltip = {"rts-people.family-" .. fam .. "-tooltip"}})
+    l.style.width = WIDTH - 90
+    tbl.add({type = "sprite-button", name = PREFIX .. "prio_up_" .. fam, sprite = "utility/hint_arrow_up",
+             style = "frame_action_button", tooltip = {"rts-people.citygui-priority-up"},
+             tags = {rts_citygui = "prio_up", city = c.id, family = fam}}).enabled = i > 1
+    tbl.add({type = "sprite-button", name = PREFIX .. "prio_down_" .. fam, sprite = "utility/hint_arrow_down",
+             style = "frame_action_button", tooltip = {"rts-people.citygui-priority-down"},
+             tags = {rts_citygui = "prio_down", city = c.id, family = fam}}).enabled = i < #list
+  end
+end
+
+local function refresh_people(player, g, c)
+  local el = g.el
+  local pop = people()
+  if not (pop and el.p_pop and el.p_pop.valid) then return end
+  local P = pop.of(c.id)
+  if not P then return end
+  el.p_pop.caption = {"rts-people.citygui-pop", P.pop, P.housing, string.format("%+.1f", P.growth or 0)}
+  el.p_pop.style.font_color = P.free_housing <= 0 and COLOR.yellow or COLOR.white
+  el.p_pop.tooltip = {"rts-people.citygui-pop-tooltip", P.free_housing, P.born and math.floor(P.born) or 0,
+                      P.lost and math.floor(P.lost) or 0, P.drafted or 0, P.settled or 0}
+  el.p_mood.caption = {"rts-people.citygui-mood", P.happiness,
+    P.tier >= 2 and (P.power and {"rts-people.citygui-power-ok"} or {"rts-people.citygui-power-off"})
+      or {"rts-people.citygui-power-village"}, P.unrest and {"rts-people.citygui-unrest"} or ""}
+  el.p_mood.style.font_color = (P.unrest or P.happiness < 40) and COLOR.yellow or COLOR.white
+  for item, r in pairs(el.p_bars or {}) do
+    if r.bar.valid then
+      local N = P.needs[item]
+      if N then
+        local pct = math.floor(math.min(1, N.met) * 100 + 0.5)
+        r.bar.value = math.min(1, N.met)
+        r.text.caption = {"rts-people.citygui-need", pct, string.format("%.1f", N.need)}
+        r.text.style.font_color = N.met < PB.hold_at and COLOR.red or (N.met < PB.grow_at and COLOR.yellow or COLOR.dim)
+      else
+        r.bar.value = 0
+        r.text.caption = {"rts-people.citygui-need-later"}
+        r.text.style.font_color = COLOR.dim
+      end
+    end
+  end
+  el.p_work.caption = {"rts-people.citygui-work", P.workforce, math.floor(P.employed + 0.5), P.jobs,
+                       math.floor(P.free + 0.5), P.recruits}
+  el.p_work.style.font_color = (P.starving or P.unrest) and COLOR.red
+    or (P.jobs > P.employed + 0.5 and COLOR.yellow or COLOR.white)
+  if el.p_draft and el.p_draft.valid then
+    local best, bd = 1, math.huge
+    for i, v in ipairs(PB.draft.levels) do
+      local d = math.abs(v - (P.draft or 0))
+      if d < bd then best, bd = i, d end
+    end
+    if el.p_draft.selected_index ~= best then el.p_draft.selected_index = best end
+    local own = c.force == player.force.name
+    el.p_draft.enabled = own
+  end
+  if el.p_prio_toggle and el.p_prio_toggle.valid then
+    el.p_prio_toggle.toggled = g.prio_open == true
+    el.p_prio_toggle.enabled = c.force == player.force.name
+  end
+  refresh_priorities(g, c, g.prio_open == true and c.force == player.force.name)
+end
+
+-- Staffing box: the selected own building with jobs (Nation mode)
+local function destroy_staff(g)
+  if g.staff and g.staff.valid then g.staff.destroy() end
+  g.staff, g.staff_un, g.staff_el = nil, nil, nil
+end
+
+local function place_staff(player, frame)
+  local s, res = player.display_scale, player.display_resolution
+  frame.location = {math.floor(MARGIN * s + 0.5),
+                    res.height - math.floor((HUD_PANEL_HEIGHT + MARGIN + 34 + 4) * s + 0.5)}
+end
+
+local function show_staff(player, g)
+  local pop, lab = people()
+  local un, rec = selection.get_building(player.index)
+  local jobs = (pop and rec and rec.force == player.force.name and rec.entity.valid)
+    and pop.jobs_of(rec.entity.name, rec.kind) or 0
+  if not (nation_running() and lab and jobs > 0) then
+    if g.staff then destroy_staff(g) end
+    return
+  end
+  if g.staff_un ~= un or not (g.staff and g.staff.valid) then
+    destroy_staff(g)
+    local frame = player.gui.screen.add({type = "frame", name = STAFF, direction = "horizontal",
+                                         style = "rts_hud_frame"})
+    frame.style.width = STAFF_WIDTH
+    local el = {}
+    el.text = frame.add({type = "label", style = "rts_hud_label", caption = ""})
+    el.text.style.maximal_width = STAFF_WIDTH - 90
+    frame.add({type = "empty-widget", style = "rts_hud_filler"})
+    el.pin = frame.add({type = "button", name = PREFIX .. "pin", style = "rts_hud_button", caption = "",
+                        tags = {rts_citygui = "pin", un = un}})
+    el.pin.style.height = 24
+    g.staff, g.staff_un, g.staff_el = frame, un, el
+    place_staff(player, frame)
+  end
+  local el = g.staff_el
+  local step = lab.staffing(rec.entity)
+  local city_id = pop.city_of_building(un)
+  local c = city_id and cities.get(city_id)
+  el.text.caption = {"rts-people.staff-line", math.floor(step * 100 + 0.5), string.format("%.1f", step * jobs), jobs,
+                     c and cities.display_name(c) or {"rts-people.staff-no-city"},
+                     family_name(lab.family(rec.entity.name, rec.kind))}
+  el.text.style.font_color = step <= 0 and COLOR.red or (step < 1 and COLOR.yellow or COLOR.white)
+  el.text.tooltip = {"rts-people.staff-tooltip"}
+  local pinned = lab.pinned(rec.entity)
+  el.pin.caption = pinned and {"rts-people.unpin"} or {"rts-people.pin"}
+  el.pin.tooltip = {"rts-people.pin-tooltip"}
+  el.pin.toggled = pinned
+end
+-- end Phase 5 M2 people --------------------------------------------------------------------------------------------
+
 local function build_panel(player, g, c)
   local frame = player.gui.screen.add({type = "frame", name = FRAME, direction = "vertical", style = "rts_hud_frame"})
   frame.style.width = WIDTH
@@ -124,6 +300,7 @@ local function build_panel(player, g, c)
   el.land = label(frame, "rts_hud_label")
   el.supply = label(frame, "rts_hud_label")
   el.next = label(frame, "rts_hud_label")
+  build_people(frame, el, c) -- Phase 5 M2 people
   el.networks = label(frame, "rts_hud_dim_label")
   label(frame, "rts_hud_heading_label", {"rts.citygui-targets"})
   local tbl = frame.add({type = "table", column_count = 3})
@@ -162,8 +339,13 @@ local function refresh_panel(player, g)
   local own = math.max(1, territory.cells(c.force))
   el.land.caption = {"rts.citygui-land", cells, string.format("%d", math.floor(cells * 100 / own + 0.5))}
   el.supply.caption = {"rts.citygui-supply", cities.supply_total(c)}
-  local req = cities.next_tier(c)
-  if req then
+  local pop = people() -- Phase 5 M2 people: the next tier comes from the population
+  local P = pop and pop.of(c.id)
+  local req = not P and cities.next_tier(c)
+  if P and P.next_at then
+    el.next.caption = {"rts-people.citygui-next", tier_name(c.tier + 1), P.next_at, P.pop}
+    el.next.style.font_color = COLOR.white
+  elseif req then
     el.next.caption = {"rts.citygui-next", tier_name(c.tier + 1), c.buildings or 0, req.buildings,
                        math.floor(c.delivered or 0), req.delivered}
     el.next.style.font_color = COLOR.white
@@ -174,6 +356,7 @@ local function refresh_panel(player, g)
   local ids = {}
   for _, id in ipairs(c.networks or {}) do ids[#ids + 1] = "#" .. id end
   el.networks.caption = {"rts.citygui-networks", #ids, #ids > 0 and table.concat(ids, " ") or "-"}
+  refresh_people(player, g, c) -- Phase 5 M2 people
   local b = el.demolish
   if b and b.valid then
     local rec = c.force == player.force.name and buildings.get(c.center) or nil
@@ -308,13 +491,15 @@ events.on_nth_tick(POLL_PERIOD, function(e)
   for _, player in pairs(game.connected_players) do
     local p = storage.players and storage.players[player.index]
     local g = p and p.citygui
-    if nation_running() or (g and (g.frame or g.list)) then
+    if nation_running() or (g and (g.frame or g.list or g.staff)) then -- Phase 5 M2 people: g.staff
       local c = nation_running() and selected_city(player)
       local key = c and ("sel:" .. c.id) or (g and g.pinned and ("pin:" .. g.pinned)) or nil
       if refresh or (g and g.key) ~= key then
         show_panel(player)
         if refresh then show_list(player) end
       end
+      -- Phase 5 M2 people: the staffing box follows the selected building
+      if g and (refresh or g.staff_un ~= selection.get_building(player.index)) then show_staff(player, g) end
     end
   end
 end)
@@ -364,6 +549,20 @@ events.on(defines.events.on_gui_click, function(e)
     if c then camera.jump_to(player, c.position) end
   elseif action == "open" then
     citygui.open(player, tags.city)
+  elseif action == "prio_toggle" then -- Phase 5 M2 people
+    g.prio_open = not g.prio_open or nil
+    show_panel(player)
+  elseif action == "prio_up" or action == "prio_down" then
+    local c, lab = cities.get(tags.city), cities.labor
+    if c and lab and c.force == player.force.name then
+      lab.move_priority(c.force, tags.family, action == "prio_up" and -1 or 1)
+    end
+    show_panel(player)
+  elseif action == "pin" then
+    local lab = cities.labor
+    local rec = buildings.get(tags.un)
+    if lab and rec and rec.force == player.force.name then lab.pin(rec.entity, not lab.pinned(rec.entity)) end
+    show_staff(player, g)
   elseif action == "demolish" then
     local c = cities.get(tags.city)
     local result = c and demolish.click(player, {c.center}) or "none"
@@ -406,12 +605,24 @@ itempicker.on_pick("citygui", function(player, item, ctx)
   util.log("citygui add target city=%d item=%s player=%d", c.id, item, player.index)
 end)
 
+-- Phase 5 M2 people: the draft drop-down
+events.on(defines.events.on_gui_selection_state_changed, function(e)
+  local element = e.element
+  if not (element and element.valid) or element.tags.rts_citygui ~= "draft" then return end
+  local player = game.get_player(e.player_index)
+  local c, pop = cities.get(element.tags.city), cities.people
+  local level = PB.draft.levels[element.selected_index]
+  if c and pop and level and player and c.force == player.force.name then pop.set_draft(c.id, level) end
+  util.log("citygui draft city=%s level=%s player=%d", tostring(element.tags.city), tostring(level), e.player_index)
+end)
+
 local function reposition(e)
   local player = game.get_player(e.player_index)
   local g = player and pstate(player.index)
   if not g then return end
   if g.frame and g.frame.valid then place_panel(player, g.frame) end
   if g.list and g.list.valid then place_list(player, g.list) end
+  if g.staff and g.staff.valid then place_staff(player, g.staff) end -- Phase 5 M2 people
 end
 events.on(defines.events.on_player_display_resolution_changed, reposition)
 events.on(defines.events.on_player_display_scale_changed, reposition)
@@ -422,6 +633,7 @@ function citygui.init()
     if g then
       if g.frame and g.frame.valid then g.frame.destroy() end
       if g.list and g.list.valid then g.list.destroy() end
+      if g.staff and g.staff.valid then g.staff.destroy() end -- Phase 5 M2 people
       p.citygui = {list_hidden = g.list_hidden}
     end
   end

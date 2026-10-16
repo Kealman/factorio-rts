@@ -88,6 +88,8 @@ world.CONTESTED = NB.contested or {
 world.CONTESTED_ORDER = {[2] = {"copper", "iron"}, [3] = {"copper", "iron", "coal"}, [4] = {"copper", "iron", "copper", "iron"}}
 world.RUIN_STOCK = {{"steel-plate", 200}, {"electronic-circuit", 50}}
 world.PORT_STOCK = {{"steel-plate", 300}, {"electronic-circuit", 100}}
+-- Phase 5 M2 treasury: fn(surface, position) -> port record; scripts/market.lua sets it (port sites become trade posts)
+world.place_port = nil
 
 -- Names (locale rts-world.proper-<i>; English copies for the log).
 world.PROPER = {"Kerr", "Ash", "Varn", "Oster", "Bel", "Dorn", "Hale", "Iver", "Mar", "Brenn", "Corvo", "Elm", "Fenn",
@@ -1492,6 +1494,8 @@ local function place_feature(surface, W, f)
     end
     f.wells_placed, f.amount = n, amount
     W.oil[#W.oil + 1] = {deposit = f.deposit, position = {x = f.x, y = f.y}, wells = n, amount = amount}
+  elseif f.type == "port" and world.place_port then -- Phase 5 M2 treasury: a trade post (scripts/market.lua)
+    f.ok = world.place_port(surface, {x = f.x, y = f.y}) ~= nil
   elseif f.type == "ruin" or f.type == "port" then
     local stock = f.type == "port" and world.PORT_STOCK or world.RUIN_STOCK
     local keys = f.type == "port" and {label = "rts-world.port-label", owned = "rts-world.port-owned",

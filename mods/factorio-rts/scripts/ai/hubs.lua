@@ -338,7 +338,7 @@ end
 function hubs.step(C)
   local L = deps.logistics
   if not (L and C.expansions) then
-    C.want_haulers = 0
+    C.want_haulers = C.people_haulers or 0 -- Phase 5 M2 people
     return
   end
   local cc = buildings.main_cc(C.force)
@@ -378,7 +378,7 @@ function hubs.step(C)
       end
     end
   end
-  C.want_haulers = want
+  C.want_haulers = want + (C.people_haulers or 0) -- Phase 5 M2 people: a supply hauler per other city (population.lua)
   if cc_un then
     for un, h in L.haulers_of(C.force) do
       if h.mode == "auto" and h.home ~= cc_un then L.set_home(un, cc_un) end

@@ -48,6 +48,9 @@ local production = {}
 -- Phase 5 E1: producers with a recipe (barracks, factory, district) and the network-fed crafters among them.
 local PRODUCER = {barracks = true, factory = true, district = true}
 local CRAFTER = {factory = true, district = true}
+-- Phase 5 M2 people: scripts/population.lua adds the farm, bakery and fishing hut kinds (fed from and emptied into their
+-- network like factories; fixed recipes, so never auto)
+production.PRODUCER_KINDS = PRODUCER
 production.AUTO_PERIOD = 60
 production.AUTO_DWELL = 30 * 60   -- a still-short auto recipe is kept this long ...
 production.AUTO_MARGIN = 0.25     -- ... before a shortfall larger by this share of its target takes over
@@ -84,6 +87,12 @@ production.KITS = {
 -- Phase 4: fn(barracks_record, kit_name, KITS entry) -> {unit, kind} to spawn, or nil to keep the kit in the output.
 -- Set by scripts/research.lua (research.gate); nil = every kit becomes its KITS unit.
 production.kit_gate = nil
+-- Phase 5 M2 people (scripts/labor.lua): fn(barracks_record, kit_name, spawn def) -> true, or false and a block table
+-- {reason = "recruits", ...} ("no recruits": the barracks' city has no worker to draft); the refusal is kept in
+-- rec.surcharge_block (shown through research.block_of like the surcharge). nil = no recruits needed.
+production.recruit_gate = nil
+-- Phase 5 M2 people (scripts/labor.lua): fn(entity) -> staffing step 0..1 (production.status, districts.staffing_factor)
+production.staffing = nil
 
 local spawned_callbacks = {}
 
@@ -187,6 +196,7 @@ function production.status(unit_number)
     rally = rec.kind == "barracks" and buildings.rally_point(unit_number) or nil,
     spawned = rec.spawned or 0,
     auto = production.is_auto(rec),
+    staffing = production.staffing and production.staffing(e) or 1, -- Phase 5 M2 people
   }
 end
 
@@ -459,6 +469,15 @@ local function check_barracks(rec)
         -- Phase 4 gate (research.lua): unit locked by research, mk2 swap after Armor I, supply cap; nil = keep the kit
         local spawn = def
         if production.kit_gate then spawn = production.kit_gate(rec, kit, def) end
+        -- Phase 5 M2 people: the barracks' city must have a recruit per supply point ("no recruits")
+        if spawn and production.recruit_gate then
+          local ok, block = production.recruit_gate(rec, kit, spawn)
+          if not ok then
+            rec.surcharge_block, spawn = block, nil
+          elseif rec.surcharge_block and rec.surcharge_block.reason == "recruits" then
+            rec.surcharge_block = nil
+          end
+        end
         -- Phase 5 E1: the army soft cap's surcharge, paid before the unit appears (given back if it cannot)
         local paid, due = true, nil
         if spawn then paid, due = pay_surcharge(rec, kit, def) end

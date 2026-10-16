@@ -57,6 +57,7 @@ local units = require("scripts.units")
 local selection = require("scripts.selection")
 local buildings = require("scripts.buildings")
 local cursor = require("scripts.cursor")
+local diplomacy = require("scripts.diplomacy") -- Phase 5 M2 diplomacy: hostile(a, b), the only force-relation question
 
 local orders = {}
 
@@ -546,10 +547,39 @@ function orders.move(who, position)
   return #recs + n_div
 end
 
+-- Phase 5 M2 diplomacy: the force that gives an order (a player's, or the first valid unit's of an entity list).
+local function who_force(who)
+  if type(who) == "number" then return selection.force_name(who) end
+  for _, e in pairs(who or {}) do
+    if e.valid then return e.force.name end
+  end
+  return nil
+end
+
+-- Phase 5 M2 diplomacy: an attack on another nation (or the city-states) that is not at war with the ordering force is
+-- refused with a message ("declare war first, F4"). Returns true when refused. Skirmish: never (every pair at war).
+local function refuse_peaceful(who, target_force)
+  if not diplomacy.nation() then return false end
+  local f = who_force(who)
+  if not (f and diplomacy.refuses_attack(f, target_force)) then return false end
+  diplomacy.note_refused(f, target_force)
+  if type(who) == "number" then
+    local player = game.get_player(who)
+    if player then
+      player.create_local_flying_text({text = {"rts.diplomacy-attack-refused", diplomacy.label(target_force),
+        {"rts.diplomacy-state-" .. diplomacy.state(f, target_force)}}, create_at_cursor = true})
+    end
+  end
+  return true
+end
+orders.refuse_peaceful = refuse_peaceful
+
 --- Attack one entity (distraction by_enemy; see ATTACK_MODE for the command used). The order is renewed
 --- at the target's position whenever it completes and ends (units idle with stop) when the target is gone.
+--- Phase 5 M2 diplomacy: refused (0 units) when the target's nation is not at war with the ordering force.
 function orders.attack(who, target)
   if not (target and target.valid) then return 0 end
+  if refuse_peaceful(who, target.force.name) then return 0 end -- Phase 5 M2 diplomacy
   local recs, n_div = resolve(who, "attack", target)
   local detail = string.format("target=#%s %s (%s) at %s", tostring(target.unit_number), target.name,
     target.force.name, util.pos_str(target.position))
@@ -698,7 +728,7 @@ end
 local function pick_enemy(force, entities, center)
   local best, best_d, best_unit
   for _, e in pairs(entities) do
-    if e.valid and e.force and force.is_enemy(e.force) then
+    if e.valid and e.force and diplomacy.hostile(force.name, e.force.name) then -- Phase 5 M2 diplomacy
       local is_unit = e.unit_number ~= nil and units.get(e.unit_number) ~= nil
       local d = util.distance_sq(e, center)
       if not best or (is_unit and not best_unit) or (is_unit == best_unit and d < best_d) then
@@ -755,6 +785,15 @@ local function right_click_order(player_index, position, entities)
   local force = game.forces[selection.force_name(player_index)]
   local enemy = pick_enemy(force, entities, position)
   if enemy then return "attack", orders.attack(player_index, enemy) end
+  -- Phase 5 M2 diplomacy: a right click on a unit or building of a nation at peace is an attack order that is refused
+  if diplomacy.nation() then
+    for _, e in pairs(entities) do
+      if e.valid and e.unit_number and (units.get(e.unit_number) or buildings.get(e.unit_number))
+         and refuse_peaceful(player_index, e.force.name) then
+        return "refused", 0
+      end
+    end
+  end
   return "move", orders.move(player_index, position)
 end
 

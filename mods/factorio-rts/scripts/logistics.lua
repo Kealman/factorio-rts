@@ -258,6 +258,22 @@ function logistics.set_policy(unit_number, field, item, value)
   return true
 end
 
+-- Phase 5 M2 treasury: a hub subtype changes hands (a captured trade post, scripts/market.lua). The caller has written
+-- the entities' force and the building records; the policy follows the new force with empty thresholds, and the
+-- network caches of both forces are rebuilt. Returns true when the hub had a policy.
+function logistics.change_owner(unit_number, new_force)
+  local L = lstate()
+  local p = L.hubs[unit_number]
+  local old = p and p.force
+  if p then
+    p.force = new_force
+    p.keep, p.export_above = {}, {}
+  end
+  if old then invalidate(old) end
+  invalidate(new_force)
+  return p ~= nil
+end
+
 --- Localised display name: "Command Center" or "Hub 3".
 function logistics.hub_name(unit_number)
   local p = lstate().hubs[unit_number]

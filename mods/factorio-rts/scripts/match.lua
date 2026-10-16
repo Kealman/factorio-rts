@@ -41,6 +41,7 @@ local production = require("scripts.production")
 local basetemplate = require("scripts.basetemplate")
 local mapgen = require("scripts.mapgen")
 local world = require("scripts.world") -- Phase 5 M1: Nation-mode worlds (config.mode == "nation")
+local balance = require("balance") -- Phase 5 M2 diplomacy: victory modes (balance.nation.diplomacy.victory)
 
 local match = {}
 
@@ -49,6 +50,7 @@ match.PLAYER, match.ENEMY = PLAYER, ENEMY
 match.LOBBY_SURFACE = util.LOBBY_SURFACE
 match.ARENA_PREFIX = "rts-arena-"
 match.AI_PREFIX = "rts-ai-"
+match.NEUTRAL = "rts-neutral" -- Phase 5 M2 diplomacy (D7): the city-states' force, Nation mode only
 match.MAX_OPPONENTS = 3
 local ARENA_TILE = "grass-1"
 
@@ -149,6 +151,10 @@ function match.on_force_out(fn) out_callbacks[#out_callbacks + 1] = fn end
 --- fn(old_surface_name) at the end of match.teardown (restart, back to the lobby, a new match): modules drop their
 --- per-match state there (logistics: alerts, hauler stats, hub numbers; hud: kill feed). Load time only.
 function match.on_teardown(fn) teardown_callbacks[#teardown_callbacks + 1] = fn end
+-- Phase 5 M2 diplomacy: fn(storage.match) at the end of match.start, once the forces, bases and armies exist
+-- (scripts/diplomacy.lua sets the Nation states, scripts/wars.lua its victory state). Load time only.
+local started_callbacks = {}
+function match.on_started(fn) started_callbacks[#started_callbacks + 1] = fn end
 match.on_teardown(function() world.reset() end) -- Phase 5 M1: storage.world (scripts/world.lua)
 
 ---------------------------------------------------------------------------
@@ -179,6 +185,15 @@ function match.normalize_config(c)
     out.world_size = world.normalize_size(c.world_size, out.opponents + 1)
     out.map = "world"
     if out.size == "legacy" then out.size = d.size end
+    -- Phase 5 M2 diplomacy (D6): victory mode and time limit in minutes (0 = none); Score needs a limit
+    local V = balance.nation.diplomacy.victory
+    local mode_ok = {conquest = true, territory = true, score = true}
+    out.victory = mode_ok[c.victory] and c.victory or V.default_mode
+    local tl = math.floor(tonumber(c.time_limit) or V.default_time_limit)
+    local tl_ok = false
+    for _, v in ipairs(V.time_limits) do if v == tl then tl_ok = true end end
+    out.time_limit = tl_ok and tl or V.default_time_limit
+    if out.victory == "score" and out.time_limit == 0 then out.time_limit = V.score_default_limit end
   end
   out.enemy_difficulty = out.difficulty
   out.first_wave_ticks = tonumber(c.first_wave_ticks) or d.first_wave_ticks
@@ -237,12 +252,21 @@ function match.is_participant(force_name)
   return false
 end
 
---- Live units of every participant other than `force_name`.
+-- Phase 5 M2 diplomacy: "enemy" is diplomacy.hostile (Skirmish: every other participant, as before; Nation: the
+-- nations at war with the force). The module is looked up at call time (it loads after this one).
+local function hostile_to(force_name, f)
+  local d = loaded("scripts.diplomacy")
+  local m = storage.match
+  if d and m and m.phase == "running" then return d.hostile(force_name, f) end
+  return f ~= force_name -- after the end every force ceases fire: the totals count every other participant, as before
+end
+
+--- Live units of every participant hostile to `force_name`.
 function match.enemy_unit_count(force_name)
   if not storage.units then return 0 end
   local n = 0
   for _, f in ipairs(match.forces()) do
-    if f ~= force_name then n = n + units.count(f) end
+    if hostile_to(force_name, f) then n = n + units.count(f) end
   end
   return n
 end
@@ -256,7 +280,7 @@ function match.enemy_units_seen(force_name)
   if not (force and surface and storage.units) then return 0 end
   local visible, n = {}, 0
   for _, f in ipairs(match.forces()) do
-    if f ~= force_name then
+    if hostile_to(force_name, f) then -- Phase 5 M2 diplomacy
       for _, rec in units.for_force(f) do
         local p = rec.entity.position
         local cx, cy = math.floor(p.x / 32), math.floor(p.y / 32)
@@ -483,6 +507,24 @@ local function setup_forces(names)
       game.forces[vanilla].set_cease_fire(f, true)
     end
   end
+  -- Phase 5 M2 diplomacy (D7): the city-states' force, created once (forces are never deleted) and at war with every
+  -- nation; it has no commander and fights only with its turrets. Nation mode only: Skirmish creates no force.
+  if config().mode == "nation" then
+    local n = game.forces[match.NEUTRAL] or game.create_force(match.NEUTRAL)
+    n.custom_color = {r = 0.75, g = 0.75, b = 0.75, a = 1}
+    n.ai_controllable = false
+    n.share_chart = false
+    for _, f in ipairs(list) do
+      f.set_friend(n, false)
+      n.set_friend(f, false)
+      f.set_cease_fire(n, false)
+      n.set_cease_fire(f, false)
+    end
+    for _, vanilla in pairs({"enemy", "player", "neutral"}) do
+      n.set_cease_fire(vanilla, true)
+      game.forces[vanilla].set_cease_fire(n, true)
+    end
+  end
 end
 
 --- Put a player on the RTS player force (humans always play rts-player).
@@ -664,6 +706,7 @@ function match.spawn_armies()
   end
   m.phase = "running"
   m.winner = nil
+  m.winners, m.victory = nil, nil -- Phase 5 M2 diplomacy: shared victories (match.finish_by)
   m.ended_tick = nil
   m.tick_started = game.tick
   m.out = {}
@@ -735,6 +778,7 @@ function match.start(cfg)
   end
   util.log("match: match %d running on %s at tick %d: %s", m.match_id, surface.name, game.tick,
     table.concat(parts, "; "))
+  for _, fn in ipairs(started_callbacks) do fn(m) end -- Phase 5 M2 diplomacy
   return surface
 end
 
@@ -772,6 +816,7 @@ function match.teardown(reason)
   m.phase = "lobby"
   m.surface = nil
   m.tick_started, m.ended_tick, m.winner = nil, nil, nil
+  m.winners, m.victory = nil, nil -- Phase 5 M2 diplomacy
   m.wave, m.enemy_next_wave, m.waves_off = 0, nil, nil
   m.out, m.conceded = {}, nil
   production.reset_match()
@@ -964,6 +1009,7 @@ function match.result_text_key(force_name)
   if not r then return nil end
   local m = storage.match
   if r == "defeat" and m.conceded == force_name then return "rts.match-conceded" end
+  if m.victory and m.victory.how then return "rts.match-" .. r .. "-" .. m.victory.how end -- Phase 5 M2 diplomacy
   return "rts.match-" .. r
 end
 
@@ -973,6 +1019,7 @@ function match.result(force_name)
   local m = storage.match
   if not (m and m.phase == "ended") then return nil end
   if m.winner == "draw" or m.winner == nil then return "draw" end
+  if m.winners and m.winners[force_name] then return "victory" end -- Phase 5 M2 diplomacy: allies share a victory
   return m.winner == force_name and "victory" or "defeat"
 end
 
@@ -1059,6 +1106,21 @@ function match.concede(force_name, who)
   for _, fn in ipairs(out_callbacks) do fn(force_name) end
   check_out()
   return m.phase == "ended"
+end
+
+--- Phase 5 M2 diplomacy (D6): end a Nation match by a victory mode (scripts/wars.lua victory_step). `winners` is a list
+--- of forces that share the victory (an alliance; empty = a draw), `how` = "conquest" | "alliance" | "territory" |
+--- "score", `detail` a log text. The end runs through the usual flow (calm, results window). Returns true when it ended.
+function match.finish_by(winners, how, detail)
+  local m = storage.match
+  if not (m and m.phase == "running") then return false end
+  m.winners = {}
+  for _, f in ipairs(winners or {}) do m.winners[f] = true end
+  m.victory = {how = how, detail = detail, winners = winners}
+  util.log("match: %s victory for %s (%s)", tostring(how), #(winners or {}) > 0 and table.concat(winners, ", ") or "nobody",
+    tostring(detail))
+  finish((winners and winners[1]) or "draw")
+  return true
 end
 
 events.on_nth_tick(60, function(e)

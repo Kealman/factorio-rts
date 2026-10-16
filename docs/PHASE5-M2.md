@@ -78,18 +78,28 @@ labor.release(city_id, n)                                             -- disband
 events: "rts_city_population" {city_id, pop, tier}, "rts_staffing_changed" {unit_number, step}
 storage.population = {[city_id] = ...}, storage.labor = {[force] = {priorities, pins}, steps = {[unit_number] = step}}
 ```
-Rules (balance.nation.people): workforce = 60 % of pop; growth +4 %/min when every need ≥ 90 % and housing has room,
-hold between 50–90 %, −3 %/min below 50 % rations, −1 %/min without power at town tier+; tier thresholds village
-20–99, town 100–399, city 400+ with 2-minute hysteresis (replaces M1's simple tier-up; land radius/supply per tier
-unchanged from M1); happiness 0–100 drives growth and taxes only. Needs are *keep* policies on the city's market
-network (defaults rations 50, goods 20) consumed every 60 s with `remove_item` and `on_flow` statistics. Housing: City
-Center 120 (capital) / 40 (new city); small house 3×3 20 (Age I, stone brick + iron), apartment 5×5 80 (Age II, town+,
-brick + steel + goods). Food chain base-game: farm 5×5 (fixed recipe → 1 grain / 4 s, limited by tier farm slots 3/6/10),
-bakery 3×3 (2 grain → 3 rations, 3 s), fishing hut on coast (6 rations/min); goods recipe at the factory (1 iron plate +
-2 copper cable + 1 stone brick → 2 goods, 4 s); rations spoil in 15 min only when `feature_flags.spoiling` (Space Age).
-Staffing: a building draws from the city whose land it stands on (`territory.city_at`); recomputed every 5 s per city,
-staggered; a step change swaps the hidden module (`rts-labor-80` … `rts-labor-20`) or toggles `disabled_by_script`.
-AI: governor keeps rations/goods at 2 minutes of need, builds farms/bakery per 150 pop, houses when free housing < 20.
+Rules as built (balance.nation.people; the seven deviations from the first draft were accepted by the lead, see
+`docs/qa/phase5-people-notes.md` §4): workforce = 60 % of pop, and below 50 % rations only half of it works; growth
++4 % **of the housing** per minute (× mood = happiness / 75, at most 1.25) when every need ≥ 90 %, housing has room and
+(town+) the city has power, hold between 50–90 %, −3 %/min of the residents below 50 % rations, −1 %/min without power
+at town tier+ (power = a hidden 1 kW probe under the centre, "no power" below 50 % satisfaction), −10 %/min of any excess
+over the housing; tier thresholds village 20–99, town 100–399, city 400+, up at the next growth pass, down after 2 minutes
+below 80 % of the threshold (replaces M1's simple tier-up; land radius/supply per tier unchanged from M1); happiness
+0–100 drives growth and taxes only. Needs are *keep* policies on the city's market network (defaults rations 50, goods
+20) consumed every 60 s with `remove_item` and `on_flow` statistics. Start: the capital has **200 residents** in a
+**200-resident centre** and a start stock of 300 rations + 100 goods; a new city gets the 40 settlers its founding moves
+(and 40 rations); a city-state (`rts-neutral`) 120 static residents. Housing: City Center 40; small house 3×3 20 (Age I,
+**15 stone + 5 iron**), apartment 5×5 80 (Age II, town+, 30 bricks + 10 steel + 10 goods). Food chain base-game, **no
+electricity**: farm 5×5 (fixed recipe → 1 grain / 4 s, limited by tier farm slots 3/6/10; 20 iron + 30 stone), bakery
+3×3 (2 grain → 3 rations, 3 s; 20 iron + 10 copper + 15 stone), fishing hut (6 rations/min, water within 3 tiles); goods
+recipe at the factory (1 iron plate + 2 copper cable + 1 stone brick → 2 goods, 4 s) and **factory bricks** (2 stone → 1
+brick, 2 s); rations spoil in 15 min only when `feature_flags.spoiling` (Space Age). Staffing: a building draws from the
+city whose land it stands on (`territory.city_at`); recomputed every 5 s per city, staggered; a step change swaps the
+hidden module (`rts-labor-80` … `rts-labor-20`) or toggles `disabled_by_script`. Recruits = unemployed + draft share
+(0/10/20/30/50 %) of the employed workers. AI governor (`population.ai_step`): keeps rations/goods at 2 minutes of need,
+farms at the capital per 150 pop (a bakery per 2.5 farms), a goods works (second Auto factory), houses from 2:30 while
+free housing < 20 and from 5:00 while housing < jobs / 0.6 + 80 (front of its construction queue), labor priorities and
+pins, draft by doctrine (economic 10 %, turtle 20 %, aggressive 30 %), a supply hauler from the capital to every town.
 
 ### treasury.lua / market.lua (`m2-treasury`)
 ```

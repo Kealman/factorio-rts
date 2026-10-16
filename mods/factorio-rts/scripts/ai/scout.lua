@@ -20,6 +20,7 @@ local buildings = require("scripts.buildings")
 local units = require("scripts.units")
 local data = require("scripts.ai.orders_data")
 local layout = require("scripts.ai.layout")
+local diplomacy = require("scripts.diplomacy") -- Phase 5 M2 diplomacy: every target test asks diplomacy.hostile
 
 local scout = {}
 
@@ -43,8 +44,7 @@ function scout.sees(C, force, surface, pos)
 end
 
 local function is_enemy(force, other_name)
-  local other = game.forces[other_name]
-  return other ~= nil and force.is_enemy(other)
+  return diplomacy.hostile(force.name, other_name) -- Phase 5 M2 diplomacy (was LuaForce.is_enemy)
 end
 
 --- Seed the spawn guesses (once per commander).
@@ -72,7 +72,8 @@ function scout.step(C, surface)
         walls = walls + 1
         check = walls <= scout.WALL_CHECKS -- a long wall must not make every scan expensive
       end
-      if check and scout.sees(C, force, surface, rec.position) then
+      -- Phase 5 M2 treasury: an indestructible building (a trade port) is never a target
+      if check and rec.entity.destructible and scout.sees(C, force, surface, rec.position) then
         local un = rec.entity.unit_number
         local k = C.known[un]
         if not k then
@@ -184,13 +185,15 @@ function scout.harass_target(C, surface, from, max_dist)
   end
   for un in pairs(C.enemy_haulers or {}) do
     local rec = storage.units[un]
-    if rec and rec.entity.valid and not near_any(rec.entity.position, turrets, scout.HARASS_SAFE) then
+    if rec and rec.entity.valid and diplomacy.hostile(C.force, rec.force) -- Phase 5 M2 diplomacy: a peace since
+       and not near_any(rec.entity.position, turrets, scout.HARASS_SAFE) then
       consider(rec.entity.position, 0, "hauler", rec.entity)
     end
   end
   for un, k in pairs(C.known) do
     local rec = storage.buildings[un]
-    if rec and rec.entity.valid and not near_any(k.position, turrets, scout.HARASS_SAFE) then
+    if rec and rec.entity.valid and diplomacy.hostile(C.force, k.force) -- Phase 5 M2 diplomacy
+       and not near_any(k.position, turrets, scout.HARASS_SAFE) then
       if k.kind == "hub" then
         consider(k.position, 15, "hub", rec.entity)
       elseif (k.kind == "extractor" or k.kind == "smelter" or k.kind == "solar")
@@ -202,11 +205,12 @@ function scout.harass_target(C, surface, from, max_dist)
   if best then return best end
   -- poles next to known outlying extractors
   for _, k in pairs(C.known) do
-    if k.kind == "extractor" and not near_any(k.position, bases, scout.HARASS_SAFE)
+    if k.kind == "extractor" and diplomacy.hostile(C.force, k.force) -- Phase 5 M2 diplomacy
+       and not near_any(k.position, bases, scout.HARASS_SAFE)
        and not near_any(k.position, turrets, scout.HARASS_SAFE) then
       for _, p in pairs(surface.find_entities_filtered({position = k.position, radius = 8,
                                                          name = "medium-electric-pole", limit = 3})) do
-        if p.force.name ~= C.force and game.forces[C.force].is_enemy(p.force) then
+        if diplomacy.hostile(C.force, p.force.name) then -- Phase 5 M2 diplomacy
           consider(p.position, 40, "pole", p)
         end
       end
@@ -216,7 +220,7 @@ function scout.harass_target(C, surface, from, max_dist)
   -- nothing known: look where an enemy expansion would be (a patch 45..110 tiles from an enemy spawn, nearest to it)
   local m = storage.match
   for f, pos in pairs(m and m.spawns or {}) do
-    if f ~= C.force and game.forces[f] and game.forces[C.force].is_enemy(game.forces[f]) then
+    if diplomacy.hostile(C.force, f) then -- Phase 5 M2 diplomacy
       for _, p in ipairs(scout.patch_list(C, surface)) do
         local d = util.distance({p.cx, p.cy}, pos)
         if d >= 45 and d <= 110 then consider({x = p.cx, y = p.cy}, d, "patch") end
@@ -253,9 +257,13 @@ function scout.beaten_enemy(C)
   local force = game.forces[C.force]
   if not force then return nil end
   local state = {}
+  -- Phase 5 M2 treasury / world: only match forces are rivals here. rts-neutral (city-states, trade posts) has
+  -- buildings but no CC or barracks, so it would count as a beaten side and every AI would rush it.
+  local players = {}
+  for _, f in ipairs(storage.match and storage.match.forces or {}) do players[f] = true end
   for _, rec in buildings.all() do
     local f = rec.force
-    if f ~= C.force then
+    if f ~= C.force and (players[f] or not storage.match) then
       local st = state[f]
       if not st then
         st = {enemy = is_enemy(force, f), alive = false, any = false}
@@ -290,25 +298,31 @@ function scout.best_target(C, surface, from)
       for un, rec in buildings.for_force(beaten, kind) do
         local d = util.distance(from, rec.position)
         if not best_score or d < best_score then
-          best, best_score = {position = rec.position, kind = rec.kind, un = un, finishing = true}, d
+          best, best_score = {position = rec.position, kind = rec.kind, un = un, finishing = true, force = beaten}, d
         end
       end
       if best then return best end
     end
   end
+  -- Phase 5 M2 diplomacy: known buildings and spawn guesses of nations at peace are no targets; a target names its force
+  -- (ai/army.lua re-targets a group whose target's nation made peace)
   for un, k in pairs(C.known) do
-    local score = util.distance(from, k.position) + (penalty[k.kind] or 50)
-    if not best_score or score < best_score then
-      best, best_score = {position = k.position, kind = k.kind, un = un}, score
+    if diplomacy.hostile(C.force, k.force) then
+      local score = util.distance(from, k.position) + (penalty[k.kind] or 50)
+      if not best_score or score < best_score then
+        best, best_score = {position = k.position, kind = k.kind, un = un, force = k.force}, score
+      end
     end
   end
   if best then return best end
   local u = scout.visible_enemy_unit(C, surface, from, 200)
-  if u then return {position = u.position, kind = "unit", un = u.unit_number} end
-  for _, g in pairs(C.guesses) do
-    local score = util.distance(from, g.position)
-    if not best_score or score < best_score then
-      best, best_score = {position = g.position, kind = "spawn"}, score
+  if u then return {position = u.position, kind = "unit", un = u.unit_number, force = u.force.name} end
+  for f, g in pairs(C.guesses) do
+    if diplomacy.hostile(C.force, f) then
+      local score = util.distance(from, g.position)
+      if not best_score or score < best_score then
+        best, best_score = {position = g.position, kind = "spawn", force = f}, score
+      end
     end
   end
   return best

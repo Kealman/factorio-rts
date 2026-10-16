@@ -45,6 +45,7 @@ local orders = require("scripts.orders")
 local commander = require("scripts.commander")
 local research = require("scripts.research")
 local balance = require("balance")
+local diplomacy = require("scripts.diplomacy") -- Phase 5 M2 diplomacy: targets must be hostile
 
 local abilities = {}
 
@@ -65,6 +66,7 @@ abilities.DEF = {
                 sprite = "item/discharge-defense-equipment"},
 }
 abilities.TICK = 10            -- expiry checks, scanner re-charts, overcharge drain
+abilities.PEACE_MARGIN = 4     -- Phase 5 M2 diplomacy: tiles beyond the strike radius kept clear of nations at peace
 abilities.RECHART = 240        -- ticks between scanner re-charts
 abilities.CHART_VISIBLE = 600  -- ticks a chart stays visible (fog.lua)
 -- Kinds Stim works on (not haulers).
@@ -348,7 +350,8 @@ end
 local function enemy_near(force, surface, position, radius)
   local best, best_d, best_unit
   for _, e in pairs(surface.find_entities_filtered({position = position, radius = radius})) do
-    if e.valid and e.force ~= force and force.is_enemy(e.force) and e.is_entity_with_health and e.type ~= "spider-leg" then
+    if e.valid and diplomacy.hostile(force.name, e.force.name) and e.is_entity_with_health -- Phase 5 M2 diplomacy
+       and e.type ~= "spider-leg" then
       local is_unit = e.unit_number ~= nil and storage.units[e.unit_number] ~= nil
       local d = util.distance_sq(e, position)
       if not best or (is_unit and not best_unit) or (is_unit == best_unit and d < best_d) then
@@ -370,6 +373,19 @@ local function cast_artillery(player_index, force_name, position)
       any = true
       local d = util.distance(rec.entity, {x = x, y = y})
       if d <= def.range and d >= def.min_range and rec.entity.surface == surface then guns[#guns + 1] = rec end
+    end
+  end
+  -- Phase 5 M2 diplomacy: the shells hit every force but the own ("not-same"), so a strike near a nation at peace (or an
+  -- ally) is refused. Skirmish: every other force is at war, nothing to check.
+  if diplomacy.nation() then
+    local peaceful = {}
+    for _, f in ipairs(diplomacy.nations()) do
+      if f ~= force_name and not diplomacy.hostile(force_name, f) then peaceful[#peaceful + 1] = f end
+    end
+    if #peaceful > 0 and surface.count_entities_filtered({position = {x = x, y = y}, force = peaceful, limit = 1,
+        radius = def.target_radius + def.scatter + abilities.PEACE_MARGIN}) > 0 then
+      return refuse(player_index, "artillery", {"rts.ability-reason-not-at-war"}, "a nation at peace near %s",
+        util.pos_str(position))
     end
   end
   if #guns == 0 then

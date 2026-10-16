@@ -45,6 +45,7 @@ local divisions = require("scripts.divisions") -- Phase 5: the divisions check
 local orders = require("scripts.orders")
 local world = require("scripts.world") -- Phase 5 M1: world checks of a Nation match (docs/PHASE5-M1.md §4)
 local towns = require("scripts.ai.towns") -- Phase 5 M1 integration: the AI's mining town (minute line)
+local diplomacy = require("scripts.diplomacy") -- Phase 5 M2 diplomacy: Nation matches start at peace (attack check)
 
 local autotest = {}
 
@@ -67,6 +68,8 @@ autotest.CITY_DEADLINE = 15 * 60 * 60
 autotest.LINE_DEADLINE = 40 * 60 * 60
 autotest.TRAIN_ITEMS = 20000
 autotest.TRAIN_DEADLINE = 60 * 60 * 60
+-- Phase 5 M2 treasury (docs/PHASE5-M2.md section 4): each normal AI has traded on the world market by TRADE_DEADLINE
+autotest.TRADE_DEADLINE = 20 * 60 * 60
 autotest.FORCES = {util.PLAYER_FORCE, util.ENEMY_FORCE}
 -- The player commander's difficulty; nil = the same as the enemy's (storage.match.config.enemy_difficulty), so
 -- one setting runs easy-vs-easy, normal-vs-normal or hard-vs-hard.
@@ -91,6 +94,7 @@ end
 -- third unit kind comes later (the economic doctrine's heavies at 6-20 minutes in six 60-minute runs, at 11:33 in
 -- two): NATION_KINDS_DEADLINE.
 autotest.NATION_KINDS_DEADLINE = 15 * 60 * 60
+autotest.PEACE_WAR_MINUTES = 10 -- Phase 5 M2 diplomacy: attack_<force> is excused below this many minutes at war
 local function nation_match()
   local m = storage.match
   return m ~= nil and m.config ~= nil and m.config.mode == "nation"
@@ -306,6 +310,7 @@ local function minute_report(s, n)
           table.sort(parts)
           return table.concat(parts, " ")
         end)() or "", lst and lst.trips or 0, lst and lst.fuel or 0)
+      if deps.market then util.log("ai minute %d %s m2: %s", n, f, deps.market.describe(f)) end -- Phase 5 M2 treasury
       if not (s.car_at and s.car_at[f]) and units.count(f, "car") > 0 then
         s.car_at = s.car_at or {}
         s.car_at[f] = game.tick - s.started
@@ -429,10 +434,14 @@ local function finish(s, why)
       -- Phase 5 M1 integration: on a Nation world (3072 tiles) the raiders may be ready long before scouting has seen
       -- a single enemy hauler, hub or outlying extractor; that is the map, not the doctrine
       local no_target = nation_match() and (C.stats.harass or 0) < 1 and (C.stats.harass_no_target or 0) > 0
-      check("harass_" .. f, (C.stats.harass or 0) >= 1 or excused(end_deadline) or harass_nd ~= "" or no_target,
-        "%s: %d raider harass(es)%s%s%s", f, C.stats.harass or 0, lost_txt, harass_nd, no_target
+      -- Phase 5 M2 diplomacy: a nation at peace for most of the match has nobody to harass
+      local war_min = nation_match() and diplomacy.war_ticks(f) / autotest.MINUTE or nil
+      local peace = (C.stats.harass or 0) < 1 and war_min ~= nil and war_min < autotest.PEACE_WAR_MINUTES
+      check("harass_" .. f, (C.stats.harass or 0) >= 1 or excused(end_deadline) or harass_nd ~= "" or no_target or peace,
+        "%s: %d raider harass(es)%s%s%s%s", f, C.stats.harass or 0, lost_txt, harass_nd, no_target
         and string.format(", raiders ready %d times but no enemy target known yet (Nation world)",
-          C.stats.harass_no_target) or "")
+          C.stats.harass_no_target) or "",
+        peace and string.format(", at peace: %.0f minutes at war (Nation diplomacy)", war_min) or "")
     end
     -- Phase 4: the economic and turtle doctrines push late; one whose pool never reached its attack size or parity
     -- with the enemy army it saw (army.lua PARITY) holds, by design, and the line says so
@@ -443,13 +452,18 @@ local function finish(s, why)
     -- Phase 5 M1 integration: in Nation mode's Age I the AI attacks nothing beyond army.NATION_AGE1_REACH
     local reach = C and (C.stats.attacks or 0) == 0 and (C.stats.reach_held or 0) > 0
     held = held or reach
-    check("attack_" .. f, (C and C.stats.attacks > 0) or ended or knocked_out or held or not_due,
-      "%s launched %d attacks (%d reinforcements)%s", f, C and C.stats.attacks or 0, C and C.stats.reinforcements or 0,
+    -- Phase 5 M2 diplomacy: a Nation match starts at peace; a force at war for less than PEACE_WAR_MINUTES has nobody
+    -- it may attack for most of the match
+    local war_min = nation_match() and diplomacy.war_ticks(f) / autotest.MINUTE or nil
+    local peace = C and (C.stats.attacks or 0) == 0 and war_min ~= nil and war_min < autotest.PEACE_WAR_MINUTES
+    check("attack_" .. f, (C and C.stats.attacks > 0) or ended or knocked_out or held or not_due or peace,
+      "%s launched %d attacks (%d reinforcements)%s%s", f, C and C.stats.attacks or 0, C and C.stats.reinforcements or 0,
       ended and ", match ended" or (knocked_out and ", lost its CC first" or (reach and string.format(
         ", Age I: every target lay beyond the Nation reach (%d times)", C.stats.reach_held) or held and string.format(
         ", %s held: pool strength %.1f below %d (attack size %d, enemy army seen %d)", C.doctrine,
         a.pool_strength or 0, need, a.min or 0, a.enemy_seen or 0) or (not_due and string.format(
-        ", first attack not due before %ds", (C.cfg.first_attack or 0) / 60) or ""))))
+        ", first attack not due before %ds", (C.cfg.first_attack or 0) / 60) or ""))),
+      peace and string.format(", at peace: %.0f minutes at war (Nation diplomacy)", war_min) or "")
     check("produce_" .. f, s.produced_ok[f], "%s kits per minute [%s]", f,
       table.concat(s.per_minute[f], " "))
     check("no_bad_spam_" .. f, (C and C.stats.bad or 0) < 20, "%s gave up on %d construction entries", f,
@@ -517,6 +531,17 @@ local function finish(s, why)
     check("train_items", items >= autotest.TRAIN_ITEMS or not due(autotest.TRAIN_DEADLINE),
       "%d items moved by train (%s), goal %d%s", items, table.concat(parts, ", "), autotest.TRAIN_ITEMS,
       (items < autotest.TRAIN_ITEMS and not due(autotest.TRAIN_DEADLINE)) and ", not due" or "")
+    if deps.market then -- Phase 5 M2 treasury: trade volume > 0 by TRADE_DEADLINE (scripts/market.lua)
+      for _, f in ipairs(autotest.FORCES) do
+        local v = deps.market.volume(f)
+        local first = v.first_tick and (v.first_tick - s.started) or nil
+        local lost = s.cc_lost_at[f]
+        check("trade_" .. f, (first ~= nil and first <= autotest.TRADE_DEADLINE) or not due(autotest.TRADE_DEADLINE)
+          or (lost ~= nil and lost < autotest.TRADE_DEADLINE), "%s: %s, %.0f cr traded by the end (sold %.0f, bought %.0f)"
+          .. "%s", f, first and string.format("first trade at %d:%02d", math.floor(first / 3600), math.floor(first / 60) % 60)
+          or "no trade", v.total, v.sold, v.bought, (not first and not due(autotest.TRADE_DEADLINE)) and ", not due" or "")
+      end
+    end
   end
   -- Phase 5 (docs/PHASE5-M1.md section 4): attack and defence groups ran as divisions (one unit-group path each) and
   -- the order queue kept its budgets
@@ -541,6 +566,7 @@ local function finish(s, why)
   -- Phase 5 M1: in a Nation match, the world checks (connectivity on samples and real tiles, start kits, spawn
   -- score spread, background fill) join the summary
   if m and m.config and m.config.mode == "nation" then world.autotest_checks(check) end
+  if m and m.config and m.config.mode == "nation" then diplomacy.autotest_checks(check) end -- Phase 5 M2 diplomacy
   local last = s.minute
   local producing = autotest.producing(s)
   -- Phase 5 M1 integration: a match where at most one force still has a CC or a barracks is decided even when a beaten
@@ -585,7 +611,8 @@ function autotest.tick(tick)
       s.lab_at[f] = age
       util.log("ai autotest: %s has a lab at %.0fs", f, age / 60)
     end
-    if not s.hub_at[f] and buildings.count(f, "hub") > 0 then
+    if not s.hub_at[f] and buildings.count(f, "hub") > (deps.market and #deps.market.ports(f) or 0) then -- Phase 5
+      -- M2 treasury: a captured trade port is a hub subtype, not the doctrine's hub
       s.hub_at[f] = age
       util.log("ai autotest: %s has a hub at %.0fs", f, age / 60)
     end

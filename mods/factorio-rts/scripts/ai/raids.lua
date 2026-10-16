@@ -17,6 +17,7 @@ local scout = require("scripts.ai.scout")
 local doctrine = require("scripts.ai.doctrine")
 local hubs = require("scripts.ai.hubs")
 local deps = require("scripts.ai.deps")
+local diplomacy = require("scripts.diplomacy") -- Phase 5 M2 diplomacy: a harass target's nation may make peace
 
 local raids = {}
 
@@ -253,7 +254,7 @@ function raids.step(C, surface, pool, lists, home, reserve)
         local gone = true
         if G.target and G.target.un then
           local rec = units.get(G.target.un) or (storage.buildings and storage.buildings[G.target.un])
-          gone = not (rec and rec.entity.valid)
+          gone = not (rec and rec.entity.valid and diplomacy.hostile(C.force, rec.force)) -- Phase 5 M2 diplomacy
         elseif G.target then
           gone = centroid ~= nil and util.distance(centroid, G.target.position) < 10
         end
