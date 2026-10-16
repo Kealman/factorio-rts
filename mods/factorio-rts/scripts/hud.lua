@@ -148,6 +148,9 @@ for _, name in ipairs({"rts-depot", "rts-rail", "rts-locomotive-kit", "rts-cargo
 for _, name in ipairs({"rts-house", "rts-apartment", "rts-farm", "rts-bakery", "rts-fishing-hut", "rts-goods",
                        "rts-brick"}) do
   P4.NATION_ONLY[name] = true end -- Phase 5 M2 people: houses, the food chain, goods and factory bricks
+-- Phase 5 M2 war: supply crates (both recipes), the field depot, the troop wagon kit
+for _, name in ipairs({"rts-supply-crate", "rts-supply-crate-ii", "rts-field-depot", "rts-troop-wagon-kit"}) do
+  P4.NATION_ONLY[name] = true end
 P4.crafter = function(kind) return kind == "factory" or kind == "district" end -- Phase 5 E1: districts are producers
 P4.place_name = require("scripts.world").place_name -- Phase 5 M2 world: region names in alerts (alert_text)
 -- Phase 5 E1: recipes an age locks (research.AGE_LOCKS: Age II goods, buildings, the Armoured car kit) exist in Nation
@@ -166,7 +169,8 @@ P4.FACTORY_TABS = {
 }
 P4.LOGISTICS_PRODUCTS = {["transport-belt"] = true, ["fast-inserter"] = true, ["medium-electric-pole"] = true,
   ["firearm-magazine"] = true, ["rts-hauler-kit"] = true, rail = true, ["rts-locomotive-kit"] = true,
-  ["rts-cargo-wagon-kit"] = true, ["rts-construction-wagon-kit"] = true}
+  ["rts-cargo-wagon-kit"] = true, ["rts-construction-wagon-kit"] = true,
+  ["rts-supply-crate"] = true, ["rts-troop-wagon-kit"] = true} -- Phase 5 M2 war
 P4.recipe_tab = function(r)
   if r.category == "rts-science" then return "science" end
   if r.category == "rts-intermediates" or r.category == "rts-age2" then return "intermediates" end
@@ -267,7 +271,8 @@ local BUILD_TABS = {
             "rts-hub", "rts-depot"}}, -- Phase 5 M1: rts-depot is Nation-only (P4.NATION_ONLY)
   {key = "production", caption = "rts.build-tab-production", tooltip = "rts.build-tab-production-tooltip",
    items = {"rts-barracks", "rts-factory", "rts-lab", "rts-city-charter", "rts-fort", -- Phase 5 M1: Nation only
-            "rts-house", "rts-apartment", "rts-farm", "rts-bakery", "rts-fishing-hut"}}, -- Phase 5 M2 people: Nation only
+            "rts-house", "rts-apartment", "rts-farm", "rts-bakery", "rts-fishing-hut", -- Phase 5 M2 people: Nation only
+            "rts-field-depot"}}, -- Phase 5 M2 war: Nation only
   {key = "defence", caption = "rts.build-tab-defence", tooltip = "rts.build-tab-defence-tooltip",
    items = {"rts-turret", "rts-laser-turret", "rts-wall", "rts-solar-array", "rts-steam-plant", "rts-accumulator",
             "rts-radar"}},
@@ -345,6 +350,15 @@ P4.ALERT_STYLE = {
   ["diplomacy-answer"] = {icons = {"utility/check_mark_green"}, color = "green"},
   ["diplomacy-declined"] = {icons = {"utility/warning_icon"}, color = "yellow"},
   ["diplomacy-news"] = {icons = {"utility/warning_icon"}, color = "white"},
+  -- Phase 5 M2 war (scripts/warsupply.lua, capture.lua, garrison.lua)
+  ["supply-low"] = {icons = {"item/rts-supply-crate", "utility/warning_icon"}, color = "yellow"},
+  ["supply-out"] = {icons = {"item/rts-supply-crate", "utility/danger_icon"}, color = "red",
+                    sound = "utility/alert_destroyed"},
+  ["city-subdued"] = {icons = {"item/rts-city-charter", "utility/danger_icon"}, color = "red",
+                      sound = "utility/alert_destroyed"},
+  ["city-captured"] = {icons = {"item/rts-city-charter", "utility/check_mark_green"}, color = "green"},
+  ["troop-wagon-lost"] = {icons = {"item/rts-troop-wagon-kit", "utility/danger_icon"}, color = "red",
+                          sound = "utility/alert_destroyed"},
 }
 P4.ALERT_DEFAULT_STYLE = {icons = {"utility/warning_icon"}, color = "white"}
 -- A text that overrides its kind's style: the ruin's previous owner gets kind "ruin-captured" with this text.

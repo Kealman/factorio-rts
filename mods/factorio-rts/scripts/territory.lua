@@ -685,6 +685,46 @@ function territory.update_source(unit_number, radius_tiles, strength)
   return true
 end
 
+--- Phase 5 M2 war: give a source to another force (a captured City Center, fort, hub or radar, scripts/capture.lua).
+--- Its land is recomputed by the queue. Returns true when the source exists.
+function territory.set_source_force(unit_number, force_name)
+  local T = grid()
+  local src = T and T.sources[unit_number]
+  if not src then return false end
+  if src.force == force_name then return true end
+  local old = src.force
+  src.force, src.fid = force_name, force_id(T, force_name)
+  queue_job(T, disk_box(T, src), "capture " .. src.kind .. "#" .. unit_number)
+  util.log("territory: source %s #%d %s -> %s", src.kind, unit_number, old, force_name)
+  return true
+end
+
+--- Phase 5 M2 war: bounding box in tiles {x0, y0, x1, y1} of the cells whose city is `city_id`, or nil (no cells).
+function territory.city_box(city_id)
+  local T = grid()
+  if not (T and city_id and city_id > 0 and city_id < 256) then return nil end
+  local ch = string.char(city_id)
+  local cx0, cy0, cx1, cy1
+  for r = 1, T.h do
+    local row = T.city[r]
+    local a = string.find(row, ch, 1, true)
+    if a then
+      local b = a
+      local i = a
+      while true do
+        i = string.find(row, ch, i + 1, true)
+        if not i then break end
+        b = i
+      end
+      cx0, cx1 = math.min(cx0 or a, a), math.max(cx1 or b, b)
+      cy0, cy1 = cy0 or r, r
+    end
+  end
+  if not cx0 then return nil end
+  local c = T.cell
+  return {x0 = T.x0 + (cx0 - 1) * c, y0 = T.y0 + (cy0 - 1) * c, x1 = T.x0 + cx1 * c, y1 = T.y0 + cy1 * c}
+end
+
 --- Drop a source (its land is recomputed by the queue).
 function territory.remove_source(unit_number)
   local T = grid()

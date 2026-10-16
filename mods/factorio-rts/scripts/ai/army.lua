@@ -68,6 +68,145 @@ local function nation_mode()
   return m ~= nil and m.config ~= nil and m.config.mode == "nation"
 end
 
+-- Phase 5 M2 war (docs/PHASE5-M2.md section 3; scripts/warsupply.lua, scripts/capture.lua), Nation mode only: attacks
+-- go for the nearest hostile city whose defenders (units within ai.defenders_radius of its centre plus garrison points)
+-- are fewer than ai.defenders_ratio (60 %) of the attack group, and keep it as their target until it is captured; an
+-- attack group whose division is low on supply returns to the rally point (a depot: the Command Center refills it); the
+-- pool does not attack while its units' supply is low; warsupply.ai_step keeps crates made and stocked at the depots.
+local WAR = require("balance").nation.war
+local function war_mod(name)
+  local l = package.loaded
+  return l["__" .. script.mod_name .. "__/scripts/" .. name .. ".lua"] or l["scripts." .. name]
+end
+local function hostile_to(a, b)
+  if a == b then return false end
+  local dip = war_mod("diplomacy")
+  if dip and dip.hostile then return dip.hostile(a, b) end
+  local fa, fb = game.forces[a], game.forces[b]
+  return fa ~= nil and fb ~= nil and fa.is_enemy(fb)
+end
+local function city_defenders(surface, city)
+  local n = 0
+  for _, e in ipairs(surface.find_entities_filtered({position = city.position, radius = WAR.ai.defenders_radius,
+                                                     force = city.force, type = {"unit", "spider-unit"}})) do
+    if e.unit_number and storage.units[e.unit_number] then n = n + 1 end
+  end
+  local g = war_mod("garrison")
+  local gar = g and g.of and g.of(city.id)
+  return n + (gar and gar.points or 0)
+end
+-- m2-diplomacy (scripts/wars.lua): the goal cities of the force's offensive wars it does not hold yet, as a set of
+-- city ids, or nil without that module.
+local function war_goals(C)
+  local wars = war_mod("wars")
+  if not (wars and wars.targets) then return nil end
+  local ok, list = pcall(wars.targets, C.force)
+  if not ok or type(list) ~= "table" then return {} end
+  local set = {}
+  for _, v in pairs(list) do
+    local id = type(v) == "table" and (v.id or v.city or v.city_id) or v
+    if type(id) == "number" then set[id] = true end
+  end
+  return set
+end
+
+--- The nearest hostile city (to `from`) whose defenders are fewer than ai.defenders_ratio of `group` units, as a
+--- target {position, kind = "city", city, un, defenders}, or nil. With scripts/wars.lua only its war goal cities.
+function army.city_target(C, surface, from, group)
+  local best, bd
+  local goals = war_goals(C)
+  local ids = {}
+  for id in pairs(storage.cities or {}) do ids[#ids + 1] = id end
+  table.sort(ids)
+  for _, id in ipairs(ids) do
+    local c = storage.cities[id]
+    if c.force ~= C.force and c.entity and c.entity.valid and hostile_to(C.force, c.force)
+       and (not goals or goals[id]) then
+      local def = city_defenders(surface, c)
+      if def < WAR.ai.defenders_ratio * group then
+        local d = util.distance(from, c.position)
+        if not bd or d < bd then best, bd = {position = c.position, kind = "city", city = c.id, un = c.center,
+                                             defenders = def, force = c.force}, d end -- force: diplomacy's stale check
+      end
+    end
+  end
+  return best
+end
+-- When the AI may start a capture operation: army.capture_ok(C) -> bool when the nation strategist (M2 wave B) sets it
+-- (war goals), else from WAR.ai.capture_from ticks of match time on, one operation per WAR.ai.capture_cooldown.
+army.capture_ok = nil
+local function may_capture(C)
+  if army.capture_ok then return army.capture_ok(C) == true end
+  local goals = war_goals(C) -- m2-diplomacy: a war with city goals is the reason to go
+  if goals then return next(goals) ~= nil and game.tick >= (C.army.capture_next or 0) end
+  local m = storage.match
+  if not (m and m.tick_started) or game.tick - m.tick_started < WAR.ai.capture_from then return false end
+  return game.tick >= (C.army.capture_next or 0)
+end
+
+-- Average supply points of pool units (scripts/warsupply.lua remembers them between divisions; fresh units: 100).
+local function pool_sp(list)
+  local s = storage.warsupply
+  local sum, n = 0, 0
+  for _, e in ipairs(list) do
+    sum, n = sum + ((s and s.unit_sp and s.unit_sp[e.unit_number]) or WAR.sp_start), n + 1
+  end
+  return n > 0 and sum / n or WAR.sp_start
+end
+
+-- City-states (m2-world: cities of rts-neutral, archetype "city_state") are deliberate capture targets only: from Age
+-- II and (without the strategist's army.capture_ok) from capture_from of match time, while the nation is at war with
+-- no other nation, with a group of at least ai.city_state_ratio (1.5x) the city-state's garrison points in supply (4
+-- per live turret plus garrison records) and supplied units, one operation per capture_cooldown. scout.lua ignores
+-- rts-neutral buildings otherwise. (Seed 501 from Age II: three city-states taken by 26:00, then marches across the
+-- rival's land led to a war and the M1 freight check fell to 18,908 items.)
+function army.city_state_target(C, surface, from, list)
+  local ages = deps.ages
+  if not (ages and ages.of(C.force) >= 2) then return nil end
+  -- when: the strategist's army.capture_ok, else (like town captures) from capture_from of match time
+  if army.capture_ok then
+    if army.capture_ok(C) ~= true then return nil end
+  else
+    local m = storage.match
+    if not (m and m.tick_started) or game.tick - m.tick_started < WAR.ai.capture_from then return nil end
+  end
+  local dip = war_mod("diplomacy")
+  if dip and dip.at_war and dip.at_war(C.force) then return nil end
+  if game.tick < (C.army.capture_next or 0) or pool_sp(list) < WAR.low then return nil end
+  local supply_mod = war_mod("supply")
+  local group = 0
+  for _, e in ipairs(list) do group = group + (supply_mod and supply_mod.cost(e.name) or 1) end
+  local world = war_mod("world")
+  local g = war_mod("garrison")
+  local best, bd
+  for _, rec in ipairs(world and world.city_states and world.city_states() or {}) do
+    local c = rec.city_id and storage.cities and storage.cities[rec.city_id]
+    if c and c.force ~= C.force and c.archetype == "city_state" and c.entity and c.entity.valid
+       and hostile_to(C.force, c.force) then
+      local points = 0
+      for _, t in ipairs(rec.turrets or {}) do
+        if t.valid and t.force.name == c.force then points = points + WAR.ai.turret_points end
+      end
+      local gar = g and g.of and g.of(c.id)
+      points = points + (gar and gar.points or 0) + city_defenders(surface, c)
+      if group >= WAR.ai.city_state_ratio * points then
+        local d = util.distance(from, c.position)
+        if not bd or d < bd then
+          best, bd = {position = c.position, kind = "city", city = c.id, un = c.center, defenders = points,
+                      force = c.force, city_state = true}, d
+        end
+      end
+    end
+  end
+  return best
+end
+
+local function city_still_hostile(C, target)
+  if not (target and target.kind == "city" and storage.cities) then return false end
+  local c = storage.cities[target.city]
+  return c ~= nil and c.force ~= C.force and hostile_to(C.force, c.force)
+end
+
 --- Set up C.army; the rally point lies between `home` (CC) and the nearest other spawn.
 function army.init(C, home)
   local a = C.army or {}
@@ -217,6 +356,8 @@ end
 function army.step(C, surface)
   local a = C.army
   local tick = game.tick
+  local ws = nation_mode() and war_mod("warsupply") or nil -- Phase 5 M2 war: crates and supply states
+  if ws then ws.ai_step(C) end
   local cc = buildings.main_cc(C.force)
   local home = cc and cc.position or a.rally
 
@@ -367,6 +508,29 @@ function army.step(C, surface)
     local reinforce = attacking and strength >= math.max(3, need / 2)
     if launch or reinforce then
       local target = scout.best_target(C, surface, a.rally)
+      -- Phase 5 M2 war: a capture operation goes for the nearest weakly held hostile city; a reinforcement joins the
+      -- city operation under way; no new offensive on low supply
+      if ws and not finishing then
+        local ct
+        if launch and may_capture(C) then
+          ct = army.city_target(C, surface, home or a.rally, #pool)
+        end
+        if launch and not ct then ct = army.city_state_target(C, surface, home or a.rally, pool) end
+        if launch and ct then a.capture_next = tick + WAR.ai.capture_cooldown end
+        if not launch then
+          for _, G in pairs(a.groups) do
+            if G.state == "attack" and city_still_hostile(C, G.target) then ct = G.target end
+          end
+        end
+        if ct then target = ct end
+        if launch and pool_sp(pool) < WAR.low then
+          if not a.low_logged then
+            a.low_logged = true
+            util.log("ai %s: no offensive: the pool's supply is low (%.0f SP)", C.force, pool_sp(pool))
+          end
+          target = nil
+        end
+      end
       if target and nation_mode() and not finishing and home
          and util.distance(target.position, home) > army.NATION_AGE1_REACH then
         local ages = deps.ages
@@ -393,6 +557,14 @@ function army.step(C, surface)
         util.log("ai %s: %s #%d: group #%d with %d units (%d ordered, %.0f hp) -> %s %s", C.force,
           launch and "attack" or "reinforcement", launch and C.stats.attacks or C.stats.reinforcements, G.id, #pool,
           n, G.initial_hp, target.kind, util.pos_str(target.position))
+        if target.kind == "city" and launch then -- Phase 5 M2 war
+          C.stats.capture_attempts = (C.stats.capture_attempts or 0) + 1
+          util.log("ai %s: capture attempt %d on %s %d (%s, %d defenders, group of %d)", C.force,
+            C.stats.capture_attempts, target.city_state and "city-state" or "city", target.city,
+            storage.cities[target.city].force, target.defenders or 0, #pool)
+        elseif target.kind == "city" then
+          util.log("ai %s: group #%d reinforces the capture of city %d", C.force, G.id, target.city)
+        end
         pool = {}
       end
     end
@@ -407,7 +579,14 @@ function army.step(C, surface)
         local hp = hp_of(list)
         -- Phase 5 M2 diplomacy: the target's nation is no longer at war with us: re-target now (scout filters it out)
         local stale = G.target and G.target.force and not diplomacy.hostile(C.force, G.target.force)
-        if G.state == "attack" and G.initial_hp > 0 and hp < (C.cfg.retreat_ratio or 0.4) * G.initial_hp then
+        -- Phase 5 M2 war: a division low on supply stops its offensive and goes back to the rally point to refill
+        local low = ws and G.state == "attack" and division_of(G) and ws.state(G.division) ~= "supplied"
+        if low then
+          send_home(C, G, list, "return")
+          C.stats.supply_returns = (C.stats.supply_returns or 0) + 1
+          util.log("ai %s: group #%d stops its offensive: division #%d is %s on supply (%.0f SP)", C.force, gid,
+            G.division, ws.state(G.division), ws.sp(G.division))
+        elseif G.state == "attack" and G.initial_hp > 0 and hp < (C.cfg.retreat_ratio or 0.4) * G.initial_hp then
           send_home(C, G, list, "retreat")
           a.hold_until = tick + army.REGROUP_TICKS
           C.stats.retreats = C.stats.retreats + 1
@@ -417,6 +596,8 @@ function army.step(C, surface)
           local target
           if G.state == "defend" then
             if threat_fresh(C, home) then target = {position = a.threat.position, kind = "threat"} end
+          elseif ws and city_still_hostile(C, G.target) then
+            target = G.target -- Phase 5 M2 war: a city target holds until it is captured
           else
             target = scout.best_target(C, surface, centroid)
           end

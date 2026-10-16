@@ -759,6 +759,46 @@ balance.nation.market = {
   },
 }
 balance.buildings["rts-trade-post"] = {kind = "hub", supply_cap = 0}
+-- Phase 5 M2 war (docs/PHASE5-M2.md section 3 "warsupply.lua / capture.lua / garrison.lua"; docs/qa/phase5-war-notes.md):
+-- supply points, supply crates and field depots, city capture, garrisons and troop trains. Nation mode only.
+balance.nation.war = {
+  -- Supply points (SP) per division, 0..sp_max. States: supplied (>= low), low (1 .. low - 1), out (0).
+  sp_max = 100, sp_start = 100, low = 50,
+  use = {idle = 0, moving = 2, engaged = 8, enemy_land = 2}, -- SP per minute (idle in own or neutral land: 0)
+  engaged_ticks = 300,       -- a member that hit or was hit this recently makes its division "engaged"
+  refill = {per_minute = 20, range = 64, sp_per_crate = 10}, -- within range (2 chunks) of a depot holding crates
+  out = {share = 0.015, period = 600},  -- out of supply: 1.5 % of max health every 10 s
+  loose_radius = 24,         -- a unit outside any division takes the state of the nearest division this close
+  crate = {cost = {["iron-plate"] = 4, ["coal"] = 2}, time = 2},                            -- Age I recipe
+  crate2 = {cost = {["iron-plate"] = 4, ["coal"] = 2, ["rts-explosives"] = 1}, time = 2},   -- Age II recipe
+  field_depot = {cost = {["iron-plate"] = 30, ["stone"] = 20, ["copper-plate"] = 10}, time = 6, health = 600,
+                 keep = 20},  -- a Commander-built hub subtype that keeps 20 crates; it adds no supply cap
+  -- Troop trains (rails-trade.md section 3): a troop wagon holds 16 supply of units as records
+  troop_wagon_kit = {cost = {["iron-plate"] = 30, ["steel-plate"] = 10}, time = 6},
+  troop_wagon = {health = 800, capacity = 16, max_wagons = 3},
+  embark_radius = 14,        -- tiles from a troop wagon at which a unit ordered to embark boards
+  embark_wait = 30 * 60,     -- a loaded troop train leaves this long after the last boarding at the latest
+  disembark_ring = 6,        -- tiles from the wagons where disembarked units appear
+  disband_share = 0.5,       -- kits a disbanded train returns
+  -- Capture (D4)
+  capture = {subdue = 0.10, radius = 24, ticks = 20 * 60, period = 60, slice = 500, unrest_ticks = 60 * 60,
+             pop_keep = 0.7, restart_health = 0.25, release_health = 0.5, siege_timeout = 60 * 60},
+  -- Garrison: units inside a city as records; hidden turrets around the City Center, one per 4 points
+  garrison = {points_per_turret = 4, max_turrets = 8, ring = 5, enter_radius = 14, sortie_health = 0.5,
+              ammo = 20, ammo_period = 300},
+  -- AI (ai/army.lua): crate keep at its hubs and depots, a crate make target at its capital, city targets
+  ai = {crate_keep = 20, crate_target = 60, crates_from_age = 2, defenders_ratio = 0.6, defenders_radius = 40,
+        period = 600,
+        -- without a strategist hook (army.capture_ok, M2 wave B) a Nation AI starts capture operations from minute 45
+        -- of the match, at most one per 15 minutes (a town lost earlier ends the rail economy of M1's 1v1 acceptance)
+        capture_from = 45 * 60 * 60, capture_cooldown = 15 * 60 * 60,
+        -- city-states: deliberate capture operations only (army.city_state_target): from Age II, at peace with every
+        -- nation, a group of at least city_state_ratio x the garrison points (turret_points per live turret)
+        city_state_ratio = 1.5, turret_points = 4},
+}
+balance.buildings["rts-field-depot"] = {kind = "hub", cost = balance.nation.war.field_depot.cost,
+                                        time = balance.nation.war.field_depot.time,
+                                        health = balance.nation.war.field_depot.health}
 
 -- Phase 5 M2 world (docs/PHASE5-M2.md §3 "world.lua additions / strategic.lua", docs/qa/phase5-world2-notes.md): the
 -- scarcity portfolio, city-states, ruins, ports, chokes and the strategic layer of Nation worlds (scripts/world.lua,

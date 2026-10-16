@@ -219,12 +219,42 @@ function buildings.is_alive_force(force_name)
 end
 
 --- The first live CC record of a force (lowest unit number), or nil.
+--- Phase 5 M2 war: a Command Center the force captured (rec.origin, another force) counts only when it has no own CC.
 function buildings.main_cc(force_name)
-  local best_un, best
+  local best_un, best, alt_un, alt
   for un, rec in buildings.for_force(force_name, "cc") do
-    if not best_un or un < best_un then best_un, best = un, rec end
+    if rec.origin and rec.origin ~= force_name then
+      if not alt_un or un < alt_un then alt_un, alt = un, rec end
+    elseif not best_un or un < best_un then
+      best_un, best = un, rec
+    end
   end
-  return best, best_un
+  if best then return best, best_un end
+  return alt, alt_un
+end
+
+---------------------------------------------------------------------------
+-- Phase 5 M2 war: capture gives buildings to another force in place (scripts/capture.lua)
+---------------------------------------------------------------------------
+local force_changed_callbacks = {}
+--- fn(unit_number, record, old_force) after a registered building changed its force (buildings.set_force). Load time.
+function buildings.on_force_changed(fn) force_changed_callbacks[#force_changed_callbacks + 1] = fn end
+
+--- Give an entity to another force in place. A registered building keeps its record: rec.force follows, rec.origin
+--- keeps the force it was built by, and the on_force_changed callbacks run (logistics, territory, rails, cities).
+--- Returns the record, or nil for an entity that is not a registered building.
+function buildings.set_force(entity, force_name)
+  if not (entity and entity.valid) then return nil end
+  local un = entity.unit_number
+  local rec = un and storage.buildings[un] or nil
+  local old = entity.force.name
+  if old == force_name then return rec end
+  entity.force = force_name
+  if not rec then return nil end
+  rec.origin = rec.origin or old
+  rec.force = force_name
+  for i = 1, #force_changed_callbacks do force_changed_callbacks[i](un, rec, old) end
+  return rec
 end
 
 ---------------------------------------------------------------------------

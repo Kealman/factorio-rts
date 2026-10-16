@@ -50,6 +50,12 @@ local modules = {
   require("scripts.techgui"),  -- Phase 4 research panel (T)
   require("scripts.ages"),      -- Phase 5 E1: ages and the Railway Charter (after research, supply, match)
   require("scripts.districts"), -- Phase 5 E1: districts, oil, make targets, ledger data (after ages, production)
+  -- Phase 5 M2 war: supply points and crates, city capture, garrisons and troop trains (Nation mode). After divisions,
+  -- rails, territory, cities and ages (their hooks), after research (the Armor heal it takes back while low) and after
+  -- cities (its capital-armor heal runs before the subdue clamp)
+  require("scripts.warsupply"),
+  require("scripts.capture"),
+  require("scripts.garrison"),
   require("scripts.ledgergui"), -- Phase 5 E1: city ledger (L) and age badge (after hud: its styles)
   require("scripts.strategic"), -- Phase 5 M2 world: chart labels, regional minimap, strategic zoom (after cities, hud)
   require("scripts.population"), -- Phase 5 M2 people: residents, needs, growth, tiers by population, houses, food

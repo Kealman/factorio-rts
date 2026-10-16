@@ -28,6 +28,28 @@ local selection = require("scripts.selection")
 local divisions = require("scripts.divisions")
 local hud = require("scripts.hud")
 
+-- Phase 5 M2 war (scripts/warsupply.lua, scripts/garrison.lua; they load later): a supply bar per card in Nation mode
+-- (blue supplied, amber low, red out), troop train and garrison states, and a garrison row with Sortie while an own
+-- City Center (or the capital's Command Center) is selected.
+local function war_mod(name)
+  local l = package.loaded
+  return l["__" .. script.mod_name .. "__/scripts/" .. name .. ".lua"] or l["scripts." .. name]
+end
+local SP_COLORS = {supplied = {0.35, 0.65, 0.95}, low = {0.95, 0.75, 0.2}, out = {0.95, 0.3, 0.25}}
+local function nation_mode()
+  local m = storage.match
+  return m ~= nil and m.config ~= nil and m.config.mode == "nation"
+end
+local function selected_city(player_index)
+  if not nation_mode() then return nil end
+  local un = selection.get_building(player_index)
+  local cs = storage.city_state
+  local id = un and cs and cs.by_center and cs.by_center[un]
+  local c = id and storage.cities and storage.cities[id]
+  if c and c.force == selection.force_name(player_index) then return id end
+  return nil
+end
+
 local divisiongui = {}
 
 divisiongui.FRAME = "rts_div_panel"
@@ -98,9 +120,9 @@ local function name_sig(D)
   return type(D.name) == "string" and D.name or ("#" .. D.id)
 end
 
-local function signature(player, ds, whole, form, bun, g)
+local function signature(player, ds, whole, form, bun, g, city)
   local parts = {form and "F" or "-", tostring(bun or "-"), tostring(bun and divisions.barracks_division(bun) or "-"),
-                 tostring(g.rename or "-")}
+                 tostring(g.rename or "-"), tostring(city or "-")} -- Phase 5 M2 war: the selected city
   for _, D in ipairs(ds) do
     parts[#parts + 1] = string.format("%d:%s:%s:%s:%s", D.id, name_sig(D), D.stance, D.reinforce and "r" or "-",
       whole[D.id] and "S" or "-")
@@ -140,6 +162,11 @@ local function health_color(ratio)
 end
 
 local function order_caption(D)
+  -- Phase 5 M2 war: on a troop train, boarding, going into a garrison
+  if (D.aboard or 0) > 0 and next(D.units) == nil then return {"rts-war.state-aboard", D.aboard} end
+  if D.embark then return {"rts-war.state-embarking"} end
+  local gs = storage.garrison
+  if gs and gs.pending and gs.pending[D.id] then return {"rts-war.state-garrisoning"} end
   if D.state == "idle" or not D.order then return {"rts-div.state-idle"} end
   if D.state == "holding" then return {"rts-div.order-hold"} end
   return {ORDER_KEYS[D.order.kind] or "rts-div.state-idle"}
@@ -175,6 +202,11 @@ local function build_card(scroll, D, selected, g)
   local n = row.add({type = "label", style = "rts_hud_mono_label", tooltip = {"rts-div.strength-tooltip"}})
   local bar = card.add({type = "progressbar", style = "rts_hud_progressbar", value = 1})
   bar.style.width = BAR_WIDTH
+  local sp_bar -- Phase 5 M2 war: supply points (Nation mode)
+  if nation_mode() then
+    sp_bar = card.add({type = "progressbar", style = "rts_hud_progressbar", value = 1})
+    sp_bar.style.width = BAR_WIDTH
+  end
   local row2 = card.add({type = "flow", direction = "horizontal", style = "rts_hud_row"})
   local state = row2.add({type = "label", style = "rts_hud_dim_label"})
   add_filler(row2)
@@ -209,10 +241,10 @@ local function build_card(scroll, D, selected, g)
     icon_button(row4, PREFIX .. "disband_" .. id, "utility/trash", {"rts-div.disband"}, {"rts-div.disband-tooltip"},
       {rts_div = "disband", id = id})
   end
-  return {n = n, bar = bar, state = state}
+  return {n = n, bar = bar, state = state, sp = sp_bar}
 end
 
-local function build(player, g, ds, whole, form, bun)
+local function build(player, g, ds, whole, form, bun, city)
   destroy(player, g)
   local screen = player.gui.screen
   local frame = screen.add({type = "frame", name = divisiongui.FRAME, style = "rts_hud_frame", direction = "vertical"})
@@ -239,6 +271,14 @@ local function build(player, g, ds, whole, form, bun)
                         tooltip = {"rts-div.barracks-tooltip"}, tags = {rts_div = "barracks", un = bun, ids = ids}})
     dd.style.width = 150
   end
+  if city then -- Phase 5 M2 war: the garrison of the selected own city
+    local row = frame.add({type = "flow", direction = "horizontal", style = "rts_hud_row"})
+    el.garrison = row.add({type = "label", style = "rts_hud_label", caption = "", tooltip = {"rts-war.garrison-tooltip"}})
+    add_filler(row)
+    el.sortie = row.add({type = "button", name = PREFIX .. "sortie", style = "rts_hud_button", caption = {"rts-war.sortie"},
+                         tooltip = {"rts-war.sortie-tooltip"}, tags = {rts_div = "sortie", city = city}})
+    el.city = city
+  end
   if #ds > 0 then
     local scroll = frame.add({type = "scroll-pane", name = PREFIX .. "list", direction = "vertical",
                               horizontal_scroll_policy = "never", vertical_scroll_policy = "auto"})
@@ -253,6 +293,13 @@ end
 
 local function update(g, ds)
   local el = g.el
+  local ws = war_mod("warsupply") -- Phase 5 M2 war
+  if el.garrison and el.garrison.valid then
+    local gm = war_mod("garrison")
+    local gar = gm and gm.of(el.city) or {records = {}, points = 0, turrets = 0}
+    el.garrison.caption = {"rts-war.garrison-line", #gar.records, gar.points, gar.turrets}
+    el.sortie.enabled = #gar.records > 0
+  end
   for _, D in ipairs(ds) do
     local c = el.cards[D.id]
     if c and c.n.valid then
@@ -262,6 +309,13 @@ local function update(g, ds)
       c.bar.style.color = health_color(ratio)
       c.bar.tooltip = {"rts-div.hp-tooltip", math.floor(ratio * 100 + 0.5)}
       c.state.caption = order_caption(D)
+      if c.sp and c.sp.valid and ws then -- Phase 5 M2 war
+        local sp = ws.sp(D.id)
+        local st = ws.state(D.id)
+        c.sp.value = sp / 100
+        c.sp.style.color = SP_COLORS[st] or SP_COLORS.supplied
+        c.sp.tooltip = {"rts-war.sp-tooltip", math.floor(sp + 0.5), {"rts-war.sp-state-" .. st}}
+      end
     end
   end
 end
@@ -277,15 +331,16 @@ function divisiongui.refresh(player)
   local combat = combat_selection(player.index)
   local form = can_form(player.index, combat)
   local bun = selected_barracks(player.index)
-  if #ds == 0 and not form and not bun and #combat < 2 then
+  local city = selected_city(player.index) -- Phase 5 M2 war
+  if #ds == 0 and not form and not bun and #combat < 2 and not city then
     if g.el then destroy(player, g) end
     return
   end
   local whole = whole_selected(player.index)
-  local sig = signature(player, ds, whole, form, bun, g)
+  local sig = signature(player, ds, whole, form, bun, g, city)
   local frame = g.el and g.el.frame
   if sig ~= g.sig or not (frame and frame.valid) then
-    build(player, g, ds, whole, form, bun)
+    build(player, g, ds, whole, form, bun, city)
     g.sig = sig
   elseif g.top ~= top_of(player) then
     place(player, frame, g.el.list) -- the city list opened or closed
@@ -361,6 +416,13 @@ events.on(defines.events.on_gui_click, function(e)
     if own_division(player, tags.id) then g.rename = tags.id end
   elseif action == "disband" then
     if own_division(player, tags.id) then divisions.disband(tags.id, "disbanded by player " .. player.index) end
+  elseif action == "sortie" then -- Phase 5 M2 war
+    local gm = war_mod("garrison")
+    local c = storage.cities and storage.cities[tags.city]
+    if gm and c and c.force == player.force.name then
+      local id = gm.sortie(tags.city, "player " .. player.index)
+      util.log("divisiongui: player %d sortie from city %d -> division #%s", player.index, tags.city, tostring(id))
+    end
   end
   divisiongui.refresh(player)
 end)

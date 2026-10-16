@@ -126,7 +126,11 @@ end
 --- Supply a city adds (see the header): tier supply, minus the hub cap of a City Center, minus 20 for the capital.
 function cities.supply_of(city)
   local s = CB.supply[city.tier] or 0
-  if city.capital then return s - (CB.supply[CB.capital_tier] or 0) end
+  -- Phase 5 M2 war: after a capture a capital can be a City Center and a Command Center a plain city
+  local e = city.entity
+  local is_cc = e ~= nil and e.valid and e.name ~= cities.CENTER
+  if city.capital and is_cc then return s - (CB.supply[CB.capital_tier] or 0) end
+  if is_cc then return s end -- a captured Command Center is no hub: its tier supply counts in full
   return s - supply.HUB_CAP
 end
 
@@ -297,6 +301,79 @@ local function lose(un)
   util.log("cities: city %d of %s at %s lost", id, c.force, util.pos_str(c.position))
   alert(c.force, "city-lost", "rts.alert-city-lost", {cities.display_name(c)}, c.position)
   events.emit("rts_city_lost", {city = id, force = c.force})
+end
+
+---------------------------------------------------------------------------
+-- Phase 5 M2 war: cities change hands (scripts/capture.lua, docs/PHASE5-M2.md D4)
+---------------------------------------------------------------------------
+--- Make city `city_id` the capital of `force_name` (its land radius and strength follow; the old capital becomes a
+--- plain city). Returns true when it is the capital now.
+function cities.set_capital(force_name, city_id)
+  local c = cities.get(city_id)
+  if not (c and c.force == force_name) then return false end
+  local nation = storage.nations[force_name]
+  if not nation then
+    nation = {age = 1}
+    storage.nations[force_name] = nation
+  end
+  local cur = nation.capital and cities.get(nation.capital)
+  if cur and cur.id ~= city_id and cur.force == force_name and cur.capital then
+    cur.capital = nil
+    cur.radius = cities.radius_of(cur.tier, false)
+    territory.update_source(cur.center, cur.radius, strength_of(cur))
+  end
+  nation.capital = city_id
+  c.capital = true
+  c.radius = cities.radius_of(c.tier, true)
+  territory.update_source(c.center, c.radius, strength_of(c))
+  util.log("cities: city %d is the capital of %s now (tier %d, radius %d)", city_id, force_name, c.tier, c.radius)
+  events.emit("rts_capital_moved", {force = force_name, city = city_id})
+  return true
+end
+
+--- The city changes hands. The record, the land source (force, radius, strength) and the capital flags follow: the new
+--- owner makes it its capital only when it has none; when it was the old owner's capital, the old owner's capital
+--- moves to opts.new_capital (else its first remaining city). Returns the old owner, or nil when nothing changed.
+--- Signal "rts_city_owner_changed" {city, from, to}.
+function cities.change_owner(city_id, force_name, opts)
+  opts = opts or {}
+  local c = cities.get(city_id)
+  if not c or c.force == force_name then return nil end
+  local old = c.force
+  local was_capital = c.capital
+  c.force = force_name
+  c.capital = nil
+  if c.archetype == "capital" then c.archetype = "city" end
+  if was_capital or (c.name_index or 0) == 0 then -- a capital has no city name of its own: it gets one of the winner
+    local S = cstate()
+    S.names[force_name] = (S.names[force_name] or 0) + 1
+    c.name_index = S.names[force_name]
+  end
+  local nation = storage.nations[force_name]
+  if not (nation and nation.capital and cities.get(nation.capital)) then
+    if not nation then
+      nation = {age = 1}
+      storage.nations[force_name] = nation
+    end
+    nation.capital = city_id
+    c.capital = true
+  end
+  -- a captured capital keeps the land it had (its outer ring would otherwise fall out of the capture)
+  c.radius = math.max(c.radius or 0, cities.radius_of(c.tier, c.capital))
+  c.last_total = nil
+  territory.set_source_force(c.center, force_name)
+  territory.update_source(c.center, c.radius, strength_of(c))
+  local onation = storage.nations[old]
+  if onation and onation.capital == city_id then
+    onation.capital = nil
+    local pick = opts.new_capital and cities.get(opts.new_capital)
+    if not (pick and pick.force == old) then pick = cities.for_force(old)[1] end
+    if pick then cities.set_capital(old, pick.id) end
+  end
+  util.log("cities: city %d changed hands %s -> %s%s (tier %d, radius %d)", city_id, old, force_name,
+    was_capital and " (was the capital)" or "", c.tier, c.radius)
+  events.emit("rts_city_owner_changed", {city = city_id, from = old, to = force_name})
+  return old
 end
 
 buildings.on_added(function(un, rec)

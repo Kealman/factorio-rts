@@ -80,6 +80,13 @@ rails.CWAGON = "rts-construction-wagon"
 rails.LOCO_KIT = "rts-locomotive-kit"
 rails.WAGON_KIT = "rts-cargo-wagon-kit"
 rails.CWAGON_KIT = "rts-construction-wagon-kit"
+-- Phase 5 M2 war (scripts/garrison.lua, docs/PHASE5-M2.md D8): troop trains = 2 locomotives + 1..max_wagons troop wagons;
+-- their troops travel as records (storage.rails.manifests[wagon unit_number], garrison.lua). Hooks set by garrison.lua:
+-- troop_dwell(rec, train) while a troop train stands at one of its stops, on_stock_died(rec, entity, cause) when a
+-- carriage of a recorded train dies, on_disband(rec, train) before rails.disband_train, troop_text(rec) for the panel.
+rails.TWAGON = "rts-troop-wagon"
+rails.TWAGON_KIT = "rts-troop-wagon-kit"
+rails.troop_dwell, rails.on_stock_died, rails.on_disband, rails.troop_text = nil, nil, nil, nil
 rails.RAIL = "rail"
 rails.SIGNAL = "rail-signal"
 rails.SUPPORT = "rail-support"
@@ -122,6 +129,7 @@ end
 buildings.KIND_BY_NAME[rails.LOCO] = rails.KIND
 buildings.KIND_BY_NAME[rails.WAGON] = rails.KIND
 buildings.KIND_BY_NAME[rails.CWAGON] = rails.KIND
+buildings.KIND_BY_NAME[rails.TWAGON] = rails.KIND -- Phase 5 M2 war
 -- Ctrl+A and box selection take units only; trains are clicked.
 selection.SELECT_ALL_SKIP[rails.KIND] = true
 -- QA round 1: a click picks rolling stock and depots only inside their (oriented) selection box, not 1 tile around it
@@ -161,7 +169,12 @@ for _, n in ipairs({"straight-rail", "half-diagonal-rail", "curved-rail-a", "cur
 end
 local RAIL_SET = {}
 for _, n in ipairs(RAIL_NAMES) do RAIL_SET[n] = true end
-local STOCK_SET = {[rails.LOCO] = true, [rails.WAGON] = true, [rails.CWAGON] = true}
+local STOCK_SET = {[rails.LOCO] = true, [rails.WAGON] = true, [rails.CWAGON] = true,
+                   [rails.TWAGON] = true} -- Phase 5 M2 war: troop wagons
+-- Phase 5 M2 war: the kit each carriage came from (rails.disband_train)
+local KIT_OF = {[rails.LOCO] = rails.LOCO_KIT, [rails.WAGON] = rails.WAGON_KIT, [rails.CWAGON] = rails.CWAGON_KIT,
+                [rails.TWAGON] = rails.TWAGON_KIT}
+local FREIGHT = {cargo = true, troop = true} -- Phase 5 M2 war: kinds with a pickup -> drop-off route
 -- Entity types that block a coarse cell (with water and void). Trees, rocks and cliffs are cleared by the builder.
 local BLOCKER_TYPES = {"assembling-machine", "furnace", "mining-drill", "roboport", "container", "logistic-container",
   "ammo-turret", "electric-turret", "fluid-turret", "artillery-turret", "wall", "gate", "radar", "lab", "solar-panel",
@@ -1251,8 +1264,9 @@ local function wagons_of(train, name)
   return list
 end
 
-local function kit_list(kind)
+local function kit_list(kind, n) -- Phase 5 M2 war: n troop wagons
   if kind == "construction" then return {{rails.LOCO_KIT, 2}, {rails.CWAGON_KIT, 1}} end
+  if kind == "troop" then return {{rails.LOCO_KIT, 2}, {rails.TWAGON_KIT, n or 1}} end -- Phase 5 M2 war
   return {{rails.LOCO_KIT, 2}, {rails.WAGON_KIT, CFG.cargo_wagons}}
 end
 
@@ -1277,7 +1291,8 @@ end
 --- Spawn a train of `kind` ("cargo" | "construction") on a depot platform from kits in the depot's network.
 --- Returns the LuaTrain, or nil and a reason ("no-depot", "no-platform", "busy", "no-kits", "no-fuel", "no-room").
 function rails.create_train(depot_un, kind)
-  kind = kind == "construction" and "construction" or "cargo"
+  -- Phase 5 M2 war: "troop" (2 locomotive kits + as many troop wagon kits as the network holds, at most max_wagons)
+  kind = (kind == "construction" or kind == "troop") and kind or "cargo"
   local R = rstate()
   local d = rails.depot(depot_un)
   if not d then return nil, "no-depot" end
@@ -1285,7 +1300,11 @@ function rails.create_train(depot_un, kind)
   if not platform_free(d) then return nil, "busy" end
   local net = logistics.hub_network(depot_un)
   if not net then return nil, "no-network" end
-  local kits = kit_list(kind)
+  local nw = nil
+  if kind == "troop" then -- Phase 5 M2 war
+    nw = math.max(1, math.min(net.get_item_count(rails.TWAGON_KIT), balance.nation.war.troop_wagon.max_wagons))
+  end
+  local kits = kit_list(kind, nw)
   for _, k in ipairs(kits) do
     if net.get_item_count(k[1]) < k[2] then return nil, "no-kits" end
   end
@@ -1301,7 +1320,9 @@ function rails.create_train(depot_un, kind)
   local ox, oy = 0, 0
   if e.d == D.east then ox = 1 elseif e.d == D.west then ox = -1 elseif e.d == D.south then oy = 1 else oy = -1 end
   local names = {rails.LOCO}
-  for _ = 1, kits[2][2] do names[#names + 1] = kind == "construction" and rails.CWAGON or rails.WAGON end
+  for _ = 1, kits[2][2] do -- Phase 5 M2 war: troop wagons
+    names[#names + 1] = kind == "construction" and rails.CWAGON or (kind == "troop" and rails.TWAGON or rails.WAGON)
+  end
   names[#names + 1] = rails.LOCO
   local made = {}
   for i, name in ipairs(names) do
@@ -1370,7 +1391,7 @@ end
 --- Freight route: pickup depot -> drop-off depot. Writes the schedule and starts the train. Returns true when set.
 function rails.set_route(train, pickup, dropoff)
   local rec = rails.train_record(train)
-  if not (rec and rec.kind == "cargo" and train and train.valid) then return false end
+  if not (rec and FREIGHT[rec.kind] and train and train.valid) then return false end -- Phase 5 M2 war
   if not (rails.depot(pickup) and rails.depot(dropoff)) or pickup == dropoff then return false end
   rec.pickup, rec.dropoff = pickup, dropoff
   if not schedule_two(train, rec) then return false end
@@ -1383,7 +1404,7 @@ end
 --- Route halves from the right-click UX: set the pickup or the drop-off; the route starts when both are set.
 function rails.set_pickup(train, depot_un)
   local rec = rails.train_record(train)
-  if not (rec and rec.kind == "cargo" and rails.depot(depot_un)) then return false end
+  if not (rec and FREIGHT[rec.kind] and rails.depot(depot_un)) then return false end -- Phase 5 M2 war
   rec.pickup = depot_un
   if rec.dropoff and rec.dropoff ~= depot_un then return rails.set_route(train, depot_un, rec.dropoff) end
   util.log("rails: train %d pickup depot #%d (drop-off not set)", train.id, depot_un)
@@ -1392,7 +1413,7 @@ end
 
 function rails.set_dropoff(train, depot_un)
   local rec = rails.train_record(train)
-  if not (rec and rec.kind == "cargo" and rails.depot(depot_un)) then return false end
+  if not (rec and FREIGHT[rec.kind] and rails.depot(depot_un)) then return false end -- Phase 5 M2 war
   rec.dropoff = depot_un
   if rec.pickup and rec.pickup ~= depot_un then return rails.set_route(train, rec.pickup, depot_un) end
   util.log("rails: train %d drop-off depot #%d (pickup not set)", train.id, depot_un)
@@ -1403,7 +1424,7 @@ end
 function rails.resume(train)
   local rec = rails.train_record(train)
   if not rec then return false end
-  if rec.kind == "cargo" and rec.pickup and rec.dropoff then
+  if FREIGHT[rec.kind] and rec.pickup and rec.dropoff then -- Phase 5 M2 war: troop trains too
     schedule_two(train, rec)
     if rec.dwell then
       rec.dwell.plan, rec.dwell.next_plan = nil, nil
@@ -1413,6 +1434,14 @@ function rails.resume(train)
     return true
   end
   return false
+end
+
+--- Phase 5 M2 war: send a freight or troop train on to its pickup (1) or drop-off (2) now (scripts/garrison.lua).
+function rails.depart_train(train, index, why)
+  local rec = rails.train_record(train)
+  if not (rec and train and train.valid and FREIGHT[rec.kind]) then return false end
+  depart(rec, train, index, why)
+  return true
 end
 
 ---------------------------------------------------------------------------
@@ -2225,7 +2254,7 @@ function rails.right_click(player_index, position, entities, alt)
     local trec = rails.train_record(rec.entity)
     local train = trec and train_of(trec)
     local target = pick_depot(player_index, force_name, position, entities)
-    if not (train and trec.kind == "cargo" and target) then
+    if not (train and FREIGHT[trec.kind] and target) then -- Phase 5 M2 war: troop trains too
       util.log("order train-none train=%s depot=%s player=%d", tostring(trec and trec.id), tostring(target), player_index)
       return "train-none", 0
     end
@@ -2288,6 +2317,151 @@ function rails.depot_stock(un)
   return {loco = net.get_item_count(rails.LOCO_KIT), wagon = net.get_item_count(rails.WAGON_KIT),
           cwagon = net.get_item_count(rails.CWAGON_KIT), rails = net.get_item_count(rails.RAIL),
           coal = net.get_item_count(rails.FUEL)}
+end
+
+-- Phase 5 M2 war: a captured depot changes owner (scripts/capture.lua through buildings.set_force). Its stops get the
+-- new owner's name (trains find stops by name across forces: probe), its line is lost to the old owner, the old
+-- owner's trains bound to it stop, and an AI rail program built around the building starts again.
+buildings.on_force_changed(function(un, rec, old)
+  local R = storage.rails
+  if not R then return end
+  local d = R.depots[un]
+  if d then
+    d.force = rec.force
+    d.stop_name = stop_name(rec.force, un)
+    local color = force_color(rec.force)
+    for _, st in pairs(d.platform and d.platform.stops or {}) do
+      if st.valid then
+        st.force = rec.force
+        st.backer_name = d.stop_name
+        if color then st.color = color end
+      end
+    end
+    local line = d.line and R.lines[d.line]
+    if line and line.force ~= rec.force then
+      line.state = "lost"
+      for _, end_un in ipairs({line.a, line.b}) do
+        local od = R.depots[end_un]
+        if od and od.line == line.id then od.line = nil end
+      end
+      util.log("rails: line #%d of %s lost: depot #%d now belongs to %s", line.id, line.force, un, rec.force)
+    end
+    d.line = nil
+    for _, id in ipairs(sorted_keys(R.trains)) do
+      local trec = R.trains[id]
+      if trec.force == old and (trec.pickup == un or trec.dropoff == un or trec.home == un) then
+        local train = train_of(trec)
+        if train and train.valid then train.manual_mode = true end
+        if trec.pickup == un then trec.pickup = nil end
+        if trec.dropoff == un then trec.dropoff = nil end
+        trec.state, trec.reason = "stopped", "depot-lost"
+        R.dwelling[id] = nil
+        trec.dwell = nil
+      end
+    end
+  end
+  local A = R.ai and R.ai[old]
+  if A and (A.anchor == un or A.far == un or A.depot_a == un or A.depot_b == un) then
+    R.ai[old] = nil
+    util.log("rails: AI %s lost #%d of its rail program: it plans a new line", old, un)
+  end
+end)
+
+---------------------------------------------------------------------------
+-- Phase 5 M2 war: rolling stock back into kits (docs/PHASE5-M2.md section 3 "rails.disband_train")
+---------------------------------------------------------------------------
+--- Take a standing train apart: balance.nation.war.disband_share (50 %) of its kits (rounded to half of all its
+--- carriages), its cargo and its coal go into the network of the depot whose platform it stands on, else its home
+--- depot. Troops aboard get out first (rails.on_disband). Returns {kits = {[item] = n}, depot = un} or nil, reason
+--- ("no-train" | "moving" | "no-depot").
+function rails.disband_train(train)
+  local rec = rails.train_record(train)
+  if not (rec and train and train.valid) then return nil, "no-train" end
+  if math.abs(train.speed) > 0.001 then return nil, "moving" end
+  local R = rstate()
+  local depot_un
+  local front = train.front_stock
+  local pos = front and front.valid and front.position
+  if pos then
+    for _, un in ipairs(sorted_keys(R.depots)) do
+      local d = R.depots[un]
+      local a = d.force == rec.force and d.entity.valid and d.platform and d.platform.area
+      if a and pos.x >= a[1][1] - 4 and pos.x <= a[2][1] + 4 and pos.y >= a[1][2] - 4 and pos.y <= a[2][2] + 4 then
+        depot_un = un
+        break
+      end
+    end
+  end
+  if not depot_un and rails.depot(rec.home) then depot_un = rec.home end
+  local net = depot_un and logistics.hub_network(depot_un)
+  if not net then return nil, "no-depot" end
+  if rails.on_disband then rails.on_disband(rec, train) end
+  local counts = {}
+  for _, c in ipairs(train.carriages) do
+    local kit = KIT_OF[c.name]
+    if kit then counts[kit] = (counts[kit] or 0) + 1 end
+  end
+  -- cargo and coal back into the network
+  local moved = 0
+  for _, w in ipairs(train.cargo_wagons) do
+    local inv = w.get_inventory(defines.inventory.cargo_wagon)
+    for _, item in pairs(inv and inv.get_contents() or {}) do
+      moved = moved + logistics.transfer(inv, net, item.name, item.count)
+    end
+  end
+  for _, group in pairs({train.locomotives.front_movers, train.locomotives.back_movers}) do
+    for _, loco in ipairs(group) do
+      local inv = loco.get_fuel_inventory()
+      local n = inv and inv.get_item_count(rails.FUEL) or 0
+      if n > 0 then moved = moved + logistics.transfer(inv, net, rails.FUEL, n) end
+    end
+  end
+  -- half of every kind, then up to half of all carriages from the kinds with the largest remainder
+  local share = balance.nation.war.disband_share
+  local back, total, got = {}, 0, 0
+  local kits = sorted_keys(counts)
+  for _, kit in ipairs(kits) do
+    total = total + counts[kit]
+    back[kit] = floor(counts[kit] * share)
+    got = got + back[kit]
+  end
+  local want = floor(total * share + 0.5)
+  while got < want do
+    local best, br
+    for _, kit in ipairs(kits) do
+      local r = counts[kit] - back[kit]
+      if r > 0 and (not br or r > br) then best, br = kit, r end
+    end
+    if not best then break end
+    back[best] = back[best] + 1
+    got = got + 1
+  end
+  local spilled = 0
+  for _, kit in ipairs(kits) do
+    if back[kit] > 0 then
+      local put = net.insert({name = kit, count = back[kit]})
+      if put < back[kit] then
+        spilled = spilled + back[kit] - put
+        front.surface.spill_item_stack({position = front.position, stack = {name = kit, count = back[kit] - put},
+                                        enable_looted = false, allow_belts = false})
+      end
+    end
+  end
+  for _, line in pairs(R.lines) do
+    if line.builder == train.id then line.builder = nil end
+  end
+  local id = train.id
+  R.trains[id] = nil
+  R.dwelling[id] = nil
+  local parts = {}
+  for _, kit in ipairs(kits) do parts[#parts + 1] = string.format("%d of %d %s", back[kit], counts[kit], kit) end
+  util.log("rails: %s train %d (%s) disbanded at depot #%d: kits back [%s]%s, %d items of cargo and coal returned",
+    rec.kind, id, rec.force, depot_un, table.concat(parts, ", "),
+    spilled > 0 and string.format(" (%d spilled: the network had no room)", spilled) or "", moved)
+  for _, c in ipairs(train.carriages) do
+    if c.valid then c.destroy() end
+  end
+  return {kits = back, depot = depot_un}
 end
 
 ---------------------------------------------------------------------------
@@ -2630,6 +2804,8 @@ events.on_nth_tick(rails.TRANSFER_PERIOD, function()
     if not (rec and rec.dwell and train and train.state == TS.wait_station) then
       R.dwelling[id] = nil
       if rec then rec.dwell = nil end
+    elseif rec.kind == "troop" then -- Phase 5 M2 war: troops board and leave by scripts/garrison.lua
+      if rails.troop_dwell then rails.troop_dwell(rec, train) end
     else
       dwell_step(rec, train)
     end
@@ -2677,7 +2853,7 @@ events.on(defines.events.on_train_changed_state, function(e)
     local st = train.station
     local dun = st and st.valid and R.stops[st.unit_number]
     if dun then
-      if rec.kind == "cargo" then
+      if FREIGHT[rec.kind] then -- Phase 5 M2 war: troop trains dwell like freight trains
         local role = (dun == rec.pickup and "pickup") or (dun == rec.dropoff and "dropoff") or "other"
         rec.dwell = {depot = dun, role = role, since = game.tick}
         R.dwelling[train.id] = true
@@ -2750,6 +2926,7 @@ events.on(defines.events.on_entity_died, function(e)
         stats.lost = stats.lost + 1
         alert(rec.force, "train-lost", entity.position, "rts.alert-train-lost")
       end
+      if rails.on_stock_died then rails.on_stock_died(rec, entity, e.cause) end -- Phase 5 M2 war: troop manifests
     end
   end
 end)

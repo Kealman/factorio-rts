@@ -47,6 +47,11 @@
 -- Reinforcement: a barracks set to reinforce division N (divisions.set_barracks, the division panel) sends every new
 -- unit to N while N accepts reinforcements and is below its template strength (production.on_spawned).
 -- QA log lines start with "divisions: ".
+-- Phase 5 M2 war (docs/PHASE5-M2.md section 3; scripts/warsupply.lua, scripts/garrison.lua) adds to D: sp (supply
+-- points 0..100) and sp_credit (scripts/warsupply.lua), aboard (members travelling as records in a troop wagon: the
+-- division stays while it has some) and embark = {depot, tick} (members board a troop train at that depot)
+-- (scripts/garrison.lua). Hooks: divisions.ORDER_HOOKS[kind] = fn(id, target, opts) -> ok for the extra order kinds
+-- "embark" and "garrison"; divisions.order_lock = fn(D, kind) -> reason refuses attack orders (out of supply).
 local util = require("scripts.util")
 local events = require("scripts.events")
 local units = require("scripts.units")
@@ -62,6 +67,8 @@ divisions.ISSUER = "divisions"
 divisions.STANCES = {"hold", "advance", "screen"}
 divisions.KINDS = {move = true, attack_move = true, attack = true, retreat = true, hold = true, stop = true}
 divisions.SKIP_KINDS = {hauler = true, commander = true} -- never members: logistics and the hero have their own drivers
+divisions.ORDER_HOOKS = {} -- Phase 5 M2 war: [kind] = fn(id, target, opts) -> ok ("embark", "garrison")
+divisions.order_lock = nil -- Phase 5 M2 war: fn(D, kind) -> reason when an attack order is refused, else nil
 
 local CHECK_PERIOD = 15      -- controller tick
 local CHECK_EVERY = 60       -- each division is looked at this often
@@ -79,6 +86,8 @@ local REJOIN_TICKS = 300      -- a moving division looks for members that droppe
 
 local CMD, DIS = defines.command, defines.distraction
 local STANCE_OK = {hold = true, advance = true, screen = true}
+-- Phase 5 M2 war: a division whose members all ride a troop train has no live member but must not disband
+local function aboard(D) return (D.aboard or 0) > 0 end
 
 ---------------------------------------------------------------------------
 -- State
@@ -341,7 +350,7 @@ local function take(D, rec)
     if old then
       old.units[un], old.detached[un], old.joining[un] = nil, nil, nil
       if old.settling then old.settling[un] = nil end
-      if next(old.units) == nil then
+      if next(old.units) == nil and not aboard(old) then -- Phase 5 M2 war: not while members ride a train
         divisions.disband(old_id, "its units joined division #" .. D.id)
       else
         old.n = nil
@@ -445,8 +454,30 @@ function divisions.remove_units(items)
       if rec then unclaim(rec) end
       n = n + 1
       D.n = nil
-      if next(D.units) == nil then divisions.disband(id, "its last unit left") else changed(D, "members") end
+      if next(D.units) == nil and not aboard(D) then -- Phase 5 M2 war: not while members ride a train
+        divisions.disband(id, "its last unit left")
+      else
+        changed(D, "members")
+      end
     end
+  end
+  return n
+end
+
+--- Phase 5 M2 war: put units into division `id` without an order (troop train disembark, scripts/garrison.lua).
+--- Returns the number of units that joined.
+function divisions.attach(id, items, why)
+  local D = list()[id]
+  if not D then return 0 end
+  local n = 0
+  for _, rec in ipairs(records_of(items, D.force)) do
+    if take(D, rec) then n = n + 1 end
+  end
+  if n > 0 then
+    D.n = nil
+    util.log("divisions: #%d %s: %d unit(s) attached (%s), %d of %d", id, divisions.label(D), n, why or "-",
+      table_size(D.units), divisions.target_size(D))
+    changed(D, "members")
   end
   return n
 end
@@ -489,13 +520,27 @@ end
 --- every member (detached ones too) takes part. opts.auto marks orders the division gave itself (stance, re-target).
 --- Returns true when the order was given.
 function divisions.order(id, kind, target, opts)
+  local hook = divisions.ORDER_HOOKS[kind] -- Phase 5 M2 war: embark, garrison
+  if hook then return hook(id, target, opts) end
   local D = list()[id]
   if not (D and divisions.KINDS[kind]) then return false end
+  -- Phase 5 M2 war: a division out of supply takes no attack order (scripts/warsupply.lua)
+  if divisions.order_lock and (kind == "attack_move" or kind == "attack") then
+    local why = divisions.order_lock(D, kind)
+    if why then
+      if not (opts and opts.auto) then
+        util.log("divisions: #%d %s order %s refused (%s)", id, divisions.label(D), kind, why)
+      end
+      return false, why
+    end
+  end
   local recs = live_members(D)
   if #recs == 0 then
+    if aboard(D) then return false end -- Phase 5 M2 war: every member rides a troop train
     divisions.disband(id, "no members left")
     return false
   end
+  D.embark = nil -- Phase 5 M2 war: any order cancels boarding (the embark hook sets it again after its move)
   local pos = target and pos_of(target) or nil
   D.detached, D.joining, D.settling = {}, {}, {}
   local m = meta()
@@ -669,8 +714,8 @@ local function arrive(D, why)
     if enemy then
       D.last_retarget = game.tick
       bump("retargets")
-      divisions.order(D.id, "attack_move", enemy.position, {auto = "re-target"})
-      return
+      -- Phase 5 M2 war: refused while out of supply; the attack-move then ends here
+      if divisions.order(D.id, "attack_move", enemy.position, {auto = "re-target"}) then return end
     end
   end
   if order and order.target and (attack or order.kind == "move" or order.kind == "retreat") then
@@ -743,6 +788,7 @@ end
 local function check(D)
   local recs = live_members(D)
   if #recs == 0 then
+    if aboard(D) then return end -- Phase 5 M2 war: every member rides a troop train
     divisions.disband(D.id, "no members left")
     return
   end
@@ -864,7 +910,7 @@ units.on_removed(function(unit_number)
   D.units[unit_number], D.detached[unit_number], D.joining[unit_number] = nil, nil, nil
   if D.settling then D.settling[unit_number] = nil end
   D.n = nil
-  if next(D.units) == nil then
+  if next(D.units) == nil and not aboard(D) then -- Phase 5 M2 war: not while members ride a train
     divisions.disband(id, "no members left")
   else
     changed(D, "members")

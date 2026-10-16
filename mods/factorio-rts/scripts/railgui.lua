@@ -108,6 +108,7 @@ local function build_train(player, g, id)
   g.frame, g.el = frame, {}
   local rec = rails.train_record(id)
   g.el.title = header(frame, {rec and rec.kind == "construction" and "rts.railgui-construction-title"
+                              or (rec and rec.kind == "troop" and "rts-war.troop-train-title") -- Phase 5 M2 war
                               or "rts.railgui-train-title", id})
   g.el.hp = label(frame, "rts_hud_mono_label")
   g.el.route = label(frame)
@@ -118,6 +119,9 @@ local function build_train(player, g, id)
   local buttons = frame.add({type = "flow", direction = "horizontal", style = "rts_hud_row"})
   g.el.resume = buttons.add({type = "button", name = PREFIX .. "resume", caption = {"rts.railgui-resume"},
     style = "rts_hud_button", tooltip = {"rts.railgui-resume-tooltip"}, tags = {rts_railgui = "resume"}})
+  -- Phase 5 M2 war: rolling stock back into kits (rails.disband_train)
+  g.el.disband = buttons.add({type = "button", name = PREFIX .. "disband", caption = {"rts-war.train-disband"},
+    style = "rts_hud_button", tooltip = {"rts-war.train-disband-tooltip"}, tags = {rts_railgui = "disband"}})
   label(frame, "rts_hud_dim_label", {"rts.railgui-train-hint"})
   place(player, frame, "train")
 end
@@ -164,7 +168,9 @@ local function refresh_train(player, g)
   end
   local cargo = items_text(rails.cargo_of(train))
   el.cargo.caption = cargo and {"rts.railgui-cargo", cargo} or {"rts.railgui-cargo-empty"}
-  el.resume.enabled = rec.kind == "cargo" and rec.pickup ~= nil and rec.dropoff ~= nil
+  if rec.kind == "troop" and rails.troop_text then el.cargo.caption = rails.troop_text(rec) or "" end -- Phase 5 M2 war
+  el.resume.enabled = (rec.kind == "cargo" or rec.kind == "troop") and rec.pickup ~= nil and rec.dropoff ~= nil
+  if el.disband and el.disband.valid then el.disband.enabled = math.abs(train.speed) < 0.001 end -- Phase 5 M2 war
   return true
 end
 
@@ -183,6 +189,11 @@ local function build_depot(player, g, un)
   local buttons = frame.add({type = "flow", direction = "horizontal", style = "rts_hud_row"})
   g.el.deploy = buttons.add({type = "button", name = PREFIX .. "deploy", caption = {"rts.railgui-deploy"},
     style = "rts_hud_button", tooltip = {"rts.railgui-deploy-tooltip"}, tags = {rts_railgui = "deploy", depot = un}})
+  -- Phase 5 M2 war: a troop train (2 locomotive kits and 1-3 troop wagon kits)
+  local troop_row = frame.add({type = "flow", direction = "horizontal", style = "rts_hud_row"})
+  g.el.deploy_troop = troop_row.add({type = "button", name = PREFIX .. "deploy_troop",
+    caption = {"rts-war.deploy-troop-train"}, style = "rts_hud_button", tooltip = {"rts-war.deploy-troop-train-tooltip"},
+    tags = {rts_railgui = "deploy_troop", depot = un}})
   label(frame, "rts_hud_dim_label", {"rts.railgui-depot-hint"})
   label(frame, "rts_hud_heading_label", {"rts.railgui-lines"})
   g.el.lines = frame.add({type = "flow", direction = "vertical"})
@@ -213,6 +224,11 @@ local function refresh_depot(player, g)
   end
   local need = rails.kit_list("cargo")
   el.deploy.enabled = d.platform ~= nil and st.loco >= need[1][2] and st.wagon >= need[2][2]
+  if el.deploy_troop and el.deploy_troop.valid then -- Phase 5 M2 war
+    local net = logistics.hub_network(g.id)
+    el.deploy_troop.enabled = d.platform ~= nil and st.loco >= 2 and net ~= nil
+      and net.get_item_count(rails.TWAGON_KIT) >= 1
+  end
   local lines = rails.lines_of(d.force)
   el.lines.clear()
   if #lines == 0 then
@@ -280,11 +296,19 @@ events.on(defines.events.on_gui_click, function(e)
     local train = rec and rails.train_of(rec)
     local ok = train and rails.resume(train)
     util.log("railgui click resume train=%s ok=%s player=%d", tostring(g.id), tostring(ok), e.player_index)
-  elseif action == "deploy" then
-    local train, why = rails.create_train(element.tags.depot, "cargo")
-    util.log("railgui click deploy depot=#%s train=%s (%s) player=%d", tostring(element.tags.depot),
+  elseif action == "deploy" or action == "deploy_troop" then -- Phase 5 M2 war: troop trains too
+    local train, why = rails.create_train(element.tags.depot, action == "deploy_troop" and "troop" or "cargo")
+    util.log("railgui click %s depot=#%s train=%s (%s) player=%d", action, tostring(element.tags.depot),
       tostring(train and train.id), tostring(why), e.player_index)
     if not train and player then player.print({"rts.railgui-deploy-failed", {"rts.rails-why-" .. tostring(why)}}) end
+  elseif action == "disband" then -- Phase 5 M2 war
+    local rec = g.id and rails.train_record(g.id)
+    local train = rec and rails.train_of(rec)
+    local res, why = nil, "no-train"
+    if train then res, why = rails.disband_train(train) end
+    util.log("railgui click disband train=%s ok=%s (%s) player=%d", tostring(g.id), tostring(res ~= nil),
+      tostring(why), e.player_index)
+    if not res and player then player.print({"rts-war.train-disband-failed", {"rts-war.disband-why-" .. tostring(why)}}) end
   else
     return
   end

@@ -349,6 +349,30 @@ end)
 local division_router = nil
 function orders.set_division_router(fn) division_router = fn end
 
+-- Phase 5 M2 war (scripts/warsupply.lua): fn(entity) -> locale key when a unit takes no attack order now (its division,
+-- or for a unit outside any division the nearest division within 24 tiles, is out of supply), else nil. Attack and
+-- attack-move orders drop such units; the player sees the reason at the cursor.
+orders.unit_lock = nil
+local function attack_filter(who, list)
+  local out, refused, key = {}, 0, nil
+  for _, e in pairs(list) do
+    local why = e.valid and orders.unit_lock(e) or nil
+    if why then
+      refused = refused + 1
+      key = key or why
+    else
+      out[#out + 1] = e
+    end
+  end
+  if refused > 0 then
+    local player = type(who) == "number" and who > 0 and game.get_player(who) or nil
+    if player then player.create_local_flying_text({text = {key, refused}, create_at_cursor = true}) end
+    util.log("orders: attack refused for %d unit(s) (%s)%s", refused, key,
+      type(who) == "number" and (" player=" .. who) or "")
+  end
+  return out
+end
+
 ---------------------------------------------------------------------------
 -- Helpers
 ---------------------------------------------------------------------------
@@ -363,6 +387,8 @@ end
 -- returns the loose records, the number of units ordered as divisions and the surface of one of them.
 local function resolve(who, kind, target)
   local list = type(who) == "number" and selection.get(who) or who
+  -- Phase 5 M2 war: units out of supply take no attack order
+  if orders.unit_lock and (kind == "attack" or kind == "attack_move") then list = attack_filter(who, list) end
   local n_div, surface = 0, nil
   if division_router and kind then list, n_div, surface = division_router(list, kind, target) end
   local out = {}
