@@ -11,6 +11,7 @@
 --   schedule[tick] = {unit_number, ...}   predicted barracks completion checks (spike decision 7)
 -- and these fields of storage.buildings records (barracks / factory / turret):
 --   last_pf     products_finished at the last look
+--   made, moved crafts finished / items moved to the network by this factory (the HUD's factory line; Wave C)
 --   next_check  tick of the pending predicted check (barracks)
 --   pull_state  "idle" | "supplied" | "starved: <items>" | "no network"   (logged on change only)
 --   starved_since  tick the consumer first lacked ingredients the network could not give (nil when supplied)
@@ -69,6 +70,13 @@ function production.init()
   local p = pstate()
   p.stats = p.stats or {}
   p.schedule = p.schedule or {}
+end
+
+--- A new match starts its counters at zero (match.teardown calls it; before, the HUD and the AI autotest saw the old
+--- match's totals after Ctrl+Shift+R or a new match from the lobby).
+function production.reset_match()
+  local p = pstate()
+  p.stats, p.schedule = {}, {}
 end
 
 --- Counters of a force (created on first use). See the header for the fields.
@@ -316,7 +324,10 @@ local function hand_off(rec)
   local stats = production.stats(rec.force)
   local pf = e.products_finished
   local last = rec.last_pf or pf
-  if pf > last then stats.buildings = stats.buildings + (pf - last) end
+  if pf > last then
+    stats.buildings = stats.buildings + (pf - last)
+    rec.made = (rec.made or 0) + (pf - last)
+  end
   rec.last_pf = pf
   local out = e.get_output_inventory()
   if out.is_empty() then return end
@@ -328,6 +339,7 @@ local function hand_off(rec)
     if moved > 0 then
       out.remove({name = item.name, count = moved, quality = item.quality})
       stats.items = stats.items + moved
+      rec.moved = (rec.moved or 0) + moved
       util.log("production: factory #%d (%s) moved %d %s into the network", e.unit_number, rec.force, moved,
         item.name)
     end

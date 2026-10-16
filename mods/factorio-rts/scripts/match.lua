@@ -741,6 +741,7 @@ function match.teardown(reason)
   m.tick_started, m.ended_tick, m.winner = nil, nil, nil
   m.wave, m.enemy_next_wave, m.waves_off = 0, nil, nil
   m.out, m.conceded = {}, nil
+  production.reset_match()
   for _, fn in ipairs(teardown_callbacks) do fn(old) end
   util.log("match: match %s torn down (%s): %d AI commanders stopped, %d units and %d buildings removed, arena %s",
     tostring(m.match_id), reason or "-", stopped, removed_units, removed_buildings, tostring(old))
@@ -941,6 +942,34 @@ function match.result(force_name)
   return m.winner == force_name and "victory" or "defeat"
 end
 
+-- A calm results screen (Phase 4 QA): fighting went on behind the results window. At the end every match force
+-- ceases fire on the others (match.start's setup_forces turns it back on), every AI commander stops and every unit
+-- that orders.lua may command stands still. Haulers and the Commander keep their own claims but fire on no one.
+local function calm_down(m)
+  local list = {}
+  for _, f in ipairs(m.forces) do
+    if game.forces[f] then list[#list + 1] = game.forces[f] end
+  end
+  for _, a in ipairs(list) do
+    for _, b in ipairs(list) do
+      if a ~= b then a.set_cease_fire(b, true) end
+    end
+  end
+  local ai = loaded("scripts.ai.init")
+  local stopped = 0
+  for _, f in ipairs(m.ai_forces) do
+    if ai and ai.get(f) and ai.stop_force(f) then stopped = stopped + 1 end
+  end
+  local orders = loaded("scripts.orders")
+  local entities = {}
+  for _, rec in pairs(storage.units or {}) do
+    if rec.entity.valid then entities[#entities + 1] = rec.entity end
+  end
+  local n = orders and orders.stop(entities) or 0
+  util.log("match: calm after the end: %d forces cease fire on each other, %d AI commanders stopped, %d units stopped",
+    #list, stopped, n)
+end
+
 local function finish(winner)
   local m = storage.match
   m.phase = "ended"
@@ -948,6 +977,7 @@ local function finish(winner)
   m.winner = winner
   drop_group()
   release_orphans()
+  calm_down(m)
   local parts = {}
   for _, f in ipairs(m.forces) do
     local s = m.stats[f] or {}

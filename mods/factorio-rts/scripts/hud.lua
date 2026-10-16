@@ -636,11 +636,11 @@ local function build_unit_page(panel, h)
 
   local header = page.add({type = "flow", direction = "horizontal", style = "rts_hud_row"})
   el.sel_count = header.add({type = "label", style = "rts_hud_heading_label"})
-  el.sel_count.style.maximal_width = 240
+  el.sel_count.style.maximal_width = 200
   add_filler(header)
   el.health = header.add({type = "label", style = "rts_hud_mono_label", tooltip = {"rts.hp-tooltip"}})
   el.order = header.add({type = "label", style = "rts_hud_label", tooltip = {"rts.order-tooltip"}})
-  el.order.style.maximal_width = 200
+  el.order.style.maximal_width = 250 -- "Order: Idle 6 / Commander 1" was cut at 200 (Phase 4 QA)
 
   local kinds_row = page.add({type = "flow", direction = "horizontal", style = "rts_hud_row"})
   el.cards = kinds_row.add({type = "flow", direction = "horizontal"})
@@ -708,6 +708,9 @@ local function build_building_page(panel, h)
                             tooltip = {"rts.progress-tooltip"}})
   el.b_line2 = text.add({type = "label", style = "rts_hud_label"})
   el.b_line3 = text.add({type = "label", style = "rts_hud_dim_label"})
+  -- Long descriptions wrap to a second line instead of ending in "..." (Phase 4 QA); the texts are kept to two lines.
+  el.b_line2.style.single_line = false
+  el.b_line3.style.single_line = false
 
   -- Factory status line (under its full-width grid)
   local foot = page.add({type = "flow", direction = "horizontal", style = "rts_hud_row"})
@@ -1260,8 +1263,9 @@ local function update_producer(player, h, un, rec)
     el.b_line3.caption = rec.rally and {"rts.rally-set", util.pos_str(rec.rally)} or {"rts.rally-none"}
     el.b_line3.tooltip = {"rts.rally-tooltip"}
   else
-    el.f_line2.caption = {"rts.factory-made-short", stats.buildings, stats.items}
-    el.f_line2.tooltip = {"", {"rts.factory-made", stats.buildings, stats.items}, "\n", {"rts.factory-hint"}}
+    -- this factory's own counters (production.lua rec.made / rec.moved), not the force's totals
+    el.f_line2.caption = {"rts.factory-made-short", rec.made or 0, rec.moved or 0}
+    el.f_line2.tooltip = {"", {"rts.factory-made", rec.made or 0, rec.moved or 0}, "\n", {"rts.factory-hint"}}
   end
 end
 

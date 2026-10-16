@@ -373,11 +373,36 @@ end
 -- Attack-move arming (F) and right-click handling
 ---------------------------------------------------------------------------
 
+--- Why a player may not order now (Phase 4 QA): the match ended, or the player's side is out of it. Returns a locale
+--- key or nil. The autotest's fake player index 0 is never locked.
+function orders.locked_reason(player_index)
+  if type(player_index) ~= "number" or player_index == 0 then return nil end
+  local m = storage.match
+  if not m then return nil end
+  if m.phase == "ended" then return "rts.orders-match-over" end
+  if m.phase == "running" and m.out and m.out[selection.force_name(player_index)] then return "rts.orders-out" end
+  return nil
+end
+
+local function refuse_locked(player_index, what)
+  local key = orders.locked_reason(player_index)
+  if not key then return false end
+  local player = game.get_player(player_index)
+  if player then player.create_local_flying_text({text = {key}, create_at_cursor = true}) end
+  util.log("orders: %s refused player=%d (%s)", what, player_index, key)
+  return true
+end
+
 --- Arm (on = true), disarm (false) or toggle (nil) attack-move for a player: the next plain right click
 --- becomes an attack-move. Returns the new state.
 function orders.arm_attack_move(player_index, on)
   local armed = ostate().armed
   if on == nil then on = armed[player_index] == nil end
+  if on and refuse_locked(player_index, "attack-move") then
+    armed[player_index] = nil
+    selection.notify_hud(player_index)
+    return false
+  end
   armed[player_index] = on and game.tick or nil
   util.log("attack-move %s player=%d", on and "armed" or "disarmed (toggle)", player_index)
   -- The prompt is the HUD's top-strip message line while armed (Phase 1 QA follow-up 5).
@@ -470,6 +495,7 @@ function orders.handle_reverse_area(player_index, entities, area, alt)
     return "none", 0
   end
   o.stats.area_orders = o.stats.area_orders + 1
+  if refuse_locked(player_index, "right click") then return "none", 0 end
   if alt then
     local hooked, hooked_n = run_right_click_hooks(player_index, center, entities, true)
     if hooked then return hooked, hooked_n end
@@ -492,6 +518,7 @@ function orders.handle_rclick(player_index, position, hovered, holds_tool, in_gu
 end
 
 local function run_fallback(player_index, pending)
+  if refuse_locked(player_index, "right click") then return end
   local stats = ostate().stats
   stats.fallbacks = stats.fallbacks + 1
   local entities = (pending.entity and pending.entity.valid) and {pending.entity} or {}
