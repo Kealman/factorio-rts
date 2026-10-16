@@ -30,6 +30,7 @@ local buildings = require("scripts.buildings")
 local units = require("scripts.units")
 local production = require("scripts.production")
 local construction = require("scripts.ai.construction")
+local build_order = require("scripts.ai.build_order") -- Phase 5 M2 ai: the copper bootstrap's critical stock
 local doctrine = require("scripts.ai.doctrine")
 local scout = require("scripts.ai.scout")
 local deps = require("scripts.ai.deps")
@@ -318,6 +319,14 @@ function mix.manage_barracks(C)
         counts[st.kind] = (counts[st.kind] or 0) + 1 -- in production: the next barracks diversifies
         total = total + 1
         room = room - mix.KINDS[st.kind].supply
+      end
+    end
+    -- Phase 5 M2 ai: no kit that takes copper while the copper bootstrap holds the last plates (ai/build_order.lua)
+    if want and C.boot and C.boot["copper-plate"] and not threat
+       and construction.have(C, "copper-plate") < build_order.BOOT_CRITICAL then
+      local r = prototypes.recipe[want]
+      for _, ing in pairs(r and r.ingredients or {}) do
+        if ing.name == "copper-plate" or ing.name == "electronic-circuit" then want = nil break end
       end
     end
     local out = e.get_output_inventory()

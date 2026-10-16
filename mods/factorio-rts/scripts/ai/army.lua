@@ -161,6 +161,7 @@ end
 -- rts-neutral buildings otherwise. (Seed 501 from Age II: three city-states taken by 26:00, then marches across the
 -- rival's land led to a war and the M1 freight check fell to 18,908 items.)
 function army.city_state_target(C, surface, from, list)
+  local home_pos = from
   local ages = deps.ages
   if not (ages and ages.of(C.force) >= 2) then return nil end
   -- when: the strategist's army.capture_ok, else (like town captures) from capture_from of match time
@@ -178,11 +179,40 @@ function army.city_state_target(C, surface, from, list)
   for _, e in ipairs(list) do group = group + (supply_mod and supply_mod.cost(e.name) or 1) end
   local world = war_mod("world")
   local g = war_mod("garrison")
+  -- Phase 5 M2 ai: only city-states on our side of the map (at most city_state_reach x as far from our capital as from
+  -- the nearest rival capital: marches across a rival's land led to a war on seed 501) with no rival division near
+  local rivals = {}
+  local dip = war_mod("diplomacy")
+  for _, f in ipairs(dip and dip.nations and dip.nations() or {}) do
+    if f ~= C.force then
+      local pos = dip.capital_position and dip.capital_position(f)
+      if pos then rivals[#rivals + 1] = {force = f, pos = pos} end
+    end
+  end
+  local function our_side(c)
+    if not (WAR.ai.city_state_reach and home_pos) then return true end
+    local d_own = util.distance(c.position, home_pos)
+    for _, r in ipairs(rivals) do
+      if d_own > WAR.ai.city_state_reach * util.distance(c.position, r.pos) then return false end
+    end
+    return true
+  end
+  local function clear(c)
+    if not WAR.ai.city_state_clear then return true end
+    for _, r in ipairs(rivals) do
+      for _, D in ipairs(divisions.for_force(r.force)) do
+        local m = divisions.members(D.id)
+        local u = m[1] and units.get(m[1])
+        if u and util.distance(u.entity.position, c.position) <= WAR.ai.city_state_clear then return false end
+      end
+    end
+    return true
+  end
   local best, bd
   for _, rec in ipairs(world and world.city_states and world.city_states() or {}) do
     local c = rec.city_id and storage.cities and storage.cities[rec.city_id]
     if c and c.force ~= C.force and c.archetype == "city_state" and c.entity and c.entity.valid
-       and hostile_to(C.force, c.force) then
+       and hostile_to(C.force, c.force) and our_side(c) and clear(c) then
       local points = 0
       for _, t in ipairs(rec.turrets or {}) do
         if t.valid and t.force.name == c.force then points = points + WAR.ai.turret_points end
@@ -251,6 +281,21 @@ function army.on_damage(C, entity, cause, damage)
   local cc = buildings.main_cc(C.force)
   if not cc or util.distance(entity.position, cc.position) > army.BASE_RADIUS then
     raids.on_building_damage(C, entity, cause, buildings.kind_of(entity.name))
+    -- Phase 5 M2 ai: damage on another own city's land (a town) calls for a relief group (army.step)
+    local T = nation_mode() and deps.territory
+    local id = T and T.city_at and T.city_at(entity.position)
+    local city = id and storage.cities and storage.cities[id]
+    if city and city.force == C.force and not city.capital then
+      a.town_threat = a.town_threat or {}
+      local tt = a.town_threat[id]
+      if not tt then
+        tt = {since = game.tick, damage = 0}
+        a.town_threat[id] = tt
+        util.log("ai %s: town %d under attack at %s by %s", C.force, id, util.pos_str(pos),
+          (cause and cause.valid) and cause.force.name or "-")
+      end
+      tt.tick, tt.position, tt.damage = game.tick, {x = pos.x, y = pos.y}, tt.damage + (damage or 0)
+    end
   end
 end
 
@@ -352,6 +397,57 @@ local function threat_fresh(C, home)
     and util.distance(t.position, home) <= army.BASE_RADIUS
 end
 
+--- Phase 5 M2 ai: the fresh attack record of own town `city_id` (within WAR.ai.relief_window), or nil.
+function army.town_threat_fresh(C, city_id)
+  local tt = C.army.town_threat and C.army.town_threat[city_id]
+  if not tt then return nil end
+  local city = storage.cities and storage.cities[city_id]
+  if not (city and city.force == C.force) or game.tick - tt.tick > (WAR.ai.relief_window or 1200) then
+    C.army.town_threat[city_id] = nil
+    return nil
+  end
+  return tt
+end
+
+--- Phase 5 M2 ai: send relief groups to attacked towns; returns the pool that is left.
+function army.relief(C, pool, lists)
+  local a = C.army
+  local busy = {}
+  for _, G in pairs(a.groups) do
+    if G.relief then busy[G.relief] = true end
+  end
+  local ids = {}
+  for id in pairs(a.town_threat) do ids[#ids + 1] = id end
+  table.sort(ids)
+  for _, id in ipairs(ids) do
+    local tt = army.town_threat_fresh(C, id)
+    local min = WAR.ai.relief_min or 6
+    if tt and not busy[id] and #pool >= min then
+      local n = math.min(#pool, math.max(min, math.ceil(#pool * (WAR.ai.relief_share or 0.5))))
+      local tp = tt.position
+      table.sort(pool, function(x, y)
+        local dx, dy = util.distance_sq(x, tp), util.distance_sq(y, tp)
+        if dx ~= dy then return dx < dy end
+        return x.unit_number < y.unit_number
+      end)
+      local sent, rest = {}, {}
+      for i, e in ipairs(pool) do
+        if i <= n then sent[#sent + 1] = e else rest[#rest + 1] = e end
+      end
+      local G = form(C, sent, "defend", nil)
+      G.relief = id
+      lists[G.id] = sent
+      order_attack(C, G, sent, {position = tp, kind = "threat"})
+      C.stats.reliefs = (C.stats.reliefs or 0) + 1
+      busy[id] = true
+      util.log("ai %s: group #%d (%d of %d idle units) relieves town %d attacked at %s", C.force, G.id, #sent,
+        #pool, id, util.pos_str(tp))
+      pool = rest
+    end
+  end
+  return pool
+end
+
 --- One army pass for commander C.
 function army.step(C, surface)
   local a = C.army
@@ -409,7 +505,7 @@ function army.step(C, surface)
     local t = a.threat
     local defending
     for _, G in pairs(a.groups) do
-      if G.state == "defend" then defending = G end
+      if G.state == "defend" and not G.relief then defending = G end -- Phase 5 M2 ai: relief groups stay at their town
     end
     if defending then
       if util.distance(defending.target.position, t.position) > 8 then
@@ -455,6 +551,9 @@ function army.step(C, surface)
       end
     end
   end
+
+  -- Phase 5 M2 ai: relief of an attacked town (Nation): relief_share of the pool (at least relief_min) goes there
+  if nation_mode() and a.town_threat then pool = army.relief(C, pool, lists) end
 
   -- raids: raid defence, the hauler-route patrol, raider harassment (ai/raids.lua; the harass takes the reserve)
   pool = raids.step(C, surface, pool, lists, home, reserve)
@@ -594,7 +693,10 @@ function army.step(C, surface)
             #list)
         elseif stale or tick - G.last_order >= army.RETARGET_TICKS then
           local target
-          if G.state == "defend" then
+          if G.state == "defend" and G.relief then
+            local tt = army.town_threat_fresh(C, G.relief)
+            if tt then target = {position = tt.position, kind = "threat"} end
+          elseif G.state == "defend" then
             if threat_fresh(C, home) then target = {position = a.threat.position, kind = "threat"} end
           elseif ws and city_still_hostile(C, G.target) then
             target = G.target -- Phase 5 M2 war: a city target holds until it is captured

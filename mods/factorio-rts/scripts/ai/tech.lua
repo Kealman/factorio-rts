@@ -18,6 +18,9 @@ tech.PERIOD = 5 * 60
 tech.SUPPLY = {"rts-supply-1", "rts-supply-2"}
 -- Phase 5 E1: in Nation mode these come before the doctrine's order (Industrialisation opens the Railway Charter)
 tech.NATION_FIRST = {"rts-industrialisation"}
+-- Phase 5 M2 ai: right after Industrialisation (Railways unlocks the Rail works now; first of all it took the aggressive
+-- AI's labs for its opening techs and failed the 6-minute research check)
+tech.NATION_NEXT = {"rts-railways"}
 local ADVANCED = "rts-science-advanced"
 local INDUSTRIAL = "rts-science-industrial"
 
@@ -58,6 +61,11 @@ function tech.next(C)
   if deps.ages and deps.ages.is_nation() then
     for _, name in ipairs(tech.NATION_FIRST) do
       if try(name) then return name end
+    end
+    if research.has(C.force, tech.NATION_FIRST[1]) then
+      for _, name in ipairs(tech.NATION_NEXT) do
+        if try(name) then return name end
+      end
     end
   end
   for _, name in ipairs(doctrine.get(C.doctrine).research) do

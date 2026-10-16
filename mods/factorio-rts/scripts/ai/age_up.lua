@@ -33,6 +33,7 @@ age_up.CHARTER_CAP = 50 -- at most this much of a Charter good is a make target 
 age_up.DISTRICT_FIRST = {["engine-unit"] = true, ["rts-steel-beam"] = true} -- held back until the first district
 age_up.SAVE_MAX = 3 * 60 * 60  -- ticks the AI may save for one district item at a stretch ...
 age_up.SAVE_REST = 60 * 60     -- ... then this long without saving
+age_up.DISTRICT_RETRY = 60 * 60 -- Phase 5 M2 ai: a district or Bunker without a spot is looked for again after this
 
 -- The builder factory makes the district items for the construction queue (orders_data.FACTORY_RECIPE).
 for _, name in ipairs(A.districts) do data.FACTORY_RECIPE[name] = name end
@@ -174,6 +175,8 @@ function age_up.step(C, surface)
       end
     end
     if N.saving then want = {} end
+    -- Phase 5 M2 ai: the bakery first (ai/governor.lua), the copper line's own parts first (ai/build_order.lua)
+    if (C.gov and C.gov.food_emergency) or C.boot then want = {} end
     local p = ages.project(C.force)
     -- the Charter's goods once Industrialisation is under way (earlier, the stockpile took plates from the army)
     local force = game.forces[C.force]
@@ -220,9 +223,10 @@ function age_up.step(C, surface)
     for _, key in ipairs(N.districts) do
       if plan_entity(C, key) then districts_built = districts_built + 1 end
     end
-    if #N.warehouse < age_up.WAREHOUSE and districts_built >= age_up.WAREHOUSE_AFTER then
+    if #N.warehouse < age_up.WAREHOUSE and districts_built >= age_up.WAREHOUSE_AFTER
+       and game.tick >= (N.warehouse_retry or 0) then
       local key = queue_building(C, surface, "rts-stockpile")
-      if key then N.warehouse[#N.warehouse + 1] = key end
+      if key then N.warehouse[#N.warehouse + 1] = key else N.warehouse_retry = game.tick + age_up.DISTRICT_RETRY end
     end
     if not N.warehouse_ready and built >= math.ceil(age_up.WAREHOUSE * 2 / 3) then
       N.warehouse_ready = true
@@ -251,8 +255,9 @@ function age_up.step(C, surface)
       if plan_entity(C, key) then built = built + 1 elseif e and e.status ~= "bad" then pending = true end
     end
     N.bunker_due = smelting and built < age_up.BUNKERS or nil
-    if N.bunker_due and not pending and #N.bunkers < age_up.BUNKERS + 2 then
+    if N.bunker_due and not pending and #N.bunkers < age_up.BUNKERS + 2 and game.tick >= (N.bunker_retry or 0) then
       local pos, pole = layout.find_spot(C, surface, "rts-bunker", "front")
+      if not pos then N.bunker_retry = game.tick + age_up.DISTRICT_RETRY end -- Phase 5 M2 ai: no search every 5 s
       if pos then
         if pole then construction.queue(C, construction.add(C, {name = layout.POLE, x = pole.x, y = pole.y})) end
         local key = construction.add(C, {name = "rts-bunker", x = pos.x, y = pos.y})
@@ -284,13 +289,22 @@ function age_up.step(C, surface)
         end
       end
     end
-    local name = N.district_todo[1]
+    -- Phase 5 M2 ai: the first district whose recipe the force has (the Rail works now unlocks with Railways, an Age I
+    -- technology: a locked one stayed first and the builder asked for its item 600 times); a district without a spot
+    -- is looked for again after DISTRICT_RETRY (the full search every 5 s cost up to 0.15 ms per tick)
+    local idx, name
+    local frec = game.forces[C.force].recipes
+    for i, n in ipairs(N.district_todo) do
+      if not frec[n] or frec[n].enabled then idx, name = i, n break end
+    end
     if name and game.tick >= (N.district_at or 0) then
       local key = queue_building(C, surface, name)
       if key then
-        table.remove(N.district_todo, 1)
+        table.remove(N.district_todo, idx)
         N.districts[#N.districts + 1] = key
         N.district_at = game.tick + A.district_gap * 60
+      else
+        N.district_at = game.tick + age_up.DISTRICT_RETRY
       end
     end
   end

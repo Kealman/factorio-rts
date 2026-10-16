@@ -46,6 +46,8 @@ local orders = require("scripts.orders")
 local world = require("scripts.world") -- Phase 5 M1: world checks of a Nation match (docs/PHASE5-M1.md §4)
 local towns = require("scripts.ai.towns") -- Phase 5 M1 integration: the AI's mining town (minute line)
 local diplomacy = require("scripts.diplomacy") -- Phase 5 M2 diplomacy: Nation matches start at peace (attack check)
+local governor = require("scripts.ai.governor") -- Phase 5 M2 ai: minute line and the M2 summary metrics
+local nation_ai = require("scripts.ai.nation")
 
 local autotest = {}
 
@@ -246,6 +248,70 @@ local function kinds(force_name)
   return table.concat(parts, " ")
 end
 
+---------------------------------------------------------------------------
+-- Phase 5 M2 ai: end-to-end metrics (docs/PHASE5-M2.md §4), logged, not checked: trade volume per nation, wars
+-- declared and ended, cities that changed hands, starving cities (rations below half for more than 3 minutes in a
+-- row), towns and open rail lines per nation, the AI's time per tick (the strategist and governors apart).
+---------------------------------------------------------------------------
+autotest.STARVE_MINUTES = 3
+local function m2_minute(s)
+  s.m2 = s.m2 or {starve_run = {}, starved = {}, captures = 0, capture_list = {}}
+  local M = s.m2
+  for id, P in pairs(storage.population or {}) do
+    local r = P.needs and P.needs["rts-rations"]
+    local c = storage.cities and storage.cities[id]
+    if r and c and c.force ~= "rts-neutral" and c.entity and c.entity.valid then
+      if r.met < 0.5 then
+        M.starve_run[id] = (M.starve_run[id] or 0) + 1
+        if M.starve_run[id] > autotest.STARVE_MINUTES and not M.starved[id] then
+          M.starved[id] = c.force
+          util.log("ai autotest: m2ai: city %d of %s below half rations for %d minutes", id, c.force, M.starve_run[id])
+        end
+      else
+        M.starve_run[id] = 0
+      end
+    end
+  end
+end
+events.on_signal("rts_city_captured", function(e)
+  local s = state()
+  if not s then return end
+  s.m2 = s.m2 or {starve_run = {}, starved = {}, captures = 0, capture_list = {}}
+  s.m2.captures = s.m2.captures + 1
+  local list = s.m2.capture_list
+  list[#list + 1] = string.format("city %s %s->%s at %d:%02d", tostring(e.city_id), tostring(e.from), tostring(e.to),
+    math.floor((game.tick - s.started) / 3600), math.floor((game.tick - s.started) / 60) % 60)
+  util.log("ai autotest: m2ai: city %s captured by %s from %s", tostring(e.city_id), tostring(e.to), tostring(e.from))
+end)
+
+function autotest.m2_summary(s)
+  local M = s.m2 or {starved = {}, captures = 0, capture_list = {}}
+  local parts = {}
+  for _, f in ipairs(autotest.FORCES) do
+    local v = deps.market and deps.market.volume(f)
+    local towns_n = deps.cities and math.max(0, #deps.cities.for_force(f) - 1) or 0
+    local open = 0
+    for _, line in ipairs(deps.rails and deps.rails.lines_of(f) or {}) do
+      if line.state == "open" then open = open + 1 end
+    end
+    parts[#parts + 1] = string.format("%s trade %.0f, town %s, line %s, cities now %d", f, v and v.total or 0,
+      (s.city2_at and s.city2_at[f]) and "yes" or "no", (s.line_at and s.line_at[f]) and "yes" or "no", towns_n + 1)
+  end
+  local declared, ended, peace = 0, 0, 0
+  for _, W in pairs(storage.wars or {}) do
+    declared = declared + 1
+    if W.status == "ended" then ended = ended + 1 end
+  end
+  local D = storage.diplomacy
+  peace = D and D.stats and D.stats.peaces or ended
+  local starving = {}
+  for id, f in pairs(M.starved or {}) do starving[#starving + 1] = string.format("%s#%d", f, id) end
+  table.sort(starving)
+  util.log("ai autotest m2ai summary: %s | wars declared %d, ended %d, peaces %s | cities changed hands %d [%s] | "
+    .. "starving cities %d [%s]", table.concat(parts, "; "), declared, ended, tostring(peace), M.captures or 0,
+    table.concat(M.capture_list or {}, ", "), #starving, table.concat(starving, " "))
+end
+
 local function minute_report(s, n)
   local m = storage.match
   for _, f in ipairs(autotest.FORCES) do
@@ -311,12 +377,14 @@ local function minute_report(s, n)
           return table.concat(parts, " ")
         end)() or "", lst and lst.trips or 0, lst and lst.fuel or 0)
       if deps.market then util.log("ai minute %d %s m2: %s", n, f, deps.market.describe(f)) end -- Phase 5 M2 treasury
+      if C then util.log("ai minute %d %s m2ai: %s | %s", n, f, nation_ai.describe(C), governor.describe(C)) end
       if not (s.car_at and s.car_at[f]) and units.count(f, "car") > 0 then
         s.car_at = s.car_at or {}
         s.car_at[f] = game.tick - s.started
       end
     end
   end
+  if deps.ages and deps.ages.is_nation() then m2_minute(s) end -- Phase 5 M2 ai
   util.log("ai minute %d match: phase=%s winner=%s", n, tostring(m and m.phase), tostring(m and m.winner))
   local p = ai.perf()
   if wall then
@@ -567,6 +635,7 @@ local function finish(s, why)
   -- score spread, background fill) join the summary
   if m and m.config and m.config.mode == "nation" then world.autotest_checks(check) end
   if m and m.config and m.config.mode == "nation" then diplomacy.autotest_checks(check) end -- Phase 5 M2 diplomacy
+  if m and m.config and m.config.mode == "nation" then autotest.m2_summary(s) end -- Phase 5 M2 ai (metrics only)
   local last = s.minute
   local producing = autotest.producing(s)
   -- Phase 5 M1 integration: a match where at most one force still has a CC or a barracks is decided even when a beaten

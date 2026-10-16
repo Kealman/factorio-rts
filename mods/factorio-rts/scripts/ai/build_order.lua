@@ -400,6 +400,58 @@ function build_order.priority(C, surface)
   return true
 end
 
+---------------------------------------------------------------------------
+-- Phase 5 M2 ai: raw-line bootstrap (Nation mode). A start line whose plate the force does not make yet comes first
+-- once that plate runs low: its first drill and slot are queued and moved to the front of the construction queue, so
+-- the builder makes their items before anything else takes the last plates. (M2 wave A: the people governor's goods
+-- works and bakery took an aggressive AI's last copper at 5:00 and its copper extractor never came: seeds 402-404 and
+-- 611 without a copper line, Age II or a town for the whole match.)
+---------------------------------------------------------------------------
+build_order.BOOT_CRITICAL = 20 -- below this many plates the workshops and barracks skip their recipes with that plate
+build_order.BOOTSTRAP = {
+  {line = "copper", item = "copper-plate", low = 40}, -- an extractor, a batch of poles and one of inserters, a margin
+}
+
+--- True when line `name` of commander C has a drill and a slot built (its plate flows), or no such line exists.
+function build_order.line_running(C, name)
+  local L = C.lines[name]
+  if not (L and L.status == "ok") then return true end
+  return build_order.line_drills_built(C, L) > 0 and build_order.line_slots_built(C, L) > 0
+end
+
+-- While a bootstrap is on, C.boot[item] = true: the make targets (ai/age_up.lua), the goods works (ai/governor.lua) and
+-- the workshop factories (ai/commander.lua) take none of that plate, so the last plates reach the line's own parts (seed
+-- 705: the bootstrap fired at 26 copper and the works factory's circuits still took them).
+function build_order.bootstrap(C)
+  if not (deps.ages and deps.ages.is_nation()) then return end
+  C.boot = nil
+  for _, b in ipairs(build_order.BOOTSTRAP) do
+    local L = C.lines[b.line]
+    if L and L.status == "ok" and not build_order.line_running(C, b.line)
+       and construction.have(C, b.item) < b.low then
+      C.boot = C.boot or {}
+      C.boot[b.item] = true
+      want_drills(C, L, 1)
+      want_slots(C, L, 1)
+      local front, rest = {}, {}
+      for _, key in ipairs(C.queue) do
+        local e = C.plan[key]
+        if e and e.line == b.line then front[#front + 1] = key else rest[#rest + 1] = key end
+      end
+      if #front > 0 and C.queue[1] ~= front[1] then
+        for _, key in ipairs(rest) do front[#front + 1] = key end
+        C.queue = front
+        if not (C.boot_logged and C.boot_logged[b.line]) then
+          C.boot_logged = C.boot_logged or {}
+          C.boot_logged[b.line] = true
+          util.log("ai %s: bootstrap: %s line first (%d %s left, no drill and slot running yet)", C.force, b.line,
+            construction.have(C, b.item), b.item)
+        end
+      end
+    end
+  end
+end
+
 --- Walk the build order of commander C once (see the header). get_ctx() returns a planning context.
 function build_order.step(C, surface, get_ctx)
   local order = data.order(C.difficulty, C.doctrine, deps.ages ~= nil and deps.ages.is_nation()) -- Phase 5 M1

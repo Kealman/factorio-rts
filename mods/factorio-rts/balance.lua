@@ -570,8 +570,26 @@ balance.nation.people = {
     -- start_after: the start stock (300 rations, 15 minutes for 200 residents) carries the capital through the AI's
     -- opening; a farm, bakery and houses at 2:00 cost it a minute of its first iron and delayed its Age II
     -- houses from house_after (10 iron + 10 stone each; residents need housing ahead of them to grow)
-    keep_minutes = 2, farm_per = 150, bakery_farms = 2.5, free_housing = 20, start_after = 300, house_after = 150,
-    period = 5 * 60, house_gap = 10, max_queued = 3, export_extra = 50, brick_target = 20,
+    -- (Phase 5 M2 ai: farm_per 200, was 150: a farm and its share of a bakery feed about 225 residents, and from the
+    -- second farm on the governor adds them by residents, not by stock)
+    keep_minutes = 2, farm_per = 200, bakery_farms = 2.5, free_housing = 20, start_after = 300, house_after = 150,
+    -- Phase 5 M2 ai (scripts/ai/governor.lua): the capital ships rations and goods above its keep + export_extra (50
+    -- left the towns at 100 residents without goods: the capital rarely held that much more)
+    period = 5 * 60, house_gap = 10, max_queued = 3, export_extra = 10, brick_target = 20,
+    -- Phase 5 M2 ai: a farm when the capital's rations run out within food_minutes, the first goods works when its
+    -- goods run out within goods_minutes (the start stock lasts 12-15 minutes); a town at the goods need for
+    -- stall_ticks while the capital has none to ship gets a second goods works (at most goods_works_max)
+    -- (houses stay from 2:30: growth is 4 % of the housing a minute, and from 5:00 only cost seed 501's aggressive AI 30
+    -- workers in minutes 8-16 and Industrialisation 4 minutes)
+    food_minutes = 6, food_urgent = 3, goods_minutes = 6, stall_ticks = 3 * 60 * 60, goods_works_max = 2,
+    -- before the capital's steel flows: the goods works only below goods_urgent minutes of goods, the towns' supply
+    -- haulers only while a town holds less than town_rations_minutes of rations
+    goods_urgent = 2, town_rations_minutes = 4,
+    -- while Industrialisation is researched or the Charter is built: goods for this many minutes of need only
+    age2_focus_minutes = 1,
+    -- a town gets its own farm and bakery from town_farm_pop residents (or when its rations run short), inside its
+    -- City Center's logistic area (town_area tiles around it; the turrets go there too)
+    town_farm_pop = 60, town_area = 13,
     -- from start_after, houses while the housing is below the city's jobs / workforce share + job_margin residents
     -- (the margin keeps recruits for the army; houses beyond it only fed goods demand)
     job_margin = 80, house_radius = {24, 40, 56},
@@ -672,6 +690,36 @@ balance.nation.diplomacy = {
 -- prototypes/trade.lua.
 balance.nation = balance.nation or {}
 balance.nation.treasury = {
+-- Phase 5 M2 ai: the nation strategist (scripts/ai/nation.lua, docs/qa/phase5-ai-notes.md). Every `period` ticks per AI
+-- nation; the doctrine table above once every diplomacy_every passes. Sales hold a good while its price is below
+-- sell_floor x p0 (easy: any price, and its capital ships from easy_dump x the surplus thresholds); coal_reserve stays
+-- at the port for the haulers. Contracts: n x deliveries of a lacking ore every interval seconds at contract_price x
+-- the market price, from a nation at peace with relation >= contract_min_r, one at a time, a new proposal at most every
+-- contract_gap ticks and the same seller and good again after contract_retry. Garrison: when a war starts,
+-- garrison_share of the idle army (garrison_min..garrison_max units) enters the capital. City-state operations from
+-- city_state_from of match time, with no rival division within capture_safe tiles of the capital.
+balance.nation.diplomacy.ai = {
+  period = 600, diplomacy_every = 6,
+  sell_floor = 0.75, easy_dump = 0.5, coal_reserve = 300, -- (coal at the port is the haulers' fuel home: not sold)
+  contract_n = 100, contract_deliveries = 5, contract_interval = 120, contract_price = 1.0, contract_min_r = 0,
+  contract_gap = 3 * 60 * 60, contract_retry = 10 * 60 * 60, contract_from = 10 * 60 * 60,
+  contract_keep = 20 * 60 * 60, -- goods bought by contract are not sold at the port for this long after it was made
+  garrison_share = 0.25, garrison_min = 4, garrison_max = 8,
+  city_state_from = 20 * 60 * 60, capture_safe = 400,
+  -- opportunity wars (on top of the doctrine table, matches of opportunity_nations or more): a rival's town within
+  -- opportunity_reach tiles of the capital with at most `defenders` defence points (units, garrison, 4 per gun turret
+  -- within opportunity_turret_radius), relation below r and power ratio above `ratio`, an idle army of `pool`; from
+  -- opportunity_from, checked every opportunity_period, at most one per opportunity_gap. nil = off.
+  opportunity = {
+    aggressive = {r = 0, ratio = 0.8, defenders = 8, pool = 12},
+    economic = {r = -25, ratio = 1.2, defenders = 4, pool = 16},
+    turtle = {r = -30, ratio = 1.3, defenders = 4, pool = 20},
+  },
+  opportunity_nations = 3,
+  opportunity_from = 20 * 60 * 60, opportunity_period = 60 * 60, opportunity_gap = 20 * 60 * 60,
+  opportunity_reach = 1400, opportunity_turret_radius = 30,
+}
+
   start = 1500,                -- cr every nation starts with
   step = 600,                  -- ticks between two flow applications (tax and upkeep are per-minute rates / 6)
   tax = {
@@ -765,6 +813,9 @@ balance.nation.war = {
   -- Supply points (SP) per division, 0..sp_max. States: supplied (>= low), low (1 .. low - 1), out (0).
   sp_max = 100, sp_start = 100, low = 50,
   use = {idle = 0, moving = 2, engaged = 8, enemy_land = 2}, -- SP per minute (idle in own or neutral land: 0)
+    -- Phase 5 M2 ai (scripts/ai/governor.lua): a town's export hauler takes its surplus to the port while the town holds
+    -- more than town_export_start of its ore and plate together, until it holds less than town_export_stop
+    town_export_start = 1500, town_export_stop = 300,
   engaged_ticks = 300,       -- a member that hit or was hit this recently makes its division "engaged"
   refill = {per_minute = 20, range = 64, sp_per_crate = 10}, -- within range (2 chunks) of a depot holding crates
   out = {share = 0.015, period = 600},  -- out of supply: 1.5 % of max health every 10 s
@@ -794,7 +845,14 @@ balance.nation.war = {
         capture_from = 45 * 60 * 60, capture_cooldown = 15 * 60 * 60,
         -- city-states: deliberate capture operations only (army.city_state_target): from Age II, at peace with every
         -- nation, a group of at least city_state_ratio x the garrison points (turret_points per live turret)
-        city_state_ratio = 1.5, turret_points = 4},
+        city_state_ratio = 1.5, turret_points = 4,
+        -- Phase 5 M2 ai (scripts/ai/governor.lua, ai/army.lua): gun turrets at a town as soon as its City Center
+        -- stands (magazines kept there); a relief group (relief_share of the idle pool, at least relief_min) goes to a
+        -- town attacked within relief_window ticks; city-state operations only on a city-state at most
+        -- city_state_reach x as far from the capital as from the nearest rival capital, with no rival division within
+        -- city_state_clear tiles of it
+        town_turrets = 2, town_magazines = 20, relief_share = 0.5, relief_min = 6, relief_window = 20 * 60,
+        city_state_reach = 0.8, city_state_clear = 150},
 }
 balance.buildings["rts-field-depot"] = {kind = "hub", cost = balance.nation.war.field_depot.cost,
                                         time = balance.nation.war.field_depot.time,
