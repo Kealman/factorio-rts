@@ -149,7 +149,7 @@ function districts.set_make_target(city_id, item, n)
   if n == 0 then n = nil end
   local cities = ages.cities()
   if cities and cities.set_make_target then
-    cities.set_make_target(city_id, item, n)
+    if not cities.set_make_target(city_id, item, n) then return false end
   else
     districts.make_targets(city_id)[item] = n
   end

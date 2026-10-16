@@ -5,7 +5,9 @@
 -- building, or from the city list (pinned until closed). Content: name and tier, a rename field, land (radius, cells,
 -- share of the nation's land), supply, the next tier's requirements (buildings on its land, goods delivered to its
 -- market), the logistic networks on its land, and the make targets (one row per item: icon, target field, remove;
--- a choose-item button adds a row). Fields write cities.rename / cities.set_make_target.
+-- an add button opens the scripted item picker, scripts/itempicker.lua, left of the panel: QA round 1 replaced the
+-- choose-elem-button, which took the rts-cursor from the player's cursor). Fields write cities.rename /
+-- cities.set_make_target; a click on a number field selects its text, so typing replaces the value.
 --
 -- City list: a small frame in the top-left corner under the kill feed, one row per own city: a jump button (name, the
 -- camera goes there), tier and land cells, an "open panel" button. hud.lua's strip has the territory share and a
@@ -23,6 +25,7 @@ local territory = require("scripts.territory")
 local cities = require("scripts.cities")
 local demolish = require("scripts.demolish") -- Phase 5 M1 integration: the panel's Demolish button
 local hubgui = require("scripts.hubgui") -- Phase 5 M1 integration: its title follows a rename
+local itempicker = require("scripts.itempicker") -- QA round 1: the make-target picker
 
 local citygui = {}
 
@@ -63,9 +66,10 @@ local function selected_city(player)
   return c
 end
 
-local function destroy_panel(g)
+local function destroy_panel(g, player)
   if g.frame and g.frame.valid then g.frame.destroy() end
   g.frame, g.el, g.city, g.key, g.targets = nil, nil, nil, nil, nil
+  if player then itempicker.close(player, "citygui") end
 end
 
 local function place_panel(player, frame)
@@ -131,8 +135,8 @@ local function build_panel(player, g, c)
   table.sort(items)
   for _, item in ipairs(items) do add_target_row(g, item, c.make[item]) end
   local add = frame.add({type = "flow", direction = "horizontal", style = "rts_hud_row"})
-  add.add({type = "choose-elem-button", name = PREFIX .. "add", elem_type = "item", style = "slot_button",
-           tooltip = {"rts.citygui-target-add"}, tags = {rts_citygui = "add", city = c.id}})
+  el.add = add.add({type = "sprite-button", name = PREFIX .. "add", sprite = "utility/add", style = "slot_button",
+                    tooltip = {"rts.citygui-target-add"}, tags = {rts_citygui = "add", city = c.id}})
   label(add, "rts_hud_dim_label", {"rts.citygui-target-hint"}, WIDTH - 60)
   -- Demolish the City Center (two presses, scripts/demolish.lua); the capital cannot be demolished (greyed)
   local foot = frame.add({type = "flow", direction = "horizontal", style = "rts_hud_row"})
@@ -188,7 +192,7 @@ end
 local function show_panel(player, force_rebuild)
   local g = pstate(player.index)
   if not nation_running() then
-    if g.frame then destroy_panel(g) end
+    if g.frame then destroy_panel(g, player) end
     return
   end
   local c = selected_city(player)
@@ -200,16 +204,16 @@ local function show_panel(player, force_rebuild)
   end
   if g.closed and g.closed ~= key then g.closed = nil end
   if not c or g.closed == key then
-    if g.frame then destroy_panel(g) end
+    if g.frame then destroy_panel(g, player) end
     return
   end
   if force_rebuild or g.key ~= key or not (g.frame and g.frame.valid) then
-    destroy_panel(g)
+    destroy_panel(g, g.key ~= key and player or nil) -- the picker stays open over a rebuild of the same city
     build_panel(player, g, c)
     g.key = key
     util.log("citygui: city panel %d (%s) player=%d", c.id, key, player.index)
   end
-  if not refresh_panel(player, g) then destroy_panel(g) end
+  if not refresh_panel(player, g) then destroy_panel(g, player) end
 end
 
 ---------------------------------------------------------------------------
@@ -338,7 +342,18 @@ events.on(defines.events.on_gui_click, function(e)
   local g = pstate(e.player_index)
   if action == "close" then
     g.closed, g.pinned = g.key, nil
-    destroy_panel(g)
+    destroy_panel(g, player)
+  elseif action == "add" then
+    -- QA round 1: the scripted picker, left of the panel (a choose-elem-button took the rts-cursor from the cursor)
+    local loc
+    if g.frame and g.frame.valid and g.frame.location then
+      local s = player.display_scale
+      loc = {math.max(0, g.frame.location.x - math.floor((itempicker.WIDTH + MARGIN) * s + 0.5)), g.frame.location.y}
+    end
+    itempicker.open(player, "citygui", {city = tags.city}, loc)
+  elseif action == "target" then
+    element.select_all() -- QA round 1: typing replaces the value
+    return
   elseif action == "rename" then
     rename(player, g, tags.city)
   elseif action == "remove" then
@@ -377,16 +392,18 @@ events.on(defines.events.on_gui_text_changed, function(e)
     e.player_index)
 end)
 
-events.on(defines.events.on_gui_elem_changed, function(e)
-  local element = e.element
-  if not (element and element.valid) or element.tags.rts_citygui ~= "add" then return end
-  local item = element.elem_value
-  if not item then return end
-  local g = pstate(e.player_index)
-  local c = cities.get(element.tags.city)
-  if c and not c.make[item] then add_target_row(g, item, nil) end
-  element.elem_value = nil
-  util.log("citygui add target city=%d item=%s player=%d", element.tags.city, tostring(item), e.player_index)
+-- The picker's choice: a new row (empty field, focused with its text selected) unless the city has that target.
+itempicker.on_pick("citygui", function(player, item, ctx)
+  local g = pstate(player.index)
+  local c = cities.get(ctx.city)
+  if not (c and g.frame and g.frame.valid and g.city == c.id) then return end
+  if not c.make[item] then add_target_row(g, item, nil) end
+  local tf = g.targets and g.targets[item]
+  if tf and tf.valid then
+    tf.focus()
+    tf.select_all()
+  end
+  util.log("citygui add target city=%d item=%s player=%d", c.id, item, player.index)
 end)
 
 local function reposition(e)

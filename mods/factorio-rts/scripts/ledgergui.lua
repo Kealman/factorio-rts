@@ -10,7 +10,10 @@
 --   * one row per good (districts.ledger): stock in the city's networks, made and used over the last minute, the make
 --     target (a numeric field: typing sets it, empty clears it), the shortfall, and a hint for a short good the city
 --     cannot make: "needs X: made in <city>" or "needs X: made nowhere";
---   * an item chooser + number + Add button for a new target; a footer with the city's auto / fixed machines.
+--   * an item button + number + Set button for a new target (QA round 1: the button opens the scripted item picker,
+--     scripts/itempicker.lua, instead of a choose-elem-button, which took the rts-cursor from the player's cursor; a
+--     click on a number field selects its text, so typing replaces the value); a footer with the city's auto / fixed
+--     machines.
 -- Refreshed every REFRESH ticks while open; rows are rebuilt only when the set of goods changes (so a field being
 -- typed in keeps its focus). Owns util.pstorage(i).ledger = {city, items_key, rows = {[item] = elements}} and
 -- util.pstorage(i).age_badge.
@@ -21,6 +24,7 @@ local production = require("scripts.production")
 local match = require("scripts.match")
 local ages = require("scripts.ages")
 local districts = require("scripts.districts")
+local itempicker = require("scripts.itempicker")
 
 local ledgergui = {}
 
@@ -192,8 +196,8 @@ local function update_project(player, g)
   local p = ages.project(f)
   g.bar.visible = p ~= nil and age < 2
   g.bar.value = p and ages.progress(p) or 0
-  local ok = ages.can_start(f)
-  g.start.visible = age < 2
+  local ok, why = ages.can_start(f)
+  g.start.visible = age < 2 and why ~= "running" -- QA round 1: no greyed (and clipped) Start while the site stands
   g.start.enabled = ok
   local parts = {""}
   if p and age < 2 then
@@ -290,10 +294,10 @@ function ledgergui.open(player)
   local row2 = top.add({type = "flow", direction = "horizontal"})
   row2.style.vertical_align = "center"
   local project = row2.add({type = "label", caption = ""})
-  project.style.width = 420
+  project.style.width = 330 -- QA round 1: leaves the Start button its whole caption (en and ru)
   project.style.single_line = false
   local pbar = row2.add({type = "progressbar", value = 0})
-  pbar.style.width = 140
+  pbar.style.width = 110
   local start = row2.add({type = "button", caption = {"rts.project-start"}, tooltip = {"rts.project-start-tooltip"},
                           tags = {rts_ledger = "start"}})
   local goods = top.add({type = "label", caption = ""})
@@ -311,9 +315,10 @@ function ledgergui.open(player)
   add.style.top_margin = 6
   add.style.vertical_align = "center"
   add.add({type = "label", caption = {"rts.ledger-add"}})
-  local chooser = add.add({type = "choose-elem-button", elem_type = "item", tags = {rts_ledger = "choose"}})
+  local chooser = add.add({type = "sprite-button", style = "slot_button", tooltip = {"rts.ledger-choose-tooltip"},
+                           tags = {rts_ledger = "choose"}})
   local amount = add.add({type = "textfield", text = "50", numeric = true, allow_decimal = false,
-                          allow_negative = false})
+                          allow_negative = false, tags = {rts_ledger = "amount"}})
   amount.style.width = 60
   add.add({type = "button", caption = {"rts.ledger-add-button"}, tooltip = {"rts.ledger-add-tooltip"},
            tags = {rts_ledger = "add"}})
@@ -337,6 +342,7 @@ function ledgergui.close(player)
   if frame then frame.destroy() end
   local ps = pstate(player.index)
   ps.gui = nil
+  itempicker.close(player, "ledger")
 end
 
 function ledgergui.toggle(player)
@@ -372,17 +378,34 @@ events.on(defines.events.on_gui_click, function(e)
     util.log("ledger: player %d start project: %s (%s)", player.index, p and p.state or "refused", tostring(why))
     if not p then player.print({"rts.project-refused", tostring(why)}) end
     ledgergui.refresh(player)
+  elseif action == "choose" then
+    itempicker.open(player, "ledger", {city = ps.city})
+  elseif action == "target" or action == "amount" then
+    el.select_all() -- QA round 1: typing replaces the value (Ctrl+A did not select it in the QA run)
   elseif action == "add" then
     local g = ps.gui
-    local item = g and g.chooser.valid and g.chooser.elem_value
-    if type(item) == "table" then item = item.name end
-    local n = g and tonumber(g.amount.text)
-    if item and n and ps.city then
+    local item = g and g.chosen
+    local n = g and g.amount.valid and tonumber(g.amount.text)
+    if item and n and ps.city and itempicker.allowed(item) then
       districts.set_make_target(ps.city, item, n)
       util.log("ledger: player %d target %s %s = %d", player.index, tostring(ps.city), item, n)
       ledgergui.refresh(player)
     end
   end
+end)
+
+-- The picker's choice goes on the item button; the amount field takes the focus with its text selected.
+itempicker.on_pick("ledger", function(player, item, ctx)
+  local g = pstate(player.index).gui
+  if not (g and g.frame and g.frame.valid and g.chooser.valid) then return end
+  g.chosen = item
+  g.chooser.sprite = "item/" .. item
+  g.chooser.tooltip = {"rts.ledger-chosen-tooltip", prototypes.item[item].localised_name}
+  if g.amount.valid then
+    g.amount.focus()
+    g.amount.select_all()
+  end
+  util.log("ledger: player %d picked %s for city %s", player.index, item, tostring(ctx.city))
 end)
 
 events.on(defines.events.on_gui_text_changed, function(e)

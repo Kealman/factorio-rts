@@ -147,10 +147,16 @@ function cities.make_targets(city_id)
   return c and c.make or {}
 end
 
---- Set (n > 0) or clear (nil or 0) a make target. Returns true when the city and the item exist.
+--- Set (n > 0) or clear (nil or 0) a make target. Returns true when the city and the item exist. QA round 1: a hidden
+--- item or a cursor-only tool (the rts-cursor) is refused; clearing such a target still works.
 function cities.set_make_target(city_id, item, n)
   local c = cities.get(city_id)
-  if not (c and item and prototypes.item[item]) then return false end
+  local proto = item and prototypes.item[item]
+  if not (c and proto) then return false end
+  if (proto.hidden or item == util.CURSOR_ITEM) and (tonumber(n) or 0) > 0 then
+    util.log("cities: make target %s #%d %s refused (not a good)", c.force, c.id, item)
+    return false
+  end
   n = n and math.floor(tonumber(n) or 0) or 0
   n = math.max(0, math.min(1000000, n))
   local value = n > 0 and n or nil

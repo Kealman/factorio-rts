@@ -387,6 +387,10 @@ events.on(defines.events.on_gui_click, function(e)
     show(player)
     return
   end
+  if action == "policy" then
+    element.select_all() -- Phase 5 M1 QA round 1: a click selects the number, so typing replaces it
+    return
+  end
   local list = selected_haulers(g)
   if action == "mode" then
     for _, un in ipairs(list) do logistics.set_mode(un, element.tags.mode) end
