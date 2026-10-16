@@ -130,7 +130,48 @@ its first feasible recipe (built for its goods, it works without targets); every
 
 ## 7. Results
 
-(filled in below by the final runs)
+All runs: 0 Lua errors, 0 "Unknown key", 0 missing locale keys.
+
+**Economy fixture** (world map 1536, Nation 1v1, `scripts/cities.lua` loaded; the same 11 checks also pass under the
+one-city shim on the 512 arena, Space Age and base only): 12/12.
+
+| Check | Result |
+|---|---|
+| charter_age2 | everything delivered from the capital's network, 20 s countdown: Age II 34 s after the start |
+| charter_force_only | enemy still Age I; petrochemical works and advanced circuit recipes enabled for the player only |
+| charter_age_tech | Supply III "available" for the player, "age" for the enemy |
+| switch_5s | gears 20 / explosives 30: gears first; switched to explosives 1.6 s after the gear stock reached 20 |
+| oil_no_plastic_no_circuit | city A (capital): 0 advanced circuits and its factory never picked them in 60 s without plastic |
+| oil_ledger_hint | A's ledger row for advanced circuits: "needs plastic: made in city 3" (city B) |
+| oil_b_makes_plastic | city B: two oil wells, a petrochemical works on Auto: 40 plastic (its target), 10 sulfur |
+| oil_route_circuit_3min | hauler route B -> A: plastic in A after 4.7 s, an advanced circuit after 11.8 s |
+
+**AI age-up** (world map, Nation 1v1, normal vs normal, economic vs aggressive doctrine, 21-minute autotest):
+
+| Seed | rts-player (economic) | rts-ai-1 (aggressive) | Districts built (player / AI) |
+|---|---|---|---|
+| 401 | Age II 18:07 (Industrialisation 12:27) | Age II 13:50 | 1 / 3 |
+| 402 | Age II 13:45 | lost its CC at 15:20, Age I | 2 / 0 |
+| 403 | Age II 15:01 | lost its CC at 17:11 (Charter razed at 38 %) | 1 / 0 |
+| 404 | Age II 16:28 | Age II 14:50 | 3 / 3 |
+| 405 | Age II 13:56 | Age II 16:40 | 3 / 3 |
+
+Every AI that kept its capital reached Age II by 20:00 (8 of 8; 5 of 5 seeds); the two that did not were destroyed
+before 20:00. On the 512 arena (first runs, seeds 301-305) 1v1 matches ended at 9-16 minutes; the winner reached
+Age II at 12:17 and 13:49 where the match lasted long enough. After these runs the AI's Charter stockpile was moved to
+start with the Industrialisation research (it took plates from the army from minute 4) and the works factory to 5:00;
+the re-run is below.
+
+**Skirmish unchanged.** The tree before and after E1 (both with the other M1 packages), same seed: 1v1 normal medium
+23/23 and legacy units 65/65 in both, and the production, autotest and minute lines are identical (2147 and 329
+lines).
+
+**Performance** (world, 2 nations, PERF=1, per minute averages): production.lua (including the auto-recipe pass)
+0.005-0.17 ms/tick, districts.lua at most 0.002, ages.lua at most 0.001, ledgergui.lua 0.00004. The 21-minute runs took
+1267 s of wall time for 1260 s of game time with nine other servers on the machine: 60 UPS.
+
+**Save / load** (Nation, fixture running, saved at minute 3 and loaded): no errors on either side; after the load the
+auto petrochemical works kept switching with its target and the minute reports continued.
 
 ## 8. Gotchas
 

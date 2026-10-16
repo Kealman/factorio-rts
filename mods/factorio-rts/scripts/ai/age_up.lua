@@ -4,9 +4,9 @@
 --
 --   1. Factories: the commander's own factories (builder, workshops) are "fixed" (it sets their recipes,
 --      production.lua); one extra "works" factory, queued works_after seconds in, runs on Auto for the make targets.
---   2. Make targets (every PERIOD): the capital template of the force's age (ai.capital[age]); while the Railway
---      Charter runs, also what it still needs of the goods a factory makes (gears, circuits; steel and stone come from
---      the lines). Other cities of the force (cities.lua) get ai.town.
+--   2. Make targets (every PERIOD): the capital template of the force's age (ai.capital[age]); from the start of the
+--      Industrialisation research until Age II, also what the Railway Charter still needs of the goods a factory makes
+--      (gears, circuits; steel and stone come from the lines). Other cities of the force (cities.lua) get ai.town.
 --   3. The Railway Charter: started on a spot layout.find_spot reserves near the CC once Industrialisation is done,
 --      started again when razed.
 --   4. Age II: the districts of ai.districts, one every district_gap seconds, near the CC (districts run on Auto).
@@ -21,6 +21,7 @@ local deps = require("scripts.ai.deps")
 local balance = require("balance")
 
 local A = balance.nation.economy.ai
+local CHARTER_TECH = balance.nation.economy.charter.tech
 
 local age_up = {}
 
@@ -105,7 +106,12 @@ function age_up.step(C, surface)
     local want = {}
     for item, n in pairs(A.capital[age] or {}) do want[item] = n end
     local p = ages.project(C.force)
-    if age < 2 then
+    -- the Charter's goods once Industrialisation is under way (earlier, the stockpile took plates from the army)
+    local force = game.forces[C.force]
+    local cur = force and force.current_research
+    local soon = p ~= nil or (deps.research and deps.research.has(C.force, CHARTER_TECH))
+      or (cur ~= nil and cur.name == CHARTER_TECH)
+    if age < 2 and soon then
       for item, n in pairs(ages.required()) do
         local left = n - ((p and p.delivered[item]) or 0)
         if left > 0 and age_up.FACTORY_GOODS[item] then

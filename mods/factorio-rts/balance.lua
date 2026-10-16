@@ -363,7 +363,7 @@ E.recipes = {
 -- The normal AI (scripts/ai/age_up.lua): make targets of its capital per age (an archetype template), the districts
 -- it builds once it reaches Age II, and when its "works" factory (an auto-recipe factory for those targets) goes up.
 E.ai = {
-  works_after = 4 * 60,      -- seconds after the commander started
+  works_after = 5 * 60,      -- seconds after the commander started
   district_gap = 60,         -- seconds between two district orders
   capital = {
     [1] = {["iron-gear-wheel"] = 20, ["electronic-circuit"] = 30},
@@ -374,5 +374,33 @@ E.ai = {
 
 for name, b in pairs(E.buildings) do balance.buildings[name] = b end
 balance.buildings["rts-project-site"] = {kind = "project", health = E.charter.site_health}
+
+-- m1-rails (docs/qa/phase5-rails-notes.md): haulers cost fuel and carry less at nation scale, trains carry a lot.
+balance.nation = balance.nation or {}
+balance.nation.hauler_slots = 10          -- base cargo slots of a hauler (research adds its bonus on top)
+balance.nation.hauler_tiles_per_coal = 40 -- a hauler takes 1 coal per this many tiles from the hub it departs
+balance.nation.rails = {
+  -- factory recipes (category rts-buildings), unlocked by the Railways technology
+  depot = {cost = {["iron-plate"] = 40, ["steel-plate"] = 10, ["copper-plate"] = 10}, time = 10, health = 1500,
+           supply_cap = 10},
+  rail = {cost = {["steel-plate"] = 2, ["stone"] = 1}, count = 2, time = 2},  -- recipe rts-rail -> 2 "rail"
+  locomotive_kit = {cost = {["iron-plate"] = 40, ["steel-plate"] = 10, ["electronic-circuit"] = 10}, time = 10},
+  cargo_wagon_kit = {cost = {["iron-plate"] = 20, ["steel-plate"] = 5}, time = 6},
+  construction_wagon_kit = {cost = {["iron-plate"] = 30, ["steel-plate"] = 10}, time = 8},
+  -- bill of a line, in rail items: track pieces cost their vanilla rail count (straight 1, half-diagonal 2,
+  -- curves 3); bridges and signals are paid in rails too, so a construction wagon only ever carries rails
+  support_rails = 10, ramp_rails = 20, signal_rails = 2,
+  build_rate = 10,         -- pieces a construction train lays per second
+  build_reach = 48,        -- tiles from the nearest locomotive to the piece being laid (the crew works ahead)
+  transfer_rate = 200,     -- items per second per wagon between a depot network and a wagon
+  fuel_target = 20,        -- coal per locomotive after a refuel at a depot
+  starter_fuel = 10,       -- coal a new locomotive takes from the depot network
+  cargo_wagons = 2,        -- a cargo train is locomotive + 2 wagons + locomotive (double-headed, single track)
+  signal_spacing = 80,     -- tiles of ground track between bidirectional signal pairs
+  ai_min_distance = 300,   -- AI: a hub or city this far from the capital gets a line
+}
+-- The depot is a hub subtype (kind "hub"), so scripts/supply.lua already counts it like a hub (+10). Listed here so the
+-- on_entity_damaged filter (scripts/research.lua) covers it: the AI defends its depots like its hubs.
+balance.buildings["rts-depot"] = {kind = "hub", supply_cap = balance.nation.rails.depot.supply_cap}
 
 return balance

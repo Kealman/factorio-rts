@@ -259,12 +259,63 @@ rts-ai-3 (lines) and rts-ai-2 (AI program), with `storage.rails.test_nation` sta
 
 ## 9. Further results
 
-(filled in below)
+| Run | Result |
+|---|---|
+| Rails autotest on the synced live tree (`p5live-rails`, `tools/probes/rails_autotest.lua`) | 11/11, 0 errors |
+| Save/load mid-survey (`tools/saveload-check.sh`, `rails_saveload_survey.lua`: survey throttled to 2 expansions per tick so it spans the save at AI minute 3) | Saved in phase `score`; 0 errors in both halves; after the load the survey finished with the same route (266 pieces, bill 493) and 8/8 checks passed |
+| Save/load mid-trip (`rails_saveload_trip.lua`: 300-tile line started at minute 1) | Saved with the freight train on its rounds (to the pickup at 0.61 tiles/tick right after the load); 0 errors; 8/8 after the load, including cut, repair in 7 s and resume in 13 s |
+| Skirmish matrix subset on the rebased tree (`tools/autotest-matrix.sh`, KEEP_TREE) | 1v1-normal-medium 23/23 (live tree without rails: 23/23), legacy-units 65/65, legacy-units-nosa 65/65; on the earlier work tree also 1v1-normal-small-nosa 22/22. The base game (no Space Age) loads: 16 ground end states, no Bridges technology |
+| GUI probe in the real client (`tools/probes/rails_gui.lua`, Russian client locale) | 6/6: depot in the build menu only in Nation rules; depot rail panel left of the hub panel; right-click on the second depot laid an 81-tile line, open in 10 s; "Deploy freight train" button; train panel, route by right-click and Shift + right-click; 1,000 iron delivered. Screenshots: `build/shots-p5-rails-gui/` |
+| 1v1 Nation match (m1-world's 1536 world, 25 minutes, game speed 4) | Rails handlers 0.0007-0.0009 ms per tick before any depot exists. The AI hook stayed idle: both AIs' second cities stand 183 tiles from their capitals, below the 300-tile trigger (open issue 1) |
 
-## 10. Shared hunks
+## 10. Shared hunks (live tree after the sync, `build/p5-rails/sync.py`)
 
-(filled in below)
+| File:line | Lines | What |
+|---|---|---|
+| `balance.lua:378` | 29 | `balance.nation.hauler_slots`, `hauler_tiles_per_coal`, `balance.nation.rails`, `balance.buildings["rts-depot"]` |
+| `control.lua:34` | 4 | require `scripts.rails` and `scripts.railgui` after hubgui |
+| `data.lua:15` | 2 | require `prototypes.rails` after prototypes.logistics |
+| `scripts/logistics.lua:61` | 1 | `local balance = require("balance")` |
+| `scripts/logistics.lua:123` | 8 | `nation_mode()` (match mode, or the rails autotest flag) |
+| `scripts/logistics.lua:680` | 15 | hauler fuel in `go()`: 1 coal per 40 tiles from the departure hub, else waiting "no-fuel" |
+| `scripts/logistics.lua:775` | 3 | `logistics.capacity`: base 10 slots in Nation mode |
+| `scripts/hubgui.lua:230` | 1 | hauler reason "no-fuel" in the hauler panel |
+| `scripts/hud.lua:146` | 2 | rail item and recipes added to m1-cities' `P4.NATION_ONLY` |
+| `scripts/hud.lua:238` | 1 | `rts-depot` in the Economy build tab |
+| `scripts/hud.lua:285` | 7 | alert styles `line-open`, `line-cut`, `line-blocked`, `line-failed`, `train-lost` |
+| `scripts/ai/commander.lua:518` | 1 | `deps.rails.ai_step(C)` after `hubs.step(C)` |
+| `scripts/ai/deps.lua:9` | 1 | comment: `deps.rails` |
+
+No change to orders.lua (the right-click hook registers itself), production.lua (factory outputs already go to the
+network), match.lua (`match.on_teardown` hook), research.lua and techgui.lua (m1-economy's `research.NATION_ONLY`
+already filters the research list and disables the technologies in Skirmish; rails.lua adds Railways and Bridges to it
+and its unlocks to `research.EFFECTS` / `research.LOCKS` at load), buildings.lua (rails.lua adds its kinds to
+`buildings.KIND_BY_NAME`) or logistics.lua's naming (m1-cities' `logistics.NAME_HOOKS`).
 
 ## 11. Open issues
 
-(filled in below)
+1. **The AI line never triggers in today's Nation match.** The contract trigger is a hub or city ≥ 300 tiles from the
+   capital; cities.lua puts the AI's second city on a world site 183 tiles out. Either cities choose a site ≥ 300 tiles
+   away or `balance.nation.rails.ai_min_distance` goes down (a test run with 150 is reported to the lead separately).
+   The M1 end-to-end goal ("open ≥ 1 rail line, move ≥ 20,000 items by train") depends on this choice.
+2. **Nation hauler fuel stalls the AI's haulers.** In the 1v1 Nation match the AI kept no coal in its CC and hub
+   networks, so 3 haulers waited "no-fuel" and the AI autotest check `hub_rts-player` failed (31/32). The rule is the
+   contract's (1 coal per 40 tiles from the departing hub); the Nation AI economy needs a coal supply or a coal keep at
+   its hubs. Locomotives burn coal from depot networks too.
+3. **Factory grid in Nation mode.** Rails adds 5 factory recipes (cities 2, economy more) to the 25 Skirmish ones; the
+   factory grid holds 2 rows of 14. The HUD layout in Nation mode needs a look (integration).
+4. **Build grid built in the lobby.** `P4.NATION_ONLY` filters the build grid when it is filled; the GUI probe needed a
+   tab switch after the mode changed. The HUD should refill the grid when a Nation match starts (cities' items too).
+5. **Demolish on rolling stock.** The HUD building page offers m1's "Demolish" for a selected locomotive or wagon
+   (kind `train`). Demolishing one breaks the train. demolish.lua should skip kind `train`, or call a rails function
+   that puts the whole train back into kits.
+6. **Trains kill units on the track (probe P4).** No hazard overlay yet; armies that cross a line can lose units.
+7. **One line per depot in M1** ("depot-busy" otherwise); junctions, double track, yards and the dispatcher are R2.
+8. **Crews live in depot networks.** A repair comes from the depot on the free side of the cut and needs a crew (2
+   locomotive kits + 1 construction wagon kit) and rails there. The AI keeps a crew at both ends; a player has to.
+9. **The AI pays recipe ingredients directly** from its capital's network (one recipe per 5 s; the products go to
+   the depot that needs them) instead of queueing factory work.
+10. **Build speed** (887 tiles in 250 s, 10 pieces per second within 48 tiles) is a tuning value in
+   `balance.nation.rails`.
+11. `logistics.lua`'s `nation_mode()` also honours `storage.rails.test_nation`, so the rails autotest's haulers follow
+    Nation rules; the flag is test-only.

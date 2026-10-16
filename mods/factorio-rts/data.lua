@@ -12,6 +12,7 @@ require("prototypes.inputs")
 require("prototypes.styles")
 require("prototypes.controller") -- RTS-paced remote view panning
 require("prototypes.logistics") -- Phase 4: hub composite, hauler, their items and recipes (after cursor)
+require("prototypes.rails") -- Phase 5 M1: rail depot, train stop, rolling stock, kits, Railways / Bridges technologies
 require("prototypes.abilities") -- Phase 4: Commander grid equipment and the stim sticker
 require("prototypes.cities") -- Phase 5 M1: City Center, City charter, fort, rts-attrition damage type (Nation mode)
 require("prototypes.world") -- Phase 5 M1: Nation-mode world tiles (mountain, ford, marsh) and noise (scripts/world.lua)

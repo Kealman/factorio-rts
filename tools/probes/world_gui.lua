@@ -1,6 +1,7 @@
 -- World GUI probe (test copy for tools/gui-run.sh, self-test off; append require("scripts.world_gui") to control.lua).
--- Lobby: switches Mode to Nation through the real drop-down handler (size and map must grey out), screenshot, then
--- Start through lobby.on_click. In the match: fog counts of rts-player (charted around the capital only: every chunk
+-- Lobby: switches Mode to Nation through the real drop-down handler (the size drop-down offers world.SIZES with the
+-- nation-count default selected, the map drop-down greys out), picks 2048, screenshot, then Start through
+-- lobby.on_click. In the match: fog counts of rts-player (charted around the capital only: every chunk
 -- within fog.NATION_START_RADIUS of it, none around the enemy capital), screenshots of the capital, of a pass and of a
 -- ford (the probe charts those two spots for the shot), and of a region label in the chart. Log lines
 -- "[rts] world gui ..." and the stop marker RTS_WORLD_GUI_DONE.
@@ -54,9 +55,16 @@ events.on_nth_tick(30, function(e)
       {element = dd, player_index = player.index, name = defines.events.on_gui_selection_state_changed})
     local size = find(player.gui.screen.rts_lobby, "rts_lobby_size")
     local map = find(player.gui.screen.rts_lobby, "rts_lobby_map")
-    check("lobby_nation", storage.lobby.pending.mode == "nation" and size and not size.enabled and map and not map.enabled,
-      "pending mode %s, size enabled %s, map enabled %s", tostring(storage.lobby.pending.mode),
-      tostring(size and size.enabled), tostring(map and map.enabled))
+    check("lobby_nation", storage.lobby.pending.mode == "nation" and size and size.enabled and #size.items == #world.SIZES
+      and world.SIZES[size.selected_index] == world.size_for(storage.lobby.pending.opponents + 1) and map and not map.enabled,
+      "pending mode %s, size enabled %s with %d items, selected %s (default %d), map enabled %s",
+      tostring(storage.lobby.pending.mode), tostring(size and size.enabled), size and #size.items or 0,
+      tostring(size and world.SIZES[size.selected_index]), world.size_for(storage.lobby.pending.opponents + 1),
+      tostring(map and map.enabled))
+    -- pick 2048 (not the 2-nation default): the match must be started on it
+    size.selected_index = 2
+    events.dispatch(defines.events.on_gui_selection_state_changed,
+      {element = size, player_index = player.index, name = defines.events.on_gui_selection_state_changed})
     st.step = 2
   elseif st.step == 2 then
     shot(player, "world-gui-lobby.png", player.position, 1, true)
@@ -65,8 +73,10 @@ events.on_nth_tick(30, function(e)
     local start = find(player.gui.screen.rts_lobby, "rts_lobby_start")
     lobby.on_click({element = start, player_index = player.index, name = defines.events.on_gui_click})
     local c = storage.match.config
-    check("started_nation", c.mode == "nation" and storage.world and storage.world.surface == storage.match.surface,
-      "config mode %s, world %s, %s", tostring(c.mode), tostring(c.world_size), lobby.config_text and "ok" or "")
+    check("started_nation", c.mode == "nation" and c.world_size == 2048 and storage.world
+      and storage.world.surface == storage.match.surface and storage.world.size == 2048,
+      "config mode %s, world %s (picked 2048), world surface %s", tostring(c.mode), tostring(c.world_size),
+      tostring(storage.world and storage.world.surface))
     for _, f in ipairs(match.ai_forces()) do ai.stop_force(f) end -- a calm map for the screenshots
     st.step = 4
   elseif st.step == 4 then

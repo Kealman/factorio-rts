@@ -58,6 +58,7 @@ local production = require("scripts.production")
 local selection = require("scripts.selection")
 local orders = require("scripts.orders")
 local match = require("scripts.match") -- on_teardown only (match.lua does not require this module)
+local balance = require("balance") -- Phase 5 M1 (m1-rails): balance.nation hauler fuel and slots
 -- Research bonuses (scripts/research.lua: hauler_slots, robots_per_hub_bonus). Optional, loaded earlier by control.lua.
 local research
 do
@@ -118,6 +119,14 @@ logistics.POLICY_SUBGROUPS = {"rts-intermediates", "rts-science", "rts-units"}
 
 -- Hubs are buildings (selection, HUD building page, removal events); the registry learns the name here.
 buildings.KIND_BY_NAME[logistics.HUB] = "hub"
+
+-- Phase 5 M1 (m1-rails): Nation mode (storage.match.config.mode, or the rails autotest) changes hauler fuel and cargo
+-- slots (balance.nation).
+local function nation_mode()
+  local m = storage.match
+  local c = m and m.config
+  return c ~= nil and c.mode == "nation" or (storage.rails ~= nil and storage.rails.test_nation == true)
+end
 -- Phase 5 M1: hub subtypes (a City Center is a hub, buildings.KIND_BY_NAME) with their own display name:
 -- [entity name] = fn(unit_number) -> LocalisedString. They get no "Hub n" number. Load time only (scripts/cities.lua).
 logistics.NAME_HOOKS = {}
@@ -668,6 +677,21 @@ end
 local function go(h, hub_un, state)
   local point = logistics.approach_point(hub_un)
   if not point then return false end
+  -- Phase 5 M1 (m1-rails): in Nation mode a hauler leaving a hub burns 1 coal per hauler_tiles_per_coal tiles of the
+  -- trip, taken from that hub's network; without it the hauler waits there ("no-fuel").
+  local per = nation_mode() and balance.nation and balance.nation.hauler_tiles_per_coal
+  if per and h.at_hub and near_hub(h, h.at_hub) then
+    local need = math.ceil(util.distance(h.entity.position, point) * 1.1 / per)
+    local net = logistics.hub_network(h.at_hub)
+    local got = (need > 0 and net) and net.remove_item({name = "coal", count = need}) or 0
+    if got < need then
+      if got > 0 then net.insert({name = "coal", count = got}) end
+      set_state(h, "waiting", "no-fuel")
+      return false
+    end
+    local stats = logistics.stats(h.force)
+    stats.fuel = (stats.fuel or 0) + got
+  end
   local key = path_key(h, hub_un)
   h.target, h.dest = hub_un, point
   local p = h.entity.position
@@ -748,7 +772,9 @@ end
 --- Cargo slots a hauler of this force may fill: BASE_SLOTS plus research (Hauler capacity), at most the trunk size.
 function logistics.capacity(force_name)
   local bonus = research and research.hauler_slots and research.hauler_slots(force_name) or 0
-  return logistics.BASE_SLOTS + bonus
+  -- Phase 5 M1 (m1-rails): smaller trucks at nation scale (balance.nation.hauler_slots)
+  local base = nation_mode() and balance.nation and balance.nation.hauler_slots or logistics.BASE_SLOTS
+  return base + bonus
 end
 
 -- Cap a {item = n} plan to the trunk's free capacity (free slots plus room in partial stacks). Returns the capped

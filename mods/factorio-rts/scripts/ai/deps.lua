@@ -6,4 +6,5 @@
 --   deps.supply     scripts/supply.lua    (get, cap, used, cost)
 --   deps.research   scripts/research.lua  (queue, cancel, status, list, is_unlocked, lab_counts)
 --   deps.logistics  scripts/logistics.lua (set_policy, haulers_of, set_home, stats, networks)
+--   deps.rails      scripts/rails.lua     (ai_step; set by rails.lua itself when it loads, Phase 5 M1)
 return {}

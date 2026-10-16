@@ -4,7 +4,7 @@
 -- lakes, climate anchors, protected sites, ore deposits); prototypes/world.lua turns it into terrain through named
 -- noise expressions that read the skeleton as numeric constants from MapGenSettings.property_expression_names.
 --
---   world.size_for(nations)        1536 for 2 nations, 2048 for 3-4
+--   world.size_for(nations)        the default size: 1536 for 2 nations, 2048 for 3-4 (1536 / 2048 / 3072 selectable)
 --   world.plan(config, seed)       skeleton + validation on engine samples (LuaSurface.calculate_tile_properties on
 --                                  an ungenerated sampler surface, 8-tile grid): land connectivity, start kits, spawn
 --                                  scores; a failing skeleton is re-rolled (world.ATTEMPTS). Then sites and regions.
@@ -15,7 +15,7 @@
 --   world.region_at(position)      -> region {id, name, label, kind = "highland"|"plain"|"swamp"|"coast", climate,
 --                                     role, center, owner?, resources = {[name] = total}}
 --   world.regions(), world.spawns() -> {position, ...} (force order), world.spawn_of(force)
---   world.sites(kind?)             -> {{kind = "city_site"|"ruin"|"port", position, region, score?}}
+--   world.sites(kind?)             -> {{kind = "city_site"|"ruin"|"port"|"oil", position, region, ...}}
 --   world.chokes()                 -> {{kind = "pass"|"ford", position, width, name, label, barrier}}
 --   world.reset()                  match teardown (match.lua)
 --
@@ -36,7 +36,7 @@ local world = {}
 
 -- Must match prototypes/world.lua SLOTS (world.check_prototypes).
 world.SLOTS = {range = 16, pass = 12, river = 12, ford = 16, site = 24, lake = 12, climate = 24}
-world.SIZES = {1536, 2048}       -- accepted config.world_size values
+world.SIZES = {1536, 2048, 3072} -- accepted config.world_size values (the lobby offers all three in Nation mode)
 world.CELL = 8                   -- validation grid (tiles per cell)
 world.CORE_RADIUS = 6            -- chunks generated around each spawn before the match starts (192 tiles)
 world.CLEAR_RADIUS = 100         -- trees and rocks removed around each spawn (the AI's base and naturals)
@@ -191,7 +191,8 @@ local function edge_margin(P, p) return P.half - max(abs(p.x), abs(p.y)) end
 ---------------------------------------------------------------------------
 -- Sizes and config
 ---------------------------------------------------------------------------
---- Map size (tiles) for a number of nations: 2 -> 1536, 3-4 -> 2048 (docs/PHASE5-M1.md §1).
+--- Default map size (tiles) for a number of nations: 2 -> 1536, 3-4 -> 2048 (docs/PHASE5-M1.md §1; the lobby also
+--- offers the other sizes of world.SIZES).
 function world.size_for(nations)
   return (nations or 2) <= 2 and 1536 or 2048
 end
@@ -398,7 +399,14 @@ local function skeleton(cfg, seed, attempt)
                between = {P.spawns[i].force, P.spawns[i % N + 1].force}, proper = name()}
     P.barriers[#P.barriers + 1] = b
     -- crossings: 2 on a long ray, 1 on a short one; kept out of the sea
-    local fr = L > 520 * k and {0.38 + rr(-0.05, 0.05), 0.78 + rr(-0.05, 0.05)} or {0.55 + rr(-0.05, 0.05)}
+    local fr
+    if S >= 3072 and L > 1000 then -- big maps: a crossing every 300-550 tiles
+      fr = {0.28 + rr(-0.04, 0.04), 0.56 + rr(-0.04, 0.04), 0.84 + rr(-0.04, 0.04)}
+    elseif L > 520 * k then
+      fr = {0.38 + rr(-0.05, 0.05), 0.78 + rr(-0.05, 0.05)}
+    else
+      fr = {0.55 + rr(-0.05, 0.05)}
+    end
     for _, f in ipairs(fr) do
       local s = L * f
       local p = poly_at(pts, s)
@@ -522,7 +530,7 @@ local function skeleton(cfg, seed, attempt)
     d.region = reg.id
     if d.kind == "highland" then reg.climate = "highland" elseif d.kind == "swamp" then reg.climate = "swamp" end
   end
-  local target = S >= 2048 and 20 or 14
+  local target = S >= 3072 and 28 or (S >= 2048 and 20 or 14)
   local cands = {}
   local step = floor(96 * k)
   for x = -H + 80, H - 80, step do
@@ -1160,7 +1168,7 @@ local function plan_sites(P, G, R)
     end
     if best then city[#city + 1] = {kind = "city_site", position = round(best), deposit = d.id, score = 3} end
   end
-  local target = P.size >= 2048 and 32 or 22
+  local target = P.size >= 3072 and 48 or (P.size >= 2048 and 32 or 22)
   local scored = {}
   for _, p in ipairs(cands) do
     if nearest_spawn_dist(P, p) > 230 * k and buildable_box(G, p, 20) and off_deposits(p, 14) and reachable(p) then
@@ -1192,7 +1200,7 @@ local function plan_sites(P, G, R)
   for _, s in ipairs(city) do sites[#sites + 1] = s end
   -- ruins: low-value land far from every spawn
   local ruins = {}
-  local rtarget = P.size >= 2048 and 10 or 6
+  local rtarget = P.size >= 3072 and 14 or (P.size >= 2048 and 10 or 6)
   shuffle(rng, cands)
   local rscored = {}
   for _, p in ipairs(cands) do
@@ -1211,7 +1219,7 @@ local function plan_sites(P, G, R)
   for _, s in ipairs(ruins) do sites[#sites + 1] = s end
   -- ports: on the coast (land next to the sea) or at the map edge, far from the spawns, spread out
   local ports = {}
-  local ptarget = P.nations <= 2 and 2 or min(4, P.nations)
+  local ptarget = (P.nations <= 2 and P.size < 3072) and 2 or min(4, max(3, P.nations))
   local pc = {}
   local has_sea = next(P.sea) ~= nil
   for _, p in ipairs(cands) do
@@ -1246,6 +1254,15 @@ local function plan_sites(P, G, R)
     if best then ports[#ports + 1] = {kind = "port", position = round(best)} end
   end
   for _, s in ipairs(ports) do sites[#sites + 1] = s end
+  -- oil fields (m1-economy: the AI looks for kind "oil"): one site per planned field, at its centre
+  for _, d in ipairs(P.deposits) do
+    if d.wells and #d.wells > 0 then
+      local amount = 0
+      for _, w in ipairs(d.wells) do amount = amount + w.amount end
+      sites[#sites + 1] = {kind = "oil", position = V(d.x, d.y), deposit = d.id, role = d.role, force = d.force,
+                           wells = #d.wells, amount = amount}
+    end
+  end
   return sites
 end
 
@@ -1711,7 +1728,10 @@ function world.write_image(W, G)
     for _, w in ipairs(d.wells or {}) do dot(w, {150, 0, 150}, 0) end
   end
   for _, s in ipairs(P.sites) do
-    dot(s.position, s.kind == "ruin" and {255, 140, 0} or (s.kind == "port" and {0, 255, 255} or {255, 230, 0}), s.kind == "city_site" and 0 or 1)
+    if s.kind ~= "oil" then
+      dot(s.position, s.kind == "ruin" and {255, 140, 0} or (s.kind == "port" and {0, 255, 255} or {255, 230, 0}),
+        s.kind == "city_site" and 0 or 1)
+    end
   end
   for _, c in ipairs(P.chokes) do dot(c.position, {255, 0, 255}, 1) end
   for _, sp in ipairs(P.spawns) do
@@ -1736,16 +1756,20 @@ events.on(defines.events.on_tick, function()
   if W and W.post then post_step(W) end
 end)
 
--- Watchdog: a save loaded mid-fill may have lost the engine's generation requests; ask again.
+-- Watchdog (a safety net: measured saves kept their generation requests): a fill that finished no chunk for
+-- FILL_WATCHDOG ticks asks for the map again. At 3072 the first background chunk finished only after 20-30 s (the
+-- engine takes all requested chunks through the early generation stages first), so the window is a minute.
+world.FILL_WATCHDOG = 3600
 events.on_nth_tick(600, function()
   local W = storage.world
   if not (W and W.fill and not W.fill.done) then return end
   local surface = game.surfaces[W.surface]
   if not surface then return end
-  if game.tick - W.fill.last >= 600 then
+  if game.tick - W.fill.last >= world.FILL_WATCHDOG then
     surface.request_to_generate_chunks({0, 0}, math.ceil(W.size / 64))
     W.fill.last = game.tick
-    util.log("world: fill stalled at %d/%d chunks, generation requested again", W.fill.generated, W.fill.total)
+    util.log("world: no chunk of the fill finished for %d s (%d/%d chunks), generation requested again",
+      world.FILL_WATCHDOG / 60, W.fill.generated, W.fill.total)
   end
 end)
 

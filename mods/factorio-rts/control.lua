@@ -31,6 +31,9 @@ local modules = {
                                 -- handlers register inside ai.init's require chain, right after orders.lua's
   require("scripts.logistics"), -- Phase 4: hubs, stockpile policies, haulers (after orders: right-click hook)
   require("scripts.hubgui"),    -- Phase 4: hub and hauler panels
+  require("scripts.rails"),     -- Phase 5 M1: depots, line planner, trains (after logistics: depots are hubs, and
+                                -- after orders: its right-click hook follows the haulers')
+  require("scripts.railgui"),   -- Phase 5 M1: train and depot rail panels
   require("scripts.demolish"),  -- Phase 5: demolish own buildings (Delete, Demolish buttons)
   require("scripts.commander"), -- Phase 4: Commander hero (after logistics: its right-click hook follows the haulers')
   require("scripts.territory"), -- Phase 5 M1: ownership grid, borders, build rules, attrition (Nation mode; after

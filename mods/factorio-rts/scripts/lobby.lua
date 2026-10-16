@@ -116,7 +116,8 @@ function lobby.show_lobby(player)
   local grid = inner.add({type = "table", column_count = 2})
   grid.style.horizontal_spacing = 16
   grid.style.vertical_spacing = 8
-  -- Phase 5 M1: Mode. Nation fixes the map type (World) and the size (by nation count): those two are greyed.
+  -- Phase 5 M1: Mode. Nation fixes the map type (World, greyed); its size is a World size (world.SIZES), by default
+  -- world.size_for(nations) until the player picks one (pending.world_size, nil = the default).
   local nation = p.mode == "nation"
   grid.add({type = "label", caption = {"rts.lobby-mode"}, tooltip = {"rts.lobby-mode-tooltip"}})
   grid.add({type = "drop-down", name = PREFIX .. "mode", items = {{"rts.mode-skirmish"}, {"rts.mode-nation"}},
@@ -135,10 +136,16 @@ function lobby.show_lobby(player)
   grid.add({type = "label", caption = {"rts.lobby-size"}})
   local sizes = {}
   for i, s in ipairs(match.SIZE_ORDER) do sizes[i] = size_caption(s) end
-  if nation then sizes = {{"rts.size-world", world.size_for(p.opponents + 1)}} end
-  grid.add({type = "drop-down", name = PREFIX .. "size", items = sizes,
-            selected_index = nation and 1 or index_of(match.SIZE_ORDER, p.size), tags = {rts_lobby = "size"},
-            tooltip = nation and {"rts.lobby-size-nation-tooltip"} or nil}).enabled = not nation
+  if nation then
+    sizes = {}
+    for i, ws in ipairs(world.SIZES) do sizes[i] = {"rts.size-world", ws} end
+    grid.add({type = "drop-down", name = PREFIX .. "size", items = sizes,
+              selected_index = index_of(world.SIZES, p.world_size or world.size_for(p.opponents + 1)),
+              tags = {rts_lobby = "world_size"}, tooltip = {"rts.lobby-size-nation-tooltip"}})
+  else
+    grid.add({type = "drop-down", name = PREFIX .. "size", items = sizes,
+              selected_index = index_of(match.SIZE_ORDER, p.size), tags = {rts_lobby = "size"}})
+  end
   grid.add({type = "label", caption = {"rts.lobby-map"}, tooltip = {"rts.lobby-map-tooltip"}})
   local maps = {}
   for i, name in ipairs(match.MAPS) do maps[i] = {"rts.map-" .. name} end
@@ -347,7 +354,9 @@ local function on_click(e)
     if not can_control(player) then return end
     local p = pending()
     lobby.start_match({opponents = p.opponents, difficulty = p.difficulty, size = p.size, map = p.map,
-                       enemy_brain = "ai", mode = p.mode}, "player " .. player.index)
+                       enemy_brain = "ai", mode = p.mode,
+                       world_size = p.mode == "nation" and (p.world_size or world.size_for(p.opponents + 1)) or nil},
+                      "player " .. player.index)
   elseif action == "restart" then
     if not can_control(player) then return end
     lobby.back_to_lobby("restart by player " .. player.index)
@@ -391,11 +400,14 @@ events.on(defines.events.on_gui_selection_state_changed, function(e)
     if p.mode ~= "nation" then p.map = match.MAPS[el.selected_index] or p.map end
   elseif what == "mode" then
     p.mode = el.selected_index == 2 and "nation" or "skirmish"
+  elseif what == "world_size" then
+    local ws = world.SIZES[el.selected_index]
+    p.world_size = (ws and ws ~= world.size_for(p.opponents + 1)) and ws or nil -- the default follows the nations
   else
     return
   end
-  util.log("lobby: player %d set %s -> %d opponent(s), %s, %s, %s, %s", e.player_index, tostring(what), p.opponents,
-    p.difficulty, p.size, p.map, p.mode)
+  util.log("lobby: player %d set %s -> %d opponent(s), %s, %s, %s, %s, world %s", e.player_index, tostring(what),
+    p.opponents, p.difficulty, p.size, p.map, p.mode, tostring(p.world_size or "default"))
   -- every connected player sees the same choices; a mode change (and the nation count in Nation mode) also redraws
   -- the dialog of the player who made it (greyed size and map, the world size)
   local redraw_self = what == "mode" or (what == "opponents" and p.mode == "nation")
@@ -449,7 +461,7 @@ match.on_force_out(function(force_name)
 end)
 
 commands.add_command("rts-match",
-  "<opponents 1-3> <easy|normal|hard> <small|medium|large> [chokes|open] [waves] [nation [1536|2048]] - start a new match",
+  "<opponents 1-3> <easy|normal|hard> <small|medium|large> [chokes|open] [waves] [nation [1536|2048|3072]] - start a new match",
   function(cmd)
     local player = cmd.player_index and game.get_player(cmd.player_index)
     if player and not player.admin then

@@ -143,6 +143,8 @@ P4.nation = function()
   local m = storage.match
   return m ~= nil and m.config ~= nil and m.config.mode == "nation"
 end
+for _, name in ipairs({"rts-depot", "rts-rail", "rts-locomotive-kit", "rts-cargo-wagon-kit", "rts-construction-wagon-kit"}) do
+  P4.NATION_ONLY[name] = true end -- Phase 5 M1 (m1-rails): the depot item, the rail and kit recipes
 P4.crafter = function(kind) return kind == "factory" or kind == "district" end -- Phase 5 E1: districts are producers
 -- Recipe grid of a barracks / factory: Pause first, then the recipes (group, subgroup, recipe order), at most
 -- RECIPE_COLUMNS per row, so a new recipe never moves Pause and only shifts the recipes after it.
@@ -233,7 +235,7 @@ local GROUP_COUNT = 5
 local BUILD_TABS = {
   {key = "economy", caption = "rts.build-tab-economy", tooltip = "rts.build-tab-economy-tooltip",
    items = {"rts-extractor", "rts-smelter", "rts-stockpile", "transport-belt", "fast-inserter", "medium-electric-pole",
-            "rts-hub"}},
+            "rts-hub", "rts-depot"}}, -- Phase 5 M1: rts-depot is Nation-only (P4.NATION_ONLY)
   {key = "production", caption = "rts.build-tab-production", tooltip = "rts.build-tab-production-tooltip",
    items = {"rts-barracks", "rts-factory", "rts-lab", "rts-city-charter", "rts-fort"}}, -- Phase 5 M1: Nation only
   {key = "defence", caption = "rts.build-tab-defence", tooltip = "rts.build-tab-defence-tooltip",
@@ -280,6 +282,13 @@ P4.ALERT_STYLE = {
   ["commander-down"] = {icons = {"entity/rts-commander", "utility/danger_icon"}, color = "red",
                         sound = "utility/alert_destroyed"},
   ["commander-ready"] = {icons = {"entity/rts-commander", "utility/check_mark_green"}, color = "green"},
+  -- Phase 5 M1 (m1-rails): rail lines and trains
+  ["line-open"] = {icons = {"item/rail", "utility/check_mark_green"}, color = "green"},
+  ["line-cut"] = {icons = {"item/rail", "utility/danger_icon"}, color = "red", sound = "utility/alert_destroyed"},
+  ["line-blocked"] = {icons = {"item/rail", "utility/warning_icon"}, color = "yellow"},
+  ["line-failed"] = {icons = {"item/rail", "utility/warning_icon"}, color = "yellow"},
+  ["train-lost"] = {icons = {"entity/rts-locomotive", "utility/danger_icon"}, color = "red",
+                    sound = "utility/alert_destroyed"},
   -- Phase 5 M1 (scripts/cities.lua)
   ["city-founded"] = {icons = {"item/rts-city-charter", "utility/check_mark_green"}, color = "green"},
   ["city-tier"] = {icons = {"item/rts-city-charter", "utility/check_mark_green"}, color = "green"},

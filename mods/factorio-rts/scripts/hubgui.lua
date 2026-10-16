@@ -226,7 +226,8 @@ local STATE_KEYS = {idle = "rts.hauler-state-idle", to_pickup = "rts.hauler-stat
                     waiting = "rts.hauler-state-waiting", parked = "rts.hauler-state-parked"}
 local REASON_KEYS = {["no-route"] = "rts.hauler-reason-no-route", nothing = "rts.hauler-reason-nothing",
                      full = "rts.hauler-reason-full", ["no-home"] = "rts.hauler-reason-no-home",
-                     ["same-network"] = "rts.hauler-reason-same-network"}
+                     ["same-network"] = "rts.hauler-reason-same-network",
+                     ["no-fuel"] = "rts.hauler-reason-no-fuel"} -- Phase 5 M1 (m1-rails): Nation-mode hauler fuel
 
 local function items_text(items)
   local names = {}
