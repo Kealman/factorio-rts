@@ -304,6 +304,8 @@ local function refresh_hauler(player, g)
   end
   local cargo = items_text(h.cargo)
   el.cargo.caption = cargo and {"rts.hauler-cargo", cargo} or {"rts.hauler-cargo-empty"}
+  -- Phase 5 M1 integration: Nation mode, the coal the hauler carries for its way back (logistics.lua go())
+  if h.fuel then el.cargo.caption = {"", el.cargo.caption, "   ", {"rts.hauler-tank", h.fuel}} end
   local delivered = items_text(h.delivered)
   el.delivered.caption = {"rts.hauler-delivered", h.trips or 0, delivered or "-"}
   el.resume.enabled = h.state == "parked"

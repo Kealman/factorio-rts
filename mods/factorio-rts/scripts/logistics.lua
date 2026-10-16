@@ -133,6 +133,9 @@ end
 -- Phase 5 M1: hub subtypes (a City Center is a hub, buildings.KIND_BY_NAME) with their own display name:
 -- [entity name] = fn(unit_number) -> LocalisedString. They get no "Hub n" number. Load time only (scripts/cities.lua).
 logistics.NAME_HOOKS = {}
+-- Phase 5 M1 integration: fn(force_name, source_network_id, home_network_id) -> true when a freight train carries
+-- from that network to that home (scripts/rails.lua sets it); auto haulers then leave the source to the train.
+logistics.served_by_train = nil
 
 local HUB_KINDS = {hub = true, cc = true}
 local TRAVEL = {to_pickup = true, to_dropoff = true, to_home = true}
@@ -682,12 +685,33 @@ local function go(h, hub_un, state)
   if not point then return false end
   -- Phase 5 M1 (m1-rails): in Nation mode a hauler leaving a hub burns 1 coal per hauler_tiles_per_coal tiles of the
   -- trip, taken from that hub's network; without it the hauler waits there ("no-fuel").
+  -- Phase 5 M1 integration: a hauler leaving for a pickup also tanks the coal of the way back (h.fuel, the coal it
+  -- carries in its tank), so only the end a round trip starts from needs coal: outposts and far hubs need none.
+  -- The tank is used first; a leg the tank and the network cannot pay waits as before.
   local per = nation_mode(h.force) and balance.nation and balance.nation.hauler_tiles_per_coal
-  if per and h.at_hub and near_hub(h, h.at_hub) then
+  -- the departure network: the hub the hauler stands at, or the network of its last hub when it stands inside it (a
+  -- new hauler walks out of a factory in its home's network)
+  local net
+  if per and h.at_hub then
+    if near_hub(h, h.at_hub) then
+      net = logistics.hub_network(h.at_hub)
+    else
+      local hn = logistics.hub_network(h.at_hub)
+      local here = h.entity.surface.find_logistic_network_by_position(h.entity.position, h.force)
+      if hn and here and here.valid and here.network_id == hn.network_id then net = hn end
+    end
+  end
+  if per and net then
     local need = math.ceil(util.distance(h.entity.position, point) * 1.1 / per)
-    local net = logistics.hub_network(h.at_hub)
-    local got = (need > 0 and net) and net.remove_item({name = "coal", count = need}) or 0
-    if got < need then
+    local tank = h.fuel or 0
+    local from_tank = math.min(tank, need)
+    local need_net = need - from_tank
+    local back = state == "to_pickup" and math.max(0, need - (tank - from_tank)) or 0
+    local want = need_net + back
+    local got = (want > 0 and net) and net.remove_item({name = "coal", count = want}) or 0
+    if got >= need_net then
+      h.fuel = tank - from_tank + (got - need_net)
+    else
       if got > 0 then net.insert({name = "coal", count = got}) end
       set_state(h, "waiting", "no-fuel")
       -- one alert per hauler per FUEL_ALERT_TICKS: "Hauler N: no fuel at <hub>"
@@ -699,7 +723,7 @@ local function go(h, hub_un, state)
       return false
     end
     local stats = logistics.stats(h.force)
-    stats.fuel = (stats.fuel or 0) + got
+    stats.fuel = (stats.fuel or 0) + need
   end
   local key = path_key(h, hub_un)
   h.target, h.dest = hub_un, point
@@ -925,7 +949,8 @@ local function auto_plan(h)
   local home_rec = logistics.hub_rec(h.home)
   local best, best_d, best_plan
   for _, entry in ipairs(logistics.networks(h.force)) do
-    if entry.id ~= home.id then
+    -- Phase 5 M1 integration: a network a freight train already serves for this home is left to the train
+    if entry.id ~= home.id and not (logistics.served_by_train and logistics.served_by_train(h.force, entry.id, home.id)) then
       local out_res = outbound[entry.id] or {}
       local want, ok = {}, false
       for item, need in pairs(needs) do
