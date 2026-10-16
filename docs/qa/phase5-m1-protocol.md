@@ -5,6 +5,12 @@ Date: 2026-10-16. Factorio 2.0.77 (mac-arm64, Steam), Space Age enabled. Mod `fa
 match start, the factory's category tabs hidden on pages without recipes, the hauler's coal tank in the hauler panel,
 `/rts-research` and `RTS_QA_END` typed in the console. Integration notes: `docs/qa/phase5-m1-integration-notes.md`.
 
+**Updated after QA round 1** (`docs/qa/phase5-m1-qa-results.md`, fixes in the integration notes, section "QA round 1
+fixes"): the make targets are picked in the mod's own item picker (steps 15 and 43), a click on a number field selects
+its text, a division's attack-move walks to the point (step 33), "Enemies seen" reads 0 with no enemy in sight, the City
+charter keeps its name in the build menu and the factory, the ledger hides its Start button once the Charter is started
+(Start moved to ≈686, 314), and clicks next to a train or a depot no longer select it.
+
 This protocol plays one Nation match on a 1536×1536 world against one Normal AI. It covers:
 
 - the lobby's Mode and World size;
@@ -126,12 +132,13 @@ what comes after it. Type each line exactly, one per console opening.
 | Selection panel, building page | same | **Title line** (y≈714): "Factory #N", HP, **Demolish** (≈361, 714). A factory in Nation mode also has 5 small **category tabs** in the title line: Buildings (≈92), Logistics (≈112), Intermediates (≈132), Science (≈152), Age II (≈172). **Barracks:** recipe buttons at y≈737 (a second row at y≈762), text to the right (lines at y≈731, ≈747, ≈764). **Factory and district:** recipe buttons at y≈737 and ≈762, button x = 27 + 26 × index; the status line under them (y≈785 with two rows, ≈759 with one). |
 | Build menu | x 1043–1274, y 678–794 in Nation mode (two rows for every tab, so the tabs never move; Skirmish: one row, y 710–794, tabs y≈744, buttons y≈772) | Tabs at y≈712; buttons in row 1 at y≈740 and row 2 at y≈772. Tabs: **Economy** (≈1077), **Production** (≈1131), **Defence** (≈1183) and a small **Age II** icon tab (≈1216, a blue science-kit icon; Nation mode only). Buttons at x≈1066, 1097, 1128, 1159, 1190, 1221, 1252, each with the count in your network. |
 | Ability bar | x 461–820, y 729–794 | The Commander portrait (486, 753): a click selects the Commander. |
-| City panel | x 788–1013, y 183 to ≈470 | Nation mode, while an own City Center or the CC is selected (or from the magnifier). Title "Capital: Town" and × (≈994, 198); a name field (≈886, 221) and a pencil (≈991, 221); lines at y≈242 (tier), 260 (nation age), 278 (land), 296 (supply), 314–329 (next tier), 348 (networks), 366 ("Make targets"); one row per make target (y≈391: icon ≈812, field ≈861, × ≈903); the item button (≈812, 394 with no targets, one row lower per target) and a hint; **Demolish** at the bottom right (≈978, 421 with no targets; ≈978, 453 with one). |
+| City panel | x 788–1013, y 183 to ≈470 | Nation mode, while an own City Center or the CC is selected (or from the magnifier). Title "Capital: Town" and × (≈994, 198); a name field (≈886, 221) and a pencil (≈991, 221); lines at y≈242 (tier), 260 (nation age), 278 (land), 296 (supply), 314–329 (next tier), 348 (networks), 366 ("Make targets"); one row per make target (y≈391: icon ≈812, field ≈861, × ≈903); the **+** button (≈812, 394 with no targets, one row lower per target) and a hint; **Demolish** at the bottom right (≈978, 421 with no targets; ≈978, 453 with one). |
+| Item picker "Pick a good to make" | from the city panel: left of it, x 461–781, y 183 to ≈510; from the ledger: centred over it, x 480–800 | The **+** button of the city panel or the ledger's item button opens it. Title and × (≈764, 198 next to the city panel); a hint; "Can make now" and "After research", each a grid of item icons 30 px apart (10 per row; first row y≈281 next to the city panel, y≈334 over the ledger). Every icon's tooltip names the good. A click picks the good and closes the picker. In Age I next to the city panel, Iron gear wheel is the 4th icon of the first row (≈574, 281); in Age II over the ledger, Plastic bar is the 10th icon of the first row (≈773, 334). |
 | Hub panel (stockpile policy) | x 1019–1273, y 183 to ≈495 | While a hub, City Center, depot or the CC is selected. Title "…: stockpile policy" and × (≈1256, 198); "Network #K, N hubs" (y≈218); for a hub, City Center or depot a **Demolish** button (≈1053, 289) above the table, rows iron y≈336, copper ≈369, steel ≈402, stone ≈435, coal ≈468; for the CC no Demolish, rows y≈314, 347, 380, 413, 446. **Keep** fields x≈1146, **Export above** x≈1200. |
 | Depot rail panel | x 765–1012, y 183 to ≈405 | Left of the hub panel while a depot is selected: "Rails: Depot N", "Platform: 40 tiles, 2 stops" (y≈218), the kits line (y≈236–251), the line (y≈269–284) and its detail (y≈287), **Deploy freight train** (≈821, 307), a hint, "Rail lines" (y≈375) and the list (y≈393). |
 | Train panel | x 1026–1273, y 183 to ≈385 | While a locomotive or wagon is selected: "Freight train N" and ×, HP and coal (y≈218), route, state, cargo, trips, the line, **Resume** (≈1058, 328–343), hint. |
 | Hauler panel | x 1019–1273, y 183 to ≈360 | **Auto** (≈1073, 220), **Route** (≈1114, 220), "HP 400/400"; home or route (y≈240), state (≈257), cargo (≈276), trips (≈295); **Return home** (≈1062, 314), **Resume** (≈1124, 314); hint. |
-| City ledger | centred, x≈355–925; y≈244–553 with 4 goods rows | L or the age badge. Title "City ledger" and × (≈907, 259); "City:" drop-down (≈461, 293) and the age (≈581, 293); the project line (≈476, 314) with **Start the Railway Charter** (≈753, 314); the goods line (y≈332); the table (header y≈374, rows from ≈393, 20 px apart); under it "New target:", an item button (≈440), a number field (≈481) and **Set** (≈547); the footer. With more rows the frame grows taller around the same centre, so these y values move up. |
+| City ledger | centred, x≈355–925; y≈244–553 with 4 goods rows | L or the age badge. Title "City ledger" and × (≈907, 259); "City:" drop-down (≈461, 293) and the age (≈581, 293); the project line (≈476, 314) with **Start the Railway Charter** (≈686, 314; hidden once the Charter is started, a progress bar in its place); the goods line (y≈332); the table (header y≈374, rows from ≈393, 20 px apart); under it "New target:", an item button (≈440), a number field (≈481) and **Set** (≈547); the footer. With more rows the frame grows taller around the same centre, so these y values move up. |
 | Console | bottom left | F9; the replies appear as chat lines above the selection panel. |
 
 **Factory recipe buttons in Nation mode** (x = 27 + 26 × index, row 1 y≈737, row 2 y≈762):
@@ -195,7 +202,8 @@ screen x = 640 + 16 × (tiles right of the CC)        screen y = 400 + 16 × (ti
 |---|---|
 | Factorio RTS: new match; Mode; Skirmish; Nation; Opponents; Difficulty; Normal | Factorio RTS: новый матч; Режим; Схватка; Держава; Противники; Сложность; Нормальная |
 | Map size; World (1536×1536); Map; World; Start match | Размер карты; Мир (1536×1536); Карта; Мир; Начать матч |
-| Army 7; Enemies seen: ?; Supply 6/40; Research [T]; Land 1.2%; Menu | Армия: 7; Врагов видно: ?; Снабжение 6/40; Исследования [T]; Земля 1.2%; Меню |
+| Army 7; Enemies seen: 0; Supply 6/40; Research [T]; Land 1.2%; Menu | Армия: 7; Врагов видно: 0; Снабжение 6/40; Исследования [T]; Земля 1.2%; Меню |
+| Pick a good to make; Can make now; After research | Выберите товар; Можно делать сейчас; После исследований |
 | Age I; Age II; Age I: Settlement; Age II: Industry | Эпоха I; Эпоха II; I эпоха: поселение; II эпоха: индустрия |
 | Research Industrialisation (advanced kits) to start the Railway Charter. | Исследуйте Индустриализацию (продвинутые наборы), чтобы начать Железнодорожную хартию. |
 | Industrialisation is done: start the Railway Charter. | Индустриализация изучена: начните Железнодорожную хартию. |
@@ -265,7 +273,7 @@ Nothing has to happen fast: your 36 walkers fire by themselves. When you notice 
 2. Press F3, or click the red alert line. The camera jumps to the attack.
 3. Press Ctrl+A. It selects the combat units and the Commander (after step 31, the whole division).
 4. Press F, then right-click on the enemies or on the ground next to them.
-5. Wait until "Enemies seen" shows "?" again.
+5. Wait until "Enemies seen" shows 0 again.
 6. Press SPACE and redo the interrupted step from its start.
 
 Note in the report the strip time, what was attacked and what you lost. If the attack wrecks the factory or a depot
@@ -314,7 +322,7 @@ before its part is done, see Recovery.
        4 stockpiles at (584, 376), (584, 424), (696, 376) and (696, 424); the Commander, a big blue spider-tank, right
        next to it; 6 walkers 14–18 tiles away on one side. The ground around the base is bare (no trees); ore patches
        lie nearby.
-     - **Strip.** The timer counts from 00:00, with "Army 7", "Enemies seen: ?", "Supply 6/40", iron 400 and copper
+     - **Strip.** The timer counts from 00:00, with "Army 7", "Enemies seen: 0", "Supply 6/40", iron 400 and copper
        150. The buttons read Research [T], ?, **Land 1.2%** (≈803, 22) and Menu. The message reads "Destroy the enemy
        base and army."
      - **Age badge** left of the strip: a button "Age I" (≈302, 21) and under it "Research Industrialisation (advanced
@@ -392,7 +400,8 @@ before its part is done, see Recovery.
        research: Railways (T)".
      - **Production:** five buttons: barracks 1, factory 1, lab, **City charter** and **Fort**, the last two without a
        number, all in row 1 (the menu keeps its two-row height, so the tabs stay at y≈712). City charter's tooltip: "City
-       charter", "In stock: 0. Factory recipe: [3 icons] gives 1 in 20 s." Fort: "… gives 1 in 6 s."
+       charter", "In stock: 0. Factory recipe: [3 icons] gives 1 in 20 s." and, last, "Builds a [icon] City Center."
+       (QA round 1: before, the tooltip's title read "City Center"). Fort: "… gives 1 in 6 s."
      - **Defence:** 7 buttons; laser turret and steam plant greyed.
      - **Age II icon tab:** tooltip "Age II: oil well, refinery, chemical plant, the ten districts and the Bunker
        (Nation mode)". Two rows of 7 greyed buttons. The first button's
@@ -519,8 +528,8 @@ before its part is done, see Recovery.
       - **City panel lines:** "Capital: Town" and ×; an empty name field with a pencil; "Tier: Town, land radius 96
         tiles (capital)"; "Nation age: 1"; "Land: N cells, M% of your nation" (M about 80); "Supply: 40"; "Next tier,
         City: buildings on its land B/25, goods delivered to its market 0/2000" (B about 2: the factory and the
-        barracks); "Logistic networks on its land: 1 (#K)"; "Make targets"; an empty item button with "Factories without
-        a fixed recipe make the largest shortfall."; and **Demolish**, greyed, at the bottom right.
+        barracks); "Logistic networks on its land: 1 (#K)"; "Make targets"; a **+** button with "Factories without a fixed
+        recipe make the largest shortfall."; and **Demolish**, greyed, at the bottom right.
       - The city panel's Demolish tooltip reads "The Command Center and the capital cannot be demolished."; the click
         does nothing.
       - The building page's Demolish is greyed too, with the same tooltip. The Delete key shows a flying text and a
@@ -531,20 +540,30 @@ before its part is done, see Recovery.
 
 15. **A make target.**
     - *Input:*
-      1. With the CC still selected, click the item button under "Make targets" (≈812, 394).
-      2. In the item picker that opens, find **Iron gear wheel** (tab "Intermediate products", or the picker's search)
-         and click it.
-      3. Click the new row's number field (≈861, 391), type 20 and press Enter.
+      1. With the CC still selected, click the **+** button under "Make targets" (≈812, 394). Take a screenshot.
+      2. The mod's item picker "Pick a good to make" opens left of the city panel (x 461–781). Hover the 4th icon of
+         its first row (≈574, 281) for 2 s: the tooltip reads "Iron gear wheel". Click it.
+      3. The new row's number field (≈861, 391) has the keyboard focus: type 20 and press Enter. (If it lost the focus,
+         click the field first: a click selects its text, so typing replaces it.)
       4. Click the factory (448, 304) and watch its status line for 10 s.
     - *Expect:*
-      - A new row: the gear icon, a field with 20 and a ×; the hint and Demolish move down one row (Demolish ≈978, 453).
+      - **The picker:** title "Pick a good to make" with ×, the hint "Goods your factories and districts can make. Click
+        one to make it a target of this city.", then "Can make now" (3 rows of icons: belts, inserters, poles, gears,
+        cable, circuits, …, the buildings and kits) and "After research" (4 rows, greyed tooltips "Its recipe is not
+        researched yet."). There is no RTS cursor icon, and your cursor still holds the RTS cursor. QA round 1: before,
+        this button was a vanilla item chooser that put the RTS cursor in as the target.
+      - The click closes the picker. A new row: the gear icon, a field with 20 and a ×; the hint and Demolish move down
+        one row (Demolish ≈978, 453).
       - The factory, which had no recipe, starts on its own within 2 s: "Auto: [gear] Iron gear wheel: running", and
         "Crafted" rises. When the network holds 20 gears (after about 20 s) it reads "Auto: Paused: pick a recipe."
         again. Iron drops by 2 per gear.
     - *Pass/Fail:* PASS if the factory makes gears without a recipe click.
     - *Log check (lead):*
+      - `itempicker: opened owner=citygui ctx=\{city = [0-9]+\} player=1`
+      - `itempicker: pick iron-gear-wheel owner=citygui ok=true player=1`
       - `citygui add target city=[0-9]+ item=iron-gear-wheel player=1`
-      - `citygui target city=[0-9]+ iron-gear-wheel=20 ok=true player=1`
+      - `citygui target city=[0-9]+ iron-gear-wheel=20 ok=true player=1`; no `rts-cursor` in any `cities: make target`
+        line
       - `production: auto factory #[0-9]+ \(rts-player\) recipe .* -> rts-gear`
 
 16. **The new city's panel; rename it.**
@@ -805,12 +824,17 @@ before its part is done, see Recovery.
     - *Input:* right-click bare ground at ≈(1050, 450). Watch 10 s. Press F, then right-click ≈(1050, 250). Watch 10 s.
     - *Expect:* one green circle, and the 36 walkers set off together; the card reads "Moving", then "Idle" when they
       stand in formation around the point. After F the message line reads "Attack-move armed: …"; the right click shows
-      an amber circle, and the card reads "Attack-moving", then "Idle".
-    - *Pass/Fail:* PASS if the whole division follows each order (the lead checks that each was one group order).
+      an amber circle, and the card reads "Attack-moving" while the walkers walk to the second point (also when it lies
+      close to the formation: QA round 1 fixed a division that stood still), then "Idle" when they stand in formation
+      around it.
+    - *Pass/Fail:* PASS if the whole division follows each order and ends around each point (the lead checks that each
+      was one group order).
     - *Log check (lead):*
       - `order move n=[0-9]+ .*divisions=[0-9]+ player=1`
       - `divisions: #[0-9]+ Division [0-9]+ order move -> .* n=[0-9]+ group #[0-9]+`
       - `divisions: #[0-9]+ Division [0-9]+ order attack_move -> .* group #[0-9]+`
+      - `divisions: #[0-9]+ Division [0-9]+ arrived \(attack_move .*, in formation\) after [0-9.]+ s at` a position
+        within a few tiles of the attack-move's point
 
 34. **One click selects the whole division.**
     - *Input:* click empty ground ≈(200, 200). Then left-click one walker of the division (near (1050, 250)).
@@ -839,20 +863,21 @@ before its part is done, see Recovery.
 
 37. **The city ledger; start the Railway Charter.**
     - *Input:* press L. Take a screenshot. Press L again. Click the age badge's "Age I" button (≈302, 21). Click **Start
-      the Railway Charter** (≈753, 314). Take a screenshot.
+      the Railway Charter** (≈686, 314). Take a screenshot.
     - *Expect:*
       - **L** opens "City ledger" in the middle of the screen; L again closes it; the badge click opens it again.
       - **Top block:** "City: [Capital ▾]" and "Age I: Settlement"; "Industrialisation is done: start the Railway
         Charter." with an enabled **Start the Railway Charter** button; the goods line "[circuit] 100 [gear] 100 [steel]
         100 [stone] 150".
       - **Table:** "Good, Stock, Made/min, Used/min, Make, Short, Hint", with rows such as Iron plate, Copper plate, Coal
-        and Iron gear wheel (its Make field shows 20, the target of step 15); under it "New target:", an item button, a
-        field "50" and **Set**.
+        and Iron gear wheel (its Make field shows 20, the target of step 15); under it "New target:", an empty item
+        button, a field "50" and **Set**.
       - **Footer:** "Factories and districts on Auto (1) make the good with the largest shortfall that their inputs
         allow; fixed ones (0) keep the recipe you chose. Toggle with the Auto button in a building's panel."
-      - **After Start:** a yellow alert "Railway Charter started next to the capital"; the project line "Railway
-        Charter: 0 % delivered from the capital's network." with a progress bar; the goods line turns into "[circuit]
-        0/100 [gear] N/100 [steel] 0/100 [stone] 0/150"; the badge shows the same text.
+      - **After Start:** a yellow alert "Railway Charter started next to the capital"; the Start button disappears and
+        the project line "Railway Charter: 0 % delivered from the capital's network." gets a progress bar; the goods line
+        turns into "[circuit] 0/100 [gear] N/100 [steel] 0/100 [stone] 0/150"; the badge shows the same text. Nothing in
+        the top block is cut off at its right edge.
     - *Log check (lead):* `ledger: opened by player 1 \(rts-player\), city [0-9]+`,
       `ledger: player 1 start project: building`,
       `ages: rts-player started railway-charter at .* \(in a logistic network, delivered so far 0%\)`
@@ -915,18 +940,25 @@ before its part is done, see Recovery.
 43. **The ledger: rows, a target, a hint.**
     - *Input:*
       1. Press L. Take a screenshot.
-      2. Click the item button after "New target:", pick **Plastic bar** (tab "Intermediate products"). Click the number
-         field, select its text, type 10. Click **Set**. Wait 2 s and take a screenshot.
+      2. Click the empty item button after "New target:". The item picker "Pick a good to make" opens over the middle of
+         the ledger. Hover the last (10th) icon of its first row (≈773, 334) for 2 s: the tooltip reads "Plastic bar"
+         (if not, find the white bar by its tooltip). Click it. The picker closes, the item button shows the plastic
+         bar, and the number field next to it has the focus with its text selected: type 10 (if it lost the focus,
+         click it once: a click selects its text). Click **Set**. Wait 2 s. If the Plastic bar row is not in view,
+         scroll down over the table. Take a screenshot.
       3. Pick "Outpost" in the City drop-down (top left of the ledger), take a screenshot, pick "Capital" again. Press
          L.
     - *Expect:*
       - "Age II: Industry" at the top; the project line "Age II: the Mk2 line for every unit, …"; no Start button and no
         bar.
+      - The picker lists no RTS cursor; your cursor still holds the RTS cursor (QA round 1: before, the item button was a
+        vanilla chooser that put the RTS cursor in as the target, and typing into the field gave "5010").
       - A row "Plastic bar" with Make 10, Short 10 in red and the Hint "**needs [crude oil]: made nowhere**".
       - Outpost's rows: its stock (iron about 200, copper 20) and no targets.
       - The footer counts the factory on Auto and the steel works as fixed: "on Auto (1) … fixed ones (1)".
     - *Pass/Fail:* PASS if the target row and a "needs …" hint appear. Report the hint's item if it is not crude oil.
-    - *Log check (lead):* `ledger: player 1 target [0-9]+ plastic-bar = 10`
+    - *Log check (lead):* `itempicker: pick plastic-bar owner=ledger ok=true player=1`,
+      `ledger: player 1 picked plastic-bar for city [0-9]+`, `ledger: player 1 target [0-9]+ plastic-bar = 10`
 
 ### Part L: the army surcharge
 

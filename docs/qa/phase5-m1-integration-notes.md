@@ -276,7 +276,51 @@ commanders together.
    outcome while two capitals stand, produce idle runs of five minutes); a Nation-specific check list (towns, lines,
    freight, ages) now carries the acceptance.
 8. **Hauler tank** coal is script state (not an item in the hauler); it is lost with the hauler and shown in its panel.
-9. **GUI protocol** `docs/qa/phase5-m1-protocol.md` has not been run by the Codex tester yet; its coordinates come from
-   the documentation agent's screenshots of the same tree.
+9. **GUI protocol** `docs/qa/phase5-m1-protocol.md` was run by the Codex tester on 2026-10-16
+   (`docs/qa/phase5-m1-qa-results.md`: 45 PASS, 3 FAIL); the failures and the usability findings are fixed in section 7.
 10. Carried over from the packages: population, labour and capture (M2); oil for the AI and Age III (M3); regional
     minimap and world-map labels at strategic zoom (W2); 3072 worlds take about four minutes to fill.
+
+## 7. QA round 1 fixes
+
+Date: 2026-10-16. Agent: `m1-qafix`. Input: the Codex GUI run `docs/qa/phase5-m1-qa-results.md` (45 PASS, 3 FAIL:
+steps 15, 33 and 43) and its log `build/qa-p5m1-gui.log`. Base: 9397683. Every finding was checked against the log or
+the screenshots first; the cause column says what was found.
+
+| # | QA finding | Cause | Fix | Where |
+|---|---|---|---|---|
+| 1 | Steps 15 and 43: the make-target item button added "RTS cursor" (`cities: make target rts-player #1 rts-cursor = 5010`) | Both buttons were vanilla choose-elem-buttons. The player's cursor always holds the rts-cursor tool, and a vanilla chooser clicked with an item in the cursor takes that item instead of opening its picker. | A scripted picker, "Pick a good to make": one sprite button per good a city can make (the item products of the non-hidden recipes of factories and districts, the recipes the auto pass chooses from; no hidden items, no cursor-only tools; 58 goods), the force's unlocked goods under "Can make now", the rest under "After research". The city panel's **+** button opens it left of the panel; a pick adds the row with its number field focused. The ledger's item button opens it over the ledger; a pick shows the good on the button and focuses the amount. `cities.set_make_target` refuses the rts-cursor and hidden items. | `scripts/itempicker.lua` (new), `citygui.lua`, `ledgergui.lua`, `cities.lua`, `districts.lua`, `locale/*/cities.cfg`, `economy.cfg` |
+| 2 | Step 33: after F + right-click the card said Attack-moving, then Idle, but the division did not move | The log shows the group order and `arrived (attack_move (-463.4, 75.6), completed) after 0.5 s at (-462.5, 88.1)`: 12.5 tiles short. A unit group ends any command (success) as soon as it stands within its own size of the point, whatever the command's radius. Probe: 30 walkers, `go_to_location` radius 2 to a point 12.5 tiles away completed in 0 ticks without a step; the old `attack_area` (radius 18) ended a 60-tile order 18.4 tiles short. A move only looked right because its arrival walks the members to formation slots. | An attack-move is a compound (`go_to_location` within 2 tiles, then `attack_area`, both distraction `by_anything`). When it ends and no enemy is near for a re-target, the members walk to formation slots around the point fighting what they meet (distraction `by_enemy`), as after a move. | `divisions.lua`; `tools/probes/divisions_func.lua` (a 30-walker division: move 60 tiles, attack-move 60 tiles, attack-move 12.5 tiles) |
+| 3 | A click well below a horizontal train selected a wagon; depots were selected from "empty" ground | `LuaEntity.selection_box` of rolling stock carries `orientation`; the code read it axis-aligned, so a horizontal wagon answered clicks in a 6-tile-tall upright box plus the 1-tile margin (up to 4 tiles below the track), and its outline was drawn upright (`qa-43.png`). Depots had the 1-tile margin of all buildings. | Clicks are turned into the box's own frame and the outline is drawn turned, attached to the carriage. Rolling stock and depots are picked only inside their box; other buildings keep the margin. `selection.building_at` no longer reads the stale `player.selected`. | `selection.lua`, `rails.lua` |
+| 4a | "Enemies seen: ?" during fights | "?" was the design for "no enemy unit in sight"; the count itself worked (2-3 at 21:45 in the run). | The strip shows 0; tooltip updated. | `hud.lua`, `locale/*/factorio-rts.cfg` |
+| 4b | The started Railway Charter button was clipped at the right edge | Project line 420 + bar 140 + button did not fit the 760 frame; the greyed button stayed after Start. | Line 330, bar 110 (the button fits in en and ru); the button is hidden while the site stands. Start moved from x≈753 to ≈686. | `ledgergui.lua` |
+| 4c | The build menu and the factory called the City charter "City Center" | Factorio 2.0 names an item with a `place_result` and no `localised_name` after its entity, and the recipe after its product. | Explicit names for the item and the recipe ("City charter", "Городская грамота"); the build and recipe tooltips of an item that places an entity of another name add "Builds a [icon] City Center." / "Ставит [icon] Городской центр." | `prototypes/cities.lua`, `hud.lua`, `locale/*/hud.cfg` |
+| 5 | A vanilla info box stayed behind the minimap, clipped | `qa-15.png` shows the City Center's entity description in a box under the minimap; it is the vanilla info box of an entity the engine selected by itself. Hover selection is off (Phase 4), so such a selection never moves on. The Codex click check below reproduced it: after a Factory ghost was placed with the mouse, the box of the built Factory stayed for minutes, while `player.selected` read nil the whole time. Entity windows were already closed (`on_gui_opened`); clicks never open them. | `camera.lua` clears a set `player.selected` at once (log `camera: cleared the hover selection (...)`), and for 2 s after every build by the player or its robots calls `clear_selected_entity()` whether or not `player.selected` reports one. **Not verified with real clicks** (see below). | `camera.lua` |
+| 6 | Ctrl+A did not select a number field's text (Cmd+A did), so typing gave 5010 | Engine behaviour of text fields on macOS. | A click on a number field selects its text (ledger amount and rows, city targets, hub Keep/Export); a pick focuses the field with its text selected. | `ledgergui.lua`, `citygui.lua`, `hubgui.lua` |
+
+Not bugs, unchanged: the first console typing (the tester's), the delayed copper refund (robot delivery).
+
+Checks on the final tree:
+
+| Check | Result |
+|---|---|
+| Smoke, `tools/autotest-run.sh smoke '{opponents = 1, difficulty = "normal", size = "small", enemy_brain = "waves"}' 240` | 65/65, 0 errors (before and after the last `camera.lua` change) |
+| Economy fixture (`economy_e1.lua`, seed 202, Nation) | 18/18, 0 errors |
+| Rails autotest (`rails_autotest.lua`) | 12/12 beside the Skirmish AI autotest 22/22, 0 errors |
+| Divisions probe (`MODULE=divisions_func tools/divisions-bench.sh qafix-divfunc '{}' 20000 99 99`) | 25/25 (the 30-walker attack-moves end 0.6 tiles from their points; before the fix `am_long_arrives` and `am_short_moves` failed: 18.4 tiles short, 0.1 tiles moved) |
+| Nation 1v1, 30 minutes, seed 501, normal AIs, 2048 world | 39/39, 0 errors, both capitals at 30:00 |
+| `tools/probes/m1_docs_gui.lua`, real client, English | 0 Lua errors, 59 screenshots in `build/shots-m1d-qafix/` (the step 15 and 43 targets now go through the picker) |
+| `tools/probes/m1_qafix_gui.lua`, real client, English and Russian | 15/15 each: picker contents and picks with the rts-cursor in the cursor, the refused rts-cursor target, picker closes with its panel, charter names and tooltip, "Enemies seen" a number, a set `player.selected` cleared, a horizontal wagon picked along the track and not 2-3 tiles below it, a depot not picked 0.6 tiles outside its box; screenshots `build/shots-qafix-gui/`, `build/shots-qafix-gui-ru/` (the Russian Start button and picker fit) |
+| Codex click check (gpt-6-astra, real mouse and keyboard, English) | 8 of 9: the **+** button opened the picker (no RTS cursor row), the gear tooltip read "Iron gear wheel", typing after the pick gave exactly 20, a click and 35 gave exactly 35, the ledger's picker put the transport belt on the button, a click on the "50" field and 10 gave exactly 10 and Set made the row, "Enemies seen: 0". **Fail:** after a Factory ghost was placed, the vanilla info box of the Factory stayed under the minimap (that run had only the first, `player.selected`-based clear). |
+
+The second `camera.lua` change (clear after every build) answers that failure but has no real-click confirmation. A
+second Codex run on an experiment copy (an unconditional `clear_selected_entity()` 9 s after the build, then hover
+selection on for one second and off again) placed the ghost and saw no box 40 s later, but which call removed it, or
+whether the box appeared at all, is unknown: other agents' GUI clients had opened on this machine by then, the window
+captures in between show their windows, and further Codex clicks could have landed in their games. A real-click check
+of finding 5 (place a ghost, press Q, watch the top-right corner for a minute) is still open.
+
+Docs: the protocol's header, location table (item picker row, ledger Start), glossary, attack interrupt, and steps 8, 14,
+15, 33, 37 and 43 follow the fixes (picker coordinates from `build/shots-m1d-qafix/`); the README's make targets name
+the picker. `tools/probes/m1_docs_gui.lua` now sets the step 15 and step 43 targets through the picker and takes
+screenshots of both; `tools/probes/m1_qafix_gui.lua` is new.
