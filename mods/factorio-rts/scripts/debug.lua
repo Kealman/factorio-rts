@@ -971,6 +971,118 @@ local function chart_probe()
   if match.surface() then fog.stats_line() end
 end
 
+---------------------------------------------------------------------------
+-- Restart scenario (Wave C): tools/autotest-run.sh RESTART_AT=<seconds> sets debug_tools.AUTOTEST_RESTART_AT in a
+-- test copy. That many seconds into the AI autotest the match restarts through the Ctrl+Shift+R code path (hud.lua
+-- qa_hotkey -> /rts-qa-reset nowaves, here without a player), the storage audit looks for leftovers of the old match
+-- right away and again RESTART_AUDIT_DELAY later (research and abilities reset lazily on the new match_id), and the AI
+-- autotest starts again on the new match. Log lines "[rts] restart ..." and "[rts] autotest check restart_*".
+---------------------------------------------------------------------------
+debug_tools.AUTOTEST_RESTART_AT = nil
+local RESTART_AUDIT_DELAY = 5 * 60
+
+--- Walk storage and count, per root key, LuaObject references that are invalid or that live on a surface other
+--- than the current arena and the lobby. Returns {invalid = {[root] = n}, foreign = {[root] = n}}.
+function debug_tools.storage_audit()
+  local arena = match.surface()
+  local arena_name = arena and arena.name
+  local seen, invalid, foreign, objects = {}, {}, {}, 0
+  local function surface_name(v) return v.surface.name end
+  local function walk(root, v, depth)
+    if depth > 10 then return end
+    local t = type(v)
+    if t == "table" then
+      if seen[v] then return end
+      seen[v] = true
+      for _, x in pairs(v) do walk(root, x, depth + 1) end
+    elseif t == "userdata" then
+      local ok, valid = pcall(function() return v.valid end)
+      if ok then objects = objects + 1 end
+      if ok and valid == false then
+        invalid[root] = (invalid[root] or 0) + 1
+      elseif ok and valid then
+        local has, sname = pcall(surface_name, v)
+        if has and sname and sname ~= arena_name and sname ~= util.LOBBY_SURFACE then
+          foreign[root] = (foreign[root] or 0) + 1
+        end
+      end
+    end
+  end
+  for root, v in pairs(storage) do walk(root, v, 0) end
+  return {invalid = invalid, foreign = foreign, objects = objects}
+end
+
+local function audit_line(a)
+  local parts = {}
+  for _, kind in ipairs({"invalid", "foreign"}) do
+    local keys = {}
+    for root, n in pairs(a[kind]) do keys[#keys + 1] = root .. "=" .. n end
+    table.sort(keys)
+    parts[#parts + 1] = kind .. " [" .. table.concat(keys, " ") .. "]"
+  end
+  return string.format("%d LuaObjects in storage, %s", a.objects, table.concat(parts, " "))
+end
+
+local function count_registry(list_fn, force_name)
+  local n, bad = 0, 0
+  local arena = match.surface()
+  for _, rec in list_fn(force_name) do
+    n = n + 1
+    if not (rec.entity and rec.entity.valid and arena and rec.entity.surface == arena) then bad = bad + 1 end
+  end
+  return n, bad
+end
+
+local function restart_now()
+  local d = storage.debug
+  local m = storage.match
+  local before_id, before_surface = m.match_id, m.surface
+  d.checks = d.checks or {pass = 0, fail = 0}
+  util.log("restart: before, match %s on %s at tick %d: %s", tostring(before_id), tostring(before_surface), game.tick,
+    audit_line(debug_tools.storage_audit()))
+  debug_tools.run_command("rts-qa-reset", "nowaves") -- the Ctrl+Shift+R hotkey's command (hud.lua qa_hotkey)
+  check("restart_new_match", m.match_id == before_id + 1 and m.phase == "running" and m.surface ~= before_surface
+    and match.surface() ~= nil, "match %s -> %s, phase %s, surface %s -> %s", tostring(before_id),
+    tostring(m.match_id), tostring(m.phase), tostring(before_surface), tostring(m.surface))
+  local parts, ok = {}, true
+  for _, f in ipairs(match.forces()) do
+    local nu, bu = count_registry(units.for_force, f)
+    local nb, bb = count_registry(buildings.for_force, f)
+    local cc = buildings.count(f, "cc")
+    parts[#parts + 1] = string.format("%s units %d (bad %d) buildings %d (bad %d) cc %d", f, nu, bu, nb, bb, cc)
+    if nu ~= ARMY_SIZE or bu > 0 or bb > 0 or cc ~= 1 then ok = false end
+  end
+  check("restart_registries", ok, "%s", table.concat(parts, "; "))
+  d.restart_audit_tick = game.tick + RESTART_AUDIT_DELAY
+  -- the AI autotest again, on the new match (the lobby started the AI forces' commanders)
+  local forces = {}
+  for i, f in ipairs(match.forces()) do forces[i] = f end
+  ai_autotest.FORCES = forces
+  ai_autotest.start()
+end
+
+local function restart_audit()
+  local a = debug_tools.storage_audit()
+  local invalid, foreign = 0, 0
+  for _, n in pairs(a.invalid) do invalid = invalid + n end
+  for _, n in pairs(a.foreign) do foreign = foreign + n end
+  util.log("restart: audit %.0fs after the restart: %s", RESTART_AUDIT_DELAY / 60, audit_line(a))
+  check("restart_storage_clean", invalid == 0 and foreign == 0, "%d invalid and %d foreign LuaObject references in "
+    .. "storage: %s", invalid, foreign, audit_line(a))
+  local parts, ok = {}, true
+  for _, f in ipairs(match.forces()) do
+    local force = game.forces[f]
+    local done = 0
+    for name, tech in pairs(force.technologies) do
+      if string.sub(name, 1, 4) == "rts-" and tech.researched then done = done + 1 end
+    end
+    -- the AI may have queued and even finished research in these few seconds; nothing may survive from before
+    parts[#parts + 1] = string.format("%s researched %d queue %d", f, done, #force.research_queue)
+    if done > 0 then ok = false end
+  end
+  check("restart_research_reset", ok, "%s", table.concat(parts, "; "))
+end
+
 --- Start the autotest match (AUTOTEST_MATCH, or storage.debug.autotest_match) and the matching autotest.
 local function start_autotest_match()
   local cfg = storage.debug.autotest_match or AUTOTEST_MATCH
@@ -996,6 +1108,16 @@ events.on_nth_tick(60, function(e)
     if d.autotest then start_autotest_match() end
   end
   if d.autotest and d.stage then autotest_tick(e.tick) end
+  local at = debug_tools.AUTOTEST_RESTART_AT
+  local s = storage.ai_autotest
+  if at and d.autotest and not d.restarted and s and not s.done and e.tick - s.started >= at * 60 then
+    d.restarted = true
+    restart_now()
+  end
+  if d.restart_audit_tick and e.tick >= d.restart_audit_tick then
+    d.restart_audit_tick = nil
+    restart_audit()
+  end
   if d.autotest and d.eco then eco_tick(e.tick) end
   if d.autotest and d.started and not d.qa_reset_checked and (d.stage == "attack_move" or d.stage == "done")
      and (storage.match.phase == "ended" or e.tick - d.started >= QA_RESET_CHECK_AFTER) then

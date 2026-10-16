@@ -12,9 +12,50 @@ local handlers = {}      -- [defines.events.* or custom-input name] = {handler, 
 local nth_handlers = {}  -- [tick period] = {handler, ...}
 local init_handlers, load_handlers, config_handlers = {}, {}, {}
 
+-- Opt-in profiling (events.enable_profiling, test copies only: tools/autotest-run.sh PERF=1). Each handler is
+-- labelled at registration with the file that registered it; with profiling on, the dispatchers time every call
+-- into one accumulating profiler per label and log the per-tick averages every PROFILE_PERIOD ticks. Profilers are
+-- module-local (never in storage) and only reach the log, so they cannot desync anything.
+local labels = {}        -- [handler] = "module" (always recorded: registration happens once per load)
+local profile = nil      -- nil, or {[label] = {acc = LuaProfiler, calls = n}}
+local laps = {}          -- lap profilers per nesting depth (a handler may raise events: entity.die(), raise_event)
+local depth = 0
+local PROFILE_PERIOD = 60 * 60
+
+local function caller_label()
+  local info = debug and debug.getinfo and debug.getinfo(3, "S")
+  local src = info and info.source or "?"
+  return string.match(src, "scripts/(.-)%.lua$") or string.match(src, "([^/]+)%.lua$") or src
+end
+
+local function timed(handler, event)
+  local label = labels[handler] or "?"
+  local p = profile[label]
+  if not p then
+    p = {acc = helpers.create_profiler(true), calls = 0}
+    profile[label] = p
+  end
+  depth = depth + 1
+  local lap = laps[depth]
+  if not lap then
+    lap = helpers.create_profiler(true)
+    laps[depth] = lap
+  end
+  lap.reset() -- reset() zeroes and starts the clock; restart() would keep the time of earlier calls
+  handler(event)
+  lap.stop()
+  depth = depth - 1
+  p.acc.add(lap) -- an outer call's time includes the nested handlers it raised
+  p.calls = p.calls + 1
+end
+
 local function dispatcher(list)
   return function(event)
-    for i = 1, #list do list[i](event) end
+    if profile then
+      for i = 1, #list do timed(list[i], event) end
+    else
+      for i = 1, #list do list[i](event) end
+    end
   end
 end
 
@@ -28,6 +69,7 @@ function events.on(event_id, handler)
     script.on_event(event_id, dispatcher(list))
   end
   list[#list + 1] = handler
+  labels[handler] = labels[handler] or caller_label()
 end
 
 --- Register a handler that runs every n ticks (first call at tick 0). The handler receives NthTickEventData.
@@ -39,6 +81,36 @@ function events.on_nth_tick(n, handler)
     script.on_nth_tick(n, dispatcher(list))
   end
   list[#list + 1] = handler
+  labels[handler] = labels[handler] or caller_label()
+end
+
+--- Test copies only: time every handler per registering module and log "[rts] perf ..." lines every minute (the
+--- average milliseconds per tick of each module over that minute, worst first). Call it while control.lua loads,
+--- after every module is required (tools/autotest-run.sh appends it to a copy's control.lua).
+function events.enable_profiling()
+  events.on_nth_tick(PROFILE_PERIOD, function(e)
+    if not profile then
+      profile = {}
+      return
+    end
+    local names = {}
+    for label in pairs(profile) do names[#names + 1] = label end
+    table.sort(names)
+    local parts = {"", string.format("[rts] perf tick %d, ms per tick averaged over %d ticks:", e.tick,
+      PROFILE_PERIOD)}
+    for _, label in ipairs(names) do
+      local p = profile[label]
+      p.acc.divide(PROFILE_PERIOD)
+      parts[#parts + 1] = string.format(" | %s (%d calls) ", label, p.calls)
+      parts[#parts + 1] = p.acc
+      if #parts >= 18 then -- a LocalisedString takes at most 20 parameters
+        log(parts)
+        parts = {"", "[rts] perf (cont.)"}
+      end
+    end
+    if #parts > 2 then log(parts) end
+    profile = {}
+  end)
 end
 
 --- Called once when the mod is first added to a save (new game or existing save).
