@@ -5,7 +5,9 @@
 --   the whole division is one group order and arrives, a partial selection detaches and the next division order takes
 --   the units back, barracks reinforcement joins the division and its control group, attack-move beats an enemy
 --   division and ends idle, hold / stop, stance advance engages, stance screen falls back, queue budgets, disband when
---   the last member dies.
+--   the last member dies. Phase 5 M1 QA round 1 (protocol step 33): a second division of 30 walkers moves 60 tiles,
+--   then attack-moves 60 tiles elsewhere (its centroid must move within 30 s and end at the point), then attack-moves
+--   12.5 tiles (inside the group's attack radius: before the fix the group finished at once and stood still).
 -- Log lines "[rts] div func check <name>: PASS|FAIL ..." and "[rts] div func summary <pass>/<total>".
 local events = require("scripts.events")
 local util = require("scripts.util")
@@ -60,6 +62,14 @@ end
 local function centroid()
   local l = {}
   for i, rec in ipairs(members()) do l[i] = rec.entity end
+  return util.centroid(l)
+end
+
+-- The second (QA round 1) division and its centroid.
+local function AM() return divisions.get(S().am_id) end
+local function am_centroid()
+  local l = {}
+  for i, rec in ipairs(divisions.live_members(AM())) do l[i] = rec.entity end
   return util.centroid(l)
 end
 
@@ -239,6 +249,59 @@ local function stage_tick(tick)
       check("queue_budgets", q.max_u <= orders.QUEUE.unit_budget and q.max_g <= orders.QUEUE.group_budget,
         "max %d unit / %d group commands per tick (budgets %d / %d), %d immediate, %d queued", q.max_u, q.max_g,
         orders.QUEUE.unit_budget, orders.QUEUE.group_budget, q.immediate, q.queued)
+      next_stage("am_setup")
+    end
+  elseif st == "am_setup" then
+    -- QA round 1: 30 walkers, a 60-tile move, then attack-moves (long, then short)
+    local list = spawn("rts-walker", 30, ME, {x = -130, y = 30})
+    s.am_id = divisions.create(ME, list, {stance = "hold"})
+    s.am_dest = {x = -70, y = 40}
+    local ok = divisions.order(s.am_id, "move", s.am_dest)
+    check("am_division_move_order", s.am_id ~= nil and #list == 30 and ok, "division #%s of %d walkers, move -> %s",
+      tostring(s.am_id), #list, util.pos_str(s.am_dest))
+    next_stage("am_move")
+  elseif st == "am_move" then
+    local d = AM()
+    if d.state == "idle" or age > TIMEOUT then
+      local c = am_centroid()
+      check("am_move_arrives", d.state == "idle" and c and util.distance(c, s.am_dest) < 12,
+        "state %s after %.1f s, centroid %s (%.1f from the target)", d.state, age / 60, util.pos_str(c),
+        c and util.distance(c, s.am_dest) or -1)
+      s.am_from = c
+      s.am_dest = {x = -70, y = 100}
+      local ok = divisions.order(s.am_id, "attack_move", s.am_dest)
+      check("am_long_order", ok and d.state == "moving", "attack_move -> %s, state %s", util.pos_str(s.am_dest), d.state)
+      next_stage("am_long")
+    end
+  elseif st == "am_long" then
+    local d = AM()
+    local c = am_centroid()
+    if not s.am_moved and c and util.distance(c, s.am_from) >= 30 then
+      s.am_moved = age
+    end
+    if age == 30 * 60 then
+      check("am_long_moves_within_30s", s.am_moved ~= nil, "centroid moved 30 tiles after %s s (from %s, now %s)",
+        s.am_moved and string.format("%.1f", s.am_moved / 60) or "never", util.pos_str(s.am_from), util.pos_str(c))
+    end
+    if (age > 30 * 60 and d.state == "idle") or age > TIMEOUT then
+      check("am_long_arrives", d.state == "idle" and c and util.distance(c, s.am_dest) < 12,
+        "state %s after %.1f s, centroid %s (%.1f from the target)", d.state, age / 60, util.pos_str(c),
+        c and util.distance(c, s.am_dest) or -1)
+      s.am_from = c
+      s.am_dest = {x = c.x, y = c.y - 12.5} -- the QA run: 12.5 tiles, inside the attack radius of 30 walkers
+      local ok = divisions.order(s.am_id, "attack_move", s.am_dest)
+      check("am_short_order", ok and d.state == "moving", "attack_move -> %s (12.5 tiles), state %s",
+        util.pos_str(s.am_dest), d.state)
+      next_stage("am_short")
+    end
+  elseif st == "am_short" then
+    local d = AM()
+    if (age >= 120 and d.state == "idle") or age > 30 * 60 then
+      local c = am_centroid()
+      local moved = c and util.distance(c, s.am_from) or 0
+      check("am_short_moves", d.state == "idle" and moved >= 8 and util.distance(c, s.am_dest) < 6,
+        "state %s after %.1f s, centroid %s moved %.1f tiles, %.1f from the target", d.state, age / 60,
+        util.pos_str(c), moved, c and util.distance(c, s.am_dest) or -1)
       next_stage("disband")
     end
   elseif st == "disband" then

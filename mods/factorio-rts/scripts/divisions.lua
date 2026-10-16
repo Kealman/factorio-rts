@@ -15,7 +15,10 @@
 -- leaves its members wandering; a group finishes go_to_location with a completion event (success), but attack_area
 -- only switches the group to state "finished" without an event (so the controller polls the state); members of a
 -- finished group keep the command "group", stand and fire back; deaths raise no on_unit_removed_from_group; a group
--- whose members all died becomes invalid without an event.
+-- whose members all died becomes invalid without an event. A group command ends (success) as soon as the group stands
+-- within its own size of the destination, whatever the command's radius (QA round 1, protocol step 33, probe: 30
+-- walkers, go_to_location radius 2, 12.5 tiles away, completed in 0 ticks without a step; attack_area ended 18 tiles
+-- short), so every order ends with the members walking to formation slots around the point ("settling").
 --
 -- Owns storage.divisions = {[id] = D} (the contract's table) with
 --   D = {id, force, name (string or LocalisedString), default_name, units = {[unit_number] = true},
@@ -34,9 +37,10 @@
 -- "attack_move" | "hold" (units.lua claim rule); an idle division's members are idle (order "idle", issuer nil) and
 -- stand in their finished group.
 --
--- Orders (divisions.order): move (go_to_location, distraction none), attack_move (attack_area, distraction
--- by_anything; at the end the division re-targets the nearest enemy within RETARGET_RANGE of it at most once per
--- RETARGET_TICKS, else it is idle), attack (attack_move at an entity's position), retreat (move to the rally point or
+-- Orders (divisions.order): move (go_to_location, distraction none), attack_move (a compound: go_to_location within
+-- ATTACK_GOTO_RADIUS, then attack_area, both distraction by_anything; at the end the division re-targets the nearest
+-- enemy within RETARGET_RANGE of it at most once per RETARGET_TICKS, else its members walk to formation slots around
+-- the point, fighting what they meet, and it is idle there), attack (attack_move at an entity's position), retreat (move to the rally point or
 -- home), hold (members stop and are re-stopped whenever a command ends), stop (members stop, idle).
 -- Stances act only while the division is idle: hold (stand, return fire), advance (attack-move enemies within
 -- ADVANCE_RANGE), screen (fall back SCREEN_STEP tiles from enemies within SCREEN_RANGE).
@@ -189,6 +193,7 @@ end
 
 local function move_radius(n) return 3 + math.sqrt(n) end
 local function attack_radius(n) return math.min(24, 10 + 1.5 * math.sqrt(n)) end
+local ATTACK_GOTO_RADIUS = 2  -- an attack-move's march leg ends this close to the point (then attack_area)
 
 local function home_of(force)
   local cc = buildings.main_cc(force)
@@ -514,7 +519,11 @@ function divisions.order(id, kind, target, opts)
     if kind == "move" or kind == "retreat" then
       cmd = {type = CMD.go_to_location, destination = pos, radius = move_radius(n), distraction = DIS.none}
     else
-      cmd = {type = CMD.attack_area, destination = pos, radius = attack_radius(n), distraction = DIS.by_anything}
+      -- QA round 1 (protocol step 33): march to the point first (fighting what it meets), then clear the area
+      cmd = {type = CMD.compound, structure_type = defines.compound_command.return_last, commands = {
+        {type = CMD.go_to_location, destination = pos, radius = ATTACK_GOTO_RADIUS, distraction = DIS.by_anything},
+        {type = CMD.attack_area, destination = pos, radius = attack_radius(n), distraction = DIS.by_anything},
+      }}
     end
     local rec_order = kind == "retreat" and "move" or (kind == "attack" and "attack_move" or kind)
     for _, rec in ipairs(recs) do
@@ -643,13 +652,15 @@ local function finish_arrival(D, why)
 end
 
 -- The group finished its command (event or polled state). A group finishes when its expected position arrives, and
--- slow members can trail 15-20 tiles behind (functional test: heavies and drones in a walker division), so after a
--- move or retreat the members walk to formation slots around the target (short paths through the queue) and stop
--- there ("settling", at most SETTLE_TICKS). Attack-moves re-target the nearest enemy first and otherwise end where the
--- fight left the members.
+-- slow members can trail 15-20 tiles behind (functional test: heavies and drones in a walker division); a group also
+-- finishes as soon as it stands within its own size of the point (header). So after every order the members walk to
+-- formation slots around the target (short paths through the queue) and stop there ("settling", at most
+-- SETTLE_TICKS): moves and retreats ignoring enemies, attack-moves fighting what they meet (distraction by_enemy).
+-- Attack-moves first re-target the nearest enemy.
 local function arrive(D, why)
   local order = D.order
-  if order and (order.kind == "attack_move" or order.kind == "attack") then
+  local attack = order and (order.kind == "attack_move" or order.kind == "attack")
+  if attack then
     if game.tick - (D.last_retarget or -RETARGET_TICKS) < RETARGET_TICKS then return end -- throttled: next pass
     local recs = live_members(D)
     local at = (D.group and D.group.valid and D.group.position) or centroid(recs)
@@ -661,17 +672,18 @@ local function arrive(D, why)
       divisions.order(D.id, "attack_move", enemy.position, {auto = "re-target"})
       return
     end
-  elseif order and (order.kind == "move" or order.kind == "retreat") and order.target then
+  end
+  if order and order.target and (attack or order.kind == "move" or order.kind == "retreat") then
     local recs = live_members(D)
     if #recs > 0 then
       drop_group(D) -- the members get their slot commands right away
       local slots = orders.formation(recs, order.target)
       D.settling = {}
       for i, rec in ipairs(recs) do
-        claim(rec, "move", slots[i])
+        claim(rec, attack and "attack_move" or "move", slots[i])
         D.settling[rec.entity.unit_number] = true
         orders.queue_command(rec.entity, {type = CMD.go_to_location, destination = slots[i], radius = 1,
-                                          distraction = DIS.none})
+                                          distraction = attack and DIS.by_enemy or DIS.none})
       end
       D.state, D.settle_tick = "settling", game.tick
       return
