@@ -12,8 +12,8 @@ wave C. Module notes: `docs/qa/phase4-*-notes.md`. Balance numbers: `phase4-bala
 - **Balance:** the economy pass is in (400 iron / 150 copper start, tier-1 research −25 %, cheaper lab and hub).
 - **Fixed:** per-match state survived a match reset; a human could not build a hub at the natural expansion; the AI
   autotest judged easy by normal's deadlines; 20 player-facing texts disagreed with the game. See "Bugs fixed".
-- **Lead decisions, round two** (all in): CC robots build 80 tiles out and hub robots 40; Concede in the F10 menu and
-  Results after the match; Ctrl+A leaves haulers out; the artillery strike uses the walker's 44-tile range; the dead
+- **Lead decisions, round two** (all in): the Commander builds forward (robot radii unchanged); Concede in the F10
+  menu and Results after the match; Ctrl+A leaves haulers out; the artillery strike uses the walker's 44-tile range; the dead
   AI lock exemption is gone; README and protocol updated. See "Round two".
 - **Docs:** `README.md` rewritten for Phase 4; `docs/qa/phase4-protocol.md` is the 62-step GUI protocol for a
   screen-only tester.
@@ -59,7 +59,7 @@ not counted). The first matrix (`final`, before round two) had the same errors, 
 | Space Age off, control stage | matrix rows "base game only" | 22/22 and 65/65, 0 errors |
 | Locale, static | every `[section] key` in `locale/en` and `locale/ru` (580 each after round two, same keys, same `__N__` parameters); every literal key in the Lua code; every dynamic family (`rts.difficulty-*`, `rts.map-*`, `rts.size-*`, `rts.results-*`, `rts.match-*`, `rts.ability-*`, `rts.tech-tier-*`, `rts.tech-status-*`, `rts.patch-kind-*`, `rts.help-1..10`) expanded with the values the code uses; every `rts-*` prototype has a name | nothing missing |
 | Locale, GUI client | `tools/locale-probe/gen.py` adds a probe to a GUI copy: the client translates 694 strings (all keys above plus every `rts-*` prototype's name) | 0 untranslated in English and in Russian; no "Unknown key" in any server or client log |
-| Natural hub, cargo, Concede (headless) | `EXTRA_LUA=tools/probes/wavec_headless.lua` on small, medium and large | the CC's robots build a hub next to the natural iron (42–68 tiles out) in 24–30 s, with its own network; a hauler route CC → hub delivers 40 iron and the hub's network holds it; `match.concede` ends the match as a defeat at once, a second call is refused |
+| Natural hub, cargo, Concede (headless) | `EXTRA_LUA=tools/probes/wavec_headless.lua` on small, medium and large | the Commander walks to the natural and its robots build a hub next to the natural iron (42–68 tiles out) 4–6 s after the ghost, with its own network; a hauler route CC → hub delivers iron and the hub's network holds it; `match.concede` ends the match as a defeat at once, a second call is refused |
 | Menu (GUI) | `tools/probes/menu_gui.lua` in the real client, English and Russian | Ctrl+A selects the 7 combat units, not the hauler; the first Concede click asks "Really concede?", the second ends the match with a defeat and the results window ("Defeat. You conceded the match.", "Conceded at 00:06"); after Continue the menu shows Results and no Concede, and Results opens the window again |
 | GUI self-test | `tools/gui-run.sh` with `SELFTEST_DEFAULT = true`: lobby start, selection, groups, orders, build placement, QA reset, hub and hauler panels, menu, unit cards, help, results, back to the lobby | `RTS_GUI_READY`, `RTS_LOGISTICS_GUI_DONE`, `RTS_P4_HUD_DONE`, `RTS_MATCHFLOW_DONE`, `RTS_HUD_DONE`; screenshots in `build/shots-integ-gui-en/` and `build/shots-integ-gui2/` |
 | Commander field construction | `EXTRA_LUA=tools/probes/commander_field.lua`: hub and solar array ghosts 55 tiles out, the Commander walks there | built 7 s after the start; the pool paid 1 + 1; the trunk held only robots afterwards |
@@ -85,13 +85,12 @@ not counted). The first matrix (`final`, before round two) had the same errors, 
    `match.on_teardown(fn)`; logistics and the HUD clear their per-match state there. The restart check asserts it.
 2. **A human could not build a hub at the natural expansion.** The CC's robots reached 40 tiles, the natural pair
    lies 50–76 tiles out, and the Commander's personal roboport built only from a trunk nobody can fill (no character,
-   remote view); the AI revives its ghosts anywhere. Two fixes:
-   - **Reach** (lead decision): CC construction radius 80 (`prototypes/buildings.lua`), hub 40
-     (`prototypes/logistics.lua`), natural pairs within 48–80 tiles (`scripts/mapgen.lua` `NATURAL_DIST`, was 84). The
-     CC's logistic radius stays 25, so a hub at the natural has its own network and haulers carry between them.
-   - **Commander field construction** (`scripts/commander.lua` `field_supply`): beyond every robot area (the middle,
-     the ruin), the sweep stocks the Commander's trunk from the CC pool for the ghosts within its roboport radius and
-     returns the surplus.
+   remote view); the AI revives its ghosts anywhere. Fix (accepted by the lead instead of larger robot radii):
+   **Commander field construction** (`scripts/commander.lua` `field_supply`). The sweep stocks the Commander's trunk
+   from the CC pool for the ghosts within its roboport radius (15) that no stocked network covers, and returns the
+   surplus. The player selects the Commander, walks it to the natural and places the hub ghost; the hub is more than
+   39 tiles from the CC, so it has its own network and haulers carry between them. A brief experiment with CC/hub
+   construction radii 80/40 was reverted; the radii stay 40/22 and the natural pairs 48–84 tiles out.
 3. **The AI autotest judged easy by normal's deadlines** (`scripts/ai/autotest.lua:65`, `:329`). Technologies, unit
    kinds, hub and harass deadlines now scale with `orders_data.TIME_SCALE` (easy ×1.5); a deadline past the test is
    reported as "not due".
@@ -108,14 +107,14 @@ not counted). The first matrix (`final`, before round two) had the same errors, 
 
 | Decision | Done | Verified by |
 |---|---|---|
-| CC construction radius 80, hub 40; naturals within reach | `prototypes/buildings.lua`, `prototypes/logistics.lua`, `scripts/mapgen.lua` (`NATURAL_DIST` 48–80) | headless probe on 3 sizes; plan smoke 1v1–1v3 × small/medium/large × 2 seeds: no natural pair skipped, every target reachable; the AI builds without robots and is unaffected |
+| Reach: the Commander builds forward (accepted instead of radius 80/40, which was tried and reverted) | `scripts/commander.lua` field supply; help, README, protocol step 23 | headless probe on small, medium and large: the Commander walks to the natural and its robots build the hub, which has its own network |
 | Concede in the F10 menu (a defeat with the results window), Results after the match | `scripts/match.lua` `concede`, `result_text_key`; `scripts/lobby.lua` menu; `scripts/hud.lua` strip text | GUI probe (en, ru), headless probe |
 | Ctrl+A combat selection only | `scripts/selection.lua` `SELECT_ALL_SKIP` | GUI probe |
 | Artillery strike range = artillery range (44) | `scripts/abilities.lua` reads `balance.lua` | code |
 | AI unit locks | `research.AI_IGNORES_LOCKS` was set false by `ai/init.lua` on every difficulty; the dead path is removed (`scripts/research.lua`, `scripts/ai/init.lua`) | matrix: AI kinds still follow research |
 | Texts | 20 items in `locale/en`, `locale/ru`, `info.json` | static check and GUI probe |
 | Stale notes | `phase4-logistics-notes.md`, `phase4-research-notes.md`, `phase4-abilities-notes.md` | – |
-| Protocol | step 23 puts Hub 1 at the natural, step 34 moves iron from the CC to it, step 56 builds a middle hub with the Commander, step 59 concedes and reopens the results | not run by a tester yet |
+| Protocol | step 23 walks the Commander to the natural and places Hub 1 there, step 34 moves iron from the CC to it, step 56 builds a middle hub with the Commander, step 59 concedes and reopens the results | not run by a tester yet |
 
 ## Moats on crowded small maps: not possible, documented
 
@@ -150,7 +149,7 @@ armed ability) and the Commander, each for its own units, by design.
 | `saveload-check.sh <name> '<match table>'` | Save at minute 3, load in a new server, run on |
 | `locale-probe/gen.py <mod> <out.lua>` | GUI-client translation probe |
 | `probes/commander_field.lua` | Commander field construction probe (`EXTRA_LUA`) |
-| `probes/wavec_headless.lua` | Natural hub by the CC's robots, hauler cargo between two networks, Concede (`EXTRA_LUA`) |
+| `probes/wavec_headless.lua` | Natural hub by the Commander, hauler cargo between two networks, Concede (`EXTRA_LUA`) |
 | `probes/menu_gui.lua` | GUI copy: Ctrl+A without haulers, Concede twice, results, Results again |
 | `factorio-env.sh` | `RTS_LOCALE=en|ru` sets the GUI client's language (without it the client follows the system, Russian here) |
 

@@ -24,7 +24,7 @@ cursor's select filters include `spider-vehicle`. `hud.lua`, `match.lua`, `scrip
 
 | Prototype | Base | Numbers |
 |---|---|---|
-| `rts-hub` (roboport) | vanilla roboport, base sprites tinted warm so it reads apart from the CC | 1200 hp, logistic radius 14, construction radius 40 (22 before Wave C), buffer 20 MJ, input 200 kW, idle 20 kW, charging 50 kW per station, radar 1 chunk, not deconstructable, military target, raid target |
+| `rts-hub` (roboport) | vanilla roboport, base sprites tinted warm so it reads apart from the CC | 1200 hp, logistic radius 14, construction radius 22, buffer 20 MJ, input 200 kW, idle 20 kW, charging 50 kW per station, radar 1 chunk, not deconstructable, military target, raid target |
 | `rts-hub-power` (electric-energy-interface) | `hidden-electric-energy-interface` | hidden, immune, 300 kW `secondary-output` (solar is used first, as with `rts-core-power`) |
 | `rts-hub-pole` (electric-pole) | `medium-electric-pole`, no sprite | hidden, immune, supply area 16×16 (`supply_area_distance = 8`), wire reach 9, so player poles connect to it |
 | `rts-hauler` (spider-vehicle) | base `create_spidertron{scale = 0.6, leg_movement_speed = HAULER_LEG_SPEED}`; the full vanilla spidertron if base ever stops exporting that function | 400 hp, no resistances, no guns, no equipment grid, no trash slots, no passengers, no remote driving, trunk 40 slots of which the script uses 20 plus research, radar 1 chunk, military target, raid target, team colour via `LuaEntity.color` |
@@ -460,9 +460,9 @@ The first Russian GUI run kept going a few seconds past the marker, and its log 
 
 ## Open items and decisions for the lead
 
-- **Hub button in the build menu:** resolved, the Economy tab has it. Since Wave C the CC's robots build up to 80
-  tiles out and a hub's up to 40, so a player places a hub at the natural expansion directly; beyond that the
-  Commander builds ghosts next to it (`docs/qa/phase4-integration-notes.md`).
+- **Hub button in the build menu:** resolved, the Economy tab has it. The CC's robots reach 40 tiles, so for a hub at
+  the natural expansion (50–76 tiles out) the player walks the Commander there: since Wave C it builds the ghosts
+  within 15 tiles of it with items from the CC pool (`docs/qa/phase4-integration-notes.md`).
 - **Haulers count as units.**
   - `units.count` includes them, so the HUD army number counts them. Supply charges 0 for them
     (`balance.units["rts-hauler"]`).

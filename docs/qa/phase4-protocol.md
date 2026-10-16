@@ -124,7 +124,8 @@ screen x = 640 + 16 × (world x + 152)        screen y = 400 + 16 × world y
 | Barracks rally point / army parking spot | (−132, −5) / (−130, −2) | (960, 320) / (992, 368) |
 | Empty ground (to deselect) | (−160.75, 13.75) | (500, 620) |
 
-Robots build only within 80 tiles of the CC and 40 tiles of a hub; beyond that the Commander builds ghosts next to it.
+Robots build only within 40 tiles of the CC and 22 tiles of a hub; beyond that the Commander builds the ghosts within
+15 tiles of it, with items from the CC's pool.
 The CC's logistic network reaches 25 tiles, so a hub more than 39 tiles away has its own network.
 
 **The natural expansion** (Medium, 1 opponent): your natural iron is a 10×10 blue-grey patch centred at world (−82, 13),
@@ -326,7 +327,7 @@ before step 40: the factory steps need that iron.
       - **First click:** "No units selected".
       - **CC click, selection panel:** an outline around the CC, and the lines "Command Center #N", "HP 3000/3000",
         "Robots idle: construction 20/20, logistic 10/10", "Power: … / 4.00 MW used, machines at 100%" and "Robots
-        build ghosts within 80 tiles; the network reaches 25 tiles."
+        build ghosts within 40 tiles; the network reaches 25 tiles."
       - **CC click, right edge:** a panel under the minimap, "Command Center: stockpile policy", "Network #N, 1 hub",
         and an item table. Iron 400 and copper 150 are green, and "Export above" reads 100 for iron, copper and steel.
       - **Last click:** the outline and the right panel are gone; "No units selected".
@@ -493,20 +494,24 @@ Before each step of this part, press SPACE if the camera has moved.
       - `production: barracks #[0-9]+ \(rts-player\) spawned rts-walker`
       - `recipe set barracks#[0-9]+ none ok=true now=none player=1`
 
-23. **A hub ghost at the natural expansion.**
+23. **The Commander goes to the natural expansion; a hub ghost next to it.**
     - *Input:*
-      1. Click empty ground at (500, 620). Click the minimap at (1153, 98): the camera jumps to your natural iron, a
-         10×10 blue-grey ore patch near the screen centre (about 160 px wide).
-      2. In the Economy tab, click **Hub** (≈1252, 772). Left-click the map about 144 px (9 tiles) left of the iron
-         patch's centre, at the same height: on bare ground, with about 2 tiles of grass between the ghost and the ore.
-      3. Press Q, then SPACE.
-    - *Expect:* a 4×4 hub ghost just left of the natural iron. It stays a ghost for now: there is no hub in stock yet.
-      While the hub was on the cursor, the game may also have drawn green and orange squares (robot areas); report
-      what you saw.
-    - *Why there:* the CC's robots build up to 80 tiles out, and the natural lies 70 tiles out. The CC's logistic area
-      (25) and the hub's (14) do not touch at that distance, so Hub 1 gets its own network, and step 33 moves cargo
-      between the two networks.
-    - *Log check (lead):* `hud click build rts-hub player=1 in_network=0 ghost=true`,
+      1. Click the Commander icon on the ability bar (486, 753) once: only the Commander is selected ("Commander ×1").
+      2. Click the minimap at (1153, 98): the camera jumps to your natural iron, a 10×10 blue-grey ore patch near the
+         screen centre (about 160 px wide). The Commander stays selected.
+      3. Right-click bare ground about 200 px (12 tiles) left of the iron patch's centre. Wait until the Commander
+         stands there (it walks about 60 tiles, 5 s; water and trees may make it go around).
+      4. In the Economy tab, click **Hub** (≈1252, 772). Left-click the map about 144 px (9 tiles) left of the iron
+         patch's centre, at the same height: on bare ground, with about 2 tiles of grass between the ghost and the ore,
+         and within 15 tiles (240 px) of the Commander.
+      5. Press Q. Leave the Commander there until step 25.
+    - *Expect:* the Commander walks to the natural and stops. A 4×4 hub ghost stands just left of the natural iron. It
+      stays a ghost for now: there is no hub in stock yet.
+    - *Why this way:* the CC's robots build only 40 tiles out, and the natural lies 70 tiles out. The Commander's own
+      robots build every ghost within 15 tiles of it, and its trunk is filled from the CC's pool with the items those
+      ghosts need. The CC's logistic area (25) and the hub's (14) do not touch at that distance, so Hub 1 gets its own
+      network, and step 34 moves cargo between the two networks.
+    - *Log check (lead):* `order commander-move n=1 unit=#[0-9]+`, `hud click build rts-hub player=1 in_network=0 ghost=true`,
       `build ghost rts-hub player=1 at \(-9[0-9]\.0, 1[0-9]\.0\)`
 
 24. **Factory: a hub, then a lab.**
@@ -532,17 +537,20 @@ Before each step of this part, press SPACE if the camera has moved.
       - `recipe set factory#[0-9]+ none ok=true`
 
 25. **The hub and the lab get built.**
-    - *Input:* click empty ground at (500, 620), press SPACE and wait 40 s (the robots fly 60 tiles to the hub). Then
-      click the minimap at (1153, 98) and take a screenshot. Press SPACE.
+    - *Input:*
+      1. Click empty ground at (500, 620), press SPACE and wait 20 s.
+      2. Click the minimap at (1153, 98) and take a screenshot.
+      3. Bring the Commander home: click its icon on the ability bar (486, 753), press SPACE, right-click ground near
+         the army at (992, 368). Then click empty ground at (500, 620).
     - *Expect:*
-      - **Lab.** A lab at (536, 264).
+      - **Lab.** A lab at (536, 264), built by the CC's robots.
       - **Hub.** At the natural: a real hub (a warm-tinted roboport) where the ghost was, with a small stockpile on each
-        side.
+        side. A few seconds after the factory made the hub, small robots flew out of the Commander and built it.
       - **Strip.** "Supply N/50" instead of /40. Power reads "…/4.3 MW", because the hub adds 300 kW. The robot count
         stays about 30: the strip counts the robots of the CC's network, and the hub's 16 work in its own network.
     - *Log check (lead):*
       - `production: factory #[0-9]+ \(rts-player\) moved 1 rts-hub into the network`
-      - `robot built rts-hub #[0-9]+ at \(-9[0-9]\.0, 1[0-9]\.0\)`
+      - `commander: field supply for rts-player at .* stocked \[rts-hub x1\]`
       - `logistics: hub #[0-9]+ \(Hub 1\) of rts-player at \(-9[0-9]\.0, 1[0-9]\.0\): power=true pole=true stockpiles=2 robots=16`
       - `robot built rts-lab #[0-9]+ at \(-158\.5, -8\.5\)`
       - `hud resources player=1 .* supply=[0-9]+/50`

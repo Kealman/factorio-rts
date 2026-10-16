@@ -28,7 +28,7 @@
 -- from level 2 and (0,2) from level 3. The roboport and ROBOTS construction robots in the trunk give field
 -- construction: ghosts within the roboport's construction radius (15 tiles) are built from items in the trunk.
 -- Field supply (Wave C): a player cannot fill the trunk (no character, remote view), and robots build only inside the
--- construction areas of the CC (80 tiles) and the hubs (40), while the AI revives its ghosts anywhere. Every sweep
+-- construction areas of the CC (40 tiles) and the hubs (22), while the AI revives its ghosts anywhere. Every sweep
 -- therefore stocks the trunk from the force's CC network (economy.take) with the items of the ghosts near the
 -- Commander that no stocked network covers (nearest FIELD_GHOSTS), and gives back what no nearby ghost needs any
 -- more (robots excepted). So, beyond the robots' reach: place the ghosts, walk the Commander there, its robots build

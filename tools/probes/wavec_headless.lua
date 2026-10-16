@@ -1,8 +1,8 @@
 -- Wave C headless probe (test copy only: tools/autotest-run.sh EXTRA_LUA=tools/probes/wavec_headless.lua).
--- 1. Natural hub: rts-player is taken from its AI commander (which had emptied its CC of robots), its CC gets 20
---    construction robots and one rts-hub item, and a hub ghost goes next to its natural iron patch (70 tiles out on a
---    medium map). PASS when the CC's own robots build it (construction radius 80) within 90 s and the hub's logistic
---    network is not the CC's.
+-- 1. Natural hub: rts-player is taken from its AI commander and gets a Commander and one rts-hub item in its CC pool; a
+--    hub ghost goes next to its natural iron patch (50-76 tiles out, beyond the CC's 40-tile robot reach) and the
+--    Commander walks there. PASS when the Commander's robots build it (field supply, scripts/commander.lua) within 90 s
+--    and the hub's logistic network is not the CC's.
 -- 2. Cargo between the two networks: the CC exports iron above 0, a hauler gets the route CC (pickup) -> natural hub
 --    (drop-off). PASS when the hub's network holds the delivered iron (its default Keep asks for 50) within 90 s.
 -- 3. Concede: then match.concede("rts-player") must end the match at once with an AI as the winner and a defeat for
@@ -14,6 +14,7 @@ local economy = require("scripts.economy")
 local buildings = require("scripts.buildings")
 local match = require("scripts.match")
 local logistics = require("scripts.logistics")
+local commander = require("scripts.commander")
 
 local F = util.PLAYER_FORCE
 
@@ -41,20 +42,22 @@ events.on_nth_tick(60, function()
     if m.phase ~= "running" or game.tick - m.tick_started < 120 then return end
     P.started = game.tick
     ai.stop_force(F)
+    commander.enable(F)
+    local hero = commander.spawn_now(F)
     local cc = buildings.main_cc(F)
     local home = match.home(F)
     local site, patch = natural_site(home)
-    local inserted = cc.entity.insert({name = "construction-robot", count = 20})
     economy.give(F, "rts-hub", 1)
     local surface = cc.entity.surface
     for _, o in pairs(surface.find_entities_filtered({area = {{site.x - 4, site.y - 4}, {site.x + 4, site.y + 4}},
                                                        type = {"tree", "simple-entity"}})) do o.destroy() end
     local g = surface.create_entity({name = "entity-ghost", inner_name = "rts-hub", position = site, force = F})
     P.site = site
+    if hero then hero.autopilot_destination = {x = site.x - 4, y = site.y} end
     util.log("wavec probe: hub ghost %s at %s, %.0f tiles from the CC (natural iron centre %s, %.0f tiles); CC "
-      .. "construction radius %d, robots inserted %d", tostring(g ~= nil), util.pos_str(site), util.distance(site, home),
-      util.pos_str(patch.center), util.distance(patch.center, home), cc.entity.logistic_cell.construction_radius,
-      inserted)
+      .. "construction radius %d; Commander %s walks there", tostring(g ~= nil), util.pos_str(site),
+      util.distance(site, home), util.pos_str(patch.center), util.distance(patch.center, home),
+      cc.entity.logistic_cell.construction_radius, hero and ("#" .. hero.unit_number) or "missing")
     return
   end
   if not P.hub_done then

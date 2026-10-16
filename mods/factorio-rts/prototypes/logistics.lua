@@ -1,6 +1,6 @@
 -- Phase 4 logistics prototypes (docs/PHASE4.md 2.1-2.2): the hub composite and the hauler.
 --
---   rts-hub        roboport clone: logistic radius 14, construction radius 40, tinted base, own small buffer.
+--   rts-hub        roboport clone: logistic radius 14, construction radius 22, tinted base, own small buffer.
 --                  scripts/logistics.lua places the rest of the composite when one is built:
 --   rts-hub-power  hidden electric-energy-interface under the hub, 300 kW (the hub plus about two extractors)
 --   rts-hub-pole   hidden pole under the hub, 16x16 supply area, wire reach 9 (player poles connect to it)
@@ -94,7 +94,7 @@ hub.is_military_target = true
 hub.trigger_target_mask = RAID_MASK and table.deepcopy(RAID_MASK) or nil
 hub.logistics_radius = 14
 hub.logistics_connection_distance = nil -- = logistics_radius: two hubs join only when their 28x28 areas touch
-hub.construction_radius = 40 -- Wave C: hubs chain towards the middle and the ruin (was 22)
+hub.construction_radius = 22
 hub.radar_range = 1
 -- Runs on its own 300 kW core: small buffer, pre-charged by the script on placement, slow robot charging.
 hub.energy_source = {
