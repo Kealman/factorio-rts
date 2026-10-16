@@ -4,6 +4,9 @@
   "title": "Factorio RTS",
   "author": "factorio-rts",
   "factorio_version": "2.0",
-  "dependencies": ["base >= 2.0", "? space-age"],
-  "description": "Real-time strategy controls for Factorio: a remote-view camera with no character, box selection and orders for spider-unit armies, and a 1v1 skirmish arena."
+  "dependencies": [
+    "base >= 2.0",
+    "? space-age"
+  ],
+  "description": "Factorio as a real-time strategy game: a remote-view camera instead of a character, box selection and orders for spider-unit armies, Factorio production chains, hubs and haulers, research, abilities and a Commander hero, against 1 to 3 AI commanders on generated maps."
 }
