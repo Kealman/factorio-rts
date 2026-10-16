@@ -590,6 +590,10 @@ balance.nation.people = {
     -- a town gets its own farm and bakery from town_farm_pop residents (or when its rations run short), inside its
     -- City Center's logistic area (town_area tiles around it; the turrets go there too)
     town_farm_pop = 60, town_area = 13,
+    -- while the AI's rail line is built, houses wait below this much stone (its rails take 1 stone per 2)
+    rail_stone = 150,
+    -- below stone_low stone (once the steel flows) one more stone extractor of the start line, at most every stone_gap
+    stone_low = 100, stone_gap = 2 * 60 * 60,
     -- from start_after, houses while the housing is below the city's jobs / workforce share + job_margin residents
     -- (the margin keeps recruits for the army; houses beyond it only fed goods demand)
     job_margin = 80, house_radius = {24, 40, 56},
@@ -684,12 +688,6 @@ balance.nation.diplomacy = {
   },
 }
 
--- Phase 5 M2 treasury (m2-treasury, docs/PHASE5-M2.md section 3 "treasury.lua / market.lua", decisions D1 and D5;
--- docs/qa/phase5-treasury-notes.md). The treasury is a script number per nation (crowns, cr); nothing is built with
--- money. Nation mode only. Read by scripts/treasury.lua, scripts/market.lua, scripts/marketgui.lua and
--- prototypes/trade.lua.
-balance.nation = balance.nation or {}
-balance.nation.treasury = {
 -- Phase 5 M2 ai: the nation strategist (scripts/ai/nation.lua, docs/qa/phase5-ai-notes.md). Every `period` ticks per AI
 -- nation; the doctrine table above once every diplomacy_every passes. Sales hold a good while its price is below
 -- sell_floor x p0 (easy: any price, and its capital ships from easy_dump x the surplus thresholds); coal_reserve stays
@@ -720,6 +718,12 @@ balance.nation.diplomacy.ai = {
   opportunity_reach = 1400, opportunity_turret_radius = 30,
 }
 
+-- Phase 5 M2 treasury (m2-treasury, docs/PHASE5-M2.md section 3 "treasury.lua / market.lua", decisions D1 and D5;
+-- docs/qa/phase5-treasury-notes.md). The treasury is a script number per nation (crowns, cr); nothing is built with
+-- money. Nation mode only. Read by scripts/treasury.lua, scripts/market.lua, scripts/marketgui.lua and
+-- prototypes/trade.lua.
+balance.nation = balance.nation or {}
+balance.nation.treasury = {
   start = 1500,                -- cr every nation starts with
   step = 600,                  -- ticks between two flow applications (tax and upkeep are per-minute rates / 6)
   tax = {
@@ -803,6 +807,9 @@ balance.nation.market = {
     deficit_floor = 1500,      -- below this balance with a negative net: tax high, no imports, deficit mode
     deficit_surplus = 0.5,     -- deficit mode: the capital exports from this share of the surplus thresholds
     happy_low = 40,            -- tax low below this happiness
+    -- Phase 5 M2 ai (scripts/ai/governor.lua): a town's export hauler takes its surplus to the port while the town holds
+    -- more than town_export_start of its ore and plate together, until it holds less than town_export_stop
+    town_export_start = 1500, town_export_stop = 300,
     war_window = 2 * 60 * 60,  -- without diplomacy: "at war" while an own group attacked or defended this recently
   },
 }
@@ -813,9 +820,6 @@ balance.nation.war = {
   -- Supply points (SP) per division, 0..sp_max. States: supplied (>= low), low (1 .. low - 1), out (0).
   sp_max = 100, sp_start = 100, low = 50,
   use = {idle = 0, moving = 2, engaged = 8, enemy_land = 2}, -- SP per minute (idle in own or neutral land: 0)
-    -- Phase 5 M2 ai (scripts/ai/governor.lua): a town's export hauler takes its surplus to the port while the town holds
-    -- more than town_export_start of its ore and plate together, until it holds less than town_export_stop
-    town_export_start = 1500, town_export_stop = 300,
   engaged_ticks = 300,       -- a member that hit or was hit this recently makes its division "engaged"
   refill = {per_minute = 20, range = 64, sp_per_crate = 10}, -- within range (2 chunks) of a depot holding crates
   out = {share = 0.015, period = 600},  -- out of supply: 1.5 % of max health every 10 s
