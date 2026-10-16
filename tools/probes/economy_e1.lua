@@ -13,7 +13,8 @@
 --   oil       city B (a hub 100 tiles away, or a second city when scripts/cities.lua is loaded) has an oil field with
 --             two pumpjacks and a Petrochemical works; the capital (city A) has an auto factory with targets advanced
 --             circuits 20, circuits and cable but no plastic. A makes no advanced circuit for 60 s (B makes plastic);
---             then a hauler route B -> A starts and A must make an advanced circuit within 3 minutes.
+--             then a hauler route B -> A starts and A must make an advanced circuit within 3 minutes. With
+--             scripts/cities.lua, A's ledger row for advanced circuits must say "needs plastic: made in city B".
 local events = require("scripts.events")
 local util = require("scripts.util")
 local ai = require("scripts.ai.init")
@@ -249,6 +250,11 @@ local function check_oil_wait(s, tick)
     "city A: advanced circuits %d, factory recipe %s, plastic %d; ledger hint %s", stock(netA, "advanced-circuit"),
     fa and recipe_of(fa.entity) or "-", stock(netA, "plastic-bar"),
     hint and (hint.item .. " from " .. tostring(hint.city)) or "none")
+  if ages.cities() then -- one city per force under the shim: no other city to name
+    check("oil_ledger_hint", hint ~= nil and hint.item == "plastic-bar" and hint.city == s.city_b,
+      "city A's ledger row for advanced circuits: %s", hint and ("needs " .. hint.item .. ", made in city "
+      .. tostring(hint.city)) or "no hint")
+  end
   check("oil_b_makes_plastic", stock(netB, "plastic-bar") > 0, "city B: crude %d, plastic %d, sulfur %d, coal %d; %s",
     stock(netB, "rts-crude-oil"), stock(netB, "plastic-bar"), stock(netB, "sulfur"), stock(netB, "coal"),
     districts.describe(s.city_b))

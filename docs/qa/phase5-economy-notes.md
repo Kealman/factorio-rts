@@ -77,7 +77,7 @@ The shared-file line numbers are in the lead report (they move with every packag
 | `techs` | Industrialisation (20 advanced kits, flag), Supply III (+15), Mining III (+25 %), Hauler capacity II (+10 slots), Attack IV (+15 %); the last four need Age II and 15-25 industrial kits |
 | `buildings` | oil well 30 iron, 5 steel, 5 circuits (mining speed 0.5: 5 crude/s on a 100 % field, no power); refinery 60/15/10, 300 kW; chemical plant 30/5/5, 200 kW; each district 80 iron, 20 steel, 15 circuits (science campus +40 copper, 25 circuits), 400 kW, 2500 hp, 12 s |
 | `recipes` | Age II intermediates (refinery: 4 crude -> 3 petroleum, 3 s; chemical plant: petroleum + coal -> 2 plastic, petroleum -> 2 sulfur; factory: engine = steel + gear + 2 iron, 6 s; advanced circuit = 2 circuits + 2 plastic + 3 cable, 6 s; 2 steel beams from 3 steel; 4 concrete from 4 bricks + 2 stone; 2 industrial kits from engine + advanced circuit + sulfur, 12 s) and 20 district recipes (about twice the output of the machines they replace, intermediate steps skipped) |
-| `ai` | works factory at 240 s; capital targets Age I gears 20, circuits 30, Age II + steel 40, engines 10, advanced kits 10, circuits 60; districts circuits, steel, science, 60 s apart |
+| `ai` | works factory at 240 s; capital targets Age I gears 20, circuits 30 (plus what the Charter still needs, at most 50 each); Age II gears 20, circuits 60, steel 40, advanced kits 10; districts circuits, steel, science, 60 s apart |
 
 The ten districts and their recipes:
 
@@ -126,7 +126,7 @@ its first feasible recipe (built for its goods, it works without targets); every
 | AI age-up, 5 seeds | `KEEP_TREE=<tree> DURATION_MIN=21 SEED=<s> PERF=1 tools/autotest-run.sh p5e2-ai-s<s> '{..., mode = "nation"}' 1700` | see section 7 |
 | Skirmish unchanged | the same seed with the tree before and after E1: `SEED=11` 1v1 normal medium and the legacy units autotest | see section 7 |
 | Save / load in Nation mode | `EXTRA_LUA=... tools/saveload-check.sh p5e-saveload '{..., mode = "nation"}' 200` | 0 errors before and after the load; the economy keeps running after it |
-| GUI | `tools/gui-run.sh build/p5e-gui 240 RTS_E1_GUI_DONE` with `tools/probes/economy_gui.lua` appended | 6/6; screenshots `build/shots-p5e-gui/` |
+| GUI | `tools/gui-run.sh build/p5e-gui 300 RTS_E1_GUI_DONE` with `tools/probes/economy_gui.lua` copied into the copy's `scripts/` and required from its `control.lua` | 5/5 on the world map; screenshots `build/shots-p5e-gui/` (site, badge, districts at zoom 0.5 and 1, ledger, Age II tab, district panel with Auto on and off) |
 
 ## 7. Results
 
