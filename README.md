@@ -45,6 +45,7 @@ Every side starts with a Command Center (CC), the same stock and 6 walkers. Huma
 | Z / C / V / G | Stim / Shield / Scanner sweep / Artillery strike (see below) |
 | B | Show or hide the build menu |
 | Left click on the map while placing | Place a ghost (R rotates) |
+| R / Shift + R | Rotate the building or ghost under the cursor (while placing: the ghost on the cursor) |
 | Q or right click | Stop placing |
 | T | Research panel |
 | F3 | Jump to the newest alert (press again for older ones) |
@@ -126,13 +127,15 @@ A main iron patch at full speed lasts 50 minutes with 2 extractors, 25 with 4, a
 
 ## Your first match
 
-You start with 400 iron, 150 copper, 2 extractors, 2 smelters, 1 barracks, 1 factory, 2 stockpiles, 60 belts, 16 fast inserters, 16 medium poles, 6 walkers and the Commander. All of the buildings are still items in the stockpiles. Your iron patch is about 17 tiles in front of the CC and 10 to one side, with copper on the other side and stone and coal further out. This plan mirrors the normal AI's opening:
+You start with 400 iron, 150 copper, 2 extractors, 2 smelters, 1 barracks, 1 factory, 2 stockpiles, 60 belts, 16 fast inserters, 16 medium poles, 6 walkers and the Commander. All of the buildings are still items in the stockpiles. Your iron patch is about 17 tiles in front of the CC and 10 to one side, with copper on the other side and stone and coal further out. This plan mirrors the normal AI's opening.
+
+**Play your first game on Easy.** Easy's first attack comes at 5:00 at the earliest and at least 4 minutes pass between attacks. On Normal an aggressive AI attacks at 3:00, so keep the barracks making walkers from the first minute and keep your army near the CC.
 
 1. **0:00** Place the factory next to the CC. Build two iron lines (each an extractor feeding a smelter, then an inserter into one of your spare stockpiles) and connect them with poles. Place the barracks.
 2. **0:30** Set the factory to make extractors. Put one on stone and belt it into a stockpile, because every new smelter costs 10 stone. Add a third iron extractor.
 3. **1:00–1:45** Build a lab and a second factory. Set that factory to basic science kits, and have the first factory make about 10 gears between buildings. Press T and research Supply I (8 kits) or Mining I first.
 4. **1:45–3:00** Add iron smelters 3 and 4 and a copper extractor with its smelter. Start the barracks on walker kits once 3 or 4 iron smelters run: a busy barracks eats about 200 iron per minute, and one smelter makes 37. Put two turrets towards the enemy and make magazines.
-5. **3:00** The first attack can come now if you face an aggressive normal AI (see below). Your walkers, the Commander's rockets, Shield (C) and Stim (Z) hold it.
+5. **3:00** On Normal, an aggressive AI attacks now (economic at about 5:00, turtle at 6:30; see below). Your walkers, the Commander's rockets, Shield (C) and Stim (Z) hold it.
 6. **3:30** Set up a steel smelter that gets iron plates from another smelter by inserter; heavies need steel. Add a second lab and a feeder factory for gears or circuits.
 7. **~4:00** First hub at the natural: the factory makes it, you walk the Commander to the natural ore and place the hub ghost next to it, and the Commander's robots build it (see above). Then extractors and smelters on the natural feeding the hub's stockpiles, *Export above* on the hub and a hauler to bring the plates home.
 8. **By 6:00** Aim to have Supply I and one unlock (Heavy walkers or Raiders) done, and to mix units by counter. Walkers and drones need no research, and walkers are your default unit.

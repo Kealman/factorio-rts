@@ -64,6 +64,9 @@ RTS_LOCALE=en tools/gui-run.sh build/qa-p4 3600 'RTS_QA_END'
   - **PARTIAL:** the main effect is there, but a detail differs. Say which.
   - **FAIL:** the main effect is missing.
   - **SKIP:** a precondition is missing. Say which.
+- **Survival.** The Normal AI attacks from 3:00 and again every few minutes. Keep the barracks making walker kits
+  from step 22 on (the factory still gets its iron first), and keep the army near the CC. In the first QA run the
+  barracks stayed paused for most of the protocol, and the AI destroyed the base twice at about 10:00.
 - **Time budget.** The session closes after one hour of wall time, and the steps take about 45 minutes. If the strip
   timer passes 45:00, or you have been testing for 50 minutes, go to step 57 and finish.
 
@@ -113,14 +116,14 @@ screen x = 640 + 16 × (world x + 152)        screen y = 400 + 16 × world y
 |---|---|---|
 | Your CC, 4×4, with 4 small stockpiles | (−152, 0) | (640, 400); stockpiles (584, 376), (584, 424), (696, 376), (696, 424) |
 | The Commander at the start (big blue spider-tank) | (−146, 0) | body ≈ (736, 368) |
-| 6 walkers at the start | x −141.5 and −138; y −3.5, 0, 3.5 | bodies ≈ x 808 and 864, y 296, 350, 407 |
+| 6 walkers at the start | feet at x −141.5 and −138; y −3.5, 0, 3.5 | bodies (shells, drawn 3 tiles above the feet) ≈ x 808 and 864, y 296, 350, 407; feet 48 px lower |
 | Iron ore (blue-grey), 12×12 | x −141…−129, y 4…16 | x 816–1008, y 464–656 |
 | Copper ore (orange), 8×8 | x −139…−131, y −14…−6 | x 848–976, y 176–304 |
 | Stone (beige), coal (black) | (−124, 16), (−116, 16) | (1088, 656), (1216, 656) |
 | The CC's power area (dark square while placing) | 36×36 tiles | x 352–928, y 112–688 |
 | **Sites used below:** factory / barracks / lab | (−146.5, 8.5) / (−146.5, −8.5) / (−158.5, −8.5) | (728, 536) / (728, 264) / (536, 264) |
 | Extractor / smelter / inserter / stockpile | (−139.5, 5.5) / (−138.5, 2.5) / (−137.5, 4.5) / (−137.5, 5.5) | (840, 488) / (856, 440) / (872, 472) / (872, 488) |
-| Hub 1, 4×4 (step 23, at the natural iron) | (−91, 13) | off screen: click the minimap at (1153, 98), then the hub is ≈144 px left of the iron patch's centre |
+| Hub 1, 4×4 (step 23, at the natural iron) | (−91, 13) | off screen: after a minimap click at (1153, 98) the iron patch's centre is at ≈(704, 356) and the hub at ≈(560, 356) |
 | Barracks rally point / army parking spot | (−132, −5) / (−130, −2) | (960, 320) / (992, 368) |
 | Empty ground (to deselect) | (−160.75, 13.75) | (500, 620) |
 
@@ -191,8 +194,7 @@ Nothing has to happen fast: your units and the Commander shoot back by themselve
 5. Wait until "Enemies seen" shows "?" again. The AI pulls back after heavy losses.
 6. Press SPACE and redo the interrupted step from its start.
 
-Note in the report the strip time, what was attacked and what you lost. Do not restart the paused barracks for this
-before step 40: the factory steps need that iron.
+Note in the report the strip time, what was attacked and what you lost. Keep the barracks running (see "Survival").
 
 ## Steps
 
@@ -287,8 +289,9 @@ before step 40: the factory steps need that iron.
 ### Part C: selection
 
 8. **Click, then Shift + click.**
-   - *Input:* left-click the body of the top-left walker (≈808, 296). Then hold Shift and left-click the body of the
-     bottom-right walker (≈864, 407).
+   - *Input:* left-click the round body (shell) of the top-left walker (≈808, 296). Then hold Shift and left-click
+     the body of the bottom-right walker (≈864, 407). A click anywhere from the shell down to the walker's feet
+     (about 48 px below the shell) selects it.
    - *Expect:*
      - After the click, a light-blue box surrounds that walker. The panel reads "Walker ×1", "HP 100%" and "Order:
        Idle", with one card: the walker icon, the number 1 and a green bar.
@@ -472,7 +475,7 @@ Before each step of this part, press SPACE if the camera has moved.
       3. Click the walker kit button (≈53, 735).
       4. Right-click ground at (960, 320).
       5. Wait 30 s.
-      6. Click the Pause button (≈27, 735).
+      6. Click the Pause button (≈27, 735), check the panel, then click the walker kit (≈53, 735) again.
     - *Expect:*
       - **Panel.** "Barracks #N", "HP 1500/1500", and six recipe buttons: Pause (highlighted), walker kit, heavy walker
         kit (grey), drone kit, raider kit (grey) and artillery kit (grey). Then "Paused: pick a recipe." and "No rally
@@ -483,27 +486,28 @@ Before each step of this part, press SPACE if the camera has moved.
         from the barracks. The panel reads "Rally point (-132.0, -5.0). Right-click to move it."
       - **The batch.** In 30 s, about 8 to 10 walkers come out at the barracks' right side and walk to the flag.
         "Army" and "Supply" rise, and iron drops by 10 per walker.
-      - **Pause.** "Paused: pick a recipe."; no more walkers come out.
-    - *Why pause:* the factory needs the iron for the hub, the lab, the hauler and the science kits. Step 40 starts the
-      barracks again.
+      - **Pause.** "Paused: pick a recipe."; no more walkers come out. The walker kit click starts it again.
+    - *Keep it running:* these walkers defend the base (see "Survival"). The factory is served first when both need
+      iron, so the factory steps still work, a little slower.
     - *Log check (lead):*
       - `select building barracks unit=[0-9]+ player=1 at \(-146\.5, -8\.5\)`
       - `hud: recipe buttons barracks#[0-9]+ player=1: pause rts-walker-kit rts-walker-heavy-kit rts-drone-kit rts-raider-kit rts-artillery-kit`
       - `recipe set barracks#[0-9]+ rts-walker-kit ok=true now=rts-walker-kit player=1`
       - `rally set barracks #[0-9]+ -> \(-132\.0, -5\.0\) ok=true player=1`
       - `production: barracks #[0-9]+ \(rts-player\) spawned rts-walker`
-      - `recipe set barracks#[0-9]+ none ok=true now=none player=1`
+      - `recipe set barracks#[0-9]+ none ok=true now=none player=1`, then `recipe set barracks#[0-9]+ rts-walker-kit ok=true`
 
 23. **The Commander goes to the natural expansion; a hub ghost next to it.**
     - *Input:*
       1. Click the Commander icon on the ability bar (486, 753) once: only the Commander is selected ("Commander ×1").
-      2. Click the minimap at (1153, 98): the camera jumps to your natural iron, a 10×10 blue-grey ore patch near the
-         screen centre (about 160 px wide). The Commander stays selected.
-      3. Right-click bare ground about 200 px (12 tiles) left of the iron patch's centre. Wait until the Commander
+      2. Click the minimap at (1153, 98): the camera jumps to your natural iron, a 10×10 blue-grey ore patch (about
+         160 px wide) up and right of the screen centre, with its centre at about (704, 356). The Commander stays
+         selected.
+      3. Right-click bare ground about 200 px (12 tiles) left of the iron patch's centre, ≈(504, 356). Wait until the Commander
          stands there (it walks about 60 tiles, 5 s; water and trees may make it go around).
       4. In the Economy tab, click **Hub** (≈1252, 772). Left-click the map about 144 px (9 tiles) left of the iron
-         patch's centre, at the same height: on bare ground, with about 2 tiles of grass between the ghost and the ore,
-         and within 15 tiles (240 px) of the Commander.
+         patch's centre, at the same height, ≈(560, 356): on bare ground, with about 2 tiles of grass between the
+         ghost and the ore, and within 15 tiles (240 px) of the Commander.
       5. Press Q. Leave the Commander there until step 25.
     - *Expect:* the Commander walks to the natural and stops. A 4×4 hub ghost stands just left of the natural iron. It
       stays a ghost for now: there is no hub in stock yet.
@@ -671,9 +675,9 @@ Before each step of this part, press SPACE if the camera has moved.
 36. **Park, Resume, Return home.**
     - *Input:*
       1. Click the minimap at (1153, 98). Right-click ground about 100 px left of Hub 1. Wait 5 s.
-      2. Click **Resume** (≈1130, 329). Wait 5 s.
+      2. Click **Resume** (≈1124, 314; in Route mode the panel has one more line and the buttons sit at y≈329). Wait 5 s.
       3. Right-click the same ground again and wait 5 s.
-      4. Click **Return home** (≈1062, 329). Wait 10 s.
+      4. Click **Return home** (≈1062, 314). Wait 10 s.
       5. Click empty ground and press SPACE.
     - *Expect:*
       - After each ground right click, the hauler walks there and stops. The panel reads "State: Parked" in yellow, and
@@ -730,20 +734,19 @@ Before each step of this part, press SPACE if the camera has moved.
     - *Log check (lead):* `recipe set factory#[0-9]+ rts-gear ok=true`, `recipe set factory#[0-9]+ rts-science-basic ok=true`,
       `production: factory #[0-9]+ \(rts-player\) moved 1 rts-science-basic into the network`
 
-40. **The lab at work; the barracks back on.**
+40. **The lab at work; the barracks still on.**
     - *Input:*
       1. Click the lab (536, 264) and take a screenshot.
-      2. Click the barracks (728, 264), then the walker kit (≈53, 735).
+      2. Click the barracks (728, 264). If its walker kit is not running (yellow), click it (≈53, 735).
       3. Click empty ground at (500, 620).
     - *Expect:*
       - **Lab page:** "Lab #N" and "Researching Supply I: N%", with N rising. The third line reads "Takes science kits
         from its logistic network. More labs research faster.", or "Waiting for [kit] in its logistic network" while
         the lab has none.
-      - **Barracks:** it makes walkers again, and they gather at the flag. Keep it running from now on: these walkers
-        are the army for Part N.
+      - **Barracks:** "Walker kit: running", and walkers gather at the flag. Keep it running: these walkers are the
+        army for Part N.
       - Supply I needs 8 kits × 10 s, about 80 s with one lab. Go on with Part I meanwhile.
-    - *Log check (lead):* `select building lab unit=[0-9]+`, `research: lab #[0-9]+ \(rts-player\) researching`,
-      `recipe set barracks#[0-9]+ rts-walker-kit ok=true`
+    - *Log check (lead):* `select building lab unit=[0-9]+`, `research: lab #[0-9]+ \(rts-player\) researching`
 
 ### Part I: abilities
 
@@ -864,14 +867,13 @@ Before each step of this part, press SPACE if the camera has moved.
 
 52. **Assign groups.**
     - *Input:*
-      1. Press SPACE, then Ctrl+A.
-      2. Shift + click the hauler card (the last card, ≈71, 736) to drop the hauler.
-      3. Press Ctrl+1.
-      4. Click the Commander icon (486, 753), then press Ctrl+2.
+      1. Press SPACE, then Ctrl+A. It selects the combat units and the Commander; haulers are never part of it, so
+         no hauler card appears.
+      2. Press Ctrl+1.
+      3. Click the Commander icon (486, 753), then press Ctrl+2.
     - *Expect:* after Ctrl+1, group button 1 reads "1: N" (the army, Commander included) and looks pressed. After
       Ctrl+2, button 2 reads "2: 1" and looks pressed. Buttons 3 to 5 stay greyed.
-    - *Log check (lead):* `hud click card rts-hauler player=1 shift=true`, `group set 1 n=[0-9]+ player=1`,
-      `group set 2 n=1 player=1`
+    - *Log check (lead):* `select all n=[0-9]+ player=1`, `group set 1 n=[0-9]+ player=1`, `group set 2 n=1 player=1`
 
 53. **Recall.**
     - *Input:*
@@ -928,7 +930,7 @@ Before each step of this part, press SPACE if the camera has moved.
 
 56. **Optional: a hub at the middle iron, built by the Commander.** Only if the strip timer is below 35:00.
     - *Input:*
-      1. Click the barracks and click Pause, so that the factory gets the iron.
+      1. Only if the factory waited for iron for more than 30 s: click the barracks and click Pause.
       2. If the Hub button in the Economy tab shows no number, click the factory and the Hub recipe, wait until the Hub
          button shows 1, then click Pause.
       3. Click the Commander icon on the ability bar (486, 753) once, so that only the Commander is selected.

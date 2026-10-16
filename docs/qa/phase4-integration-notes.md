@@ -116,6 +116,20 @@ not counted). The first matrix (`final`, before round two) had the same errors, 
 | Stale notes | `phase4-logistics-notes.md`, `phase4-research-notes.md`, `phase4-abilities-notes.md` | – |
 | Protocol | step 23 walks the Commander to the natural and places Hub 1 there, step 34 moves iron from the CC to it, step 56 builds a middle hub with the Commander, step 59 concedes and reopens the results | not run by a tester yet |
 
+## Fixes from the computer-use QA run (`phase4-qa-results.md`: 52 pass, 2 fail, 8 skipped)
+
+| Finding | Cause | Fix | Verified by |
+|---|---|---|---|
+| Step 28: a hub's policy panel never reopened after its × | `hubgui.lua` cleared the "closed" flag only when the selection changed, and `destroy()` had already cleared the key it compared with, so a deselect did not count | the poll clears the flag as soon as the wanted panel differs from the closed one | GUI probe `hubpanel` |
+| Step 8: a click on a walker's body selected nothing | the engine's selection box is centred one torso height above the feet; in the remote view the body is drawn about two torso heights up; a click between them hits no box | `selection.unit_at`: a click picks the nearest own unit whose feet, torso or drawn body (0, 1 or 2 × the prototype height up) lies within 1.5 tiles; units win over buildings; the engine's hits are the fallback. The prototypes' boxes stay: the engine already centres them on the torso | GUI probe `click` (0×0 areas with no engine hits) |
+| A new factory showed the old one's "Crafted 6 / to network 6" | the line showed the force's totals, which also survived the match | per-factory counters (`rec.made`, `rec.moved`); `production.reset_match()` from `match.teardown` | GUI probe `factory` |
+| Fighting went on behind the results window; F still armed after defeat | nothing stopped at the end | `match.lua` `calm_down`: every match force ceases fire on the others (`setup_forces` undoes it), every AI commander stops, every orderable unit stops; `orders.locked_reason` refuses F and right clicks after the end or while the player's side is out, with a flying text | GUI probe `end`; headless concede probe |
+| A vanilla info box under the minimap, stale after construction | the remote view shows the hover tooltip for ghosts even with `show_entity_tooltip` off (real entities' tooltips were hidden) | hover selection off (`update_entity_selection` in `camera.lua`'s hidden chrome); R / Shift + R now rotate the own entity or ghost under the cursor (`rts-rotate`, `rts-reverse-rotate` follow the vanilla controls); a vanilla entity window that opens anyway is closed (`on_gui_opened`) | GUI probe `hover`, `entity_window`, `rotate` |
+| Help said 80/40 reach | the frozen QA build predates the revert | help (Hubs) states 40 / 22 and the Commander flow, en and ru | text check |
+| Truncated lines in the building panel and the order label | single-line labels | the building page's 2nd and 3rd lines wrap; the order label is 250 wide (was 200); the hub and extractor texts are shorter | GUI screenshot `rts-qafix-wrap-hub.png` |
+| Protocol | coordinates and a stale remark | step 8 (click anywhere from the shell to the feet), step 23 (the natural iron's centre at ≈(704, 356), hub at ≈(560, 356)), step 36 (Auto-mode buttons at y≈314), step 52 (Ctrl+A has no hauler), a "Survival" note: keep the barracks running from step 22 | – |
+| README | – | "Your first match" recommends Easy and says an aggressive Normal AI attacks at 3:00 | – |
+
 ## Moats on crowded small maps: not possible, documented
 
 `scripts/mapgen.lua` (comment above `plan_moats`) and the lobby tooltip say why:
