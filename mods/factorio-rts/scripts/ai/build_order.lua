@@ -6,6 +6,10 @@
 --   * an unsatisfied step whose `when` holds is executed (queues its work) and counts as in progress;
 --   * an unsatisfied step whose `when` does not hold is skipped, but at most LOOKAHEAD of those are passed over.
 -- The walk stops at cfg.max_in_progress steps in progress, so a few steps overlap and the queue stays short.
+-- Phase 4: the order is data.order(difficulty, doctrine). Before the walk, a lost factory or barracks is rebuilt
+-- first (build_order.priority: its entry moves to the front of the construction queue, so the factory makes its
+-- item next). Other modules add step kinds through build_order.KINDS[kind] = {satisfied, in_progress, execute,
+-- describe} (ai/hubs.lua: "hub").
 --
 -- Mining lines (C.lines[name]) are planned by ai/layout.lua once: the START_LINES when the commander starts, an
 -- expansion line when its step runs. A line holds the plan keys of its parts:
@@ -19,11 +23,14 @@ local units = require("scripts.units")
 local data = require("scripts.ai.orders_data")
 local layout = require("scripts.ai.layout")
 local construction = require("scripts.ai.construction")
+local deps = require("scripts.ai.deps")
 
 local build_order = {}
 
 build_order.LOOKAHEAD = 2           -- unaffordable steps passed over before the walk stops
 build_order.RETRY_TICKS = 10 * 60   -- a step that found no spot tries again after this long
+build_order.BASE_COUNT_RADIUS = 32  -- "cc" / "front" build steps count buildings this close to the CC
+build_order.KINDS = {}              -- extra step kinds (see the header)
 
 ---------------------------------------------------------------------------
 -- Lines
@@ -41,17 +48,18 @@ local function hostile_positions(C)
   return list
 end
 
---- Plan line `name` (orders_data.LINES) for commander C with planning context ctx. Idempotent.
-function build_order.plan_line(C, ctx, name)
+--- Plan line `name` (orders_data.LINES, or `spec`) for commander C with planning context ctx, into `sink` (default
+--- the CC, see layout.lua). Idempotent.
+function build_order.plan_line(C, ctx, name, spec, sink)
   if C.lines[name] then return C.lines[name] end
-  local spec = data.LINES[name]
+  spec = spec or data.LINES[name]
   local L = {name = name, ore = spec and spec.ore}
   C.lines[name] = L
   if not spec then
     L.status, L.reason = "unavailable", "no such line"
     return L
   end
-  local plan, reason = layout.plan_line(C, ctx, name, spec, hostile_positions(C))
+  local plan, reason = layout.plan_line(C, ctx, name, spec, hostile_positions(C), sink)
   if not plan then
     L.status, L.reason = "unavailable", reason
     util.log("ai %s: line %s unavailable: %s", C.force, name, reason)
@@ -101,6 +109,7 @@ end
 local function queue_list(C, list)
   for _, key in ipairs(list or {}) do construction.queue(C, key) end
 end
+build_order.queue_list = queue_list
 
 --- Number of the line's drills that are built.
 function build_order.line_drills_built(C, L)
@@ -131,6 +140,7 @@ local function line_busy(C, L)
   end
   return false
 end
+build_order.line_busy = line_busy
 
 -- Queue drills until `n` are built or queued: the spine, the belt to the first slot, the poles, then the drills.
 local function want_drills(C, L, n)
@@ -163,6 +173,7 @@ local function want_drills(C, L, n)
   queue_list(C, wanted)
   return #wanted
 end
+build_order.want_drills = want_drills
 
 -- Queue hub slots 1..n with the belt segments that reach them.
 local function want_slots(C, L, n)
@@ -175,6 +186,7 @@ local function want_slots(C, L, n)
   end
   return queued
 end
+build_order.want_slots = want_slots
 
 ---------------------------------------------------------------------------
 -- Steps
@@ -185,15 +197,19 @@ local function when_ok(C, step)
   local w = step.when
   if not w then return true end
   for key, need in pairs(w) do
-    local have
-    if key == "units" then
-      have = units.count(C.force)
-    elseif key == "time" then
-      have = (game.tick - C.started) / 60
+    if key == "unlocked" then
+      if not (deps.research and deps.research.is_unlocked(C.force, need)) then return false end
     else
-      have = construction.have(C, WHEN_ITEMS[key] or key)
+      local have
+      if key == "units" then
+        have = units.count(C.force)
+      elseif key == "time" then
+        have = (game.tick - C.started) / 60
+      else
+        have = construction.have(C, WHEN_ITEMS[key] or key)
+      end
+      if have < need then return false end
     end
-    if have < need then return false end
   end
   return true
 end
@@ -202,13 +218,34 @@ local function line_of(C, step)
   return C.lines[step.anchor]
 end
 
+--- Live buildings named `name` of commander C's force within BASE_COUNT_RADIUS of its CC (a forward hub's solar
+--- arrays do not count for the base). Names outside the building registry are counted from the plan.
+function build_order.base_count(C, name)
+  local kind = buildings.kind_of(name)
+  local f = C.frame
+  local centre = f and {x = f.cx, y = f.cy}
+  local n = 0
+  if kind then
+    for _, rec in buildings.for_force(C.force, kind) do
+      if not centre or util.distance(rec.position, centre) <= build_order.BASE_COUNT_RADIUS then n = n + 1 end
+    end
+    return n
+  end
+  for _, e in pairs(C.plan) do
+    if e.name == name and e.status == "built" and e.entity and e.entity.valid then n = n + 1 end
+  end
+  return n
+end
+
 local function satisfied(C, step, st)
   if st.skipped then return true end
   local kind = step.kind
+  local ext = build_order.KINDS[kind]
+  if ext then return ext.satisfied(C, step, st) end
   if kind == "build" then
     local count = step.count or 1
     if step.anchor == "cc" or step.anchor == "front" then
-      return buildings.count(C.force, buildings.kind_of(step.name)) >= count
+      return build_order.base_count(C, step.name) >= count
     end
     local L = line_of(C, step)
     if not L then return false end
@@ -235,6 +272,8 @@ local function satisfied(C, step, st)
 end
 
 local function in_progress(C, step)
+  local ext = build_order.KINDS[step.kind]
+  if ext then return ext.in_progress(C, step) end
   if step.kind == "build" then
     if step.anchor == "cc" or step.anchor == "front" then return (C.pending[step.name] or 0) > 0 end
     local L = line_of(C, step)
@@ -248,10 +287,12 @@ end
 
 local function execute(C, step, st, surface, get_ctx)
   local kind = step.kind
+  local ext = build_order.KINDS[kind]
+  if ext then return ext.execute(C, step, st, surface, get_ctx) end
   if kind == "build" then
     local count = step.count or 1
     if step.anchor == "cc" or step.anchor == "front" then
-      local have = buildings.count(C.force, buildings.kind_of(step.name)) + (C.pending[step.name] or 0)
+      local have = build_order.base_count(C, step.name) + (C.pending[step.name] or 0)
       local placed = 0
       for _ = have + 1, count do
         local pos, pole = layout.find_spot(C, surface, step.name, step.anchor)
@@ -299,6 +340,8 @@ local function execute(C, step, st, surface, get_ctx)
 end
 
 local function describe(step)
+  local ext = build_order.KINDS[step.kind]
+  if ext then return ext.describe(step) end
   if step.kind == "build" then
     return string.format("build %s x%d @%s", step.name, step.count or 1, step.anchor)
   elseif step.kind == "recipe" then
@@ -312,9 +355,55 @@ local function describe(step)
 end
 build_order.describe = describe
 
+---------------------------------------------------------------------------
+-- Priority rebuild (Phase 4 fix: a side that lost its barracks never rebuilt it in time)
+---------------------------------------------------------------------------
+-- A lost factory comes first (it makes the barracks item), then the barracks once unit production is on. Their
+-- queue entries move to the front of C.queue, so construction places them first and the factory, which makes the
+-- first item the queue lacks, makes their items next.
+build_order.PRIORITY = {"rts-factory", "rts-barracks"}
+
+function build_order.priority(C, surface)
+  local front = {}
+  C.had = C.had or {}
+  for _, name in ipairs(build_order.PRIORITY) do
+    local n = buildings.count(C.force, buildings.kind_of(name))
+    if n > 0 then C.had[name] = true end
+    -- only a building the force had and lost: the opening places the first ones
+    if C.had[name] and n == 0 then
+      C.priority_retry = C.priority_retry or {}
+      if (C.pending[name] or 0) == 0 and game.tick >= (C.priority_retry[name] or 0) then
+        C.priority_retry[name] = game.tick + build_order.RETRY_TICKS
+        local pos, pole = layout.find_spot(C, surface, name, "cc")
+        if pos then
+          if pole then construction.queue(C, construction.add(C, {name = layout.POLE, x = pole.x, y = pole.y})) end
+          construction.queue(C, construction.add(C, {name = name, x = pos.x, y = pos.y}))
+          C.stats.priority = (C.stats.priority or 0) + 1
+          util.log("ai %s: priority rebuild: %s at %s (the last one was lost)", C.force, name, util.pos_str(pos))
+        end
+      end
+      for _, key in ipairs(C.queue) do
+        local e = C.plan[key]
+        if e and e.name == name then front[#front + 1] = key end
+      end
+    end
+  end
+  if #front == 0 then return false end
+  local set = {}
+  for _, key in ipairs(front) do set[key] = true end
+  local q = {}
+  for _, key in ipairs(front) do q[#q + 1] = key end
+  for _, key in ipairs(C.queue) do
+    if not set[key] then q[#q + 1] = key end
+  end
+  C.queue = q
+  return true
+end
+
 --- Walk the build order of commander C once (see the header). get_ctx() returns a planning context.
 function build_order.step(C, surface, get_ctx)
-  local order = data.BUILD_ORDERS[C.difficulty] or data.BUILD_ORDERS[data.DEFAULT_DIFFICULTY]
+  local order = data.order(C.difficulty, C.doctrine)
+  build_order.priority(C, surface)
   local busy, passed = 0, 0
   C.current_step = nil
   for i, step in ipairs(order) do

@@ -15,6 +15,12 @@
 -- still produce at the end; when a force stopped producing at DURATION, the test waits up to END_GRACE for the match
 -- to end), no_bad_spam (fewer than 20 construction entries given up per force). FORCES is every match force (debug.lua
 -- sets it); 1v1 is rts-player vs rts-ai-1.
+-- Phase 4 checks (each excused for a force that lost its CC before the deadline): lab_<force> (a lab stood),
+-- techs_6min_<force> (at least 2 technologies researched by 6 minutes), kinds_8min_<force> (at least 3 unit kinds
+-- spawned by 8 minutes, or by the end), hub_<force> (economic doctrine: a hub built and at least 1 hauler delivery),
+-- harass_<force> (aggressive doctrine: at least 1 raider harass). DOCTRINES sets the doctrines (nil = the seeded
+-- draw); the minute report adds research, hubs, haulers, the unit mix and supply, and the perf line the AI time
+-- per tick.
 local util = require("scripts.util")
 local events = require("scripts.events")
 local units = require("scripts.units")
@@ -26,17 +32,25 @@ local commander = require("scripts.ai.commander")
 local layout = require("scripts.ai.layout")
 local data = require("scripts.ai.orders_data")
 local build_order = require("scripts.ai.build_order")
+local tech = require("scripts.ai.tech")
+local hubs = require("scripts.ai.hubs")
+local mix = require("scripts.ai.mix")
+local deps = require("scripts.ai.deps")
 
 local autotest = {}
 
-autotest.DURATION = 6 * 60 * 60 -- test copies may set a longer one to see how long a match takes
+autotest.DURATION = 8 * 60 * 60 -- test copies may set a longer one to see how long a match takes
 autotest.MINUTE = 60 * 60
 autotest.BUILD_DEADLINE = 3 * 60 * 60
+autotest.TECH_DEADLINE = 6 * 60 * 60
+autotest.KINDS_DEADLINE = 8 * 60 * 60
 autotest.END_GRACE = 60 * 60 -- at DURATION, a side that stopped producing gets this long for the match to end
 autotest.FORCES = {util.PLAYER_FORCE, util.ENEMY_FORCE}
 -- The player commander's difficulty; nil = the same as the enemy's (storage.match.config.enemy_difficulty), so
 -- one setting runs easy-vs-easy, normal-vs-normal or hard-vs-hard.
 autotest.PLAYER_DIFFICULTY = nil
+-- Doctrines per force for the run; nil (or a force left out) = the seeded draw (ai/doctrine.lua).
+autotest.DOCTRINES = {["rts-player"] = "economic", ["rts-ai-1"] = "aggressive"}
 
 -- Module-local wall clock (profilers are not game state).
 local wall
@@ -125,23 +139,57 @@ end
 
 function autotest.start()
   local s = {started = game.tick, minute = 0, pass = 0, fail = 0, kits = {}, per_minute = {}, built_at = {},
-             lines_at = {}, produced_ok = {}, done = false}
+             lines_at = {}, produced_ok = {}, done = false, lab_at = {}, techs_at_deadline = {}, kinds = {},
+             kinds_at_deadline = {}, hub_at = {}, delivery_at = {}, cc_lost_at = {}}
   storage.ai_autotest = s
   autotest.planner_check()
   local cfg = storage.match and storage.match.config
   local difficulty = autotest.PLAYER_DIFFICULTY or (cfg and cfg.enemy_difficulty) or "normal"
   for _, f in ipairs(autotest.FORCES) do
+    local want = autotest.DOCTRINES and autotest.DOCTRINES[f]
+    if want then ai.set_doctrine(f, want) end
     if not ai.get(f) then ai.init_force(f, difficulty) end
     s.kits[f] = production.stats(f).kits
     s.per_minute[f] = {}
     s.produced_ok[f] = true
+    s.kinds[f] = {}
   end
   ai.reset_perf()
   wall = helpers.create_profiler()
   autotest.log_maps()
-  util.log("ai autotest: started at tick %d, %s (%s) vs %s (%s), %d minutes", game.tick, autotest.FORCES[1],
-    ai.get(autotest.FORCES[1]).difficulty, autotest.FORCES[2], ai.get(autotest.FORCES[2]).difficulty,
+  local parts = {}
+  for _, f in ipairs(autotest.FORCES) do
+    local C = ai.get(f)
+    parts[#parts + 1] = string.format("%s (%s, %s)", f, C.difficulty, C.doctrine)
+  end
+  util.log("ai autotest: started at tick %d, %s, %d minutes", game.tick, table.concat(parts, " vs "),
     autotest.DURATION / autotest.MINUTE)
+end
+
+-- Unit kinds each force's barracks spawned (kinds_8min check).
+production.on_spawned(function(unit, rec, kit)
+  local s = storage.ai_autotest
+  if not (s and s.kinds and s.kinds[rec.force]) then return end
+  local u = units.get(unit.unit_number)
+  local kind = u and u.kind or unit.name
+  if not s.kinds[rec.force][kind] then
+    s.kinds[rec.force][kind] = game.tick - s.started
+    util.log("ai autotest: %s spawned its first %s at %.0fs", rec.force, kind, (game.tick - s.started) / 60)
+  end
+end)
+
+local function kinds_line(t)
+  local list = {}
+  for kind in pairs(t or {}) do list[#list + 1] = kind end
+  table.sort(list)
+  return table.concat(list, " ")
+end
+
+local function delivered_total(f)
+  local st = deps.logistics and deps.logistics.stats(f)
+  local n = 0
+  for _, c in pairs(st and st.delivered or {}) do n = n + c end
+  return n, st
 end
 
 local function kinds(force_name)
@@ -178,6 +226,19 @@ local function minute_report(s, n)
       snap.iron, snap.copper, snap.stone, snap.steel, C and #C.queue or -1, C and table_size(C.known) or -1,
       C and C.stats.attacks or -1, C and C.stats.reinforcements or -1, C and C.stats.retreats or -1,
       C and C.stats.defends or -1, C and tostring(C.current_step) or "-")
+    if C then
+      local labs, working = 0, 0
+      if deps.research then labs, working = deps.research.lab_counts(f) end
+      local total, lst = delivered_total(f)
+      util.log("ai minute %d %s phase4: doctrine %s | labs %d (working %d) techs %d research %s | hubs %d haulers %d "
+        .. "trips %d delivered %d lost %d | units [%s] desired [%s] kinds spawned [%s] | supply %s/%s%s | harass %d "
+        .. "guards %d patrols %d priority %d yields %d/%d", n, f, C.doctrine, labs, working, tech.done_count(f),
+        C.science and C.science.tech or "-", buildings.count(f, "hub"), hubs.hauler_count(C), lst and lst.trips or 0,
+        total, lst and lst.lost or 0, mix.describe(C.mix_counts), mix.describe(C.mix_weights), kinds_line(s.kinds[f]),
+        tostring(C.supply_used), tostring(C.supply_cap), C.capped and " CAPPED" or "", C.stats.harass or 0,
+        C.stats.guards or 0, C.stats.patrols or 0, C.stats.priority or 0, C.stats.yields or 0,
+        C.stats.builder_yields or 0)
+    end
   end
   util.log("ai minute %d match: phase=%s winner=%s", n, tostring(m and m.phase), tostring(m and m.winner))
   local p = ai.perf()
@@ -185,6 +246,12 @@ local function minute_report(s, n)
     wall.stop()
     log({"", string.format("[rts] ai perf minute %d: %d ticks, %d AI runs, AI time ", n, autotest.MINUTE, p.runs),
          p.ai, " | wall clock ", wall})
+    -- per tick: the AI time divided over the minute's ticks (Lua formats the profiler; the division is done there)
+    local per_tick = helpers.create_profiler(true)
+    per_tick.add(p.ai)
+    per_tick.divide(autotest.MINUTE)
+    log({"", string.format("[rts] ai perf minute %d: AI time per tick (average over %d ticks) ", n, autotest.MINUTE),
+         per_tick})
     local parts = {""}
     for _, name in ipairs(commander.PARTS) do
       parts[#parts + 1] = " | " .. name .. " "
@@ -242,9 +309,50 @@ local function finish(s, why)
   for _, f in ipairs(autotest.FORCES) do
     local C = ai.get(f)
     local knocked_out = buildings.count(f, "cc") == 0
-    check("attack_" .. f, (C and C.stats.attacks > 0) or ended or knocked_out,
+    local lost = s.cc_lost_at[f]
+    local function excused(deadline) return lost ~= nil and lost < deadline end
+    local lost_txt = lost and string.format(" (lost its CC at %.0fs)", lost / 60) or ""
+    check("lab_" .. f, s.lab_at[f] ~= nil or excused(autotest.BUILD_DEADLINE), "%s: %s%s", f,
+      s.lab_at[f] and string.format("first lab at %.0fs", s.lab_at[f] / 60) or "no lab", lost_txt)
+    local techs = s.techs_at_deadline[f]
+    if techs == nil then techs = tech.done_count(f) end
+    check("techs_6min_" .. f, techs >= 2 or excused(autotest.TECH_DEADLINE), "%s: %d technologies by %s%s [%s]", f,
+      techs, s.techs_at_deadline[f] and "6 min" or "the end", lost_txt, (function()
+        local names = {}
+        for name, t in pairs(C and C.tech and C.tech.done or {}) do names[#names + 1] = string.format("%s@%.0fs", name,
+          (t - C.started) / 60) end
+        table.sort(names)
+        return table.concat(names, " ")
+      end)())
+    local nk = s.kinds_at_deadline[f] or table_size(s.kinds[f] or {})
+    check("kinds_8min_" .. f, nk >= 3 or excused(autotest.KINDS_DEADLINE), "%s: %d unit kinds spawned [%s]%s", f, nk,
+      kinds_line(s.kinds[f]), lost_txt)
+    if C then
+      for _, l in ipairs(hubs.diagnose(C)) do util.log("%s", l) end
+    end
+    if C and C.doctrine == "economic" then
+      local total, lst = delivered_total(f)
+      check("hub_" .. f, (s.hub_at[f] ~= nil and total > 0) or excused(autotest.DURATION), "%s: %s, %s%s; %s", f,
+        s.hub_at[f] and string.format("hub built at %.0fs", s.hub_at[f] / 60) or "no hub",
+        s.delivery_at[f] and string.format("first hauler delivery at %.0fs", s.delivery_at[f] / 60) or "no delivery",
+        lost_txt, hubs.describe(C))
+    end
+    if C and C.doctrine == "aggressive" then
+      check("harass_" .. f, (C.stats.harass or 0) >= 1 or excused(autotest.DURATION), "%s: %d raider harass(es)%s",
+        f, C.stats.harass or 0, lost_txt)
+    end
+    -- Phase 4: the economic and turtle doctrines push late; one whose pool never reached its attack size or parity
+    -- with the enemy army it saw (army.lua PARITY) holds, by design, and the line says so
+    local a = C and C.army
+    local need = a and math.max(a.min or 0, math.floor((a.enemy_seen or 0) * 0.8 + 0.5)) or 0
+    local held = C and (C.doctrine == "turtle" or C.doctrine == "economic") and a and (a.pool_strength or 0) < need
+    local not_due = C and game.tick < C.started + (C.cfg.first_attack or 0) -- easy x late doctrines: past 8 minutes
+    check("attack_" .. f, (C and C.stats.attacks > 0) or ended or knocked_out or held or not_due,
       "%s launched %d attacks (%d reinforcements)%s", f, C and C.stats.attacks or 0, C and C.stats.reinforcements or 0,
-      ended and ", match ended" or (knocked_out and ", lost its CC first" or ""))
+      ended and ", match ended" or (knocked_out and ", lost its CC first" or (held and string.format(
+        ", %s held: pool strength %.1f below %d (attack size %d, enemy army seen %d)", C.doctrine,
+        a.pool_strength or 0, need, a.min or 0, a.enemy_seen or 0) or (not_due and string.format(
+        ", first attack not due before %ds", (C.cfg.first_attack or 0) / 60) or ""))))
     check("produce_" .. f, s.produced_ok[f], "%s kits per minute [%s]", f,
       table.concat(s.per_minute[f], " "))
     check("no_bad_spam_" .. f, (C and C.stats.bad or 0) < 20, "%s gave up on %d construction entries", f,
@@ -279,6 +387,28 @@ function autotest.tick(tick)
     if not s.built_at[f] and has_all(f) then
       s.built_at[f] = age
       util.log("ai autotest: %s has an extractor, a smelter and a barracks at %.0fs", f, age / 60)
+    end
+    if not s.cc_lost_at[f] and buildings.count(f, "cc") == 0 then
+      s.cc_lost_at[f] = age
+      util.log("ai autotest: %s lost its CC at %.0fs", f, age / 60)
+    end
+    if not s.lab_at[f] and buildings.count(f, "lab") > 0 then
+      s.lab_at[f] = age
+      util.log("ai autotest: %s has a lab at %.0fs", f, age / 60)
+    end
+    if not s.hub_at[f] and buildings.count(f, "hub") > 0 then
+      s.hub_at[f] = age
+      util.log("ai autotest: %s has a hub at %.0fs", f, age / 60)
+    end
+    if not s.delivery_at[f] and delivered_total(f) > 0 then
+      s.delivery_at[f] = age
+      util.log("ai autotest: %s: first hauler delivery at %.0fs", f, age / 60)
+    end
+    if age >= autotest.TECH_DEADLINE and s.techs_at_deadline[f] == nil then
+      s.techs_at_deadline[f] = tech.done_count(f)
+    end
+    if age >= autotest.KINDS_DEADLINE and s.kinds_at_deadline[f] == nil then
+      s.kinds_at_deadline[f] = table_size(s.kinds[f] or {})
     end
     if not s.lines_at[f] and autotest.lines_running(f) then
       s.lines_at[f] = age

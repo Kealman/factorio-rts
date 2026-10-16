@@ -26,6 +26,14 @@
 -- (pairs around a one-tile gap that holds a medium pole: D g D . D g D ...), then an A* belt route from the spine's
 -- near end to the feed tile of each hub slot in turn, and a chain of medium poles from the spine to the CC (the
 -- hidden core pole connects poles within 9 tiles of the CC centre).
+--
+-- Sinks (Phase 4). A line ends at a "sink": the CC (default) or a forward rts-hub. A sink is
+--   {frame, hub = {[slot] = state}, order = {slot names}, target = pole chain target, wire = chain reach,
+--    satellites = bool}
+-- The hub sink's frame has its origin 2 tiles south of the hub centre, so the hub's two stockpiles (logistics.lua
+-- HUB_STOCKPILES, (+-3.5, 0.5) from the hub) sit where the CC frame's north stockpiles are (+-3.5, -1.5): the "1"
+-- slots of HUB (E1, W1, N1, N2 and their d/c variants) then feed the hub's stockpiles unchanged (HUB_SINK_ORDER).
+-- Water tiles count as occupied in every planning context (Phase 4 maps have lakes).
 local util = require("scripts.util")
 local buildings = require("scripts.buildings")
 
@@ -229,12 +237,28 @@ local function slot_tiles(frame, slot_name)
   return set
 end
 
+-- The "1" slots feed the north stockpile pair of a frame: on a hub sink these are the hub's two stockpiles.
+layout.HUB_SINK_ORDER = {"E1", "W1", "N1", "N2", "E1d", "W1d", "N1d", "N2d", "E1c", "W1c", "N1c", "N2c"}
+layout.HUB_SINK_DY = 2      -- hub sink frame origin = hub centre + (0, HUB_SINK_DY)
+layout.HUB_WIRE = 8         -- pole chain reach to the hub's hidden pole (wire 9; it snaps up to 0.7 tiles off centre)
+
+--- The CC sink of commander C (see the header).
+function layout.cc_sink(C)
+  local f = C.frame
+  return {frame = f, hub = C.hub, order = layout.HUB_ORDER, target = {x = f.cx, y = f.cy}, wire = layout.CC_WIRE,
+          satellites = true}
+end
+
 --- Reserve every hub slot's tiles as "hub" (once per commander). C.hub = {[slot] = "free" | "dead" | line name}.
-function layout.reserve_hub(C, frame)
-  C.hub = C.hub or {}
-  for _, name in ipairs(layout.HUB_ORDER) do
-    if not C.hub[name] then
-      C.hub[name] = "free"
+--- `hub` and `order` default to C.hub and HUB_ORDER (the CC); a forward hub passes its own.
+function layout.reserve_hub(C, frame, hub, order)
+  if not hub then
+    C.hub = C.hub or {}
+    hub = C.hub
+  end
+  for _, name in ipairs(order or layout.HUB_ORDER) do
+    if not hub[name] then
+      hub[name] = "free"
       for k in pairs(slot_tiles(frame, name)) do
         if C.reserved[k] == nil then C.reserved[k] = "hub" end
       end
@@ -243,36 +267,39 @@ function layout.reserve_hub(C, frame)
 end
 
 --- Snapshot of the hub state, for layout.restore_hub (a claim whose route then fails is undone).
-function layout.snapshot_hub(C, frame)
-  local snap = {hub = {}, reserved = {}}
-  for k, v in pairs(C.hub) do snap.hub[k] = v end
-  for _, name in ipairs(layout.HUB_ORDER) do
+function layout.snapshot_hub(C, frame, hub, order)
+  hub, order = hub or C.hub, order or layout.HUB_ORDER
+  local snap = {hub = {}, reserved = {}, ref = hub}
+  for k, v in pairs(hub) do snap.hub[k] = v end
+  for _, name in ipairs(order) do
     for k in pairs(slot_tiles(frame, name)) do snap.reserved[k] = C.reserved[k] or false end
   end
   return snap
 end
 
 function layout.restore_hub(C, snap)
-  for k, v in pairs(snap.hub) do C.hub[k] = v end
+  local hub = snap.ref or C.hub
+  for k, v in pairs(snap.hub) do hub[k] = v end
   for k, v in pairs(snap.reserved) do C.reserved[k] = v or nil end
 end
 
 --- Claim a hub slot for a line: its tiles become the line's, slots sharing a tile with it die, and the tiles only
 --- the dead slots used are released. Returns false when the slot is not free.
-function layout.claim_slot(C, frame, slot_name, owner)
-  if C.hub[slot_name] ~= "free" then return false end
+function layout.claim_slot(C, frame, slot_name, owner, hub, order)
+  hub, order = hub or C.hub, order or layout.HUB_ORDER
+  if hub[slot_name] ~= "free" then return false end
   local mine = slot_tiles(frame, slot_name)
-  C.hub[slot_name] = owner
+  hub[slot_name] = owner
   for k in pairs(mine) do C.reserved[k] = owner end
-  for _, other in ipairs(layout.HUB_ORDER) do
-    if other ~= slot_name and C.hub[other] == "free" then
+  for _, other in ipairs(order) do
+    if other ~= slot_name and hub[other] == "free" then
       local tiles = slot_tiles(frame, other)
       local shared = false
       for k in pairs(tiles) do
         if mine[k] then shared = true break end
       end
       if shared then
-        C.hub[other] = "dead"
+        hub[other] = "dead"
         for k in pairs(tiles) do
           if C.reserved[k] == "hub" then C.reserved[k] = nil end
         end
@@ -280,8 +307,8 @@ function layout.claim_slot(C, frame, slot_name, owner)
     end
   end
   -- a released tile may still belong to another live slot: re-reserve those
-  for _, other in ipairs(layout.HUB_ORDER) do
-    if C.hub[other] == "free" then
+  for _, other in ipairs(order) do
+    if hub[other] == "free" then
       for k in pairs(slot_tiles(frame, other)) do
         if C.reserved[k] == nil then C.reserved[k] = "hub" end
       end
@@ -302,10 +329,14 @@ local PLAN_IGNORE_TYPES = {"tree", "simple-entity"}
 for _, t in ipairs(IGNORE_TYPES) do PLAN_IGNORE_TYPES[#PLAN_IGNORE_TYPES + 1] = t end
 
 --- Planning context around a CC: {surface, force, frame, occ = {[tile] = true}, ore = {[tile] = resource name},
---- patches = sorted list}. Costs one find_entities_filtered for obstacles and one for resources.
+--- patches = sorted list}. Costs one find_entities_filtered for obstacles, one for resources and one for water.
 function layout.context(C, surface)
-  local frame = C.frame
-  local R = layout.PATCH_SEARCH
+  return layout.context_at(C, surface, C.frame, layout.PATCH_SEARCH)
+end
+
+--- The same around any frame (a forward hub's), `radius` tiles in each direction.
+function layout.context_at(C, surface, frame, radius)
+  local R = radius or layout.PATCH_SEARCH
   local area = {{frame.cx - R, frame.cy - R}, {frame.cx + R, frame.cy + R}}
   local occ = {}
   for _, e in pairs(surface.find_entities_filtered({area = area, type = PLAN_IGNORE_TYPES, invert = true})) do
@@ -315,6 +346,11 @@ function layout.context(C, surface)
     for tx = x0, x1 do
       for ty = y0, y1 do occ[tkey(tx, ty)] = true end
     end
+  end
+  -- lakes block belts and buildings like an entity does
+  for _, t in pairs(surface.find_tiles_filtered({area = area, collision_mask = "water_tile"})) do
+    local p = t.position
+    occ[tkey(math.floor(p.x), math.floor(p.y))] = true
   end
   local ore, list = {}, {}
   for _, e in pairs(surface.find_entities_filtered({area = area, type = "resource"})) do
@@ -497,9 +533,10 @@ local function spine_candidate(ctx, patch, horizontal, along_sign, c)
   return cand
 end
 
---- Best spine for a patch towards the hub: {tiles, drills (best first), poles, along}. nil if none fits.
-function layout.plan_spine(ctx, patch)
-  local f = ctx.frame
+--- Best spine for a patch towards the hub (frame `toward`, default the context's): {tiles, drills (best first),
+--- poles, along}. nil if none fits.
+function layout.plan_spine(ctx, patch, toward)
+  local f = toward or ctx.frame
   local dx, dy = f.cx - patch.cx, f.cy - patch.cy
   local horizontal = math.abs(dx) >= math.abs(dy)
   local along_sign = horizontal and (dx >= 0 and 1 or -1) or (dy >= 0 and 1 or -1)
@@ -634,15 +671,16 @@ end
 ---------------------------------------------------------------------------
 -- Pole chain
 ---------------------------------------------------------------------------
---- Greedy chain of pole positions from `from` (a pole position) to within CC_WIRE of `target` (the CC centre):
---- each step takes the free tile within POLE_STEP that is closest to the target. Reserves the tiles. Returns the
---- list and whether the chain reached the target.
-function layout.chain_poles(ctx, from, target, owner)
+--- Greedy chain of pole positions from `from` (a pole position) to within `wire` (default CC_WIRE) of `target`
+--- (the CC centre, or a hub's): each step takes the free tile within POLE_STEP that is closest to the target.
+--- Reserves the tiles. Returns the list and whether the chain reached the target.
+function layout.chain_poles(ctx, from, target, owner, wire)
   local out, last = {}, {x = from.x, y = from.y}
   local step = layout.POLE_STEP
+  wire = wire or layout.CC_WIRE
   for _ = 1, 16 do
     local dist = util.distance(last, target)
-    if dist <= layout.CC_WIRE then return out, true end
+    if dist <= wire then return out, true end
     local best, best_d
     local lx, ly = math.floor(last.x), math.floor(last.y)
     for tx = lx - 8, lx + 8 do
@@ -800,13 +838,26 @@ end
 ---   {patch = {id, cx, cy, count, ore}, belts = {{x, y, dir, seg}, ...} (seg 0 = spine, k = up to slot k's feed),
 ---    drills = {{x, y, dir, g}, ...} best first, gap_poles = {[g] = {x, y}}, chain = {{x, y}, ...},
 ---    slots = {{name, specs = slot_specs, seg = k}, ...}, chained = bool}
-function layout.plan_line(C, ctx, line_name, spec, hostile)
+--- `sink` (optional, see the header): where the line ends, default the CC (layout.cc_sink). spec.patch_id (optional)
+--- names the patch to use instead of the nearest free one.
+function layout.plan_line(C, ctx, line_name, spec, hostile, sink)
+  sink = sink or layout.cc_sink(C)
+  local sframe, shub, sorder = sink.frame, sink.hub, sink.order
   local patch, spine
   local tried = {}
   while true do
-    patch = layout.pick_patch(ctx, spec.ore, C.claimed, hostile, tried)
+    if spec.patch_id then
+      patch = nil
+      if not tried[spec.patch_id] then
+        for _, p in ipairs(layout.patches(ctx)) do
+          if p.id == spec.patch_id then patch = p break end
+        end
+      end
+    else
+      patch = layout.pick_patch(ctx, spec.ore, C.claimed, hostile, tried)
+    end
     if not patch then break end
-    spine = layout.plan_spine(ctx, patch)
+    spine = layout.plan_spine(ctx, patch, sframe)
     if spine then break end
     tried[patch.id] = true
     util.log("ai layout: %s line %s: no room for drills on %s, trying the next patch", C.force, line_name, patch.id)
@@ -839,7 +890,7 @@ function layout.plan_line(C, ctx, line_name, spec, hostile)
   -- The short links between consecutive slots' feed tiles are routed first; then the main belt from the spine to
   -- the first slot routes around them (otherwise the main belt may arrive at slot 1 over the tile the link to slot
   -- 2 needs). When that main route fails, the line is planned again without that first slot (MAX_ATTEMPTS).
-  local patch_side = (patch.cy > ctx.frame.cy + 0.5 and "south") or (patch.cy < ctx.frame.cy - 0.5 and "north")
+  local patch_side = (patch.cy > sframe.cy + 0.5 and "south") or (patch.cy < sframe.cy - 0.5 and "north")
     or nil
   local flip = patch_side ~= nil and patch_side ~= (spec.side or "north")
   local path = {} -- full belt path: spine, main route, links
@@ -874,6 +925,7 @@ function layout.plan_line(C, ctx, line_name, spec, hostile)
     end
     -- the next slot of the line's satellite (placed on first use); false when there is none
     local function use_satellite()
+      if not sink.satellites then return false end
       if not satellite and sat_used == 0 then
         local from = feeds[#feeds] or spine_end
         satellite = layout.plan_satellite(ctx, from, blocked, line_name, #slots == 0)
@@ -898,12 +950,13 @@ function layout.plan_line(C, ctx, line_name, spec, hostile)
       else
         local stype = layout.slot_type(entry)
         local preferred = layout.HUB[entry] and (flip and layout.SLOT_FLIP[entry] or entry) or nil
+        if preferred and shub[preferred] == nil then preferred = nil end -- not a slot of this sink
         local ref = feeds[#feeds] or spine_end
         local cands = {}
         if preferred then cands[1] = {name = preferred, d = -1} end
-        for _, name in ipairs(layout.HUB_ORDER) do
-          if name ~= preferred and C.hub[name] == "free" and layout.slot_type(name) == stype then
-            local _, ftx, fty = layout.slot_specs(ctx.frame, name)
+        for _, name in ipairs(sorder) do
+          if name ~= preferred and shub[name] == "free" and layout.slot_type(name) == stype then
+            local _, ftx, fty = layout.slot_specs(sframe, name)
             cands[#cands + 1] = {name = name, d = math.abs(ftx - ref[1]) + math.abs(fty - ref[2])}
           end
         end
@@ -914,14 +967,14 @@ function layout.plan_line(C, ctx, line_name, spec, hostile)
         local placed, tried = false, 0
         for _, cand in ipairs(cands) do
           local name = cand.name
-          if C.hub[name] == "free" and not (#slots == 0 and exclude_first[name]) then
+          if shub[name] == "free" and not (#slots == 0 and exclude_first[name]) then
             tried = tried + 1
             if tried > layout.SLOT_TRIES then break end
-            local specs, ftx, fty = layout.slot_specs(ctx.frame, name)
+            local specs, ftx, fty = layout.slot_specs(sframe, name)
             -- claim first: the slots it kills free their tiles, which a route may need (a direct slot's feed tile
             -- is boxed in by the smelter slot it replaces)
-            local snap = layout.snapshot_hub(C, ctx.frame)
-            layout.claim_slot(C, ctx.frame, name, line_name)
+            local snap = layout.snapshot_hub(C, sframe, shub, sorder)
+            layout.claim_slot(C, sframe, name, line_name, shub, sorder)
             local link
             if #slots > 0 then
               local prev = feeds[#feeds]
@@ -944,11 +997,11 @@ function layout.plan_line(C, ctx, line_name, spec, hostile)
   end
 
   local base_hub, base_reserved = {}, {}
-  for k, v in pairs(C.hub) do base_hub[k] = v end
+  for k, v in pairs(shub) do base_hub[k] = v end
   for k, v in pairs(C.reserved) do base_reserved[k] = v end
   local function restore()
-    for k in pairs(C.hub) do C.hub[k] = nil end
-    for k, v in pairs(base_hub) do C.hub[k] = v end
+    for k in pairs(shub) do shub[k] = nil end
+    for k, v in pairs(base_hub) do shub[k] = v end
     for k in pairs(C.reserved) do C.reserved[k] = nil end
     for k, v in pairs(base_reserved) do C.reserved[k] = v end
     for k in pairs(blocked_extra) do blocked_extra[k] = nil end
@@ -988,18 +1041,18 @@ function layout.plan_line(C, ctx, line_name, spec, hostile)
     plan.belts[#plan.belts + 1] = {x = t[1] + 0.5, y = t[2] + 0.5, dir = DEFINES[d], seg = t.seg}
   end
 
-  -- pole chain from the gap pole nearest the CC
+  -- pole chain from the gap pole nearest the sink (the CC's or the hub's hidden pole)
   local start
-  local f = ctx.frame
+  local target = sink.target
   for _, p in pairs(plan.gap_poles) do
-    if not start or util.distance(p, {f.cx, f.cy}) < util.distance(start, {f.cx, f.cy}) then start = p end
+    if not start or util.distance(p, target) < util.distance(start, target) then start = p end
   end
   if start then
-    local chain, ok = layout.chain_poles(ctx, start, {x = f.cx, y = f.cy}, line_name)
+    local chain, ok = layout.chain_poles(ctx, start, target, line_name, sink.wire)
     plan.chain, plan.chained = chain, ok
     if not ok then
-      util.log("ai layout: %s line %s: the pole chain from %s stops %.1f tiles short of the CC", C.force, line_name,
-        util.pos_str(start), util.distance(chain[#chain] or start, {f.cx, f.cy}) - layout.CC_WIRE)
+      util.log("ai layout: %s line %s: the pole chain from %s stops %.1f tiles short of the sink", C.force, line_name,
+        util.pos_str(start), util.distance(chain[#chain] or start, target) - sink.wire)
     end
   end
   return plan
@@ -1014,6 +1067,8 @@ local PREFER = {
   ["rts-factory"] = {-12, 6},
   ["rts-solar-array"] = {-13, -9},
   ["rts-turret"] = {19, 6},
+  ["rts-lab"] = {-12, -6},
+  ["rts-laser-turret"] = {14, 2},
 }
 
 -- Planned (or built) medium poles of a commander: {{x, y}, ...}.
@@ -1065,7 +1120,10 @@ function layout.find_spot(C, surface, name, anchor)
   local powered = p.electric_energy_source_prototype ~= nil
   local pref = PREFER[name] or {-10, 10}
   local passes
-  if anchor == "front" then
+  if anchor == "front" and powered then
+    -- a powered defence (laser turret) stays inside the core pole's supply area
+    passes = {{lo_x = 8, hi_x = layout.POWER_HALF, half_y = layout.POWER_HALF}}
+  elseif anchor == "front" then
     passes = {{lo_x = 10, hi_x = layout.LOGISTIC_HALF, half_y = layout.LOGISTIC_HALF}}
   else
     passes = {{lo_x = -layout.POWER_HALF, hi_x = layout.POWER_HALF, half_y = layout.POWER_HALF},
@@ -1133,11 +1191,199 @@ function layout.find_spot(C, surface, name, anchor)
 end
 
 ---------------------------------------------------------------------------
+-- Forward hubs (Phase 4): patches across the map, hub sites, spots and power near a hub
+---------------------------------------------------------------------------
+--- Ore patches within `radius` tiles of `center` (resources only, no obstacle scan), clustered like layout.patches,
+--- nearest to `center` first. Only ore inside the arena counts.
+function layout.resource_patches(surface, center, radius)
+  local area = {{center.x - radius, center.y - radius}, {center.x + radius, center.y + radius}}
+  local ore, list = {}, {}
+  for _, e in pairs(surface.find_entities_filtered({area = area, type = "resource"})) do
+    local p = e.position
+    local tx, ty = tile_of(p.x, p.y)
+    local k = tkey(tx, ty)
+    if not ore[k] and in_arena(tx, ty) then
+      ore[k] = e.name
+      list[#list + 1] = {k = k, tx = tx, ty = ty, name = e.name}
+    end
+  end
+  return layout.patches({frame = {cx = center.x, cy = center.y, fx = 1}, ore = ore, ore_list = list})
+end
+
+--- Bounding box of a patch's tiles: x0, y0, x1, y1 (tiles, inclusive).
+function layout.patch_box(patch)
+  local x0, y0, x1, y1
+  for _, cell in ipairs(patch.cells) do
+    local x, y = cell[1], cell[2]
+    if not x0 or x < x0 then x0 = x end
+    if not x1 or x > x1 then x1 = x end
+    if not y0 or y < y0 then y0 = y end
+    if not y1 or y > y1 then y1 = y end
+  end
+  return x0, y0, x1, y1
+end
+
+-- Hub site in hub-sink frame tile offsets {x from, x to, y from, y to} ([from, to)): the hub, its two stockpiles
+-- and the four "1" smelter slots with their feed tiles, plus a one-tile margin. HUB_SOLAR = world tile offsets
+-- from the hub centre south of it, kept free for the solar arrays (inside the hidden pole's 16x16 supply area).
+layout.HUB_SITE = {-11, 11, -9, 1}
+layout.HUB_SOLAR = {-8, 8, 2, 8}
+layout.HUB_RING = {7, 16}      -- hub centre this many tiles (Chebyshev) from the patch's bounding box
+layout.HUB_SITE_TRIES = 400
+
+--- The hub-sink frame of a hub centred at (hx, hy).
+function layout.hub_frame(hx, hy) return {cx = hx, cy = hy + layout.HUB_SINK_DY, fx = 1} end
+
+--- A site for a forward hub next to `patch` (context ctx around it), nearest to `home` first: the hub centre
+--- {x, y} (a tile corner) whose site and solar boxes are free of entities, water, ore, reserved tiles and the arena
+--- edge, at least `min_home` tiles from home along x or y (square logistic areas) and `min_apart` tiles from every
+--- position in `keep_away` (hubs).
+function layout.hub_site(C, ctx, patch, home, min_home, keep_away, min_apart)
+  local x0, y0, x1, y1 = layout.patch_box(patch)
+  local lo, hi = layout.HUB_RING[1], layout.HUB_RING[2]
+  local cands = {}
+  for hx = x0 - hi, x1 + 1 + hi do
+    for hy = y0 - hi, y1 + 1 + hi do
+      local d = math.max(x0 - hx, 0, hx - (x1 + 1), y0 - hy, hy - (y1 + 1))
+      if d >= lo and d <= hi then
+        local dh = util.distance({hx, hy}, home)
+        -- roboport areas are squares: a separate network needs the Chebyshev distance, not the straight one
+        local ok = math.max(math.abs(hx - home.x), math.abs(hy - home.y)) >= min_home
+        for _, p in ipairs(keep_away or {}) do
+          if ok and util.distance({hx, hy}, p) < (min_apart or min_home) then ok = false end
+        end
+        if ok then cands[#cands + 1] = {hx, hy, dh + 3 * d} end
+      end
+    end
+  end
+  table.sort(cands, function(a, b)
+    if a[3] ~= b[3] then return a[3] < b[3] end
+    if a[1] ~= b[1] then return a[1] < b[1] end
+    return a[2] < b[2]
+  end)
+  local S, P = layout.HUB_SITE, layout.HUB_SOLAR
+  local function box_free(tx0, tx1, ty0, ty1)
+    for tx = tx0, tx1 - 1 do
+      for ty = ty0, ty1 - 1 do
+        local k = tkey(tx, ty)
+        if not free(ctx, tx, ty) or ctx.ore[k] then return false end
+      end
+    end
+    return true
+  end
+  for i, c in ipairs(cands) do
+    if i > layout.HUB_SITE_TRIES then break end
+    local hx, hy = c[1], c[2]
+    local cy = hy + layout.HUB_SINK_DY
+    if box_free(hx + S[1], hx + S[2], cy + S[3], cy + S[4]) and box_free(hx + P[1], hx + P[2], hy + P[3], hy + P[4])
+       and ctx.surface.can_place_entity({name = "rts-hub", position = {hx, hy}, force = C.force}) then
+      return {x = hx, y = hy}
+    end
+  end
+  return nil
+end
+
+--- Reserve the hub body and its two stockpile tiles (logistics.lua places the stockpiles when the hub is built).
+function layout.reserve_hub_body(C, hx, hy, owner)
+  for tx = hx - 2, hx + 1 do
+    for ty = hy - 2, hy + 1 do C.reserved[tkey(tx, ty)] = owner end
+  end
+  C.reserved[tkey(hx - 4, hy)] = owner
+  C.reserved[tkey(hx + 3, hy)] = owner
+end
+
+--- A free spot for `name` whose footprint lies inside world tiles [x0, x1) x [y0, y1), nearest to `pref` first:
+--- no reserved or avoided tile, no entity, no ore, can_place_entity. Reserves the footprint. Returns the position.
+function layout.find_spot_in(C, surface, name, x0, y0, x1, y1, pref)
+  local p = prototypes.entity[name]
+  local w, h = p.tile_width, p.tile_height
+  local cands = {}
+  for tx = x0, x1 - w do
+    for ty = y0, y1 - h do
+      local pos = {x = tx + w / 2, y = ty + h / 2}
+      cands[#cands + 1] = {pos, (pos.x - pref.x) ^ 2 + (pos.y - pref.y) ^ 2, tx, ty}
+    end
+  end
+  table.sort(cands, function(a, b)
+    if a[2] ~= b[2] then return a[2] < b[2] end
+    if a[3] ~= b[3] then return a[3] < b[3] end
+    return a[4] < b[4]
+  end)
+  for _, c in ipairs(cands) do
+    local pos, tx0, ty0 = c[1], c[3], c[4]
+    local ok = true
+    for tx = tx0, tx0 + w - 1 do
+      for ty = ty0, ty0 + h - 1 do
+        local k = tkey(tx, ty)
+        if C.reserved[k] ~= nil or C.avoid[k] or not in_arena(tx, ty) then ok = false break end
+      end
+      if not ok then break end
+    end
+    if ok and surface.count_entities_filtered({area = {{tx0, ty0}, {tx0 + w, ty0 + h}}, type = IGNORE_TYPES,
+                                               invert = true}) == 0
+       and surface.count_entities_filtered({area = {{tx0, ty0}, {tx0 + w, ty0 + h}}, type = "resource"}) == 0
+       and surface.can_place_entity({name = name, position = pos, force = C.force,
+                                     build_check_type = defines.build_check_type.manual}) then
+      for tx = tx0, tx0 + w - 1 do
+        for ty = ty0, ty0 + h - 1 do C.reserved[tkey(tx, ty)] = "building" end
+      end
+      return pos
+    end
+  end
+  return nil
+end
+
+--- Poles so that every powered entity in `specs` ({name, x, y}) overlaps a supply area: the hub's hidden pole
+--- (HUB_POLE_HALF around the hub centre, conservative for the 0.7-tile snap) or a medium pole of `poles` (planned
+--- gap and chain poles). A missing one gets a medium pole on a free tile next to it, within HUB_WIRE of the hub
+--- centre or wire reach of a pole. Reserves the tiles; returns the new pole positions.
+layout.HUB_POLE_HALF = 7.5
+function layout.cover_power(C, ctx, hub_pos, specs, poles, owner)
+  local out = {}
+  local function covered(x0, y0, x1, y1)
+    local H = layout.HUB_POLE_HALF
+    if x0 < hub_pos.x + H and x1 > hub_pos.x - H and y0 < hub_pos.y + H and y1 > hub_pos.y - H then return true end
+    for _, p in ipairs(poles) do
+      if x0 < p.x + 3.5 and x1 > p.x - 3.5 and y0 < p.y + 3.5 and y1 > p.y - 3.5 then return true end
+    end
+    return false
+  end
+  for _, sp in ipairs(specs) do
+    local proto = prototypes.entity[sp.name]
+    if proto and proto.electric_energy_source_prototype then
+      local tx0, ty0, w, h = layout.footprint(sp.name, sp.x, sp.y)
+      if not covered(tx0, ty0, tx0 + w, ty0 + h) then
+        local best
+        for tx = tx0 - 1, tx0 + w do
+          for ty = ty0 - 1, ty0 + h do
+            if not best and free(ctx, tx, ty) then
+              local q = {x = tx + 0.5, y = ty + 0.5}
+              local linked = util.distance(q, hub_pos) <= layout.HUB_WIRE
+              for _, p in ipairs(poles) do
+                if not linked and util.distance(q, p) <= layout.CC_WIRE then linked = true end
+              end
+              if linked then best = q end
+            end
+          end
+        end
+        if best then
+          reserve(ctx, math.floor(best.x), math.floor(best.y), owner)
+          poles[#poles + 1] = best
+          out[#out + 1] = best
+        end
+      end
+    end
+  end
+  return out
+end
+
+---------------------------------------------------------------------------
 -- ASCII map of a commander's plan (debug: /rts-ai-map and the autotest)
 ---------------------------------------------------------------------------
 local GLYPH = {["rts-extractor"] = "D", ["rts-smelter"] = "S", ["fast-inserter"] = "i", ["medium-electric-pole"] = "P",
                ["rts-barracks"] = "B", ["rts-factory"] = "F", ["rts-solar-array"] = "Z", ["rts-turret"] = "T",
-               ["rts-command-center"] = "C", ["rts-stockpile"] = "K"}
+               ["rts-command-center"] = "C", ["rts-stockpile"] = "K", ["rts-hub"] = "H", ["rts-lab"] = "L",
+               ["rts-laser-turret"] = "Y"}
 local BELT_GLYPH = {[DIR.north] = "^", [DIR.east] = ">", [DIR.south] = "v", [DIR.west] = "<"}
 local ORE_GLYPH = {["iron-ore"] = ".", ["copper-ore"] = ",", ["stone"] = ":", ["coal"] = ";"}
 
@@ -1160,7 +1406,7 @@ function layout.ascii(C, surface, x0, y0, x1, y1)
     end
   end
   for _, e in pairs(surface.find_entities_filtered({area = {{x0, y0}, {x1, y1}}, force = C.force,
-                                                     name = {"rts-command-center", "rts-stockpile"}})) do
+                                                     name = {"rts-command-center", "rts-stockpile", "rts-hub"}})) do
     each_tile(e.name, e.position.x, e.position.y, function(tx, ty) put(tx, ty, GLYPH[e.name]) end)
   end
   for _, e in pairs(C.plan) do

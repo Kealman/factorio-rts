@@ -1,8 +1,12 @@
 -- AI commander (docs/PHASE3.md "ai/commander.lua"): one per AI force, state in storage.ai[force_name]. A run is
--- economy (build order) -> construction -> production -> army -> scouting.
+-- economy (build order) -> construction -> hubs -> research -> production -> army -> scouting.
+-- Phase 4: each commander has a doctrine (ai/doctrine.lua), researches (ai/tech.lua), expands with hubs and haulers
+-- (ai/hubs.lua), rotates its barracks through a counter-aware unit mix (ai/mix.lua) and runs two factories: the
+-- builder (construction items, ammo) and the workshop (science kits, hauler kits, circuits, explosives).
 --
 -- storage.ai[force_name] = C = {
---   force, difficulty, cfg (orders_data.DIFFICULTY copy), started, next_tick, runs,
+--   force, difficulty, doctrine, doctrine_seed, cfg (orders_data.DIFFICULTY copy, first_attack scaled by the
+--   doctrine), started, next_tick, runs,
 --   frame       layout frame of the main CC {cx, cy, fx}
 --   reserved    {[tile key] = owner}   tiles the plan uses ("hub", a line name, "building")
 --   avoid       {[tile key] = true}    tiles in front of a line's last belt: no belt may ever go there
@@ -12,9 +16,10 @@
 --   lines       {[name] = line}        build_order.lua
 --   plan, queue, pending, need, need_list, next_build      construction.lua
 --   steps       {[i] = {done?, started?, skipped?, retry_at?}}, current_step     build_order.lua
---   unit_recipe nil until the build order enables unit production; last_kit[barracks] = kit it made last,
---               heavy_wait[barracks] = tick it started waiting for iron for a heavy kit
---   army        army.lua;  known, guesses   scout.lua
+--   unit_recipe nil until the build order enables unit production; last_kit[barracks] = kit it made last
+--   bk, kind_rest, mix_weights, mix_counts, capped, supply_used, supply_cap   mix.lua
+--   expansions, want_haulers   hubs.lua;  tech, science   tech.lua;  ws_fill, ws_set   workshop factory
+--   army        army.lua;  known, guesses, seen, enemy_haulers   scout.lua;  raid, next_harass   raids.lua
 --   stats       {ghosts, revived, jobs, bad, seen, attacks, reinforcements, retreats, defends, recalls, bonus_units,
 --                bots_removed}
 -- }
@@ -29,6 +34,12 @@ local construction = require("scripts.ai.construction")
 local build_order = require("scripts.ai.build_order")
 local army = require("scripts.ai.army")
 local scout = require("scripts.ai.scout")
+local doctrine = require("scripts.ai.doctrine")
+local hubs = require("scripts.ai.hubs")
+local mix = require("scripts.ai.mix")
+local tech = require("scripts.ai.tech")
+local deps = require("scripts.ai.deps")
+local balance = require("balance")
 
 local commander = {}
 
@@ -72,17 +83,35 @@ function commander.remove_bots(C)
   return n
 end
 
---- New commander state (not started). difficulty: "easy" | "normal" | "hard".
+-- Settings of a difficulty under a doctrine.
+local function settings(difficulty, doctrine_name)
+  local cfg = copy(data.DIFFICULTY[difficulty])
+  local D = doctrine.get(doctrine_name)
+  cfg.first_attack = math.floor(cfg.first_attack * D.first_attack + 0.5)
+  cfg.max_in_progress = cfg.max_in_progress + (D.in_flight or 0)
+  if D.retreat then cfg.retreat_ratio = D.retreat end
+  if D.targets then
+    cfg.target_penalty = copy(data.TARGET_PENALTY)
+    for kind, v in pairs(D.targets) do cfg.target_penalty[kind] = v end
+  end
+  return cfg
+end
+
+--- New commander state (not started). difficulty: "easy" | "normal" | "hard". The doctrine is drawn here
+--- (doctrine.pick: override or seeded draw) and logged.
 function commander.new(force_name, difficulty)
   difficulty = data.DIFFICULTY[difficulty] and difficulty or data.DEFAULT_DIFFICULTY
+  local doc, seed = doctrine.pick(force_name)
+  util.log("ai %s: doctrine %s (seed %s)", force_name, doc, tostring(seed))
   return {
-    force = force_name, difficulty = difficulty, cfg = copy(data.DIFFICULTY[difficulty]),
+    force = force_name, difficulty = difficulty, doctrine = doc, doctrine_seed = seed, cfg = settings(difficulty, doc),
     started = game.tick, next_tick = game.tick + 1, runs = 0,
     reserved = {}, avoid = {}, belt_tiles = {}, claimed = {}, lines = {},
     plan = {}, queue = {}, pending = {}, need = {}, need_list = {}, next_build = 0,
-    steps = {}, known = {}, guesses = {},
+    steps = {}, known = {}, guesses = {}, expansions = {},
     stats = {ghosts = 0, revived = 0, jobs = 0, bad = 0, seen = 0, attacks = 0, reinforcements = 0, retreats = 0,
-             defends = 0, recalls = 0, bonus_units = 0, bots_removed = 0},
+             defends = 0, recalls = 0, bonus_units = 0, bots_removed = 0, harass = 0, guards = 0, patrols = 0,
+             priority = 0},
   }
 end
 
@@ -90,8 +119,17 @@ end
 --- from what exists), same plan, base and army.
 function commander.set_difficulty(C, difficulty)
   difficulty = data.DIFFICULTY[difficulty] and difficulty or data.DEFAULT_DIFFICULTY
-  C.difficulty, C.cfg, C.steps, C.current_step = difficulty, copy(data.DIFFICULTY[difficulty]), {}, nil
+  C.difficulty, C.cfg, C.steps, C.current_step = difficulty, settings(difficulty, C.doctrine), {}, nil
   util.log("ai %s: difficulty is now %s", C.force, difficulty)
+end
+
+--- Switch a running commander to another doctrine (the autotest and /rts-ai-doctrine): new build order, research
+--- order, mix and pacing; plan, base and army stay.
+function commander.set_doctrine(C, name)
+  if not doctrine.DEF[name] then return false end
+  C.doctrine, C.cfg, C.steps, C.current_step = name, settings(C.difficulty, name), {}, nil
+  util.log("ai %s: doctrine is now %s", C.force, name)
+  return true
 end
 
 -- Hard: the extra starting stock and the mining bonus (orders_data.DIFFICULTY).
@@ -139,84 +177,27 @@ function commander.start(C)
 end
 
 ---------------------------------------------------------------------------
--- Production: barracks recipes and rally points, the factory recipe
+-- Production: barracks (ai/mix.lua), the builder factory and the workshop factory
 ---------------------------------------------------------------------------
 local function recipe_name(entity)
   local r = entity.get_recipe()
   return r and r.name or nil
 end
 
-commander.HEAVY_WAIT = 20 * 60   -- a barracks pauses at most this long for iron to gather for a heavy kit
-commander.SWITCH_PROGRESS = 0.15 -- a busy barracks changes recipe only this early in a craft (its ingredients return)
-
--- Each barracks makes the build order's unit recipe. With cfg.heavy, a heavy kit is due after every walker kit
--- (C.last_kit, set by init.lua's on_spawned handler). The barracks switches once the network holds HEAVY_STEEL steel
--- and HEAVY_IRON iron, counting the iron already inside the force's barracks (it goes back to the network on a
--- recipe change; with a walker barracks running, the network alone rarely holds 40). Short of iron, it pauses
--- (recipe cleared) at most HEAVY_WAIT ticks, then makes one more walker. Once on heavy kits it keeps the recipe until
--- the heavy kit is out (the kit's own pull takes the steel below 5 at once), unless it starves for HEAVY_WAIT.
-local function manage_barracks(C)
-  local steel = construction.have(C, "steel-plate")
-  local iron = construction.have(C, "iron-plate")
-  for _, rec in buildings.for_force(C.force, "barracks") do
-    local input = rec.entity.get_inventory(defines.inventory.crafter_input)
-    if input then iron = iron + input.get_item_count("iron-plate") end
-  end
-  C.last_kit = C.last_kit or {}
-  C.heavy_wait = C.heavy_wait or {}
-  local tick = game.tick
-  for un, rec in buildings.for_force(C.force, "barracks") do
-    local rally = C.army.rally
-    if rally and not (rec.rally and util.distance(rec.rally, rally) < 1) then buildings.set_rally(un, rally) end
-    local e = rec.entity
-    local cur = recipe_name(e)
-    local want = C.unit_recipe
-    if want and C.cfg.heavy and C.last_kit[un] ~= data.HEAVY_KIT then
-      if cur == data.HEAVY_KIT then
-        want = data.HEAVY_KIT
-        if e.is_crafting() then
-          C.heavy_wait[un] = nil
-        else
-          C.heavy_wait[un] = C.heavy_wait[un] or tick
-          if tick - C.heavy_wait[un] >= commander.HEAVY_WAIT then
-            want, C.last_kit[un], C.heavy_wait[un] = C.unit_recipe, data.HEAVY_KIT, nil
-          end
-        end
-      elseif steel >= data.HEAVY_STEEL then
-        if iron >= data.HEAVY_IRON then
-          want, C.heavy_wait[un] = data.HEAVY_KIT, nil
-        else
-          C.heavy_wait[un] = C.heavy_wait[un] or tick
-          if tick - C.heavy_wait[un] < commander.HEAVY_WAIT then
-            want = nil
-          else
-            -- waited long enough: one more walker, then a heavy is due again
-            C.last_kit[un], C.heavy_wait[un] = data.HEAVY_KIT, nil
-          end
-        end
-      end
-    end
-    if cur ~= want and (cur == nil or not e.is_crafting() or e.crafting_progress < commander.SWITCH_PROGRESS) then
-      production.set_recipe(e, want)
-    end
-  end
-end
-
 commander.AMMO_PER_TURRET = 10  -- magazines per turret per minute the factory may make (gun turrets burn about one
                                  -- a second on a walker that soaks hits; uncapped this took ~200 iron a minute)
+commander.AMMO_MAX = 30         -- ... and at most this many a minute in all (a turtle's six turrets under fire took
+                                 -- every plate in a 1v3 and its barracks made nothing for three minutes)
 
--- True when the force produced `item` in the last minute (item production statistics), memoized per tick.
-local function flowing(C, item)
-  if C.flow_tick ~= game.tick then C.flow_tick, C.flow = game.tick, {} end
-  local v = C.flow[item]
-  if v == nil then
-    local stats = game.forces[C.force].get_item_production_statistics(util.surface())
-    v = stats.get_flow_count({name = item, category = "input",
-                              precision_index = defines.flow_precision_index.one_minute}) > 0
-    C.flow[item] = v
-  end
-  return v
+-- Intermediates the factory makes (balance.intermediates): item -> recipe.
+local INTERMEDIATE = {}
+for recipe, def in pairs(balance.intermediates or {}) do INTERMEDIATE[def.result] = recipe end
+
+local function factory_recipe_of(item)
+  return data.FACTORY_RECIPE[item] or data.WORKSHOP_RECIPE[item] or INTERMEDIATE[item]
 end
+
+local flowing = construction.flowing
 
 -- A factory recipe can run: every ingredient is in the network or being produced.
 local function recipe_feasible(C, recipe_name_)
@@ -228,65 +209,272 @@ local function recipe_feasible(C, recipe_name_)
   return true
 end
 
--- The factory makes the first item the construction queue lacks whose recipe can run (so a recipe that needs a
--- resource the force has run out of does not block the one that would bring it back: easy once waited forever on an
--- extractor needing copper while its copper smelter was queued behind it); ammo while turrets run low, at most
--- AMMO_PER_TURRET magazines per turret per minute; else it idles, so the iron goes to units.
-local function manage_factory(C)
-  local factory
-  for un, rec in buildings.for_force(C.force, "factory") do
-    if not factory or un < factory.entity.unit_number then factory = rec end
+--- The recipe to run now for `item`: its own when every ingredient is at hand (raw plates may be on their way),
+--- else the recipe of a missing intermediate (gear, cable, circuit, explosives; depth first). nil when the force
+--- cannot make it (a locked recipe, or a raw ingredient that is neither in the network nor produced).
+function commander.recipe_for(C, item, depth)
+  depth = depth or 0
+  local recipe = factory_recipe_of(item)
+  local r = recipe and prototypes.recipe[recipe]
+  if not r then return nil end
+  local fr = game.forces[C.force].recipes[recipe]
+  if not (fr and fr.enabled) then return nil end
+  for _, ing in pairs(r.ingredients) do
+    if construction.have(C, ing.name) < ing.amount then
+      if INTERMEDIATE[ing.name] then
+        if depth >= 3 then return nil end
+        return commander.recipe_for(C, ing.name, depth + 1)
+      elseif not flowing(C, ing.name) then
+        return nil
+      end
+    end
   end
-  if not factory then return end
+  return recipe
+end
+
+-- The workshop's demands: {item, want, low, group}. A demand is active while the network holds fewer than `low` of
+-- the item, and then stays active until it holds `want` (C.ws_fill, one flag per demand): batches.
+--   group "science": the gears (basic kits) or circuits (advanced kits), then the kits, SCIENCE_PER_LAB per lab;
+--   group "circuits": circuits while raiders are wanted (also laser turrets and hauler kits);
+--   group "explosives": explosives while artillery is wanted.
+-- Groups take turns of at most WS_TURN ticks each (round robin in that order) while more than one is active. With a
+-- strict priority the always-short science stock kept the aggressive doctrine's workshop from ever making a circuit,
+-- so no raider came after Unlock Raider.
+commander.WS_TURN = 20 * 60
+local function workshop_demands(C)
+  local list = {}
+  local sci = C.science
+  if sci then
+    if sci.kit == "rts-science-basic" then
+      list[#list + 1] = {item = "iron-gear-wheel", want = data.GEAR_STOCK, low = 2, group = "science"}
+    else
+      list[#list + 1] = {item = "electronic-circuit", want = data.CIRCUIT_STOCK, low = 4, group = "science"}
+    end
+    list[#list + 1] = {item = sci.kit, want = sci.want, low = math.max(1, math.floor(sci.want / 2)),
+                       group = "science"}
+  end
+  local lasers = C.unit_recipe ~= nil and deps.research and deps.research.is_unlocked(C.force, "rts-laser-turret")
+    and (C.pending["rts-laser-turret"] or 0) > 0
+  -- (circuits ahead of Unlock Raider took the workshop's turns and pushed the unlock from 5:15 to 7:45)
+  if mix.wanted(C, "raider") or lasers or (C.want_haulers or 0) > 0 then
+    list[#list + 1] = {item = "electronic-circuit", want = data.CIRCUIT_STOCK, low = math.floor(data.CIRCUIT_STOCK / 2),
+                       group = "circuits"}
+  end
+  if mix.wanted(C, "artillery") then
+    list[#list + 1] = {item = "rts-explosives", want = data.EXPLOSIVE_STOCK, low = math.floor(data.EXPLOSIVE_STOCK / 2),
+                       group = "explosives"}
+  end
+  return list
+end
+
+-- The workshop's recipe now (or nil): the active demand of the group whose turn it is.
+local function workshop_want(C)
+  C.ws_fill = C.ws_fill or {}
+  local groups, order = {}, {}
+  for _, d in ipairs(workshop_demands(C)) do
+    local key = d.item .. "#" .. d.group
+    local have = construction.have(C, d.item)
+    if have >= d.want then
+      C.ws_fill[key] = nil
+    elseif C.ws_fill[key] or have < d.low then
+      local recipe = commander.recipe_for(C, d.item)
+      if recipe and not groups[d.group] then
+        groups[d.group] = {recipe = recipe, key = key}
+        order[#order + 1] = d.group
+      end
+    end
+  end
+  if #order == 0 then
+    C.ws_turn = nil
+    return nil
+  end
+  local turn = C.ws_turn
+  local pick
+  if turn and groups[turn.group] and game.tick - turn.since < commander.WS_TURN then
+    pick = turn.group
+  else
+    -- the next active group after the current one (round robin in priority order)
+    local idx = 0
+    for i, g in ipairs(order) do
+      if turn and g == turn.group then idx = i end
+    end
+    pick = order[(idx % #order) + 1]
+    C.ws_turn = {group = pick, since = game.tick}
+  end
+  C.ws_fill[groups[pick].key] = true
+  return groups[pick].recipe
+end
+
+-- True while the force wants another hauler (hubs.lua) and none is on its way.
+local function hauler_due(C)
+  return (C.want_haulers or 0) > hubs.hauler_count(C)
+end
+
+-- The first item the construction queue lacks that the factory can make now (intermediates first when one is
+-- missing), else the first lacking item's own recipe; `skip` = a recipe another factory already runs. A due hauler
+-- kit comes first: it is built like a building (the builder keeps the recipe until the kit is out), because the
+-- workshop switching between science and a 30-plate kit never gathered the plates.
+local function construction_want(C, skip)
+  local function short(item) return construction.have(C, item) < (C.need[item] or 0) end
+  if hauler_due(C) and skip ~= "rts-hauler-kit" then
+    local now = commander.recipe_for(C, "rts-hauler-kit")
+    if now then return now end
+  end
+  local fallback
+  for _, item in ipairs(C.need_list) do
+    local recipe = data.FACTORY_RECIPE[item]
+    if recipe and short(item) and recipe ~= skip then
+      fallback = fallback or recipe
+      local now = commander.recipe_for(C, item)
+      if now then return now end
+    end
+  end
+  return fallback
+end
+
+-- Builder factory (the force's first): the first item the construction queue lacks whose recipe can run (so a
+-- recipe that needs a resource the force has run out of does not block the one that would bring it back); ammo
+-- while turrets run low, at most AMMO_PER_TURRET magazines per turret per minute; with nothing to build and no
+-- workshop, the workshop's work; else it idles, so the iron goes to units.
+local function manage_builder(C, factory, has_workshop)
   local e = factory.entity
   local cur = recipe_name(e)
   local ammo = data.FACTORY_RECIPE["firearm-magazine"]
   local turrets = buildings.count(C.force, "turret")
   if cur == ammo and (not C.ammo_pf or e.products_finished > C.ammo_pf) then
     -- one craft (10 magazines) done: the next one waits its share of the per-minute budget
-    C.ammo_block = game.tick + math.floor(60 * 60 * 10 / (commander.AMMO_PER_TURRET * math.max(1, turrets)))
+    C.ammo_block = game.tick + math.floor(60 * 60 * 10 / math.min(commander.AMMO_MAX,
+      commander.AMMO_PER_TURRET * math.max(1, turrets)))
     C.ammo_pf = nil
   end
   local function short(item) return construction.have(C, item) < (C.need[item] or 0) end
-  local want, fallback
-  for _, item in ipairs(C.need_list) do
-    local recipe = data.FACTORY_RECIPE[item]
-    if recipe and short(item) then
-      fallback = fallback or recipe
-      if recipe_feasible(C, recipe) then
-        want = recipe
-        break
-      end
-    end
-  end
-  want = want or fallback
-  if cur == ammo and C.ammo_pf and not want then return end -- the budgeted ammo craft is still running
+  local want = construction_want(C)
+  if cur == ammo and C.ammo_pf and not want then return cur end -- the budgeted ammo craft is still running
   if not want and turrets > 0 and construction.have(C, "firearm-magazine") < data.TURRET_MAGAZINES
      and game.tick >= (C.ammo_block or 0) and cur ~= ammo then
     want = ammo
   end
-  if cur == want then return end
+  local ws = false
+  if not want and not has_workshop then
+    want = workshop_want(C)
+    ws = want ~= nil
+  end
+  if cur == want then return cur end
   -- keep a recipe that still makes something short and can run, so two shortages do not make it flip every second
   if cur and cur ~= ammo and recipe_feasible(C, cur) then
     for item, recipe in pairs(data.FACTORY_RECIPE) do
-      if recipe == cur and short(item) then return end
+      if recipe == cur and short(item) then return cur end
     end
+    if cur == "rts-hauler-kit" and hauler_due(C) then return cur end
+    if ws and e.is_crafting() and game.tick - (C.factory_set or 0) < commander.FACTORY_DWELL then return cur end
   end
   -- let a building craft finish (the factory pulls ingredients for two crafts, so it is nearly always crafting);
   -- ammo is cut off at once when its budget is spent (its ingredients go back to the network)
   if cur and cur ~= ammo and e.is_crafting()
      and (want == nil or game.tick - (C.factory_set or 0) < commander.FACTORY_DWELL) then
-    return
+    return cur
   end
   if production.set_recipe(e, want) then
     C.factory_set = game.tick
     if want == ammo then C.ammo_pf = e.products_finished end
   end
+  return want
+end
+
+-- Workshop factory (the force's second and later): science kits for the running research, circuits for raiders,
+-- lasers and hauler kits, explosives for artillery (workshop_demands); with none of those it idles.
+-- A feeder workshop (the third factory and later) makes the intermediates the first workshop's work needs ahead of
+-- time: gears for basic kits (or circuits for advanced ones) up to FEEDER_STOCK crafts' worth, else whatever the
+-- workshop demands that the first workshop is not making. One workshop spent half its time on gears (~6 kits a
+-- minute); with a feeder the first one makes kits back to back.
+commander.FEEDER_STOCK = 2
+local function feeder_want(C, taken)
+  local sci = C.science
+  if sci then
+    local basic = sci.kit == "rts-science-basic"
+    local item = basic and "iron-gear-wheel" or "electronic-circuit"
+    local stock = commander.FEEDER_STOCK * (basic and data.GEAR_STOCK or data.CIRCUIT_STOCK)
+    if construction.have(C, item) < stock then
+      local r = commander.recipe_for(C, item)
+      if r and not taken[r] then return r end
+    end
+  end
+  local r = workshop_want(C)
+  if r and not taken[r] then return r end
+  return nil
+end
+
+local function manage_workshop(C, factory, builder_recipe, taken)
+  local e = factory.entity
+  local cur = recipe_name(e)
+  local want
+  if taken then want = feeder_want(C, taken) else want = workshop_want(C) end
+  -- no construction help: with plates short, a second and third factory crafting buildings in parallel only split
+  -- the plates (a lab took three minutes while all three factories took turns on it)
+  if cur == want then return end
+  -- batches: a running recipe stays at least FACTORY_DWELL while it is still useful
+  C.ws_set = C.ws_set or {}
+  local un = e.unit_number
+  if cur and e.is_crafting() and game.tick - (C.ws_set[un] or 0) < commander.FACTORY_DWELL
+     and recipe_feasible(C, cur) and want ~= nil then
+    return
+  end
+  if production.set_recipe(e, want) then C.ws_set[un] = game.tick end
+end
+
+-- True when the workshop has starved on workshop work (science, hauler kits, their intermediates) for
+-- BUILDER_YIELD: the builder then pauses too (production.lua serves the oldest-starved consumer and lets a consumer
+-- short of one item reserve it, so the builder's 20-40 plate bites came first and a gear took ~20 s). The builder
+-- pauses at most BUILDER_SHARE of each BUILDER_WINDOW: uncapped, the always-hungry workshop kept it from finishing
+-- a smelter for over a minute.
+commander.BUILDER_YIELD = 4 * 60
+commander.BUILDER_WINDOW = 60 * 60
+commander.BUILDER_SHARE = 0.35
+local function workshop_starved(C, rec)
+  local r = recipe_name(rec.entity)
+  local st = rec.pull_state
+  return r ~= nil and mix.WORKSHOP_RECIPES[r] and rec.starved_since ~= nil and st ~= nil
+    and string.sub(st, 1, 7) == "starved" and game.tick - rec.starved_since >= commander.BUILDER_YIELD
+end
+
+local function manage_factories(C)
+  local list = {}
+  for un, rec in buildings.for_force(C.force, "factory") do list[#list + 1] = {un, rec} end
+  if #list == 0 then return end
+  table.sort(list, function(a, b) return a[1] < b[1] end)
+  local hungry = false
+  for i = 2, #list do
+    if workshop_starved(C, list[i][2]) then hungry = true end
+  end
+  local builder = list[1][2]
+  local brecipe = recipe_name(builder.entity)
+  local tick = game.tick
+  local win = C.builder_win
+  if not win or tick - win.start >= commander.BUILDER_WINDOW then
+    win = {start = tick, used = 0}
+    C.builder_win = win
+  end
+  if hungry and win.used >= commander.BUILDER_SHARE * commander.BUILDER_WINDOW then hungry = false end
+  if hungry then win.used = win.used + commander.THINK end
+  if hungry and not builder.entity.is_crafting() and brecipe ~= nil and not mix.WORKSHOP_RECIPES[brecipe] then
+    -- the builder steps aside for one pass: its partial ingredients go back to the network for the workshop
+    production.set_recipe(builder.entity, nil)
+    C.stats.builder_yields = (C.stats.builder_yields or 0) + 1
+  elseif not hungry then
+    manage_builder(C, builder, #list > 1)
+  end
+  local builder_recipe = recipe_name(builder.entity)
+  local taken = {}
+  for i = 2, #list do
+    manage_workshop(C, list[i][2], builder_recipe, i > 2 and taken or nil)
+    local r = recipe_name(list[i][2].entity)
+    if r then taken[r] = true end
+  end
 end
 
 local function manage_production(C)
-  manage_barracks(C)
-  manage_factory(C)
+  mix.manage_barracks(C)
+  manage_factories(C)
 end
 
 ---------------------------------------------------------------------------
@@ -322,8 +510,13 @@ function commander.run(C)
       C.next_repair = tick + commander.REPAIR_TICKS
       construction.repair(C)
     end
+    hubs.step(C)
     stop("construction")
     start("production")
+    if tick >= (C.next_tech or 0) then
+      C.next_tech = tick + tech.PERIOD
+      tech.step(C)
+    end
     manage_production(C)
     stop("production")
   end
@@ -341,7 +534,7 @@ end
 --- Lines describing commander C (for /rts-ai-dump and the autotest).
 function commander.dump_lines(C)
   local lines = {}
-  local order = data.BUILD_ORDERS[C.difficulty]
+  local order = data.order(C.difficulty, C.doctrine)
   local cur = C.current_step and order[C.current_step]
   local done = 0
   for i = 1, #order do
@@ -350,11 +543,11 @@ function commander.dump_lines(C)
   local pend = {}
   for name, n in pairs(C.pending) do pend[#pend + 1] = name .. "=" .. n end
   table.sort(pend)
-  lines[#lines + 1] = string.format("ai %s (%s): t=%ds runs=%d steps done %d/%d, next: %s | queue %d [%s]",
-    C.force, C.difficulty, (game.tick - C.started) / 60, C.runs, done, #order,
+  lines[#lines + 1] = string.format("ai %s (%s, %s): t=%ds runs=%d steps done %d/%d, next: %s | queue %d [%s]",
+    C.force, C.difficulty, C.doctrine, (game.tick - C.started) / 60, C.runs, done, #order,
     cur and build_order.describe(cur) or "-", #C.queue, table.concat(pend, " "))
   local lp = {}
-  for _, name in ipairs({"iron", "copper", "stone", "iron2"}) do
+  for _, name in ipairs({"iron", "copper", "stone", "coal", "iron2"}) do
     local L = C.lines[name]
     if L then
       if L.status == "ok" then
@@ -367,14 +560,29 @@ function commander.dump_lines(C)
   end
   lines[#lines + 1] = string.format("ai %s lines: %s", C.force, table.concat(lp, "; "))
   local kinds = {}
-  for _, kind in ipairs({"cc", "extractor", "smelter", "barracks", "factory", "turret", "solar", "stockpile"}) do
+  for _, kind in ipairs({"cc", "extractor", "smelter", "barracks", "factory", "turret", "solar", "stockpile", "lab",
+                         "hub"}) do
     kinds[#kinds + 1] = kind .. "=" .. buildings.count(C.force, kind)
   end
+  kinds[#kinds + 1] = "laser=" .. build_order.base_count(C, "rts-laser-turret")
   local st = C.stats
   lines[#lines + 1] = string.format("ai %s buildings [%s] | ghosts=%d revived=%d jobs=%d bad=%d | recipe=%s",
     C.force, table.concat(kinds, " "), st.ghosts, st.revived, st.jobs, st.bad, tostring(C.unit_recipe))
-  lines[#lines + 1] = string.format("ai %s army: %s | attacks=%d reinforcements=%d retreats=%d defends=%d recalls=%d",
-    C.force, army.describe(C), st.attacks, st.reinforcements, st.retreats, st.defends, st.recalls)
+  lines[#lines + 1] = string.format("ai %s army: %s | attacks=%d reinforcements=%d retreats=%d defends=%d recalls=%d"
+    .. " harass=%d guards=%d patrols=%d priority=%d", C.force, army.describe(C), st.attacks, st.reinforcements,
+    st.retreats, st.defends, st.recalls, st.harass or 0, st.guards or 0, st.patrols or 0, st.priority or 0)
+  lines[#lines + 1] = string.format("ai %s mix: units [%s] desired [%s] supply %s/%s%s", C.force,
+    mix.describe(C.mix_counts), mix.describe(C.mix_weights), tostring(C.supply_used), tostring(C.supply_cap),
+    C.capped and " CAPPED" or "")
+  local done_t = {}
+  for name, t in pairs(C.tech and C.tech.done or {}) do done_t[#done_t + 1] = {name, t} end
+  table.sort(done_t, function(x, y) return x[2] < y[2] or (x[2] == y[2] and x[1] < y[1]) end)
+  for i, p in ipairs(done_t) do done_t[i] = string.format("%s@%ds", p[1], (p[2] - C.started) / 60) end
+  local labs, working = 0, 0
+  if deps.research then labs, working = deps.research.lab_counts(C.force) end
+  lines[#lines + 1] = string.format("ai %s research: labs %d (working %d), current %s, done %d [%s]", C.force, labs,
+    working, C.science and C.science.tech or "-", #done_t, table.concat(done_t, " "))
+  lines[#lines + 1] = string.format("ai %s hubs: %s", C.force, hubs.describe(C))
   local kk = {}
   for k, n in pairs(scout.known_by_kind(C)) do kk[#kk + 1] = k .. "=" .. n end
   table.sort(kk)

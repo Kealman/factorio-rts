@@ -12,15 +12,22 @@
 --
 -- The match charts the whole arena for rts-player at start (match.lua chart_arena), so is_chunk_charted would be
 -- true everywhere for that force; visibility is what makes the two AI forces equal.
+-- Phase 4: each scan also counts the enemy units it sees by kind, C.seen[kind] = {n, tick} (ai/mix.lua counters
+-- read the last minute), and remembers seen enemy haulers, C.enemy_haulers[unit_number] = tick. Honest vision checks
+-- at most UNIT_CHECKS enemy units per scan. scout.harass_target picks raider targets.
 local util = require("scripts.util")
 local buildings = require("scripts.buildings")
 local units = require("scripts.units")
 local data = require("scripts.ai.orders_data")
+local layout = require("scripts.ai.layout")
 
 local scout = {}
 
 scout.PERIOD = 300 -- ticks between scans
 scout.SIGHT = 30   -- tiles; the units' vision_distance (prototypes/units.lua)
+scout.UNIT_CHECKS = 150 -- enemy units checked for sight per scan (honest vision)
+scout.HAULER_MEMORY = 60 * 60 -- a seen enemy hauler stays a harass target this long
+scout.ENEMY_ARMY_TICKS = 3 * 60 * 60 -- the largest enemy army seen is remembered this long
 
 local function chunk_of(pos)
   local x, y = util.xy(pos)
@@ -77,6 +84,139 @@ function scout.step(C, surface)
   for f, g in pairs(C.guesses) do
     if scout.sees(C, force, surface, g.position) then C.guesses[f] = nil end
   end
+  -- enemy units in sight, by kind (counters) and haulers (harass)
+  C.seen = C.seen or {}
+  C.enemy_haulers = C.enemy_haulers or {}
+  local counts, checks = {}, 0
+  for un, rec in pairs(storage.units) do
+    local f = rec.force
+    if f ~= C.force and rec.entity.valid then
+      if enemies[f] == nil then enemies[f] = is_enemy(force, f) end
+      if enemies[f] then
+        local visible = C.cfg.vision == "full"
+        if not visible and checks < scout.UNIT_CHECKS then
+          checks = checks + 1
+          visible = scout.sees(C, force, surface, rec.entity.position)
+        end
+        if visible then
+          counts[rec.kind] = (counts[rec.kind] or 0) + 1
+          if rec.kind == "hauler" then C.enemy_haulers[un] = tick end
+        end
+      end
+    end
+  end
+  for kind, n in pairs(counts) do C.seen[kind] = {n = n, tick = tick} end
+  -- the largest enemy army seen in one scan, remembered ENEMY_ARMY_TICKS (army.lua's attack parity)
+  local army_n = 0
+  for kind, n in pairs(counts) do
+    if kind ~= "hauler" and kind ~= "commander" then army_n = army_n + n end
+  end
+  local best = C.enemy_army
+  if army_n > 0 and (not best or army_n >= best.n or tick - best.tick > scout.ENEMY_ARMY_TICKS) then
+    C.enemy_army = {n = army_n, tick = tick}
+  end
+  for un, t in pairs(C.enemy_haulers) do
+    if tick - t > scout.HAULER_MEMORY or not (storage.units[un] and storage.units[un].entity.valid) then
+      C.enemy_haulers[un] = nil
+    end
+  end
+end
+
+-- Enemy CC positions (known or spawn guesses) of commander C, for "outlying" tests.
+local function enemy_bases(C)
+  local list = {}
+  for _, k in pairs(C.known) do
+    if k.kind == "cc" then list[#list + 1] = k.position end
+  end
+  for _, g in pairs(C.guesses) do list[#list + 1] = g.position end
+  local m = storage.match
+  for f, pos in pairs(m and m.spawns or {}) do
+    if f ~= C.force then list[#list + 1] = pos end
+  end
+  return list
+end
+
+local function near_any(pos, list, r)
+  for _, p in ipairs(list) do
+    if util.distance(pos, p) < r then return true end
+  end
+  return false
+end
+
+--- Ore patches of the whole arena {cx, cy, name, count, id}, cached per commander for PATCH_CACHE ticks.
+scout.PATCH_CACHE = 60 * 60
+function scout.patch_list(C, surface)
+  local cache = C.patch_cache
+  if cache and game.tick - cache.tick < scout.PATCH_CACHE then return cache.list end
+  local list = {}
+  local half = layout.arena_half()
+  for _, p in ipairs(layout.resource_patches(surface, {x = 0, y = 0}, half)) do
+    list[#list + 1] = {cx = p.cx, cy = p.cy, name = p.name, count = p.count, id = p.id}
+  end
+  C.patch_cache = {tick = game.tick, list = list}
+  return list
+end
+
+scout.HARASS_SAFE = 26 -- extractors and poles this close to an enemy CC or a known turret are not harass targets
+--- A raider target for a group at `from` (within `max_dist` when given): {position, kind, entity?}, or nil.
+--- Seen enemy haulers first, then known hubs, then outlying extractors, smelters and solar arrays (away from enemy
+--- CCs and known turrets), then the poles next to them; with nothing known (and no max_dist) the ore patch
+--- nearest to an enemy spawn outside its main, where its expansion would be.
+function scout.harass_target(C, surface, from, max_dist)
+  local best, best_score
+  local function consider(pos, score, kind, entity)
+    local d = util.distance(from, pos)
+    if max_dist and d > max_dist then return end
+    score = score + d
+    if not best_score or score < best_score then best, best_score = {position = pos, kind = kind, entity = entity}, score end
+  end
+  local bases = enemy_bases(C)
+  local turrets = {}
+  for _, k in pairs(C.known) do
+    if k.kind == "turret" or k.kind == "laser-turret" then turrets[#turrets + 1] = k.position end
+  end
+  for un in pairs(C.enemy_haulers or {}) do
+    local rec = storage.units[un]
+    if rec and rec.entity.valid and not near_any(rec.entity.position, turrets, scout.HARASS_SAFE) then
+      consider(rec.entity.position, 0, "hauler", rec.entity)
+    end
+  end
+  for un, k in pairs(C.known) do
+    local rec = storage.buildings[un]
+    if rec and rec.entity.valid and not near_any(k.position, turrets, scout.HARASS_SAFE) then
+      if k.kind == "hub" then
+        consider(k.position, 15, "hub", rec.entity)
+      elseif (k.kind == "extractor" or k.kind == "smelter" or k.kind == "solar")
+             and not near_any(k.position, bases, scout.HARASS_SAFE) then
+        consider(k.position, 30, k.kind, rec.entity)
+      end
+    end
+  end
+  if best then return best end
+  -- poles next to known outlying extractors
+  for _, k in pairs(C.known) do
+    if k.kind == "extractor" and not near_any(k.position, bases, scout.HARASS_SAFE)
+       and not near_any(k.position, turrets, scout.HARASS_SAFE) then
+      for _, p in pairs(surface.find_entities_filtered({position = k.position, radius = 8,
+                                                         name = "medium-electric-pole", limit = 3})) do
+        if p.force.name ~= C.force and game.forces[C.force].is_enemy(p.force) then
+          consider(p.position, 40, "pole", p)
+        end
+      end
+    end
+  end
+  if best or max_dist then return best end
+  -- nothing known: look where an enemy expansion would be (a patch 45..110 tiles from an enemy spawn, nearest to it)
+  local m = storage.match
+  for f, pos in pairs(m and m.spawns or {}) do
+    if f ~= C.force and game.forces[f] and game.forces[C.force].is_enemy(game.forces[f]) then
+      for _, p in ipairs(scout.patch_list(C, surface)) do
+        local d = util.distance({p.cx, p.cy}, pos)
+        if d >= 45 and d <= 110 then consider({x = p.cx, y = p.cy}, d, "patch") end
+      end
+    end
+  end
+  return best
 end
 
 --- Nearest visible enemy unit to `pos` within `range`, or nil.
@@ -131,10 +271,10 @@ end
 --- Against a beaten enemy (scout.beaten_enemy) the target is its nearest factory, else stockpile, else building,
 --- known or not.
 --- Returns {position, kind, un?} or nil.
-scout.FINISH_ORDER = {"factory", "stockpile"} -- a factory keeps a side in the match (buildings.is_alive_force)
+scout.FINISH_ORDER = {"factory", "hub", "stockpile"} -- a factory keeps a side in the match (buildings.is_alive_force)
 function scout.best_target(C, surface, from)
   local best, best_score
-  local penalty = data.TARGET_PENALTY
+  local penalty = C.cfg.target_penalty or data.TARGET_PENALTY
   local beaten = scout.beaten_enemy(C)
   if beaten then
     -- finishing: the nearest factory of the beaten side, else its nearest stockpile, else its nearest building

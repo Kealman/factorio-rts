@@ -6,6 +6,8 @@ Date: 2026-10-15. Factorio 2.0.77 (mac-arm64, Steam). Plan: `docs/PHASE3.md` ("A
 
 ## Status
 
+- **Phase 4 (wave B1, 2026-10-16): doctrines, research, hubs and haulers, counters.** See the section "Phase 4" at the
+  end. Not committed.
 - **Round 1 is committed (a843594).** That covers the commanders, build orders, ghost construction, production, army,
   scouting, the AI-vs-AI autotest, and the wiring into `control.lua`, `match.lua` and `debug.lua`.
 - **Round 3 (latest) generalizes the hub for the rotated ore layout.** Slot types now exist on all four sides of the
@@ -530,3 +532,398 @@ acceptance 5 (3 AI bases with 300 units) is still not measured. The 1v3 run is t
 - **No GUI check** of satellites, the second ring or turret placement. They were checked through the plan map and
   through production (smelted plates, kits per minute).
 - **Not measured: PHASE3 acceptance 5,** 3 AI bases and 300 units at 60 UPS.
+
+## Phase 4: doctrines, research, hubs and haulers, unit mix (wave B1)
+
+Date: 2026-10-16. Plan: `docs/PHASE4.md` sections 2, 3, 4 and 6. APIs: `docs/qa/phase4-content-notes.md`,
+`docs/qa/phase4-logistics-notes.md`, `docs/qa/phase4-research-notes.md`, `docs/qa/phase4-mapgen-notes.md`.
+Only `scripts/ai/*` changed. Nothing is committed.
+
+### Status
+
+- **Every brief item is built** (B1: army pools, research, hubs and haulers, unit mix and counters, doctrines, raid
+  defence and patrol, the barracks rebuild fix, hubs as finishing targets). The validated `scripts/ai/` is copied back
+  into `mods/`.
+- **Final runs, zero errors in all of them,** on copies of the current `mods/` (map generation with natural patches
+  and moats, the balance pass, haulers on land routes) plus these AI files:
+
+  | Run | Doctrines | Checks | Result |
+  |---|---|---|---|
+  | Normal 1v1 small, 480 s (`build/p4-ai-final`) | economic vs aggressive | 22/22 | both alive |
+  | Same, second map seed (`build/p4-ai2b`) | economic vs aggressive | 22/22 | both alive |
+  | Hard 1v1, seeded draw (`build/p4-ai2-hard`) | aggressive vs turtle | 21/21 | both alive |
+  | Hard 1v1 (`build/p4-ai2-hard2`) | economic vs aggressive | 22/22 | both alive |
+  | 1v3 normal small, 540 s (`build/p4-ai2-1v3`) | economic, aggressive ×2, turtle | 37/38 | 0 errors; `techs_6min_rts-ai-1` FAIL: lost its CC at 6:33 with one technology |
+
+- **The margins are thin.** On normal the second technology lands at 4:55-5:15, the first hauler delivery at
+  6:05-6:13, the first harass at about 7:00 and the economic doctrine's first heavy at 7:24. A map seed moves these by
+  30-90 s. Earlier configurations of this work failed one of these checks on some seeds; "Tuning history" lists what
+  traded against what.
+- **60 UPS everywhere:** wall clock 59.9-60.0 s per 3600 ticks. AI time 0.05-0.11 ms per tick averaged over a minute
+  with two commanders, up to 0.17 ms with four.
+
+### Files (`scripts/ai/`)
+
+| File | Lines | Phase 4 change |
+|---|---|---|
+| `deps.lua` | 9, new | Late-bound `supply`, `research`, `logistics` (see "Load order") |
+| `doctrine.lua` | 77, new | The three doctrines and the seeded draw |
+| `tech.lua` | 127, new | Research queue per doctrine; Supply first when capped; `C.science` for the workshop |
+| `hubs.lua` | 461, new | The `hub` build-order step: patch, site, line into the hub, solar arrays, extra poles; policies, robots, hauler homes; diagnosis |
+| `mix.lua` | 318, new | Desired unit mix with counters, barracks recipe rotation, unlock and supply checks, barracks yields |
+| `raids.lua` | 277, new | Harass (aggressive), raid defence ("guard"), hauler-route patrol (economic) |
+| `layout.lua` | +246 | Line sinks (CC or hub), `context_at` with water, hub sites, `find_spot_in`, `cover_power`, powered front spots |
+| `build_order.lua` | +89 | Step-kind registry, `when.unlocked`, base counts near the CC, priority rebuild of a lost factory or barracks |
+| `orders_data.lua` | +171 | `data.order(difficulty, doctrine)`: openings, doctrine steps, `UNITS_AFTER`; workshop data; coal line |
+| `commander.lua` | +208 | Doctrine at start, builder / workshop / feeder factories, `recipe_for` with intermediates, ammo cap, dump lines |
+| `army.lua` | +36 | Pool skips haulers and the commander; reserve raiders; raids step; attack parity; doctrine retreat and targets |
+| `scout.lua` | +140 | Enemy units by kind, seen haulers, largest enemy army, harass targets, arena patch list, hubs in the finishing order |
+| `construction.lua` | +34 | `construction.flowing`; `clear` areas a revive waits for (a hub's stockpile spots) |
+| `init.lua` | +58 | `deps` binding, `AI_IGNORES_LOCKS = false`, `/rts-ai-doctrine`, `ai.set_doctrine`, supply-checked hard bonus, hub maps in `/rts-ai-map` |
+| `autotest.lua` | +130 | Doctrines per force, 8 minutes, Phase 4 checks and minute lines, AI time per tick |
+
+### Load order (`deps.lua`)
+
+`control.lua` loads `scripts.ai.init` before `scripts.supply`, `scripts.research` and `scripts.logistics`. The AI needs
+all three, but `research.lua` must set the `on_entity_damaged` filter after `ai/init.lua` sets its own: the filter is
+one per mod, and research's is the union with the armored unit names. `require` is not allowed at run time. So
+`ai/init.lua` requires the three modules at its very end, after its own `set_event_filter`, and stores them in
+`ai/deps.lua`. The AI modules read `deps.<name>` at run time only.
+
+Side effect: `logistics.lua` now loads before `fog`, `hubgui`, `hud`, `lobby`, `techgui` and `debug` instead of after
+them. Its handlers do not depend on those modules. `selection`, `orders`, `camera` and `cursor` were already loaded
+early through `ai/army.lua`.
+
+`ai/init.lua` also sets `research.AI_IGNORES_LOCKS = false` at load. AI commanders research their own unlocks and obey
+the barracks gate like a player, on every difficulty. Easy simply researches slowly.
+
+### Doctrines (`doctrine.lua`)
+
+`commander.new` draws one per AI force with `game.create_random_generator(seed)`. The seed is the nauvis map seed +
+match id × 7919 + force number × 104729. The draw is logged as `[rts] ai <force>: doctrine <name> (seed N)`.
+`storage.ai_meta.doctrines[force]` overrides it; `/rts-ai-doctrine <force> <name>` (admin) and `ai.set_doctrine` write
+it. A running commander switches at once: build order, research order, mix and pacing change; plan, base and army stay.
+
+| | Economic | Aggressive | Turtle |
+|---|---|---|---|
+| First attack (× difficulty) | 1.7: normal 5:06, hard 2:33 | 1.0: normal 3:00, hard 1:30 | 2.2: normal 6:36, hard 3:18 |
+| Attack size (× difficulty) | 1.0 | 0.8 | 1.1 |
+| Retreat below | 40 % (difficulty) | 60 % | 40 % |
+| Target penalties | default | extractor and hub 0, smelter 5, solar 10, barracks and factory 15 | default |
+| Unit mix (base weights) | walker 4, heavy 3, drone 1, raider 1, artillery 1 | drone 4, walker 3, raider 4, heavy 1 | walker 3, heavy 3, artillery 2, drone 1 |
+| Research | Supply I, Unlock Heavy, Mining I, Logistics I, Hauler capacity I, Attack I, Armor I, Unlock Raider, Supply II, Mining II, Attack II, Armor II, Unlock Artillery, Attack III, Armor III | Supply I, Unlock Raider, Attack I, Armor I, Unlock Heavy, Attack II, Supply II, Armor II, Mining I, Attack III | Supply I, Unlock Heavy, Armor I, Unlock Laser, Unlock Artillery, Attack I, Mining I, Armor II, Overcharge, Supply II, Attack II |
+| Unit production | after the third iron smelter | at once | after the third iron smelter |
+| Expansions | hub 1 (iron) in the opening after the steel chain, whole at 3:20; hub 2 (copper) at 4:30; one hauler each | hub 1 at 5:30 | hub 1 at 5:30 |
+| Defence | 2 turrets, hauler-route patrol | 1 turret, second barracks at 4:00 | 2, 4, 6 turrets; 2 laser turrets once unlocked; 2 solar arrays; coal line for explosives |
+| Raids | patrol of 2 | harass every 2 minutes, 4 reserve raiders | – |
+| Barracks yield above | 6 units | 6 units | 6 units |
+
+The research orders differ from the lead's examples on purpose. Every doctrine starts with Supply I, the cheapest
+technology at 10 kits, then its unlock. In the first measured runs no AI completed a technology by 6 minutes; with this
+order the second one lands at 4:55-5:15 on normal. The aggressive doctrine needs Unlock Raider (20 kits) second for its
+harass.
+
+The turtle's "artillery group" is the mix weight: artillery is made once Unlock Artillery (tier 2) is researched and
+explosives flow from the coal line. No AI reached tier 2 within 8 minutes.
+
+### Build orders (`orders_data.lua` `data.order`)
+
+`data.order(difficulty, doctrine)` is the difficulty's opening, the recipe step (unit production) after the opening
+step tagged `UNITS_AFTER[doctrine]`, the army step (attack size = difficulty `attack_min` × doctrine factor), and the
+doctrine's steps. Time gates are in normal seconds and scale with `TIME_SCALE` (easy 1.5, normal 1, hard 0.7). A step
+with `min_difficulty` is dropped below it. Orders are cached per key.
+
+Normal and hard opening:
+
+| # | Step |
+|---|---|
+| 1-4 | Factory, 2 iron extractors, 2 iron smelters, barracks (starting stock) |
+| – | Aggressive: unit production on |
+| 5-6 | Stone extractor and its direct slot |
+| 7 | Lab |
+| 8 | Second factory: the workshop |
+| 9-10 | Third iron extractor, third iron smelter (stone 10) |
+| – | Economic, turtle: unit production on |
+| 11-12 | Copper extractor and smelter (stone 10) |
+| 13 | Fourth iron smelter (stone 10) |
+| 14 | Second lab |
+| 15 | Third factory: the feeder |
+| 16 | Steel chain: fifth iron slot (stone 20), steel for heavies and advanced kits |
+| – | Economic: hub 1, stage 1 (`OPENING_EXTRA`) |
+| 17-18 | Second copper extractor and smelter (stone 10): walkers, science, circuits and heavies all take copper |
+
+The opening has no time gates. Two failed `when` per walk end the walk, so a gated lab at 30 s kept the iron core
+waiting. Easy keeps its Phase 3 opening and adds a lab at 60 s and the workshop at 120 s.
+
+Doctrine steps (normal times):
+
+- **Economic.** Hub 1 stage 1 sits in the opening right after the steel chain (`data.OPENING_EXTRA`): iron,
+  2 extractors, 1 smelter slot, 1 solar array, planned for 2 and 2. Then hub 1 whole (2 slots, 2 solar) at 200 s,
+  fourth iron extractor 150 s, 2 turrets 200 s, hard: second barracks 240 s, hub 2 (copper) 270 s, iron smelters 6
+  and 7 and extractor 5 at 300-330 s. Placed after the whole opening, the hub stood at 5-6 minutes and its first
+  hauler delivered after minute 8; placed before the labs and the feeder, the second technology slipped to 6:40;
+  with its queue entries moved to the front, the steel chain waited and no heavy came by minute 8.
+- **Aggressive.** Second barracks 240 s (at 120 s its plates never left room for science); 1 turret 180 s; fourth iron
+  extractor 200 s; smelter 6 and extractor 5 at 300 s; hub 1 at 330 s; smelter 7 at 360 s.
+- **Turtle.** 2 turrets 75 s; fourth iron extractor 140 s; 4 turrets 150 s; coal line 240 s; hard: second barracks
+  240 s; 6 turrets and 2 solar arrays 270 s; 2 laser turrets once `rts-laser-turret` is unlocked; smelter 6 at 300 s;
+  hub 1 at 330 s; smelter 7 at 360 s.
+
+New step data: `{kind = "hub", id, ore, extractors, slots, solar, haulers, plan_slots?, plan_solar?, front?}`,
+`when = {unlocked = <name>}`, and `OPENING_EXTRA[doctrine][tag]` (doctrine steps placed after a tagged opening step).
+`front = true` moves the hub's queue entries ahead of everything but labs and factories; no order uses it now.
+`build_order.KINDS[kind] = {satisfied, in_progress, execute, describe}` lets a module add
+a step kind; `hubs.lua` registers `hub`. "cc" and "front" build steps now count buildings within 32 tiles of the CC
+(`build_order.base_count`), so a hub's solar arrays do not satisfy the turtle's "2 solar arrays". Names outside the
+building registry are counted from the plan.
+
+### Research (`tech.lua`)
+
+Every 5 s a commander with a lab keeps one technology running:
+
+1. While the barracks are supply-capped (`C.capped`), Supply I or II comes first. A running technology of another
+   kind is put back with `research.cancel` after Supply is queued; it keeps its progress.
+2. Otherwise the first technology of the doctrine's order that `research.status` calls `available` and whose kit the
+   force can make. Advanced kits need steel and copper in the network or produced in the last minute.
+3. Otherwise any available technology, in tree order.
+
+`C.science = {kit, want = labs × SCIENCE_PER_LAB (4), tech}` tells the workshop which kit to keep. Log lines:
+`[rts] ai <force>: research <tech> (<doctrine> doctrine, N labs)` and `research <tech> done at Ns (N done)`.
+
+### Factories: builder, workshop, feeder (`commander.lua`)
+
+- **Builder** (the force's first factory): the construction queue's items, then ammo, as in Phase 3. A due hauler kit
+  counts as construction and keeps the recipe until it is out. `commander.recipe_for(C, item)` returns the recipe to
+  run now: the item's own when its ingredients are at hand or, for raw plates, flowing; else the recipe of a missing
+  intermediate from `balance.intermediates` (gear, cable, circuit, explosives), depth first. Ammo is capped at 10
+  magazines per turret and 30 in all per minute: a turtle's six turrets under fire took every plate in a 1v3 run.
+- **Workshop** (the second). Its demands come in groups that take turns of at most `WS_TURN` (20 s, round robin)
+  while more than one group is active:
+
+  | Group | Demand |
+  |---|---|
+  | science | Gears for basic kits (or circuits for advanced ones) in batches, then the running research's kit, up to 4 per lab |
+  | circuits | 10 → 20 circuits while raiders are wanted and unlocked, laser turrets are queued, or hauler kits are wanted |
+  | explosives | 10 → 20 explosives while artillery is wanted and unlocked |
+
+  With a strict priority the always-short science stock kept the aggressive doctrine's workshop from ever making a
+  circuit, so no raider came after Unlock Raider.
+- **Feeder** (the third). Gears for basic kits (or circuits for advanced ones) up to two batches ahead, else what the
+  workshop demands that the workshop itself is not making. Alone, the workshop spent half its time on gears, about
+  6 kits a minute; with the feeder it makes kits back to back, 10-11 a minute.
+- Workshop and feeder never craft construction items: with plates short, three factories crafting buildings in
+  parallel only split the plates, and a lab took three minutes.
+
+**Plate allocation.** `production.lua` serves the oldest-starved consumer with up to two crafts' worth, and a consumer
+short of one item reserves it. The workshop's 2-plate gears came one every ~20 s behind the builder's 20-40-plate
+bites and the barracks. Two measures, both with duty caps:
+
+- **Barracks yield** (`mix.lua`). While a factory has starved of plates for 2 s on workshop work (science kits, hauler
+  kits and their intermediates), the barracks clear their recipe and their ingredients return at once. Conditions: the
+  army holds `yield_army` (6) units, no base threat is fresh, a unit spawned in the last 40 s, and the barracks yielded
+  less than 60 % of the last minute.
+- **Builder steps aside** (`commander.lua`). After 4 s of workshop starvation the builder's recipe is cleared for one
+  pass, at most 35 % of each minute. It never steps aside while it makes a hauler kit.
+
+### Hubs and haulers (`hubs.lua`, `layout.lua`)
+
+The `hub` step:
+
+1. **Patch.** Every iron or copper patch of the arena within 150 tiles of the CC that has at least 30 tiles, lies at
+   least 45 tiles from the CC (outside the main) and at least 50 tiles from every other force's spawn, CC and hub, and
+   is at most 15 tiles farther from us than from the nearest other base. The step's ore first, then the nearest. A
+   patch with another force's building or ghost within 8 tiles is skipped. `storage.ai_meta.patch_claims` keeps two
+   AI commanders off one patch. On the map-generation tree this picks the natural, 52-65 tiles out; on the open map
+   the middle patches.
+2. **Site.** Candidate hub centres 7-16 tiles from the patch's bounding box, nearest to the CC first. The centre must
+   be at least 42 tiles from the CC along x or y: logistic areas are squares, and a hub 45 tiles away in a straight
+   line but 36 along x joined the CC network, so its hauler never had anything to fetch. It must also be 24 tiles from
+   other hubs. The site box (the hub, its two stockpiles, the four smelter slots with feed tiles, a margin) and the
+   solar box south of the hub must be free of entities, water, ore and reserved tiles, and
+   `can_place_entity("rts-hub")` must hold.
+3. **Line.** `layout.plan_line` takes a **sink**. The hub sink's frame has its origin 2 tiles south of the hub, so the
+   hub's stockpiles at (±3.5, 0.5) sit where the CC frame's north stockpiles are, and the "1" slots (E1, W1, N1, N2)
+   feed them unchanged. The spine points at the hub, slots are the abstract `smelter` type, there are no satellites,
+   and the pole chain ends within 8 tiles of the hub centre: the hub's hidden pole has wire reach 9 and snaps up to
+   0.7 tiles off centre.
+4. **Power.** The hub's own 300 kW plus `solar` solar arrays south of it. A column under the hub stays free, because
+   haulers stop there. `layout.cover_power` adds a medium pole next to any slot machine that neither the hub's 16×16
+   supply area (counted as ±7.5) nor the line's poles reach. E1 and W1 input inserters usually need one.
+5. **Build.** The hub first, then the drills with the spine, belts and poles, the slots, the extra poles and the solar
+   arrays, all by the usual paced revive paid from the CC network. `logistics.lua` places the hub's stockpiles when
+   the hub is built and moves a blocked one up to 4 tiles; the smelters' output inserters then drop plates on the
+   ground. So trees, rocks and items on the two stockpile tiles are removed when the step runs, and the hub is revived
+   only while no unit stands on them: own units there are sent to the rally point (`clear` areas of a plan entry,
+   `construction.lua`).
+
+Once the hub stands, `hubs.step` clears its keep thresholds, sets `export_above <plate> = 20`, takes its 10
+construction robots out and makes the CC keep 400 of the plate. It logs where the stockpiles ended up. When the hub's
+line has a built drill and a built slot, the hub's `haulers` join `C.want_haulers`. The builder makes the kits,
+`logistics.lua` deploys them, and every auto hauler of the force is homed at the CC with `logistics.set_home`.
+Deliveries are read from `logistics.stats(force).delivered`. `hubs.diagnose` logs every hub line's machines by entity
+status at the end of an autotest, and `/rts-ai-map` adds a map of each hub.
+
+Every planning context now marks water tiles (`find_tiles_filtered{collision_mask = "water_tile"}`) as occupied,
+for the generated lakes and moats. `layout.context_at(C, surface, frame, radius)` plans around any frame.
+
+### Unit mix and counters (`mix.lua`)
+
+Kinds come from `balance.units`: tier-1 units with a barracks kit and no `made_by`. The desired weights are the
+doctrine's mix plus counters. For every enemy kind seen in the last minute (`C.seen`) and every known enemy turret,
+laser turret and wall, each own kind that lists it under `counters` or `strong` gains `COUNTER_GAIN` (8) × that kind's
+share of what was seen. With the current `balance.lua`: drones against artillery, haulers and raiders; walkers against
+drones and raiders; heavies against walkers and drones; artillery against heavies, turrets, laser turrets and walls;
+raiders against artillery and haulers.
+
+A harassing doctrine's raider weight is tripled (`RESERVE_BOOST`) while it has fewer raiders than its reserve, and so
+is the weight of a heavy, raider or artillery kind the force has no unit of yet (`FIRST_BOOST`): the economic
+doctrine's first heavy came 2-3 minutes after Unlock Heavy behind walkers and drones, which take plates in smaller
+bites. Each barracks makes the available kind furthest below its desired share. Kinds being made count as present,
+so two barracks diversify. It keeps the kind until a unit of it spawned. Heavies, raiders and artillery rest for
+30 s after starving for 20 s; walkers and drones never rest. A kind is available when research unlocked it, every
+kit ingredient is in the network or was produced in the last minute, and its supply cost fits under the cap
+(`supply.get`). With no room for any kind the barracks stop (the recipe is cleared once the output is empty),
+`C.capped` is set and `tech.lua` researches supply. The hard bonus unit checks `supply.can_spawn` too.
+
+### Raids (`raids.lua`)
+
+| Group | Trigger | Behaviour |
+|---|---|---|
+| harass | Aggressive doctrine, every 2 minutes from minute 2, at least 3 raiders among the reserve and the pool | 3-4 raiders attack the nearest seen enemy hauler, else a known hub, else an outlying extractor, smelter or solar array (26 tiles from enemy CCs and known turrets), else a pole next to one. With nothing known they go to the patch where an enemy expansion would be. Home below 50 % hit points or after 75 s; the next target within 45 tiles when the first is gone. |
+| guard | An own hauler loses health beyond 30 tiles of the CC (polled every run), or an extractor, hub, smelter, stockpile or solar array beyond the base radius (55) is damaged | The 4 pool units nearest to it attack-move there; home 15 s after the last alarm |
+| patrol | Economic doctrine, once a hub stands | 2 units attack-move between the route's midpoint and a point 10 tiles before the hub, one leg every 25 s, refilled from the pool |
+
+The doctrine's reserve raiders (4) stay out of defence, guard, patrol and attack groups; only the harass takes them.
+
+### Army changes (`army.lua`, `scout.lua`)
+
+- **Pool.** Units of kind `hauler` (logistics) and `commander` (abilities) never join the pool, a group or the strength.
+- **Parity.** `scout.step` remembers the largest enemy army seen in one scan for 3 minutes (`C.enemy_army`). A
+  non-finishing attack also needs 80 % of it. Without this the aggressive doctrine fed its army piecemeal into a
+  defending one and lost its base by minute 6.
+- **Doctrine settings.** `cfg.retreat_ratio` and `cfg.target_penalty` come from the doctrine. `TARGET_PENALTY`
+  gained `lab` 15, `hub` 20 and `laser-turret` 12.
+- **Finishing** targets factories, then hubs, then stockpiles.
+- **Priority rebuild.** This fixes the Phase 3 1v3 failure `attack_rts-ai-1` ("never reached attack size after losing
+  its barracks"). When the force had a factory or a barracks and has none left, `build_order.priority` queues one,
+  the factory first because it makes the barracks item. The entry moves to the front of the construction queue, so the
+  factory makes its item next. Log: `priority rebuild: rts-barracks at (x, y) (the last one was lost)`.
+
+### APIs used
+
+| Module | Calls |
+|---|---|
+| `research` | `queue`, `cancel`, `status`, `list`, `has`, `is_unlocked`, `lab_counts`; `AI_IGNORES_LOCKS` |
+| `supply` | `get`, `can_spawn` |
+| `logistics` | `set_policy`, `policy`, `haulers_of`, `set_home`, `stats`, `entry_for_hub`, `HUB_STOCKPILES` |
+| `balance` | `units` (kind, kit, made_by, tier, supply, cost, counters, strong), `intermediates` |
+| `buildings` | kinds `lab`, `hub`, `laser-turret`, `wall`; `kind_of`, `for_force`, `count`, `main_cc` |
+| `production` | `set_recipe`, `on_spawned`, `KITS`; records' `pull_state`, `starved_since`, `spawned` |
+| vanilla | `LuaForce.current_research`, `research_unit_ingredients`, `get_item_production_statistics`, `LuaSurface.find_tiles_filtered`, `game.create_random_generator`, `LuaEntity.status` |
+
+### Validation
+
+Each run is a copy of `mods/` plus `mods/mod-list.json` (Space Age on). Copies differ only in `debug.lua`
+`AUTOTEST_MATCH` (difficulty, opponents) and `ai/autotest.lua` `DOCTRINES` (nil = the seeded draw). Every map creation
+draws a new seed. Runner: create, start the server, stop at `ai autotest summary`.
+
+```sh
+rm -rf build/p4-ai-final && mkdir -p build/p4-ai-final && cp -R mods/factorio-rts mods/mod-list.json build/p4-ai-final/
+tools/headless-run.sh 520 '\[rts\] (ai|research|logistics: hub)' build/p4-ai-final
+```
+
+New autotest checks (each excused for a force that lost its CC before the deadline, which the line says):
+`lab_<force>`, `techs_6min_<force>` (2 technologies by 6:00), `kinds_8min_<force>` (3 unit kinds spawned by 8:00),
+`hub_<force>` (economic: a hub and a hauler delivery), `harass_<force>` (aggressive: a raider harass). The Phase 3
+`attack_<force>` check now also passes when an economic or turtle commander held (its pool stayed below its attack size
+or 80 % of the enemy army it saw) or when its first attack was not due yet; the line says which.
+
+**Phase 4 checks, final runs:**
+
+| Run | Force | Lab | Technologies (time) | Hub, first delivery, plates by 8:00 | Harass | Kinds by 8:00 |
+|---|---|---|---|---|---|---|
+| Normal (`p4-ai-final`) | economic | 1:41 | Supply I 3:40, Unlock Heavy 4:55, Mining I 7:00 | natural at (-40, 0), 52 tiles out; built 4:18; 6:13; 97 | – | drone, walker, heavy (7:24) |
+| | aggressive | 1:16 | Supply I 3:20, Unlock Raider 5:15 | – | 1 at 7:03 (3 raiders on the hub) | drone, walker, raider (6:15) |
+| Normal (`p4-ai2b`) | economic | 1:41 | 3:40, 4:55, 7:00 | (-41, 0); 4:18; 6:05; 102 | – | heavy at 7:25 |
+| | aggressive | 1:16 | 3:20, 5:15 | – | 1 at 6:57 | raider at 6:20 |
+| Hard (`p4-ai2-hard`) | aggressive | 0:43 | 2:40, 4:20 | – | 1 at 6:14 | raider at 5:29 |
+| | turtle | 0:43 | 2:15, 3:30, Armor I 5:10 | (42, 0) at 6:26 | – | heavy at 4:29 |
+| Hard (`p4-ai2-hard2`) | economic | 0:43 | 2:15, 3:55, 7:05 | 2:44; 4:57; 255 by 8:00 (2 hubs, 44 trips) | – | heavy at 5:46 |
+| | aggressive | 0:43 | 2:45, 4:25 | – | 1 at 6:15 | raider at 4:49 |
+| 1v3 (`p4-ai2-1v3`) | economic (player) | 1:40 | 3:45, 5:00, 7:35 | 4:10; 6:06; 115 | – | heavy at 7:09 |
+
+**AI time** (`[rts] ai perf minute N` lines; the AI time per tick is the minute's total over 3600 ticks):
+
+| Run | Commanders | AI time per minute | Per tick | Wall clock per 3600 ticks |
+|---|---|---|---|---|
+| Normal 1v1 (two runs) | 2 | 188-397 ms | 0.05-0.11 ms | 59.91-60.01 s |
+| Hard 1v1 (two runs) | 2 | 204-368 ms | 0.06-0.10 ms | 59.91-60.01 s |
+| 1v3 normal | 4 | 431-616 ms | 0.12-0.17 ms | 59.93-60.00 s |
+
+One-off costs in a single tick: planning a hub 19-52 ms (16 plans), the start lines 27-49 ms per force.
+
+**Also run, earlier builds of this work:** easy 1v1 (turtle vs economic), zero errors, 14/21: the lab came at 4:30 and
+Supply I at 7:00, so the Phase 4 checks are not met on easy; pacing by design. Not rerun on the final build.
+
+**Priority rebuild** triggered twice in the 1v3 run (`priority rebuild: rts-barracks ... (the last one was lost)` at
+3:21 and 6:28); both forces lost their CC within seconds, so a completed rebuild was not observed.
+
+### Tuning history (what traded against what)
+
+Every early step competes for the same plates. Measured on normal, one variable at a time:
+
+| Change | Gained | Lost |
+|---|---|---|
+| Phase 3 order plus a lab and a workshop as doctrine steps | – | no technology by 6:00 in any run |
+| Lab and workshop in the opening, Supply I first | second technology 5:40 | – |
+| Feeder factory, workshop groups in turns | second technology 4:55-5:15; raiders after Unlock Raider | – |
+| Hub 1 after the whole opening | – | hub built at 5:11-6:18, no delivery by 8:00 on two seeds |
+| Hub 1 right after "core" (third smelter) | hub built at 4:36 | second technology 7:00 |
+| One more step in flight for the economic doctrine | delivery 6:14 | second technology 7:10 |
+| Hub 1 stage 1 after the steel chain, entries to the front of the queue | delivery 6:26-6:29 | steel chain late, no heavy by 8:00 |
+| **Final:** hub 1 stage 1 after the steel chain, labs and feeder before it | delivery 6:05-6:13, second technology 4:55 | heavy at ~7:25 |
+| Circuits ahead of Unlock Raider | – | Unlock Raider at 7:45 (reverted) |
+| First unit of a fresh kind ×3 weight | first heavy 7:05-7:25 instead of 7:47-7:58 | – |
+
+### Gotchas
+
+1. **`require` is not allowed at run time,** and the damage filter is one per mod. Hence the late `deps` binding.
+2. **Plates decide everything.** The Phase 4 investments (two labs, two more factories, a hub with its line and solar
+   arrays, hauler kits, science) compete with the barracks for 75-190 plates a minute. Early steps took 40-80 s each
+   while iron ran out. The fixes were the order (lab, workshop and the iron core from the starting plates; units after
+   the third smelter for economic and turtle) and the duty-capped yields.
+3. **A time gate in the opening stops the walk.** Two failed `when` per walk end it.
+4. **Production serves the oldest-starved consumer with two crafts.** Small recipes (gears, circuits) lose to
+   20-40-plate bites. Strict workshop priority starved circuits, so the groups take turns.
+5. **Logistic areas are squares.** A hub must clear the CC's 50×50 area by Chebyshev distance, not straight-line
+   distance.
+6. **`logistics.lua` moves a hub stockpile whose spot is taken** when the hub is built: by a tree or rock (planning
+   treats them as free) or by a unit standing there. The west stockpile, on the side the army comes from, moved in
+   both hubs of one run, and the smelters' output inserters then dropped plates on the ground.
+7. **The hub's hidden pole snaps 0.7 tiles off the hub centre.** The pole chain targets 8 tiles, not the CC's 8.5, and
+   E1 and W1 input inserters need an extra pole.
+8. **A hauler kit made before the hub's line runs** takes the plates the hub's own parts need.
+9. **Every map creation draws a new seed.** The generated terrain, the hub sites and the doctrine draws change from
+   run to run, and so do the timings. One run per configuration is a sample, not a measurement.
+
+### Open issues
+
+- **Small armies.** At 8:00 on normal each side fields 6-8 units (economic: walker 4, drone 1, heavy 1). Phase 3
+  normal had about 20. Plates now go to labs, two more factories, hubs, haulers and science first. This is a balance
+  call for the lead: starting plates, kit or building costs, or fewer AI investments.
+- **Thin margins** (Status): a slow seed can push the second technology, the first delivery, the first harass (about
+  7:00 on normal, needs 3 raiders at once) or the first heavy past its deadline. "Tuning history" shows the
+  trade-offs; no order improved all four at once with the current costs.
+- **Free-for-all.** Aggressive AIs in a 1v3 sometimes lose their CC before their second technology (1 of 4 forces in
+  the final run). The economic player's first heavy came at 7:09.
+- **No AI reached tier 2** within 8 minutes: advanced kits, laser turrets, artillery and the turtle's artillery group
+  are exercised by code paths only, not by a run.
+- **Harass raids are short.** Raiders come home after about 10 s at half their hit points; the harass happens, but
+  costs the defender little so far.
+- **Hub planning costs 19-52 ms in one tick,** once per hub; the start lines 27-49 ms per force. A split over several
+  ticks would remove the hitch.
+- **Economic and turtle may not attack within 8 minutes** on normal; the attack check allows it ("held").
+- **`logistics.lua` loads earlier** than `control.lua` lists it (see "Load order"). Nothing depends on the old order
+  today.
+- **Not tested:** a GUI session, a human opponent, medium and large maps, easy on the final build, more than 8 minutes,
+  `/rts-ai-doctrine` from the console (the autotest calls `ai.set_doctrine`).

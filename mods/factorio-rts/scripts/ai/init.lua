@@ -7,11 +7,16 @@
 --   ai.get(force_name)                     the commander state, or nil
 --   ai.tick(event)                         scheduler: every TICK ticks, runs each commander that is due (each
 --                                          commander every commander.THINK ticks, staggered by force)
--- Console: /rts-ai <force> [easy|normal|hard], /rts-ai-stop <force>, /rts-ai-dump [force], /rts-ai-map [force].
+-- Console: /rts-ai <force> [easy|normal|hard], /rts-ai-stop <force>, /rts-ai-dump [force], /rts-ai-map [force],
+-- /rts-ai-doctrine <force> <economic|aggressive|turtle>.
 -- Events: on_entity_damaged (filtered to RTS building names) feeds the army's threat; production.on_spawned gives
 -- the hard bonus units.
+-- Phase 4: at its end this file requires scripts.supply, scripts.research and scripts.logistics into ai/deps.lua
+-- (research must set its damage filter after ours) and switches research.AI_IGNORES_LOCKS off: AI commanders
+-- research their unlocks themselves (ai/tech.lua) and obey the barracks gate like a player.
 --
--- Owns storage.ai = {[force_name] = commander state (ai/commander.lua)} and storage.ai_meta = {inserter_dir_is_pickup}.
+-- Owns storage.ai = {[force_name] = commander state (ai/commander.lua)} and storage.ai_meta = {inserter_dir_is_pickup,
+-- doctrines = {[force] = doctrine override}, patch_claims = {[patch id] = force}}.
 local util = require("scripts.util")
 local events = require("scripts.events")
 local units = require("scripts.units")
@@ -21,6 +26,8 @@ local data = require("scripts.ai.orders_data")
 local commander = require("scripts.ai.commander")
 local army = require("scripts.ai.army")
 local layout = require("scripts.ai.layout")
+local doctrine = require("scripts.ai.doctrine")
+local deps = require("scripts.ai.deps")
 
 local ai = {}
 
@@ -33,6 +40,8 @@ local perf = {}
 local function ensure_storage()
   storage.ai = storage.ai or {}
   storage.ai_meta = storage.ai_meta or {}
+  storage.ai_meta.doctrines = storage.ai_meta.doctrines or {}
+  storage.ai_meta.patch_claims = storage.ai_meta.patch_claims or {}
 end
 
 function ai.init()
@@ -76,10 +85,26 @@ end
 function ai.stop_force(force_name)
   if storage.ai and storage.ai[force_name] then
     storage.ai[force_name] = nil
+    -- patches it claimed are free again (a new match starts new commanders)
+    local claims = storage.ai_meta and storage.ai_meta.patch_claims or {}
+    for id, f in pairs(claims) do
+      if f == force_name then claims[id] = nil end
+    end
     util.log("ai %s: commander stopped", force_name)
     return true
   end
   return false
+end
+
+--- Set the doctrine of a force: a running commander switches now (commander.set_doctrine); the override also
+--- applies to the force's next commander. nil clears the override. Returns true when valid.
+function ai.set_doctrine(force_name, name)
+  ensure_storage()
+  if name ~= nil and not doctrine.DEF[name] then return false end
+  storage.ai_meta.doctrines[force_name] = name
+  local C = storage.ai[force_name]
+  if C and name and C.doctrine ~= name then commander.set_doctrine(C, name) end
+  return true
 end
 
 --- Profilers {ai = time spent in commander runs, runs = number of runs, parts = {[subsystem] = profiler}} since
@@ -152,10 +177,12 @@ production.on_spawned(function(unit, rec, kit)
   if not C then return end
   C.last_kit = C.last_kit or {}
   if rec.entity.valid then C.last_kit[rec.entity.unit_number] = kit end
+  C.last_spawn_tick = game.tick
   local every = C.cfg.kit_bonus_every
   if not every then return end
   C.spawned = (C.spawned or 0) + 1
   if C.spawned % every ~= 0 then return end
+  if deps.supply and not deps.supply.can_spawn(rec.force, unit.name) then return end -- the bonus obeys the cap
   local extra = units.spawn(unit.name, unit.position, rec.force, nil, unit.surface)
   if extra then
     C.stats.bonus_units = C.stats.bonus_units + 1
@@ -220,6 +247,20 @@ function ai.log_maps(force_name)
       local y0, y1 = math.floor(fr.cy) - 26, math.floor(fr.cy) + 26
       util.log("ai map %s (x %d..%d, y %d..%d):", f, x0, x1 - 1, y0, y1 - 1)
       for _, row in ipairs(layout.ascii(C, util.surface(), x0, y0, x1, y1)) do util.log("ai map %s %s", f, row) end
+      -- forward hubs: 30 tiles around each
+      local ids = {}
+      for id in pairs(C.expansions or {}) do ids[#ids + 1] = id end
+      table.sort(ids)
+      for _, id in ipairs(ids) do
+        local X = C.expansions[id]
+        if X.pos then
+          local hx, hy = math.floor(X.pos.x), math.floor(X.pos.y)
+          util.log("ai map %s hub %d (x %d..%d, y %d..%d):", f, id, hx - 30, hx + 29, hy - 30, hy + 29)
+          for _, row in ipairs(layout.ascii(C, util.surface(), hx - 30, hy - 30, hx + 30, hy + 30)) do
+            util.log("ai map %s hub%d %s", f, id, row)
+          end
+        end
+      end
     end
   end
   return #names
@@ -256,6 +297,16 @@ local COMMANDS = {
       reply(cmd, string.format("rts-ai-map: %d map(s) written to the log", n))
     end,
   },
+  ["rts-ai-doctrine"] = {
+    help = "<force> <economic|aggressive|turtle> - set the doctrine of an AI force (now and for its next commander)",
+    admin = true,
+    run = function(cmd)
+      local args = words(cmd.parameter)
+      local ok = args[1] and ai.set_doctrine(args[1], args[2])
+      reply(cmd, ok and string.format("rts-ai-doctrine: %s -> %s", args[1], args[2])
+        or "rts-ai-doctrine: usage /rts-ai-doctrine <force> <economic|aggressive|turtle>")
+    end,
+  },
   ["rts-ai-dump"] = {
     help = "[force] - print the AI commander state",
     run = function(cmd)
@@ -276,5 +327,12 @@ function ai.run_command(name, parameter, player_index)
   local def = COMMANDS[name]
   def.run({name = name, parameter = parameter, tick = game.tick, player_index = player_index})
 end
+
+-- Phase 4 modules that load after this one in control.lua (see the header and ai/deps.lua). research.lua sets the
+-- union damage filter when it loads, i.e. here, after ours above.
+deps.supply = require("scripts.supply")
+deps.research = require("scripts.research")
+deps.logistics = require("scripts.logistics")
+deps.research.AI_IGNORES_LOCKS = false
 
 return ai

@@ -17,12 +17,15 @@
 -- Defence sends the nearest half of the idle units (at least DEFEND_MIN; easy at most half) and keeps the rest at
 -- the rally. No attack starts before cfg.first_attack ticks; an enemy without CC and barracks is attacked with
 -- FINISH_MIN units, its remaining buildings all known (scout.best_target).
+-- Phase 4: the pool never holds haulers or the commander (POOL_SKIP); ai/raids.lua forms "harass", "guard" and
+-- "patrol" groups from it after the base defence, and the doctrine's reserve raiders stay out of attack groups.
 -- Stats in C.stats: attacks, reinforcements, retreats, defends, recalls.
 local util = require("scripts.util")
 local units = require("scripts.units")
 local buildings = require("scripts.buildings")
 local orders = require("scripts.orders")
 local scout = require("scripts.ai.scout")
+local raids = require("scripts.ai.raids")
 
 local army = {}
 
@@ -38,6 +41,8 @@ army.DEFEND_MIN = 4              -- a defence group takes the nearest half of th
 army.FINISH_MIN = 3              -- attack size against an enemy without CC and barracks
 army.RALLY_SHARE = 0.34          -- rally point: this share of the way from the CC to the nearest enemy spawn,
 army.RALLY_MIN, army.RALLY_MAX = 20, 40 -- clamped; two rallies 24 tiles apart (0.4 of 120) saw each other (vision 30)
+army.POOL_SKIP = {hauler = true, commander = true} -- unit kinds the army never commands (logistics, abilities)
+army.PARITY = 0.8 -- an attack (not a finishing one) also needs this share of the largest enemy army seen lately
 
 --- Set up C.army; the rally point lies between `home` (CC) and the nearest other spawn.
 function army.init(C, home)
@@ -79,6 +84,11 @@ function army.on_damage(C, entity, cause, damage)
   t.position = {x = pos.x, y = pos.y}
   t.tick = game.tick
   t.damage = t.damage + (damage or 0)
+  -- far from the CC (a forward hub, its extractors): the raid defence answers (ai/raids.lua)
+  local cc = buildings.main_cc(C.force)
+  if not cc or util.distance(entity.position, cc.position) > army.BASE_RADIUS then
+    raids.on_building_damage(C, entity, cause, buildings.kind_of(entity.name))
+  end
 end
 
 --- How many of `idle` pool units defend: the nearest half, at least DEFEND_MIN (cfg.defend_share caps it: easy
@@ -141,6 +151,8 @@ local function send_home(C, G, list, state)
   orders.move(list, C.army.rally)
 end
 
+raids.bind({form = form, order_attack = order_attack, send_home = send_home, hp_of = hp_of, disband = disband})
+
 local function threat_fresh(C, home)
   local t = C.army.threat
   return t ~= nil and game.tick - t.tick <= army.THREAT_TICKS and home ~= nil
@@ -171,10 +183,10 @@ function army.step(C, surface)
     end
   end
 
-  -- the pool: own units in no group
+  -- the pool: own units in no group (haulers and the commander never)
   local pool, far = {}, {}
   for un, rec in units.for_force(C.force) do
-    if not a.member[un] then
+    if not a.member[un] and not army.POOL_SKIP[rec.kind] then
       pool[#pool + 1] = rec.entity
       if rec.order == units.IDLE and util.distance(rec.entity, a.rally) > army.RALLY_RADIUS
          and tick - (a.sent[un] or -army.RALLY_RESEND_TICKS) >= army.RALLY_RESEND_TICKS then
@@ -184,6 +196,18 @@ function army.step(C, surface)
     end
   end
   if #far > 0 and not threat_fresh(C, home) then orders.move(far, a.rally) end
+
+  -- the doctrine's reserve raiders stay out of defence, guard, patrol and attack groups: they harass (raids.lua)
+  local reserve = {}
+  local n_reserve = raids.reserved_raiders(C)
+  if n_reserve > 0 then
+    local rest = {}
+    for _, e in ipairs(pool) do
+      local rec = units.get(e.unit_number)
+      if #reserve < n_reserve and rec and rec.kind == "raider" then reserve[#reserve + 1] = e else rest[#rest + 1] = e end
+    end
+    pool = rest
+  end
 
   -- defend the base
   if threat_fresh(C, home) then
@@ -235,6 +259,9 @@ function army.step(C, surface)
     end
   end
 
+  -- raids: raid defence, the hauler-route patrol, raider harassment (ai/raids.lua; the harass takes the reserve)
+  pool = raids.step(C, surface, pool, lists, home, reserve)
+
   -- launch an attack (or reinforce one under way). The pool's strength counts wounded units by their health
   -- share, so the remains of a beaten group do not turn round at once.
   local attacking = false
@@ -247,6 +274,14 @@ function army.step(C, surface)
   -- an enemy without CC and barracks is finished off with whatever is at hand
   local finishing = scout.beaten_enemy(C) ~= nil
   local need = finishing and math.min(a.min or 3, army.FINISH_MIN) or a.min
+  -- no suicide: once scouting saw the enemy army, an attack waits for rough parity (Phase 4; the aggressive doctrine
+  -- fed its army piecemeal into a defending one and lost its base by minute 6)
+  if need and not finishing then
+    local e = C.enemy_army
+    local seen = (e and tick - e.tick <= scout.ENEMY_ARMY_TICKS) and e.n or 0
+    a.enemy_seen = seen
+    need = math.max(need, math.floor(seen * army.PARITY + 0.5))
+  end
   -- (a threat does not stop it: the defence above took its share of the pool, the rest may attack)
   if a.min and #pool > 0 and tick >= (a.hold_until or 0) and tick >= C.started + (C.cfg.first_attack or 0) then
     local launch = strength >= need and (finishing or tick - a.last_attack >= (C.cfg.attack_interval or 0))
@@ -332,8 +367,9 @@ function army.describe(C)
     parts[#parts + 1] = string.format("#%d %s %du -> %s %s", gid, G.state, table_size(G.members),
       G.target and G.target.kind or "-", G.target and util.pos_str(G.target.position) or "")
   end
-  return string.format("rally %s min=%s pool=%d (strength %.1f) groups=[%s]", util.pos_str(a.rally),
-    tostring(a.min), a.pool_size or 0, a.pool_strength or 0, table.concat(parts, "; "))
+  return string.format("rally %s min=%s pool=%d (strength %.1f, enemy army seen %d) groups=[%s]",
+    util.pos_str(a.rally), tostring(a.min), a.pool_size or 0, a.pool_strength or 0, a.enemy_seen or 0,
+    table.concat(parts, "; "))
 end
 
 return army

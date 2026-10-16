@@ -240,7 +240,9 @@ Consequences:
   ```
 - **Alert format.** `mapgen.alert` hands every alert to the shared writer `supply.alert(force, kind, text, params,
   position)`, looked up at call time. That writer appends `{tick, force, kind, text, params, position}` to
-  `storage.alerts`, at most 100. The text is also printed to the force.
+  `storage.alerts`, at most 100. The text is also printed to the force's chat. The HUD agent asked to keep the chat
+  line (2026-10-16): the HUD line fades after 15 s, so chat is the lasting record, as for supply, research and
+  Commander alerts.
 - **HUD.** The HUD styles both kinds (`patch-depleted` yellow with an ore icon, `ruin-captured` green, ruin-lost as a
   loss since 5d176ad). It shows the newest 3, and F3 jumps to them.
 - **Measured pace.** The normal AI mines about 1000 main iron in 6 minutes (6000 → 4924–5241). At that pace the main
@@ -370,6 +372,4 @@ player's main stone ore.
 - **The AI ignores the ruin and the gaps.** B1 could send a unit to the ruin and rally or defend at
   `storage.mapgen.gaps`.
 - **The AI cannot expand to a natural with belts** in 1v1: the route fails. B1 needs hubs and haulers there.
-- **Alerts appear twice:** in the force's chat and in the HUD alert lines. Drop the chat line in `mapgen.alert` if
-  the HUD alone is enough.
 - **Main patches last about 30 minutes at the current AI pace**, not 12.

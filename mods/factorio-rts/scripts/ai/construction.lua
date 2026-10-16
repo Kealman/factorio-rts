@@ -31,14 +31,34 @@ local function item_of(name)
   return items and items[1] and items[1].name or name
 end
 
---- Register (or find) the plan entry for an entity spec {name, x, y, dir?, line?, part?, pickup?}. Returns the key.
+--- Register (or find) the plan entry for an entity spec {name, x, y, dir?, line?, part?, pickup?, clear?}. `clear` =
+--- areas that must be free of units before the revive (a hub's stockpile spots). Returns the key.
 function construction.add(C, spec)
   local key = string.format("%s@%.1f,%.1f", spec.name, spec.x, spec.y)
   if not C.plan[key] then
     C.plan[key] = {key = key, name = spec.name, item = item_of(spec.name), x = spec.x, y = spec.y, dir = spec.dir,
-                   line = spec.line, part = spec.part, pickup = spec.pickup, status = "planned"}
+                   line = spec.line, part = spec.part, pickup = spec.pickup, clear = spec.clear, status = "planned"}
   end
   return key
+end
+
+local UNIT_TYPES = {"spider-unit", "unit", "spider-leg", "spider-vehicle", "character"}
+
+-- True while a unit stands in one of the entry's `clear` areas; own units there are sent to the rally point.
+local function units_in_clear(C, surface, e)
+  local blocked = false
+  for _, box in ipairs(e.clear or {}) do
+    local found = surface.find_entities_filtered({area = box, type = UNIT_TYPES})
+    if #found > 0 then
+      blocked = true
+      local own = {}
+      for _, u in pairs(found) do
+        if u.valid and u.unit_number and u.force.name == C.force and units.get(u.unit_number) then own[#own + 1] = u end
+      end
+      if #own > 0 and C.army and C.army.rally then orders.move(own, C.army.rally) end
+    end
+  end
+  return blocked
 end
 
 --- Ask for an entry to be built. No effect when it is already queued, a ghost or built (and alive).
@@ -67,6 +87,19 @@ function construction.have(C, item)
   for _, net in ipairs(economy.networks(C.force)) do n = n + net.get_item_count(item) end
   C.have[item] = n
   return n
+end
+
+--- True when the force produced `item` in the last minute (item production statistics), memoized per tick.
+function construction.flowing(C, item)
+  if C.flow_tick ~= game.tick then C.flow_tick, C.flow = game.tick, {} end
+  local v = C.flow[item]
+  if v == nil then
+    local stats = game.forces[C.force].get_item_production_statistics(util.surface())
+    v = stats.get_flow_count({name = item, category = "input",
+                              precision_index = defines.flow_precision_index.one_minute}) > 0
+    C.flow[item] = v
+  end
+  return v
 end
 
 --- True when the entry is built and its entity is alive.
@@ -206,7 +239,8 @@ function construction.step(C, surface)
   local job, smalls, names, lacking = nil, 0, {}, {}
   for _, key in ipairs(C.queue) do
     local e = C.plan[key]
-    if e.status == "ghost" and e.ghost and e.ghost.valid and not lacking[e.item] then
+    if e.status == "ghost" and e.ghost and e.ghost.valid and not lacking[e.item]
+       and not (e.clear and units_in_clear(C, surface, e)) then
       local small = construction.SMALL[e.name] == true
       if job == nil or (job == "small" and small) then
         if economy.take(C.force, e.item, 1) ~= 1 then
