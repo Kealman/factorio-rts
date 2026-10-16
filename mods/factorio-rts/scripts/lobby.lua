@@ -6,11 +6,14 @@
 --   lobby.back_to_lobby(reason)      tear down, cameras to the lobby surface, the start dialog for everyone
 --   lobby.restart_current(reason)    the same config again (/rts-qa-reset, Ctrl+Shift+R)
 --   lobby.show_lobby / show_menu / toggle_menu / show_results (player)
+-- The menu has Concede (two clicks; match.concede: the human side is out, defeat) while the match runs and Results
+-- (the results window again) after it ended.
 -- Console: /rts-match <opponents> <difficulty> <size> [chokes|open] [waves]. Input: rts-menu (F10) toggles the menu;
 -- the HUD has a Menu button (hud.lua calls lobby.toggle_menu).
 --
 -- Owns storage.lobby = {pending = {opponents, difficulty, size, map}} (the dialog's choices, shared by every player)
--- and storage.players[i].results_closed = match_id whose results frame the player closed.
+-- and storage.players[i].results_closed = match_id whose results frame the player closed, .concede_armed = tick of
+-- the first Concede click.
 local util = require("scripts.util")
 local events = require("scripts.events")
 local match = require("scripts.match")
@@ -143,7 +146,16 @@ function lobby.show_lobby(player)
   return frame
 end
 
---- The in-match menu: the match's settings and time, [Resume] [Restart].
+-- Concede asks twice: the first click arms the button for this long, the second gives up.
+local CONCEDE_CONFIRM_TICKS = 5 * 60
+
+local function concede_armed(player)
+  local t = util.pstorage(player.index).concede_armed
+  return t ~= nil and game.tick - t < CONCEDE_CONFIRM_TICKS
+end
+
+--- The in-match menu: the match's settings and time, [Restart] [Concede | Results] [Resume]. Concede while the match
+--- runs (the human side only; two clicks), Results once it ended (the results window again after Continue).
 function lobby.show_menu(player)
   local m = storage.match
   if match.in_lobby() then return lobby.show_lobby(player) end
@@ -154,6 +166,15 @@ function lobby.show_menu(player)
   local row = button_row(frame)
   row.add({type = "button", name = PREFIX .. "menu_restart", style = "back_button", caption = {"rts.menu-restart"},
            tooltip = {"rts.menu-restart-tooltip"}, tags = {rts_lobby = "restart"}}).enabled = can_control(player)
+  if m.phase == "running" and player.force.name == match.PLAYER and not (m.out and m.out[match.PLAYER]) then
+    local armed = concede_armed(player)
+    row.add({type = "button", name = PREFIX .. "menu_concede", style = "red_button",
+             caption = armed and {"rts.menu-concede-confirm"} or {"rts.menu-concede"},
+             tooltip = {"rts.menu-concede-tooltip"}, tags = {rts_lobby = "concede"}}).enabled = can_control(player)
+  elseif match.result(player.force.name) then
+    row.add({type = "button", name = PREFIX .. "menu_results", caption = {"rts.menu-results"},
+             tooltip = {"rts.menu-results-tooltip"}, tags = {rts_lobby = "results"}})
+  end
   filler(row, frame)
   row.add({type = "button", name = PREFIX .. "menu_resume", style = "confirm_button", caption = {"rts.menu-resume"},
            tags = {rts_lobby = "resume"}})
@@ -190,7 +211,7 @@ function lobby.show_results(player)
   local title = inner.add({type = "label", caption = {"rts.results-" .. result}})
   title.style.font = "default-large-bold"
   title.style.font_color = result == "victory" and COLOR.green or (result == "defeat" and COLOR.red or COLOR.yellow)
-  local sub = inner.add({type = "label", caption = {"rts.match-" .. result}})
+  local sub = inner.add({type = "label", caption = {match.result_text_key(player.force.name)}})
   sub.style.single_line = false
   sub.style.maximal_width = DIALOG_WIDTH - 40
   inner.add({type = "label", caption = {"rts.results-time", clock(match.elapsed_seconds())}})
@@ -212,7 +233,7 @@ function lobby.show_results(player)
     t.add({type = "label", caption = {"rts.results-pair", s.buildings_built, s.buildings_lost}})
     local status
     if m.out[f] then
-      status = {"rts.results-out", clock((m.out[f] - m.tick_started) / 60)}
+      status = {m.conceded == f and "rts.results-conceded" or "rts.results-out", clock((m.out[f] - m.tick_started) / 60)}
     elseif m.winner == f then
       status = {"rts.results-winner"}
     else
@@ -315,6 +336,20 @@ local function on_click(e)
     lobby.back_to_lobby("restart by player " .. player.index)
   elseif action == "resume" then
     destroy(player, "menu")
+  elseif action == "concede" then
+    if not can_control(player) then return end
+    if not concede_armed(player) then
+      util.pstorage(player.index).concede_armed = game.tick
+      util.log("lobby: concede armed by player %d", player.index)
+      lobby.show_menu(player)
+      return
+    end
+    util.pstorage(player.index).concede_armed = nil
+    destroy(player, "menu")
+    match.concede(player.force.name, "player " .. player.index) -- match.on_ended below shows the results
+  elseif action == "results" then
+    destroy(player, "menu")
+    if match.result(player.force.name) then lobby.show_results(player) end
   elseif action == "continue" then
     util.pstorage(player.index).results_closed = storage.match.match_id
     destroy(player, "results")

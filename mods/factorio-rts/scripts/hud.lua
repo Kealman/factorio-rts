@@ -1442,7 +1442,7 @@ local function match_message(m, own)
   local result = result_for(m, own)
   if result == "victory" then return {"rts.match-victory"}, COLOR.green end
   if result == "draw" then return {"rts.match-draw"}, COLOR.yellow end
-  if result == "defeat" then return {"rts.match-defeat"}, COLOR.red end
+  if result == "defeat" then return {match.result_text_key(own) or "rts.match-defeat"}, COLOR.red end
   local hs = storage.hud
   if (m.wave or 0) > 0 and hs and hs.wave_tick and game.tick - hs.wave_tick < WAVE_ALERT_TICKS then
     return {"rts.wave-attacking", m.wave}, COLOR.red

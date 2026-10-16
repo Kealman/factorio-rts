@@ -26,7 +26,7 @@
 --                    first match
 --   forces           participating forces, rts-player first; ai_forces = the AI ones
 --   spawns           {[force] = MapPosition} CC centres (match.home); facing = {[force] = +1 | -1}
---   out              {[force] = tick the force was out}
+--   out              {[force] = tick the force was out}; conceded = the force that gave up (menu), if any
 --   stats            {[force] = {units_built, units_lost, buildings_built, buildings_lost}} (match.stats)
 --   tick_started     tick the clock started; ended_tick, winner (force name, "ai" = several AIs left, or "draw")
 --   placing          true while match.start places the starting entities (the counters ignore them)
@@ -740,7 +740,7 @@ function match.teardown(reason)
   m.surface = nil
   m.tick_started, m.ended_tick, m.winner = nil, nil, nil
   m.wave, m.enemy_next_wave, m.waves_off = 0, nil, nil
-  m.out = {}
+  m.out, m.conceded = {}, nil
   for _, fn in ipairs(teardown_callbacks) do fn(old) end
   util.log("match: match %s torn down (%s): %d AI commanders stopped, %d units and %d buildings removed, arena %s",
     tostring(m.match_id), reason or "-", stopped, removed_units, removed_buildings, tostring(old))
@@ -922,6 +922,16 @@ function match.decide_winner(player_out, enemies_out)
   return nil
 end
 
+--- Locale key of the one-line outcome for a force: rts.match-victory / -defeat / -draw, or rts.match-conceded for a
+--- force that gave up (match.concede).
+function match.result_text_key(force_name)
+  local r = match.result(force_name)
+  if not r then return nil end
+  local m = storage.match
+  if r == "defeat" and m.conceded == force_name then return "rts.match-conceded" end
+  return "rts.match-" .. r
+end
+
 --- The match result from a force's point of view, derived from storage.match.phase only:
 --- nil while the match is not "ended", else "victory" | "defeat" | "draw".
 function match.result(force_name)
@@ -948,8 +958,7 @@ local function finish(winner)
   util.log("match: ended at tick %d after %.0fs, winner=%s, result for %s=%s | %s", game.tick,
     match.elapsed_seconds(), tostring(winner), PLAYER, tostring(match.result(PLAYER)), table.concat(parts, " | "))
   for _, player in pairs(game.players) do
-    local r = match.result(player.force.name) or "draw"
-    player.print({"", "[RTS] ", {"rts.match-" .. r}})
+    player.print({"", "[RTS] ", {match.result_text_key(player.force.name) or "rts.match-draw"}})
   end
   for _, fn in ipairs(ended_callbacks) do fn(m) end
 end
@@ -973,6 +982,19 @@ local function check_out()
   if not winner then return end
   if winner == ENEMY then winner = (#alive == 1) and alive[1] or "ai" end
   finish(winner)
+end
+
+--- The human side gives up (the menu's Concede button, lobby.lua): it is out now, and the winner rule above ends the
+--- match at once with a defeat for it and the results window for everyone. Returns true when the match ended.
+function match.concede(force_name, who)
+  local m = storage.match
+  if not (m and m.phase == "running") or force_name ~= PLAYER or m.out[force_name] then return false end
+  m.out[force_name] = game.tick
+  m.conceded = force_name
+  util.log("match: %s concedes at %.0fs (%s)", force_name, match.elapsed_seconds(), tostring(who))
+  for _, fn in ipairs(out_callbacks) do fn(force_name) end
+  check_out()
+  return m.phase == "ended"
 end
 
 events.on_nth_tick(60, function(e)
