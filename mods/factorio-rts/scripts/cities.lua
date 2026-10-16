@@ -285,6 +285,9 @@ buildings.on_added(function(un, rec)
   if not territory.nation() then return end
   local e = rec.entity
   if rec.kind == "cc" then
+    -- Phase 5 M1 integration: the nation's inserter bonus (balance.nation.cities.inserter_bonus; reset at teardown)
+    local force = game.forces[rec.force]
+    if force and CB.inserter_bonus then force.inserter_stack_size_bonus = CB.inserter_bonus end
     local nation = storage.nations[rec.force]
     if not (nation and nation.capital and cities.get(nation.capital)) then register(e, {capital = true, why = "(CC)"}) end
   elseif e.name == cities.CENTER then
@@ -294,6 +297,20 @@ end)
 
 buildings.on_removed(function(un)
   if cstate().by_center[un] then lose(un) end
+end)
+
+-- Phase 5 M1 integration: the capital's centre (CC or City Center) heals back balance.nation.cities.capital_armor of
+-- every hit (the shared on_entity_damaged filter of scripts/research.lua lists every RTS building)
+events.on(defines.events.on_entity_damaged, function(e)
+  local entity = e.entity
+  if not (entity and entity.valid and e.final_health > 0 and storage.cities) then return end
+  local share = CB.capital_armor
+  if not share or share <= 0 or e.damage_type.name == "rts-attrition" then return end
+  local un = entity.unit_number
+  local id = un and storage.city_state and storage.city_state.by_center[un]
+  local c = id and storage.cities[id]
+  if not (c and c.capital) then return end
+  entity.health = entity.health + e.final_damage_amount * share
 end)
 
 logistics.NAME_HOOKS[cities.CENTER] = function(un)
@@ -401,6 +418,11 @@ do
   local ok, mod = pcall(require, "scripts.ai.construction")
   if ok and type(mod) == "table" then ai_construction = mod end
 end
+local ai_deps -- scripts/ai/deps.lua (load time; deps.towns is read at run time)
+do
+  local ok, mod = pcall(require, "scripts.ai.deps")
+  if ok and type(mod) == "table" then ai_deps = mod end
+end
 
 -- Candidate sites, best first: the world's city sites (nearest first), else points AI_SITE_DISTANCE tiles from the
 -- capital towards its first expansion (its natural) or the arena centre.
@@ -505,7 +527,12 @@ function cities.ai_step(C, surface)
   local nation = storage.nations[C.force]
   local cap = nation and cities.get(nation.capital)
   local home = cap and cap.position or match.home(C.force)
-  local site, why = pick_site(C, surface, home)
+  -- Phase 5 M1 integration: on a world map the AI's second city is a mining town next to an ore patch
+  -- (scripts/ai/towns.lua); the world's city sites are the fallback
+  local towns = ai_deps and ai_deps.towns or nil
+  local site, why
+  if towns and storage.world then site, why = towns.pick_site(C, surface, home) end
+  if not site then site, why = pick_site(C, surface, home) end
   if not site then
     A.retry_at = game.tick + 60 * 60
     util.log("ai %s: no city site yet (try %d)", C.force, A.tries)
@@ -531,6 +558,11 @@ end
 match.on_teardown(function()
   for _, c in pairs(storage.cities or {}) do
     if c.power and c.power.valid then c.power.destroy() end
+  end
+  for _, force in pairs(game.forces) do
+    if string.sub(force.name, 1, 4) == "rts-" and force.inserter_stack_size_bonus ~= 0 then
+      force.inserter_stack_size_bonus = 0
+    end
   end
   storage.cities = {}
   storage.nations = {}

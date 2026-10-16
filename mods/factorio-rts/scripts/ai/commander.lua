@@ -39,6 +39,7 @@ local hubs = require("scripts.ai.hubs")
 local mix = require("scripts.ai.mix")
 local tech = require("scripts.ai.tech")
 local age_up = require("scripts.ai.age_up") -- Phase 5 E1: Nation mode age-up and make targets
+local towns = require("scripts.ai.towns") -- Phase 5 M1 integration: the second city as a mining town (Nation mode)
 local deps = require("scripts.ai.deps")
 local balance = require("balance")
 
@@ -153,6 +154,31 @@ local function apply_cheats(C)
   end
 end
 
+-- Phase 5 M1 integration: the planning state before the start lines (restored for a second planning pass).
+local PLAN_TABLES = {"reserved", "avoid", "belt_tiles", "claimed", "hub", "plan", "lines"}
+local function deep_copy(t)
+  if type(t) ~= "table" then return t end
+  local out = {}
+  for k, v in pairs(t) do out[k] = deep_copy(v) end
+  return out
+end
+local function planning_snapshot(C)
+  local snap = {}
+  for _, name in ipairs(PLAN_TABLES) do snap[name] = deep_copy(C[name] or {}) end
+  return snap
+end
+local function planning_restore(C, snap)
+  for _, name in ipairs(PLAN_TABLES) do
+    local t = C[name]
+    if not t then
+      t = {}
+      C[name] = t
+    end
+    for k in pairs(t) do t[k] = nil end
+    for k, v in pairs(snap[name]) do t[k] = v end
+  end
+end
+
 --- First-time setup: robots out, frame, hub reservation, start lines, army rally, scouting guesses, cheats.
 function commander.start(C)
   local surface = util.surface()
@@ -168,7 +194,49 @@ function commander.start(C)
     layout.reserve_hub(C, C.frame)
     local prof = helpers.create_profiler()
     local ctx = layout.context(C, surface)
-    for _, name in ipairs(data.START_LINES) do build_order.plan_line(C, ctx, name) end
+    -- Phase 5 M1 integration: Nation mode plans the coal line at the start too (orders_data.NATION_START_LINES)
+    local nation = deps.ages and deps.ages.is_nation()
+    local snap = nation and planning_snapshot(C) or nil
+    local start_lines = nation and data.NATION_START_LINES or data.START_LINES
+    for _, name in ipairs(start_lines) do build_order.plan_line(C, ctx, name) end
+    -- the other lines' belts closed W2d's feed tile in: plan again with coal first (same slots, its belt routed
+    -- before the others), then, if that fails too, coal first into any direct slot it reaches (the line it takes the
+    -- slot from loses one smelter)
+    -- A pass is kept only when copper and stone keep all their slots and iron loses at most one: an AI without copper
+    -- researched nothing for 25 minutes (seed 404), one without coal only waits with its haulers.
+    local function slots(name)
+      local L = C.lines[name]
+      return (L and L.status == "ok") and #L.slots or 0
+    end
+    local function names(name)
+      local L, out = C.lines[name], {}
+      for _, sl in ipairs((L and L.status == "ok") and L.slots or {}) do out[#out + 1] = sl.name end
+      table.sort(out)
+      return table.concat(out, " ")
+    end
+    local first = nation and {iron = slots("iron"), copper = names("copper"), stone = names("stone")} or nil
+    local first_plan = (nation and slots("coal") == 0) and planning_snapshot(C) or nil
+    for pass, coal_spec in ipairs({data.line_spec("coal", true), data.NATION_COAL_FALLBACK}) do
+      if not nation or slots("coal") > 0 then break end
+      util.log("ai %s: coal line unavailable (%s), planning again with coal first (pass %d)", C.force,
+        tostring(C.lines.coal and C.lines.coal.reason), pass + 1)
+      planning_restore(C, snap)
+      ctx = layout.context(C, surface)
+      build_order.plan_line(C, ctx, "coal", coal_spec)
+      for _, name in ipairs(start_lines) do
+        if name ~= "coal" then build_order.plan_line(C, ctx, name) end
+      end
+      if slots("coal") > 0 and not (names("copper") == first.copper and names("stone") == first.stone
+                                    and slots("iron") >= first.iron - 1) then
+        util.log("ai %s: pass %d gave coal but changed other lines (iron %d of %d slots, copper [%s] was [%s], stone "
+          .. "[%s] was [%s]): not kept", C.force, pass + 1, slots("iron"), first.iron, names("copper"), first.copper,
+          names("stone"), first.stone)
+        planning_restore(C, first_plan)
+        ctx = layout.context(C, surface)
+      end
+    end
+    -- last resort: a coal hub next to the coal patch whose network joins the CC's (towns.coal_hub)
+    if nation and slots("coal") == 0 then towns.coal_hub(C, surface) end
     prof.stop()
     log({"", string.format("[rts] ai %s: start lines planned (%d reserved tiles) in ", C.force,
       table_size(C.reserved)), prof})
@@ -517,6 +585,7 @@ function commander.run(C)
     hubs.step(C)
     if deps.rails then deps.rails.ai_step(C) end -- Phase 5 M1 (m1-rails): a line to a far hub/city, Nation mode only
     if deps.cities then deps.cities.ai_step(C, surface) end -- Phase 5 M1: Nation mode second city (no-op in Skirmish)
+    towns.step(C, surface) -- Phase 5 M1 integration: the town's mining line (Nation mode only)
     stop("construction")
     start("production")
     if tick >= (C.next_tech or 0) then
@@ -541,7 +610,7 @@ end
 --- Lines describing commander C (for /rts-ai-dump and the autotest).
 function commander.dump_lines(C)
   local lines = {}
-  local order = data.order(C.difficulty, C.doctrine)
+  local order = data.order(C.difficulty, C.doctrine, deps.ages ~= nil and deps.ages.is_nation()) -- Phase 5 M1
   local cur = C.current_step and order[C.current_step]
   local done = 0
   for i = 1, #order do

@@ -1238,7 +1238,7 @@ function layout.hub_frame(hx, hy) return {cx = hx, cy = hy + layout.HUB_SINK_DY,
 --- {x, y} (a tile corner) whose site and solar boxes are free of entities, water, ore, reserved tiles and the arena
 --- edge, at least `min_home` tiles from home along x or y (square logistic areas) and `min_apart` tiles from every
 --- position in `keep_away` (hubs).
-function layout.hub_site(C, ctx, patch, home, min_home, keep_away, min_apart)
+function layout.hub_site(C, ctx, patch, home, min_home, keep_away, min_apart, max_home)
   local x0, y0, x1, y1 = layout.patch_box(patch)
   local lo, hi = layout.HUB_RING[1], layout.HUB_RING[2]
   local cands = {}
@@ -1248,7 +1248,8 @@ function layout.hub_site(C, ctx, patch, home, min_home, keep_away, min_apart)
       if d >= lo and d <= hi then
         local dh = util.distance({hx, hy}, home)
         -- roboport areas are squares: a separate network needs the Chebyshev distance, not the straight one
-        local ok = math.max(math.abs(hx - home.x), math.abs(hy - home.y)) >= min_home
+        local cheb = math.max(math.abs(hx - home.x), math.abs(hy - home.y))
+        local ok = cheb >= min_home and (not max_home or cheb <= max_home) -- max_home: Phase 5 M1 (coal hub)
         for _, p in ipairs(keep_away or {}) do
           if ok and util.distance({hx, hy}, p) < (min_apart or min_home) then ok = false end
         end

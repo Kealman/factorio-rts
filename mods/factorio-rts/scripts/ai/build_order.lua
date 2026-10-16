@@ -52,7 +52,7 @@ end
 --- the CC, see layout.lua). Idempotent.
 function build_order.plan_line(C, ctx, name, spec, sink)
   if C.lines[name] then return C.lines[name] end
-  spec = spec or data.LINES[name]
+  spec = spec or data.line_spec(name, deps.ages ~= nil and deps.ages.is_nation()) -- Phase 5 M1: Nation line specs
   local L = {name = name, ore = spec and spec.ore}
   C.lines[name] = L
   if not spec then
@@ -402,7 +402,7 @@ end
 
 --- Walk the build order of commander C once (see the header). get_ctx() returns a planning context.
 function build_order.step(C, surface, get_ctx)
-  local order = data.order(C.difficulty, C.doctrine)
+  local order = data.order(C.difficulty, C.doctrine, deps.ages ~= nil and deps.ages.is_nation()) -- Phase 5 M1
   build_order.priority(C, surface)
   local busy, passed = 0, 0
   C.current_step = nil

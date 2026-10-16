@@ -31,6 +31,7 @@ local orders = require("scripts.orders")
 local divisions = require("scripts.divisions") -- Phase 5: attack and defence groups are divisions
 local scout = require("scripts.ai.scout")
 local raids = require("scripts.ai.raids")
+local deps = require("scripts.ai.deps") -- Phase 5 M1 integration: deps.ages (Nation Age I reach)
 
 local army = {}
 
@@ -49,6 +50,22 @@ army.RALLY_MIN, army.RALLY_MAX = 20, 40 -- clamped; two rallies 24 tiles apart (
 army.POOL_SKIP = {hauler = true, commander = true} -- unit kinds the army never commands (logistics, abilities)
 army.PARITY = 0.8 -- an attack (not a finishing one) also needs this share of the largest enemy army seen lately
 army.DIVISION_STATES = {attack = true, defend = true} -- Phase 5: groups formed in these states run as divisions
+-- Phase 5 M1 integration, Nation mode only (the aggressive doctrine lost its capital in 4 of 4 Nation runs): a home
+-- guard of the pool never joins an attack, no attack starts while the capital is under attack, and a heavy attack on
+-- the capital recalls the nearest attack group even when idle units are left.
+army.NATION_GUARD_SHARE = 0.4
+army.NATION_GUARD_MIN, army.NATION_GUARD_MAX = 10, 16
+army.NATION_RECALL_DAMAGE = 1500
+army.NATION_PARITY = 1.2 -- Nation mode: an attack needs this share of the enemy army it saw (Skirmish: PARITY)
+-- Nation mode, Age I: attacks only on targets within this many tiles of the own capital (both AIs of a 2048 world
+-- sent their armies at each other's capital in minute 9 and the weaker one fell at 12:17); raids go on, and from Age II
+-- on any target is fair. Capitals lie about 1000 (1536 world) to 1300 tiles (2048) apart.
+army.NATION_AGE1_REACH = 500
+
+local function nation_mode()
+  local m = storage.match
+  return m ~= nil and m.config ~= nil and m.config.mode == "nation"
+end
 
 --- Set up C.army; the rally point lies between `home` (CC) and the nearest other spawn.
 function army.init(C, home)
@@ -276,7 +293,9 @@ function army.step(C, surface)
       util.log("ai %s: group #%d (%d of %d idle units) defends against an attack at %s", C.force, G.id, #sent,
         #pool, util.pos_str(tp))
       pool = rest
-    elseif #pool == 0 and t.damage >= army.RECALL_DAMAGE then
+    elseif (#pool == 0 and t.damage >= army.RECALL_DAMAGE)
+        or (nation_mode() and t.damage >= army.NATION_RECALL_DAMAGE and not t.recalled) then
+      t.recalled = true
       local nearest, nd
       for gid, G in pairs(a.groups) do
         if G.state == "attack" then
@@ -316,14 +335,50 @@ function army.step(C, surface)
     local e = C.enemy_army
     local seen = (e and tick - e.tick <= scout.ENEMY_ARMY_TICKS) and e.n or 0
     a.enemy_seen = seen
-    need = math.max(need, math.floor(seen * army.PARITY + 0.5))
+    need = math.max(need, math.floor(seen * (nation_mode() and army.NATION_PARITY or army.PARITY) + 0.5))
   end
   -- (a threat does not stop it: the defence above took its share of the pool, the rest may attack)
+  -- Phase 5 M1 integration, Nation mode: the home guard stays, and nothing leaves while the capital is attacked
+  local guard_list = {}
+  if nation_mode() and #pool > 0 then
+    if threat_fresh(C, home) then
+      guard_list, pool = pool, {}
+    else
+      local n = math.min(#pool, army.NATION_GUARD_MAX,
+        math.max(army.NATION_GUARD_MIN, math.ceil(#pool * army.NATION_GUARD_SHARE)))
+      table.sort(pool, function(x, y)
+        local dx, dy = util.distance_sq(x, home), util.distance_sq(y, home)
+        if dx ~= dy then return dx < dy end
+        return x.unit_number < y.unit_number
+      end)
+      local rest = {}
+      for i, e in ipairs(pool) do
+        if i <= n then guard_list[#guard_list + 1] = e else rest[#rest + 1] = e end
+      end
+      pool = rest
+      strength = 0
+      for _, e in ipairs(pool) do strength = strength + (e.get_health_ratio() or 1) end
+      a.pool_strength = strength
+    end
+  end
   if a.min and #pool > 0 and tick >= (a.hold_until or 0) and tick >= C.started + (C.cfg.first_attack or 0) then
     local launch = strength >= need and (finishing or tick - a.last_attack >= (C.cfg.attack_interval or 0))
     local reinforce = attacking and strength >= math.max(3, need / 2)
     if launch or reinforce then
       local target = scout.best_target(C, surface, a.rally)
+      if target and nation_mode() and not finishing and home
+         and util.distance(target.position, home) > army.NATION_AGE1_REACH then
+        local ages = deps.ages
+        if ages and ages.of(C.force) < 2 then
+          if not a.reach_logged then
+            a.reach_logged = true
+            util.log("ai %s: Age I: no attack on %s %s (%.0f tiles from the capital, reach %d)", C.force, target.kind,
+              util.pos_str(target.position), util.distance(target.position, home), army.NATION_AGE1_REACH)
+          end
+          C.stats.reach_held = (C.stats.reach_held or 0) + 1
+          target = nil
+        end
+      end
       if target then
         local G = form(C, pool, "attack", target)
         lists[G.id] = pool
@@ -392,7 +447,7 @@ function army.step(C, surface)
       end
     end
   end
-  a.pool_size = #pool
+  a.pool_size = #pool + #guard_list
 end
 
 --- Summary for logs: "pool=N groups=[#1 attack 8u -> barracks (x, y)] ..."

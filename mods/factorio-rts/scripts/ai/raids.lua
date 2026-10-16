@@ -238,6 +238,7 @@ function raids.step(C, surface, pool, lists, home, reserve)
             target.kind, util.pos_str(target.position))
         else
           C.next_harass = tick + 20 * 60 -- nothing to harass: the raiders stay unassigned and try again later
+          C.stats.harass_no_target = (C.stats.harass_no_target or 0) + 1 -- Phase 5 M1: the autotest's excuse
         end
       end
     elseif G and lists[G.id] and tick - G.last_order >= raids.HARASS_RETARGET then

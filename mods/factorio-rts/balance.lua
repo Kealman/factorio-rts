@@ -213,6 +213,13 @@ balance.nation.cities = {
   limit = 4,                                  -- cities per nation, capital included
   tier_up = {[2] = {buildings = 10, delivered = 400}, [3] = {buildings = 25, delivered = 2000}},
   ai_found_at = 300,                          -- seconds: the AI plans its second city from then on
+  -- Phase 5 M1 integration: a capital's centre heals back this share of every hit (scripts/cities.lua), so it takes
+  -- about twice the damage to fall; a 1-3 hour match should not end in a base race in minute 12
+  capital_armor = 0.5,
+  -- Phase 5 M1 integration: inserters of a nation move this many more items per swing (LuaForce
+  -- inserter_stack_size_bonus): a direct slot (belt -> inserter -> stockpile) carried only 2.3 ore/s, so a town's six
+  -- extractors could not fill a train
+  inserter_bonus = 2,
   ai_site_distance = 110,                     -- tiles from its capital when no world city site is known
 }
 
@@ -412,8 +419,16 @@ E.ai = {
            ["rts-steel-beam"] = 10},
   },
   districts = {"rts-district-steel", "rts-district-engines", "rts-district-rails"},
+  -- Phase 5 M1 integration: with a mining town (scripts/ai/towns.lua) shipping ore by train, a Smelting works second
+  -- (four Smelting works take about 300 ore a minute: what the town's direct slots load)
+  town_districts = {"rts-district-steel", "rts-district-smelting", "rts-district-smelting", "rts-district-engines",
+                    "rts-district-smelting", "rts-district-rails", "rts-district-smelting"},
   car_weight = 3,            -- Age II: Armoured car weight in the barracks mix (ai/mix.lua; walkers are 1-2)
   age1_army = 40,            -- no Age I units beyond this army size (the soft cap makes them dear) unless threatened
+  -- Phase 5 M1 integration: below this army size the AI does not save for districts, its barracks never yield plates
+  -- to factories and its mining town waits (the aggressive AI lost its capital while the Charter, its town and its
+  -- districts took every plate)
+  min_army = 20,
 }
 
 for name, b in pairs(E.buildings) do balance.buildings[name] = b end

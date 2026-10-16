@@ -36,6 +36,18 @@ age_up.SAVE_REST = 60 * 60     -- ... then this long without saving
 
 -- The builder factory makes the district items for the construction queue (orders_data.FACTORY_RECIPE).
 for _, name in ipairs(A.districts) do data.FACTORY_RECIPE[name] = name end
+for _, name in ipairs(A.town_districts or {}) do data.FACTORY_RECIPE[name] = name end
+-- Phase 5 M1 integration: Age II defence. Once a Smelting works stands (it makes the bricks concrete needs), the AI
+-- builds BUNKERS Bunkers towards the enemy; their inputs are make targets until they stand.
+age_up.BUNKERS = 2
+age_up.BUNKER_TARGETS = {["stone-brick"] = 20, concrete = 40, ["rts-steel-beam"] = 16}
+data.FACTORY_RECIPE["rts-bunker"] = "rts-bunker"
+-- the plate a mining town's ore becomes in the capital's Smelting works (a target keeps the works on that recipe);
+-- once the capital's warehouse stands (WAREHOUSE stockpiles, from WAREHOUSE_AFTER districts on) the target and the
+-- capital's ore keep rise to the _STORED values: the town's ore keeps coming by train and is stored as plates
+age_up.TOWN_PLATE = {["iron-ore"] = {"iron-plate", 2000, 8000}, ["copper-ore"] = {"copper-plate", 2000, 6000}}
+age_up.WAREHOUSE, age_up.WAREHOUSE_AFTER = 6, 3
+age_up.ORE_KEEP_STORED = 6000
 
 local function plan_entity(C, key)
   local e = key and C.plan[key]
@@ -106,6 +118,21 @@ function age_up.step(C, surface)
   --    pause, so its 80 plates, steel and circuits gather in the network (they never did between unit kits)
   --    Safety valve: at most SAVE_MAX at a time, then SAVE_REST without (a stuck item must not stop the army for good)
   N.saving = nil
+  -- Phase 5 M1 integration: while the rail line to the mining town waits for its depots, kits and rails (paid from the
+  -- capital's plates, which an aggressive AI's barracks never left: its line waited 20 minutes for kits), the barracks
+  -- save too (C.nation.saving_rail, ai/mix.lua); make targets go on (the Charter needs them)
+  N.saving_rail = nil
+  local rail_state = deps.rails and deps.rails.ai_program_state and deps.rails.ai_program_state(C.force)
+  if C.town and (rail_state == "depots" or rail_state == "building") then
+    N.rail_save_since = N.rail_save_since or game.tick
+    if game.tick - N.rail_save_since <= age_up.SAVE_MAX then
+      N.saving_rail, N.saving_tick = true, game.tick
+    elseif game.tick - N.rail_save_since > age_up.SAVE_MAX + age_up.SAVE_REST then
+      N.rail_save_since = game.tick
+    end
+  else
+    N.rail_save_since = nil
+  end
   for _, key in ipairs(N.districts) do
     local e = C.plan[key]
     if e and e.status ~= "built" and e.status ~= "bad" then
@@ -135,6 +162,15 @@ function age_up.step(C, surface)
     -- nothing while saving for a district item
     if age >= 2 and #N.districts > 0 and not plan_entity(C, N.districts[1]) then
       for item in pairs(age_up.DISTRICT_FIRST) do want[item] = nil end
+    end
+    -- Phase 5 M1 integration: the town's ore is smelted in the capital (the plate target keeps the Smelting works on
+    -- it) and the Bunkers' inputs while they are due
+    if age >= 2 then
+      local tp = C.town and C.town.status == "ok" and age_up.TOWN_PLATE[C.town.ore]
+      if tp then want[tp[1]] = math.max(want[tp[1]] or 0, N.warehouse_ready and tp[3] or tp[2]) end
+      if N.bunker_due then
+        for item, n in pairs(age_up.BUNKER_TARGETS) do want[item] = math.max(want[item] or 0, n) end
+      end
     end
     if N.saving then want = {} end
     local p = ages.project(C.force)
@@ -172,9 +208,62 @@ function age_up.step(C, surface)
       util.pos_str(pos), secs)
   end
 
+  -- 6. The warehouse (Phase 5 M1 integration): with a mining town, WAREHOUSE stockpiles in the capital's network
+  if age >= 2 and C.town and C.town.status == "ok" then
+    N.warehouse = N.warehouse or {}
+    local built = 0
+    for _, key in ipairs(N.warehouse) do
+      if plan_entity(C, key) then built = built + 1 end
+    end
+    local districts_built = 0
+    for _, key in ipairs(N.districts) do
+      if plan_entity(C, key) then districts_built = districts_built + 1 end
+    end
+    if #N.warehouse < age_up.WAREHOUSE and districts_built >= age_up.WAREHOUSE_AFTER then
+      local key = queue_building(C, surface, "rts-stockpile")
+      if key then N.warehouse[#N.warehouse + 1] = key end
+    end
+    if not N.warehouse_ready and built >= math.ceil(age_up.WAREHOUSE * 2 / 3) then
+      N.warehouse_ready = true
+      local cc = buildings.main_cc(C.force)
+      if cc and deps.logistics then
+        deps.logistics.set_policy(cc.entity.unit_number, "keep", C.town.ore, age_up.ORE_KEEP_STORED)
+      end
+      util.log("ai %s: age-up: warehouse ready (%d stockpiles): the capital keeps %d %s", C.force, built,
+        age_up.ORE_KEEP_STORED, C.town.ore)
+    end
+  end
+
+  -- 5. Bunkers (Phase 5 M1 integration): once a Smelting works stands, BUNKERS at the front, one at a time
+  if age >= 2 then
+    local smelting = false
+    for _, rec in buildings.for_force(C.force, "district") do
+      if rec.entity.valid and rec.entity.name == "rts-district-smelting" then smelting = true end
+    end
+    N.bunkers = N.bunkers or {}
+    local built, pending = 0, false
+    for _, key in ipairs(N.bunkers) do
+      local e = C.plan[key]
+      if plan_entity(C, key) then built = built + 1 elseif e and e.status ~= "bad" then pending = true end
+    end
+    N.bunker_due = smelting and built < age_up.BUNKERS or nil
+    if N.bunker_due and not pending and #N.bunkers < age_up.BUNKERS + 2 then
+      local pos, pole = layout.find_spot(C, surface, "rts-bunker", "front")
+      if pos then
+        if pole then construction.queue(C, construction.add(C, {name = layout.POLE, x = pole.x, y = pole.y})) end
+        local key = construction.add(C, {name = "rts-bunker", x = pos.x, y = pos.y})
+        construction.queue(C, key)
+        N.bunkers[#N.bunkers + 1] = key
+        util.log("ai %s: age-up: rts-bunker queued at %s (t=%ds)", C.force, util.pos_str(pos), secs)
+      end
+    end
+  end
+
   -- 4. districts in Age II
   if age >= 2 then
-    local name = A.districts[#N.districts + 1]
+    -- Phase 5 M1 integration: a force whose mining town ships ore builds a Smelting works too (balance town_districts)
+    local list = (C.town and C.town.status == "ok" and A.town_districts) or A.districts
+    local name = list[#N.districts + 1]
     if name and game.tick >= (N.district_at or 0) then
       local key = queue_building(C, surface, name)
       if key then
@@ -196,8 +285,12 @@ function age_up.describe(C)
   local t = {}
   for item, n in pairs(N.targets or {}) do t[#t + 1] = string.format("%s=%d", item, n) end
   table.sort(t)
-  return string.format("works %s, districts %d/%d built, targets [%s]", N.works_un and ("#" .. N.works_un) or "-",
-    built, #N.districts, table.concat(t, " "))
+  local bunkers = 0
+  for _, key in ipairs(N.bunkers or {}) do
+    if plan_entity(C, key) then bunkers = bunkers + 1 end
+  end
+  return string.format("works %s, districts %d/%d built, bunkers %d, targets [%s]", N.works_un and ("#" .. N.works_un)
+    or "-", built, #N.districts, bunkers, table.concat(t, " "))
 end
 
 return age_up

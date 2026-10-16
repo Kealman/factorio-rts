@@ -57,6 +57,8 @@ mix.CAR_WEIGHT = require("balance").nation.economy.ai.car_weight
 -- Phase 5 E1: a Nation-mode AI makes no Age I unit beyond this army size (the army soft cap makes them dearer, the
 -- plates go to districts, the Charter and Armoured cars) unless a base threat is fresh
 mix.AGE1_ARMY = require("balance").nation.economy.ai.age1_army
+-- Phase 5 M1 integration: the Nation-mode army floor (balance.nation.economy.ai.min_army)
+mix.NATION_MIN_ARMY = require("balance").nation.economy.ai.min_army or 0
 mix.THREAT_TICKS = 5 * 60
 
 -- Barracks kinds from balance.lua: tier-1 units with a barracks kit (mk2 come from research, haulers from the
@@ -142,7 +144,10 @@ function mix.available(C, kind)
   local ages = deps.ages
   if ages and ages.is_nation() then
     local threat = C.army and C.army.threat and game.tick - C.army.threat.tick <= mix.THREAT_TICKS
-    if C.nation and C.nation.saving and not threat then return false, "saving" end -- ai/age_up.lua
+    if C.nation and (C.nation.saving or C.nation.saving_rail) and not threat
+       and production.army_size(C.force) >= mix.NATION_MIN_ARMY then
+      return false, "saving" -- ai/age_up.lua; never below the army floor (Phase 5 M1 integration)
+    end
     if not def.nation_only and not threat and production.army_size(C.force) >= mix.AGE1_ARMY then
       return false, "army cap"
     end
@@ -254,7 +259,9 @@ function mix.manage_barracks(C)
     win = {start = tick, used = 0}
     C.yield_win = win
   end
-  if C.unit_recipe and total >= (D.yield_army or 0) and not threat
+  -- Phase 5 M1 integration: a Nation-mode barracks never yields below the army floor
+  local floor = deps.ages and deps.ages.is_nation() and production.army_size(C.force) < mix.NATION_MIN_ARMY
+  if C.unit_recipe and total >= (D.yield_army or 0) and not threat and not floor
      and win.used < mix.YIELD_SHARE * mix.YIELD_WINDOW and tick - (C.last_spawn_tick or 0) < mix.YIELD_SPAWN_GAP then
     yield = mix.economy_hungry(C)
   end

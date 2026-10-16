@@ -74,6 +74,22 @@ data.LINES = {
 -- Lines planned when the commander starts (their tiles are reserved before anything else is placed). Expansion
 -- lines are planned when their step runs.
 data.START_LINES = {"iron", "stone", "copper"}
+-- Phase 5 M1 integration (Nation mode): haulers and locomotives burn coal, so the coal line is planned at the start
+-- like iron, stone and copper. Every CC direct slot is taken once iron, copper and stone have theirs, so the iron
+-- line gives up its W2 smelter (it keeps two satellites) and coal takes W2's direct slot.
+data.NATION_START_LINES = {"iron", "stone", "copper", "coal"}
+-- (N2c stays the iron line's fifth slot: the opening's "steel" step builds the fifth iron smelter, and steel any
+-- earlier made the AI research Industrialisation right after Supply I, too early for its second technology)
+data.NATION_LINES = {
+  iron = {ore = "iron-ore", rank = 1, side = "south", slots = {"S1", "S2", "W1", "X", "N2c", "X"}},
+  coal = {ore = "coal", rank = 1, side = "south", slots = {"W2d"}},
+}
+-- when W2d cannot be reached, coal is planned first into any direct slot it reaches (commander.start)
+data.NATION_COAL_FALLBACK = {ore = "coal", rank = 1, side = "south", slots = {"direct"}}
+--- The line spec of `name` (Nation mode: data.NATION_LINES first).
+function data.line_spec(name, nation)
+  return nation and data.NATION_LINES[name] or data.LINES[name]
+end
 
 local B = {} -- build orders
 -- Gates use stone and time, not iron: once the barracks run, they take iron as it arrives, so the network rarely
@@ -177,7 +193,7 @@ local OPENING = {
     {kind = "build", name = "rts-extractor", anchor = "copper", count = 1},
     {kind = "build", name = "rts-smelter", anchor = "copper", count = 1, tag = "core"},
     {kind = "build", name = "rts-extractor", anchor = "stone", count = 1, when = {time = 120}},
-    {kind = "build", name = "slot", anchor = "stone", count = 1},
+    {kind = "build", name = "slot", anchor = "stone", count = 1, tag = "stone"},
     {kind = "build", name = "rts-lab", anchor = "cc", count = 1, when = {time = 40}},
     {kind = "build", name = "rts-factory", anchor = "cc", count = 2, when = {time = 80}},
   },
@@ -187,7 +203,7 @@ local OPENING = {
     {kind = "build", name = "rts-smelter", anchor = "iron", count = 2},
     {kind = "build", name = "rts-barracks", anchor = "cc", count = 1, tag = "barracks"},
     {kind = "build", name = "rts-extractor", anchor = "stone", count = 1},
-    {kind = "build", name = "slot", anchor = "stone", count = 1},
+    {kind = "build", name = "slot", anchor = "stone", count = 1, tag = "stone"},
     {kind = "build", name = "rts-lab", anchor = "cc", count = 1},
     {kind = "build", name = "rts-factory", anchor = "cc", count = 2},
     {kind = "build", name = "rts-extractor", anchor = "iron", count = 3},
@@ -216,6 +232,22 @@ data.OPENING_EXTRA = {
   }},
 }
 
+
+-- Phase 5 M1 integration (Nation mode only): steps inserted after the opening step with the given tag. Haulers burn
+-- coal and locomotives need it, so a Nation commander mines coal once its iron core runs (third iron smelter, before
+-- its first hub and hauler): one extractor on the start kit's coal patch into a CC stockpile. After the steel chain,
+-- two turrets towards the enemy: a Nation match is long, and an AI whose army went into the Charter, its town or its
+-- districts lost its capital to the first attack (aggressive doctrine, 2 of 5 seeds). data.order(difficulty,
+-- doctrine, true).
+data.NATION_EXTRA = {
+  core = {
+    {kind = "build", name = "rts-extractor", anchor = "coal", count = 1},
+    {kind = "build", name = "slot", anchor = "coal", count = 1},
+  },
+  steel = {
+    {kind = "build", name = "rts-turret", anchor = "front", count = 2},
+  },
+}
 
 -- Doctrine steps, time gates in normal seconds (scaled per difficulty). min_difficulty drops a step below it.
 data.DOCTRINE_STEPS = {
@@ -276,11 +308,12 @@ local function copy_step(st, scale)
 end
 
 --- The build order of a commander: opening (with the recipe step where the doctrine wants it), army step
---- (difficulty attack size x doctrine factor), doctrine steps.
-function data.order(difficulty, doctrine_name)
+--- (difficulty attack size x doctrine factor), doctrine steps. nation = true (Phase 5 M1, Nation mode) adds
+--- data.NATION_EXTRA; without it the order is exactly the Phase 4 one.
+function data.order(difficulty, doctrine_name, nation)
   difficulty = data.DIFFICULTY[difficulty] and difficulty or data.DEFAULT_DIFFICULTY
   local D = data.DOCTRINE_STEPS[doctrine_name] and doctrine_name or "economic"
-  local key = difficulty .. "/" .. D
+  local key = difficulty .. "/" .. D .. (nation and "/nation" or "")
   if order_cache[key] then return order_cache[key] end
   local scale = data.TIME_SCALE[difficulty] or 1
   local o = {}
@@ -290,6 +323,7 @@ function data.order(difficulty, doctrine_name)
     o[#o + 1] = copy_step(st, scale)
     if st.tag == after then o[#o + 1] = copy_step(data.UNITS_STEP, scale) end
     for _, x in ipairs(st.tag and extra[st.tag] or {}) do o[#o + 1] = copy_step(x, scale) end
+    for _, x in ipairs(nation and st.tag and data.NATION_EXTRA[st.tag] or {}) do o[#o + 1] = copy_step(x, scale) end
   end
   local factor = data.ATTACK_SIZE_FACTOR[D] or 1
   o[#o + 1] = {kind = "army", min = math.max(4, math.floor(data.DIFFICULTY[difficulty].attack_min * factor + 0.5)),

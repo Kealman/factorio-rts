@@ -327,7 +327,21 @@ local function pay_surcharge(rec, kit, def)
   local r = prototypes.recipe[kit]
   if not r then return true end
   local network = production.network_for(rec.entity)
-  if not network then -- outside every logistic network the surcharge cannot be paid
+  if not network then
+    -- Phase 5 M1 integration: a barracks outside every logistic network (fed by belts) pays its surcharge from the
+    -- nearest network of its force with a Command Center, City Center or hub (the surcharge is a levy, not freight)
+    local best, bd
+    local e = rec.entity
+    for _, other in buildings.for_force(rec.force) do
+      if (other.kind == "cc" or other.kind == "hub") and other.entity.valid and other.entity.surface == e.surface then
+        local net = other.entity.logistic_network
+        local d = util.distance(other.entity.position, e.position)
+        if net and net.valid and (not bd or d < bd) then best, bd = net, d end
+      end
+    end
+    network = best
+  end
+  if not network then -- no network at all: the surcharge cannot be paid
     if not rec.surcharge_block then
       util.log("production: barracks #%d (%s) holds %s: army surcharge x%.1f, no logistic network",
         rec.entity.unit_number, rec.force, kit, mult)
