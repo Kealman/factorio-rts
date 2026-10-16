@@ -494,6 +494,20 @@ function buildings.demolish(entity, opts)
   for item, n in pairs(refund) do stacks[#stacks + 1] = {name = item, count = n} end
   local refunded = {}
   local lost = insert_into(sinks, stacks)
+  -- Phase 5 M1 integration: a lone hub or City Center (no other stockpile in its network) refunds into the force's
+  -- pool, the Command Center's network, instead of dropping the refund
+  if #lost > 0 and opts.refund ~= false then
+    local cc = buildings.main_cc(force_name)
+    local pool = cc and cc.entity.valid and cc.entity.logistic_network
+    if pool and pool.valid then
+      local rest = {}
+      for _, st in ipairs(lost) do
+        local n = pool.insert({name = st.name, count = st.count})
+        if n < st.count then rest[#rest + 1] = {name = st.name, count = st.count - n} end
+      end
+      lost = rest
+    end
+  end
   local lost_by = {}
   for _, st in ipairs(lost) do lost_by[st.name] = st.count end
   for item, n in pairs(refund) do refunded[item] = n - (lost_by[item] or 0) end

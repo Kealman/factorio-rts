@@ -52,7 +52,7 @@ Every side starts with a Command Center (CC), the same stock and 6 walkers. Huma
 | Q or right click | Stop placing |
 | T | Research panel |
 | L, or a click on the age badge | Nation: city ledger (age, national project, goods, make targets) |
-| Delete or Backspace, or the **Demolish** button | Demolish the selected own building: the first press arms (the button turns red), a second press within 3 s demolishes it. 50 % of its cost goes back to the nearest other stockpile of its logistic network (with none there, the refund is lost and the contents spill on the ground). A hub, depot or City Center takes its stockpiles with it. The Command Center, the capital and trains cannot be demolished ("Locomotive cannot be demolished.") |
+| Delete or Backspace, or the **Demolish** button | Demolish the selected own building: the first press arms (the button turns red), a second press within 3 s demolishes it. 50 % of its cost goes back to the nearest other stockpile of its logistic network (with none there, to your Command Center's network; the contents spill on the ground). A hub, depot or City Center takes its stockpiles with it. The Command Center, the capital and trains cannot be demolished ("Locomotive cannot be demolished.") |
 | F3 | Jump to the newest alert (press again for older ones) |
 | F10 | Match menu: resume, restart, concede (click twice); after the match, the results again |
 | F11 | How to play |
@@ -230,7 +230,7 @@ A refused ghost disappears with a flying text such as "Enemy land: nothing can b
 
 ### The city panel, make targets and the ledger
 
-**The city panel** opens left of the stockpile panel when you select your CC or a City Center, or with the magnifier in the city list. It shows the name (a field to rename it), tier and land radius, your nation's age, the city's land cells and their share of your nation, its supply, what the next tier needs, the logistic networks on its land, the city's make targets, and a **Demolish** button (greyed for the capital). Demolishing a City Center (two presses, like any building) ends the city: its land goes, and half of the charter's cost returns to another stockpile of its network if there is one (a depot's, for example).
+**The city panel** opens left of the stockpile panel when you select your CC or a City Center, or with the magnifier in the city list. It shows the name (a field to rename it), tier and land radius, your nation's age, the city's land cells and their share of your nation, its supply, what the next tier needs, the logistic networks on its land, the city's make targets, and a **Demolish** button (greyed for the capital). Demolishing a City Center (two presses, like any building) ends the city: its land goes, and half of the charter's cost returns to another stockpile of its network (a depot's, for example), else to your Command Center's network.
 
 **Make targets** tell a city how many of a good to keep in stock. Add one with the item button under "Make targets" and type a number (empty clears it). In Nation mode a new factory or district starts on **Auto**: every second it switches to the good with the largest shortfall among its city's targets that its inputs allow, and stops when every target is met. Choosing a recipe or Pause in the building page fixes it; the **Auto** button (the circular arrows next to Pause) switches it back.
 
@@ -238,7 +238,7 @@ A refused ghost disappears with a flying text such as "Enemy land: nothing can b
 
 ### Haulers in Nation mode
 
-Haulers carry 10 slots instead of 20 (*Hauler capacity I* and *II* add 10 each) and burn coal: a hauler leaving a hub takes 1 coal per 40 tiles of the trip (×1.1, rounded up) from that hub's network. A hauler leaving for a pickup also fills its tank with the coal for the way back, so only the end a round trip starts from needs coal: for a route from an outpost to your capital, keep coal at the capital. A walk inside one network (a new hauler from its factory to its home hub) burns nothing. The hauler panel shows the tank after the cargo ("Tank: [coal] 4"). Without coal the hauler waits with "no coal for the trip in the hub network", and an alert "Hauler N: no fuel at <hub>" comes at most every 2 minutes per hauler. Beyond about 300 tiles, trains are the better carrier. In Nation mode every inserter also moves 3 items per swing instead of 1, so one inserter into a stockpile keeps up with several extractors.
+Haulers carry 10 slots instead of 20 (*Hauler capacity I* and *II* add 10 each) and burn coal: a hauler leaving a hub takes 1 coal per 40 tiles of the trip (×1.1, rounded up) from that hub's network. A hauler leaving for a pickup or a drop-off also fills its tank with the coal for the way back, so one end of a route with coal is enough: keep coal at your capital, and outposts need none. A walk inside one network (a new hauler from its factory to its home hub) burns nothing. The hauler panel shows the tank after the cargo ("Tank: [coal] 4"). Without coal the hauler waits with "no coal for the trip in the hub network", and an alert "Hauler N: no fuel at <hub>" comes at most every 2 minutes per hauler. Beyond about 300 tiles, trains are the better carrier. In Nation mode every inserter also moves 3 items per swing instead of 1, so one inserter into a stockpile keeps up with several extractors.
 
 ### Rails
 

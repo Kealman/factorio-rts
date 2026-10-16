@@ -28,7 +28,7 @@ and its construction trains were deployed with 0 coal and stood on their platfor
 |---|---|
 | A Nation commander plans a **coal line** at the start with iron, stone and copper (`orders_data.NATION_START_LINES`) and builds it after its iron core (`NATION_EXTRA.core`). Every CC direct slot is taken once iron, copper and stone have theirs, so the Nation iron line gives up its W2 smelter (two satellites remain, N2c stays its fifth slot, so steel comes at the same time as before) and coal takes W2d. | `scripts/ai/orders_data.lua`, `build_order.lua`, `commander.lua` |
 | When the other lines' belts close W2d in (2 of 10 forces), start-up planning tries again with coal first, then coal into any direct slot. A pass is kept only when copper and stone keep exactly their slots and iron loses at most one: an earlier version kept a pass that moved copper onto two satellites, and that AI made no copper and researched nothing for 25 minutes. Last resort: a **coal hub** next to the coal patch, at most 36 tiles (Chebyshev) from the CC so its network joins the CC's, and at least 24 tiles from the army's rally point (idle units on the spot kept the hub's revive failing). | `scripts/ai/commander.lua`, `scripts/ai/towns.lua` (`coal_hub`), `layout.hub_site(..., max_home)` |
-| **Hauler tank:** a hauler leaving for a pickup takes the coal of its way back too (`h.fuel`), so only the end a round trip starts from needs coal. The departure network is the hub it stands at, or the network of its last hub when it stands inside it (a new hauler walks out of a factory); a walk inside one network burns nothing. The cost is unchanged: 1 coal per 40 tiles of every leg between networks. The hauler panel shows "Tank: [coal] N". | `scripts/logistics.lua`, `hubgui.lua`, `locale/*/rails.cfg` |
+| **Hauler tank:** a hauler leaving for a pickup or a drop-off takes the coal of its way back too (`h.fuel`), so one end of a route with coal is enough (a capital-to-outpost route as well as an outpost-to-capital one). The departure network is the hub it stands at, or the network of its last hub when it stands inside it (a new hauler walks out of a factory); a walk inside one network burns nothing. The cost is unchanged: 1 coal per 40 tiles of every leg between networks. The hauler panel shows "Tank: [coal] N". | `scripts/logistics.lua`, `hubgui.lua`, `locale/*/rails.cfg` |
 | A train is not deployed with less than 2 coal in its depot network (reason "out of coal"); a train standing without coal on one of its force's platforms tanks as soon as coal arrives. | `scripts/rails.lua` |
 | Auto haulers leave a network to the train once a freight train of the force runs from it to their home (`logistics.served_by_train`). | `logistics.lua`, `rails.lua` |
 
@@ -86,6 +86,24 @@ reaches Age II late (24:53); it is the same seed that stalled at 72 % Charter in
 | AI never founded a second city in one seed | With the mining-town site (section 3) every force founded its second city in every run with the town code, 1v1 and 1v3 (6:35-14:39 in 1v1, 7:27-7:59 in 1v3), except one AI that lost its capital at 11:49 before. The earlier failure (rails notes, open issue 11) came from world city sites far from ore, picked by distance alone. |
 | Nation produce check tolerates 2 idle minutes | Kept the rule, with five idle minutes in a row instead of three: the rail line's saving and the Age I army cap in Age II add idle minutes (seed 402: eight in a row while saving for districts at the cap). In Nation mode `outcome` passes while two forces keep their capital. |
 | Other bugs found | `package.loaded` is keyed by the resolved file name, so `rails.lua`'s lookups of `scripts.territory` and `scripts.cities` never matched: the rail survey never saw foreign land and the AI hook never saw cities (fixed with the helper the other modules use). A crew short of rails placed one signal of a pair and made a finished line one-way (seed 405 never opened it): signals now come in pairs, and a finished one-way line loses its signals. The construction-train wait reason of the far side hid the near side's. |
+
+### B2. The documentation agent's findings (lead: fix 1-8 and the texts of 10)
+
+| # | Finding | Fix |
+|---|---|---|
+| 1 | Factory tab icons stayed on City Center, depot and locomotive pages | already fixed (B1 above) |
+| 2 | A lone hub or City Center lost its demolish refund (its own stockpiles go with it) | the refund goes to the force's Command Center network when no other stockpile of the building's network takes it (`buildings.demolish`); only what does not fit there is dropped |
+| 3 | The CC's building-page Demolish was clickable and then refused | greyed with the "cannot be demolished" tooltip, like the city panel's; the hub panel greys it for a capital City Center too |
+| 4 | The army surcharge showed only while a kit waited | the barracks line reads "Units from here: N · all barracks: M · army surcharge +P %" in yellow while the multiplier is above 1, with the rule in its tooltip |
+| 5 | The ledger hint named an ingredient the city could make itself ("needs [copper cable]: made nowhere") | `districts.hint` skips an ingredient an enabled recipe of the force could make from the city's stock (one level down) |
+| 6 | The Bunker counted as an economic building (own land only) | `territory.CLASS_BY_NAME["rts-bunker"] = "outpost"`, like turret, fort and laser turret |
+| 7 | The build menu changed height with the tab, so the tab row moved | the menu takes the rows of the largest tab of the mode: two rows for every tab in Nation mode (tabs always at y≈712), one in Skirmish (unchanged) |
+| 8 | A capital-to-outpost hauler route needed coal at the outpost | the return tank is also filled when leaving for a drop-off; a walk inside one network burns nothing |
+| 10 | Texts | Russian says "Держава" throughout (economy texts said "нация"); the no-coal alert reads "Транспортёр N стоит без угля: <hub>"; the hauler's description says 10 slots and coal in Nation mode; the hub panel is rebuilt after a city rename; the lobby and match log lines of a Nation match name the world instead of the Skirmish size and map |
+
+Item 9 (fixed factory recipes repeat) stays as documented in the protocol. Checks after these fixes: smoke 65/65,
+demolish probe 0 failures, economy fixture 18/18, rails autotest 12/12, a 30-minute Nation run 39/39, the GUI probe
+again (0 errors; the protocol's build-menu coordinates follow the fixed tab row).
 
 ### E. Docs
 

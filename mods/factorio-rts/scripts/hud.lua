@@ -898,8 +898,13 @@ local function fill_build_grid(player_index, h)
                                       tags = {rts_hud = "build", item = item}})
   end
   for key, button in pairs(h.el.build_tabs or {}) do button.toggled = key == tab.key end
-  -- Phase 5 E1: a tab with more than BUILD_COLUMNS items takes more rows; the frame grows upwards
-  local extra = math.max(0, math.ceil(#build_items(tab) / BUILD_COLUMNS) - 1)
+  -- Phase 5 E1: a tab with more than BUILD_COLUMNS items takes more rows; the frame grows upwards. Phase 5 M1
+  -- integration: the rows of the largest tab in this mode, so the tab row stays put when the tab changes
+  local most = 0
+  for _, t in ipairs(BUILD_TABS) do
+    if not t.nation or P4.nation() then most = math.max(most, #build_items(t)) end
+  end
+  local extra = math.max(0, math.ceil(most / BUILD_COLUMNS) - 1)
   if h.build_extra_rows ~= extra then
     h.build_extra_rows = extra
     h.build.style.height = BUILD_HEIGHT + extra * P4.BUILD_ROW
@@ -1400,6 +1405,14 @@ local function update_producer(player, h, un, rec)
       el.b_line2.style.font_color = COLOR.white
       el.b_line2.caption = {"rts.barracks-made", st.spawned or 0, stats.walkers}
       el.b_line2.tooltip = {"rts.barracks-made-tooltip", stats.kits, stats.walkers, stats.heavies}
+      -- Phase 5 M1 integration: the army soft cap's surcharge while it is being paid (Nation mode)
+      local mult = production.army_multiplier and production.army_multiplier(rec.force) or 1
+      if mult > 1 then
+        local pct = math.floor((mult - 1) * 100 + 0.5)
+        el.b_line2.style.font_color = COLOR.yellow
+        el.b_line2.caption = {"rts.barracks-made-surcharge", st.spawned or 0, stats.walkers, pct}
+        el.b_line2.tooltip = {"rts.barracks-surcharge-tooltip", pct}
+      end
     end
     el.b_line3.caption = rec.rally and {"rts.rally-set", util.pos_str(rec.rally)} or {"rts.rally-none"}
     el.b_line3.tooltip = {"rts.rally-tooltip"}
@@ -1527,6 +1540,7 @@ local function update_demolish_button(player, h, un, rec)
   button.caption = armed and {"rts.demolish-confirm"} or {"rts.demolish"}
   button.tooltip = blocked and {"rts.demolish-tooltip-blocked"}
     or {"rts.demolish-tooltip", math.floor(buildings.REFUND_RATIO * 100)}
+  button.enabled = not blocked -- Phase 5 M1 integration: greyed like the city panel's (the key still explains)
 end
 
 local function update_building(player, h, un, rec)

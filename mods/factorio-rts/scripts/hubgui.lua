@@ -189,7 +189,11 @@ local function refresh_hub(player, g)
       el.demolish.style = armed and "rts_hud_button_armed" or "rts_hud_button"
     end
     el.demolish.caption = armed and {"rts.demolish-confirm"} or {"rts.demolish"}
-    el.demolish.tooltip = {"rts.demolish-tooltip", math.floor(buildings.REFUND_RATIO * 100)}
+    -- Phase 5 M1 integration: a capital City Center (the capital passed to it) cannot be demolished: greyed
+    local blocked = buildings.demolish_blocked(rec) ~= nil
+    el.demolish.enabled = not blocked
+    el.demolish.tooltip = blocked and {"rts.demolish-tooltip-blocked"}
+      or {"rts.demolish-tooltip", math.floor(buildings.REFUND_RATIO * 100)}
   end
   if entry then
     el.network.caption = {"rts.hubgui-network", entry.id, #entry.hubs}

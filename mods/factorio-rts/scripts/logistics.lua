@@ -685,8 +685,8 @@ local function go(h, hub_un, state)
   if not point then return false end
   -- Phase 5 M1 (m1-rails): in Nation mode a hauler leaving a hub burns 1 coal per hauler_tiles_per_coal tiles of the
   -- trip, taken from that hub's network; without it the hauler waits there ("no-fuel").
-  -- Phase 5 M1 integration: a hauler leaving for a pickup also tanks the coal of the way back (h.fuel, the coal it
-  -- carries in its tank), so only the end a round trip starts from needs coal: outposts and far hubs need none.
+  -- Phase 5 M1 integration: a hauler leaving for a pickup or a drop-off also tanks the coal of the way back (h.fuel,
+  -- the coal it carries in its tank), so one end of a route with coal is enough: outposts and far hubs need none.
   -- The tank is used first; a leg the tank and the network cannot pay waits as before.
   local per = nation_mode(h.force) and balance.nation and balance.nation.hauler_tiles_per_coal
   -- the departure network: the hub the hauler stands at, or the network of its last hub when it stands inside it (a
@@ -709,7 +709,9 @@ local function go(h, hub_un, state)
     local tank = h.fuel or 0
     local from_tank = math.min(tank, need)
     local need_net = need - from_tank
-    local back = state == "to_pickup" and math.max(0, need - (tank - from_tank)) or 0
+    -- the way back is tanked when leaving for a pickup and for a drop-off alike, so a route from the capital to an
+    -- outpost without coal runs too (the docs agent's GUI check)
+    local back = (state == "to_pickup" or state == "to_dropoff") and math.max(0, need - (tank - from_tank)) or 0
     local want = need_net + back
     local got = (want > 0 and net) and net.remove_item({name = "coal", count = want}) or 0
     if got >= need_net then

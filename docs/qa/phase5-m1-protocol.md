@@ -1,7 +1,7 @@
 # Phase 5 M1 GUI QA protocol: a Nation match
 
-Date: 2026-10-16. Factorio 2.0.77 (mac-arm64, Steam), Space Age enabled. Mod `factorio-rts` 0.1.0 at commit fa07c03
-(M1 integration): the city panel's Demolish button, no Demolish for rolling stock, the build grid refilled at a Nation
+Date: 2026-10-16. Factorio 2.0.77 (mac-arm64, Steam), Space Age enabled. Mod `factorio-rts` 0.1.0 with the commit "M1 integration: m1-docs findings"
+(right after 3f33f4c): the city panel's Demolish button, no Demolish for rolling stock, the build grid refilled at a Nation
 match start, the factory's category tabs hidden on pages without recipes, the hauler's coal tank in the hauler panel,
 `/rts-research` and `RTS_QA_END` typed in the console. Integration notes: `docs/qa/phase5-m1-integration-notes.md`.
 
@@ -124,7 +124,7 @@ what comes after it. Type each line exactly, one per console opening.
 | Minimap | x 1106–1271, y 9–174 | The whole 1536-tile world, ≈0.1 px per tile. Black where never seen. Your land: a blue outline and tint; the AI's land: red. A left click moves the camera there. |
 | Selection panel, units page | x 6–396, y 699–794 | As in Phase 4: "37 units selected", cards at y≈736 (Commander ≈22, walker ≈47, …), groups, command buttons at y≈763. |
 | Selection panel, building page | same | **Title line** (y≈714): "Factory #N", HP, **Demolish** (≈361, 714). A factory in Nation mode also has 5 small **category tabs** in the title line: Buildings (≈92), Logistics (≈112), Intermediates (≈132), Science (≈152), Age II (≈172). **Barracks:** recipe buttons at y≈737 (a second row at y≈762), text to the right (lines at y≈731, ≈747, ≈764). **Factory and district:** recipe buttons at y≈737 and ≈762, button x = 27 + 26 × index; the status line under them (y≈785 with two rows, ≈759 with one). |
-| Build menu | x 1043–1274, **its height follows the tab** | A tab with up to 7 items (Production, Defence): y 710–794, tabs at y≈744, buttons at y≈772. A tab with 8–14 items (Economy in Nation mode, Age II): y 678–794, tabs at y≈712, buttons at y≈740 and ≈770. Tabs: **Economy** (≈1077), **Production** (≈1131), **Defence** (≈1183) and a small **Age II** icon tab (≈1216, a blue science-kit icon; Nation mode only). Buttons at x≈1066, 1097, 1128, 1159, 1190, 1221, 1252, each with the count in your network. |
+| Build menu | x 1043–1274, y 678–794 in Nation mode (two rows for every tab, so the tabs never move; Skirmish: one row, y 710–794, tabs y≈744, buttons y≈772) | Tabs at y≈712; buttons in row 1 at y≈740 and row 2 at y≈772. Tabs: **Economy** (≈1077), **Production** (≈1131), **Defence** (≈1183) and a small **Age II** icon tab (≈1216, a blue science-kit icon; Nation mode only). Buttons at x≈1066, 1097, 1128, 1159, 1190, 1221, 1252, each with the count in your network. |
 | Ability bar | x 461–820, y 729–794 | The Commander portrait (486, 753): a click selects the Commander. |
 | City panel | x 788–1013, y 183 to ≈470 | Nation mode, while an own City Center or the CC is selected (or from the magnifier). Title "Capital: Town" and × (≈994, 198); a name field (≈886, 221) and a pencil (≈991, 221); lines at y≈242 (tier), 260 (nation age), 278 (land), 296 (supply), 314–329 (next tier), 348 (networks), 366 ("Make targets"); one row per make target (y≈391: icon ≈812, field ≈861, × ≈903); the item button (≈812, 394 with no targets, one row lower per target) and a hint; **Demolish** at the bottom right (≈978, 421 with no targets; ≈978, 453 with one). |
 | Hub panel (stockpile policy) | x 1019–1273, y 183 to ≈495 | While a hub, City Center, depot or the CC is selected. Title "…: stockpile policy" and × (≈1256, 198); "Network #K, N hubs" (y≈218); for a hub, City Center or depot a **Demolish** button (≈1053, 289) above the table, rows iron y≈336, copper ≈369, steel ≈402, stone ≈435, coal ≈468; for the CC no Demolish, rows y≈314, 347, 380, 413, 446. **Keep** fields x≈1146, **Export above** x≈1200. |
@@ -202,7 +202,7 @@ screen x = 640 + 16 × (tiles right of the CC)        screen y = 400 + 16 × (ti
 | Railway Charter: N % delivered from the capital's network. | Железнодорожная хартия: доставлено N % из сети столицы. |
 | Railway Charter complete: Age II in N s.; Railway Charter: Age II in N s | Железнодорожная хартия готова: II эпоха через N с.; Железнодорожная хартия: II эпоха через N с |
 | Railway Charter N %; Start the Railway Charter; Railway Charter site | Железнодорожная хартия N %; Начать Железнодорожную хартию; Стройка Железнодорожной хартии |
-| Railway Charter started next to the capital; A new age for your nation: Age II: Industry | Железнодорожная хартия: стройка начата рядом со столицей; Новая эпоха для вашей нации: II эпоха: индустрия |
+| Railway Charter started next to the capital; A new age for your nation: Age II: Industry | Железнодорожная хартия: стройка начата рядом со столицей; Новая эпоха для вашей державы: II эпоха: индустрия |
 | Cities; Capital; Town, 441 cells; Village; City; Ironford | Города; Столица; Посёлок, ячеек: 441; Деревня; Город; Железноброд |
 | City founded: Ironford; City lost: Outpost; Territory lost near Capital (N cells) | Основан город: Железноброд; Город потерян: Outpost; Потеряна земля у города Столица (клеток: N) |
 | Capital: Town; Tier: Town, land radius 96 tiles (capital); Nation age: 1 | Столица: Посёлок; Уровень: Посёлок, радиус земли 96 клеток (столица); Эпоха державы: 1 |
@@ -225,7 +225,7 @@ screen x = 640 + 16 × (tiles right of the CC)        screen y = 400 + 16 × (ti
 | Hauler #N; Mode: Auto / Route; Home: Command Center; Route: Outpost → Command Center | Транспортёр №N; Режим: Авто / Маршрут; Дом: Командный центр; Маршрут: Outpost → Командный центр |
 | State: Waiting, nothing to carry; no coal for the trip in the hub network | Состояние: ждёт, нечего везти; в сети хаба нет угля на рейс |
 | To pickup; Going home; Cargo: empty; Tank: [coal] 4; Return home; Resume | к погрузке; домой; Груз: пусто; Бак: [уголь] 4; Домой; Продолжить |
-| Hauler N: no fuel at Command Center | Транспортёр N: нет угля в Командный центр |
+| Hauler N: no fuel at Command Center | Транспортёр N стоит без угля: Командный центр |
 | Railways; Industrialisation; Research complete: Railways | Железные дороги; Индустриализация; Исследование завершено: Железные дороги |
 | Rail depot; Depot 1; Rails: Depot 1; Platform: 40 tiles, 2 stops | Ж/д депо; Депо 1; Ж/д: Депо 1; Платформа: 40 клеток, 2 остановки |
 | Kits: locomotive 4, wagon 2, construction 1 \| rails 400, coal N | Комплекты: локомотив 4, вагон 2, путеукладчик 1 \| рельсы 400, уголь N |
@@ -244,6 +244,7 @@ screen x = 640 + 16 × (tiles right of the CC)        screen y = 400 + 16 × (ti
 | New target:; Set; needs [crude oil]: made nowhere | Новая цель:; Задать; нужно [нефть]: нигде не делают |
 | Steel works; Steel from plates; Steel from ore | Сталелитейный комбинат; Сталь из пластин; Сталь из руды |
 | Army surcharge +10 %: waiting for [copper] (Walker) | Армейская надбавка +10 %: ждёт [медь] (Шагоход) |
+| Units from here: N · all barracks: M · army surcharge +10 % | Юнитов отсюда: N · из всех казарм: M · армейская надбавка +10 % |
 | Walker kit; Hauler kit; Copper cable; Armoured car kit | Комплект шагохода; Комплект транспортёра; Медный провод; Комплект бронеавтомобиля |
 
 ## If an AI attack interrupts
@@ -296,7 +297,7 @@ before its part is done, see Recovery.
      - After the click, Mode reads "Nation", Map size reads "**World (1536×1536)**" (the drop-down gets a little wider,
        ≈620, 395), and Map reads "World" and is greyed out.
    - *Pass/Fail:* PASS if Map size shows World (1536×1536) and Map is a greyed "World".
-   - *Log check (lead):* `lobby: player 1 set mode -> 1 opponent\(s\), normal, [a-z]+, [a-z]+, nation, world default`
+   - *Log check (lead):* `lobby: player 1 set mode -> 1 opponent\(s\), normal, nation, world default`
 
 3. **World size.**
    - *Input:* click Map size (≈620, 395) and take a screenshot of the open list. Click "World (1536×1536)". Then click
@@ -304,7 +305,7 @@ before its part is done, see Recovery.
    - *Expect:* the list has three lines: World (1536×1536), World (2048×2048) and World (3072×3072). Map size reads
      World (1536×1536), the default for 2 nations. The greyed Map drop-down does not open.
    - *Pass/Fail:* PASS if there are three sizes and 1536 is selected.
-   - *Log check (lead):* `lobby: player 1 set world_size -> .*, nation, world default`
+   - *Log check (lead):* `lobby: player 1 set world_size -> 1 opponent\(s\), normal, nation, world default`
 
 4. **Start the Nation match.**
    - *Input:* check that Opponents shows 1 and Difficulty Normal. Click **Start match**. Wait up to 10 s.
@@ -321,7 +322,7 @@ before its part is done, see Recovery.
      - **City list** at the top left: "Cities  Land 1.2%" and one row: a "Capital" button (≈36, 127), "Town, N cells"
        (N about 440) and a magnifier (≈183, 127).
      - **Build menu** on its Economy tab, **two rows high** (y 678–794): extractor 2, smelter 2, stockpile 2, belt 60,
-       inserter 16, pole 16 and the hub; in row 2 a greyed **Rail depot** (≈1066, 770). Tabs at y≈712: Economy,
+       inserter 16, pole 16 and the hub; in row 2 a greyed **Rail depot** (≈1066, 772). Tabs at y≈712: Economy,
        Production, Defence and a small blue icon tab (≈1216, 712).
      - Bottom left "No units selected"; bottom centre the ability bar.
    - *Pass/Fail:* PASS if the age badge, the Land button, the city list and the greyed depot in row 2 of the Economy
@@ -329,11 +330,11 @@ before its part is done, see Recovery.
      refilled at the start).
    - *Log check (lead):*
      - `lobby click start player=1`
-     - `match: starting match [0-9]+: 1 opponent\(s\), normal, [a-z]+ \(1536x1536\), map world, brain ai`
+     - `match: starting match [0-9]+: 1 opponent\(s\), normal, nation, world 1536x1536, brain ai`
      - `cities: capital city [0-9]+ of rts-player at .* \(tier 2, radius 96\) \(CC\)`
      - `fog: match start on rts-arena-[0-9]+, charted rts-player [0-9]+ chunks`
      - `hud: built for player 1 .*build menu 8 items\)`
-     - `lobby: match [0-9]+ started by player 1 .*mode nation \(world 1536x1536\)`
+     - `lobby: match [0-9]+ started by player 1 .*: 1 opponent\(s\), normal, nation, world 1536x1536, brain ai`
 
 ### Part B: the capital and the Nation HUD
 
@@ -381,20 +382,20 @@ before its part is done, see Recovery.
 
 8. **The build menu in Nation mode.**
    - *Input:*
-     1. Hover the greyed Rail depot (≈1066, 770) for 2 s.
-     2. Click **Production** (≈1131, 712). Hover City charter (≈1159, 772) and Fort (≈1190, 772) for 2 s each.
-     3. Click **Defence** (≈1183, 744).
-     4. Click the small icon tab (≈1216, 744). Hover the tab for 2 s and then its first button (≈1066, 740).
+     1. Hover the greyed Rail depot (≈1066, 772) for 2 s.
+     2. Click **Production** (≈1131, 712). Hover City charter (≈1159, 740) and Fort (≈1190, 740) for 2 s each.
+     3. Click **Defence** (≈1183, 712).
+     4. Click the small icon tab (≈1216, 712). Hover the tab for 2 s and then its first button (≈1066, 740).
      5. Click **Economy** (≈1077, 712).
    - *Expect:*
      - **Depot tooltip:** "Rail depot", "In stock: 0. Factory recipe: … gives 1 in 10 s." and in red "Requires
        research: Railways (T)".
      - **Production:** five buttons: barracks 1, factory 1, lab, **City charter** and **Fort**, the last two without a
-       number. The menu shrinks to one row (y 710–794) and the tabs move down to y≈744. City charter's tooltip: "City
+       number, all in row 1 (the menu keeps its two-row height, so the tabs stay at y≈712). City charter's tooltip: "City
        charter", "In stock: 0. Factory recipe: [3 icons] gives 1 in 20 s." Fort: "… gives 1 in 6 s."
      - **Defence:** 7 buttons; laser turret and steam plant greyed.
      - **Age II icon tab:** tooltip "Age II: oil well, refinery, chemical plant, the ten districts and the Bunker
-       (Nation mode)". The menu grows to two rows of 7 greyed buttons (y 678–794, tabs at y≈712). The first button's
+       (Nation mode)". Two rows of 7 greyed buttons. The first button's
        tooltip ends in red "Requires research: Age II (Railway Charter) (T)".
      - **Economy** again: two rows with the depot.
    - *Pass/Fail:* PASS if City charter and Fort are in the Production tab on its first visit and the Age II tab shows
@@ -407,9 +408,9 @@ before its part is done, see Recovery.
 9. **Place the factory and the barracks.**
    - *Input:*
      1. Click **Production** (≈1131, 712).
-     2. Click **Factory** (≈1097, 772), then left-click the map at (448, 304).
-     3. Click **Barracks** (≈1066, 772), then left-click (832, 304).
-     4. Press Q. Wait 15 s. Click **Economy** (≈1077, 744).
+     2. Click **Factory** (≈1097, 740), then left-click the map at (448, 304).
+     3. Click **Barracks** (≈1066, 740), then left-click (832, 304).
+     4. Press Q. Wait 15 s. Click **Economy** (≈1077, 712).
    - *Expect:* the message line reads in green "Placing Factory: left-click the map. R rotates. Q or right-click: done."
      Each click leaves a ghost, and the CC's robots build both within about 15 s. The counts on both buttons drop to 0.
    - *Log check (lead):* `build ghost rts-factory player=1 at`, `build ghost rts-barracks player=1 at`,
@@ -469,7 +470,7 @@ before its part is done, see Recovery.
     - *Input:*
       1. Click empty ground, so that nothing is selected, and press SPACE.
       2. Scroll down 5 notches.
-      3. Click **Production** (≈1131, 712), then **City charter** (≈1159, 772).
+      3. Click **Production** (≈1131, 712), then **City charter** (≈1159, 740).
       4. Left-click the map at ≈(87, 400) or ≈(1193, 400): about 110 tiles left or right of the CC and 15 tiles beyond
          the dashed border. Take the side away from the red AI outline on the minimap, on open ground (no water, no grey
          rock, no dense forest). Any spot at least 500 px from the screen centre works. Press Q.
@@ -522,12 +523,11 @@ before its part is done, see Recovery.
         a fixed recipe make the largest shortfall."; and **Demolish**, greyed, at the bottom right.
       - The city panel's Demolish tooltip reads "The Command Center and the capital cannot be demolished."; the click
         does nothing.
-      - The building page's Demolish is not greyed and has the same tooltip. Its click and the Delete key each show a
-        flying text and a chat line "Command Center cannot be demolished."; nothing changes.
-    - *Pass/Fail:* PASS if the lines read as above and nothing is demolished. Report that the building page's button is
-      not greyed while the city panel's is.
+      - The building page's Demolish is greyed too, with the same tooltip. The Delete key shows a flying text and a
+        chat line "Command Center cannot be demolished."; nothing changes.
+    - *Pass/Fail:* PASS if the lines read as above, both Demolish buttons are greyed and nothing is demolished.
     - *Log check (lead):* `citygui: city panel [0-9]+ \(sel:[0-9]+\) player=1`,
-      `demolish: blocked player=1 cc #[0-9]+ \(protected\)` (twice)
+      `demolish: blocked player=1 cc #[0-9]+ \(protected\)`
 
 15. **A make target.**
     - *Input:*
@@ -635,17 +635,17 @@ before its part is done, see Recovery.
     - *Input:* open the console once per line and type, each followed by Enter:
       `/rts-research rts-railways`, `/rts-give rts-depot 2`, `/rts-give rts-locomotive-kit 4`,
       `/rts-give rts-cargo-wagon-kit 2`, `/rts-give rts-construction-wagon-kit 1`, `/rts-give rail 400`,
-      `/rts-give iron-plate 300`. Then click **Economy** in the build menu (≈1077, 744).
+      `/rts-give iron-plate 300`. Then click **Economy** in the build menu (≈1077, 712).
     - *Why:* Railways needs 15 basic science kits from labs, and depots, kits and rails need a steel chain.
     - *Expect:* a green alert "Research complete: Railways" and the chat lines "rts-research: rts-railways researched
-      for rts-player" and six "rts-give: …" replies. In the Economy tab the Rail depot (≈1066, 770) is no longer greyed
+      for rts-player" and six "rts-give: …" replies. In the Economy tab the Rail depot (≈1066, 772) is no longer greyed
       and shows 2. Iron rises by 300.
     - *Log check (lead):* `rts-research: rts-railways researched for rts-player`,
       `research: rts-player finished rts-railways \(by script\)`, `rts-give: 4 x rts-locomotive-kit`,
       `rts-give: 400 x rail into the rts-player pool`
 
 22. **Depot 1 next to the capital.**
-    - *Input:* press SPACE. In the Economy tab click **Rail depot** (≈1066, 770) and left-click (288, 400), 22 tiles
+    - *Input:* press SPACE. In the Economy tab click **Rail depot** (≈1066, 772) and left-click (288, 400), 22 tiles
       left of the CC (any bare ground 18–30 tiles from the CC, away from your buildings, works). Press Q. Wait 15 s.
       Click the new depot. Take a screenshot.
     - *Expect:*
@@ -666,7 +666,7 @@ before its part is done, see Recovery.
       `railgui: depot panel for [0-9]+ player=1`
 
 23. **Depot 2 at Outpost; the Commander builds it.**
-    - *Input:* click empty ground. Click "Outpost" (≈38, 146). In the Economy tab click **Rail depot** (≈1066, 770) and
+    - *Input:* click empty ground. Click "Outpost" (≈38, 146). In the Economy tab click **Rail depot** (≈1066, 772) and
       left-click (832, 432), 12 tiles right of the City Center. Press Q. Click the Commander portrait (486, 753) and
       right-click bare ground just above the ghost, ≈(832, 360). Wait until the Commander stands there, then 10 s more.
       Click the new depot.
@@ -952,9 +952,9 @@ before its part is done, see Recovery.
         beyond 20 make Age I kits 10 % dearer (now +10 %): the barracks takes the extra plates from its network before
         Walker deploys. Age II units (Armoured car) pay none."
       - The Armoured car kit is no longer greyed; its tooltip lists 2 engines, 2 steel beams and 10 iron.
-      - With 50 copper the walker deploys, and the line returns to "Units from here: N · all barracks: M". While the
-        network can pay, the page shows nothing about the surcharge; each walker then takes 1 more iron and 1 more
-        copper than the kit.
+      - With 50 copper the walker deploys, and the line turns yellow: "Units from here: N · all barracks: M · army
+        surcharge +10 %" (tooltip: the rule and the current share). Each walker then takes 1 more iron and 1 more copper
+        than the kit.
     - *Pass/Fail:* PASS if the red surcharge line appears. If "Supply cap N/M: Walker waits" appears instead, report it.
     - *Log check (lead):* `rts-give: 2 x copper-plate`,
       `production: barracks #[0-9]+ \(rts-player\) holds rts-walker-kit: army surcharge x1\.[0-9], network short of 1 copper-plate`,

@@ -709,8 +709,13 @@ function match.start(cfg)
   m.out, m.winner, m.ended_tick, m.tick_started = {}, nil, nil, nil
   m.wave, m.waves_off, m.enemy_next_wave = 0, nil, nil
   m.stats = fresh_stats(m.forces)
-  util.log("match: starting match %d: %d opponent(s), %s, %s (%dx%d), map %s, brain %s", m.match_id, c.opponents,
-    c.difficulty, c.size, 2 * m.arena_half, 2 * m.arena_half, c.map, c.enemy_brain)
+  if c.mode == "nation" then -- Phase 5 M1 integration: a Nation match logs its world, not the Skirmish size and map
+    util.log("match: starting match %d: %d opponent(s), %s, nation, world %dx%d, brain %s", m.match_id, c.opponents,
+      c.difficulty, 2 * m.arena_half, 2 * m.arena_half, c.enemy_brain)
+  else
+    util.log("match: starting match %d: %d opponent(s), %s, %s (%dx%d), map %s, brain %s", m.match_id, c.opponents,
+      c.difficulty, c.size, 2 * m.arena_half, 2 * m.arena_half, c.map, c.enemy_brain)
+  end
 
   -- Map generation (scripts/mapgen.lua): planned before the arena exists (ground tiles), built before the CCs.
   local plan = c.size ~= "legacy" and not wplan and mapgen.plan(mapgen_spec(m, c)) or nil

@@ -17,7 +17,8 @@ Rules the check verifies:
   demolished." and nothing changes.
 - A hub takes its hidden power, pole and both attached stockpiles with it. Nothing of it stays on the map.
 - 50 % of the item cost (rounded down; walls carry the remainder inside one batch) goes into the nearest own
-  stockpile of the building's logistic network. If none is in that network or all are full, the rest is dropped.
+  stockpile of the building's logistic network. If none is in that network or all are full, the rest goes to the
+  force's Command Center network (M1 integration), and only what does not fit there is dropped.
 - Stockpile contents (and turret ammo, furnace contents, fuel) go to another own stockpile of the network, else they
   drop on the ground next to the building.
 - The alert line under the HUD strip reads "Demolished <icon> <building>" (F3 jumps to it).

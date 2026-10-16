@@ -84,6 +84,7 @@ territory.CLASS_BY_NAME = {
   ["rts-city-center"] = "city",
   ["rts-fort"] = "outpost", ["rts-hub"] = "outpost", ["rts-radar"] = "outpost", ["rts-turret"] = "outpost",
   ["rts-laser-turret"] = "outpost", ["rts-depot"] = "outpost",
+  ["rts-bunker"] = "outpost", -- Phase 5 M1 integration: a defence like the turret and the fort
   ["rts-wall"] = "infra", ["rts-stockpile"] = "infra",
 }
 territory.INFRA_TYPES = {}

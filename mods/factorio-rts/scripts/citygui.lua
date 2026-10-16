@@ -22,6 +22,7 @@ local camera = require("scripts.camera")
 local territory = require("scripts.territory")
 local cities = require("scripts.cities")
 local demolish = require("scripts.demolish") -- Phase 5 M1 integration: the panel's Demolish button
+local hubgui = require("scripts.hubgui") -- Phase 5 M1 integration: its title follows a rename
 
 local citygui = {}
 
@@ -324,6 +325,8 @@ local function rename(player, g, city_id)
   util.log("citygui click rename city=%d name=%s player=%d", city_id, el.name.text, player.index)
   show_panel(player)
   show_list(player)
+  -- Phase 5 M1 integration: the hub panel's title names the city too (logistics.NAME_HOOKS): rebuild it
+  if hubgui then hubgui.refresh(player.index, true) end
 end
 
 events.on(defines.events.on_gui_click, function(e)

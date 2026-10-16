@@ -163,8 +163,13 @@ function lobby.show_lobby(player)
   local start = row.add({type = "button", name = PREFIX .. "start", style = "confirm_button",
                          caption = {"rts.lobby-start"}, tags = {rts_lobby = "start"}})
   start.enabled = can_control(player)
-  util.log("lobby: dialog shown to player %d (%d opponent(s), %s, %s, %s, %s)", player.index, p.opponents, p.difficulty,
-    p.size, p.map, p.mode)
+  if p.mode == "nation" then -- Phase 5 M1 integration: the Nation line names the world, not the Skirmish size and map
+    util.log("lobby: dialog shown to player %d (%d opponent(s), %s, nation, world %s)", player.index, p.opponents,
+      p.difficulty, tostring(p.world_size or "default"))
+  else
+    util.log("lobby: dialog shown to player %d (%d opponent(s), %s, %s, %s, %s)", player.index, p.opponents,
+      p.difficulty, p.size, p.map, p.mode)
+  end
   return frame
 end
 
@@ -319,9 +324,13 @@ function lobby.start_match(cfg, who)
   pending().opponents, pending().difficulty = c.opponents, c.difficulty
   if c.size ~= "legacy" and c.mode ~= "nation" then pending().size, pending().map = c.size, c.map end
   pending().mode = c.mode or "skirmish"
-  util.log("lobby: match %d started by %s on %s: %d opponent(s), %s, %s, map %s, brain %s, mode %s%s", m.match_id,
-    tostring(who), surface.name, c.opponents, c.difficulty, c.size, c.map, c.enemy_brain, tostring(c.mode),
-    c.mode == "nation" and string.format(" (world %dx%d)", c.world_size, c.world_size) or "")
+  if c.mode == "nation" then
+    util.log("lobby: match %d started by %s on %s: %d opponent(s), %s, nation, world %dx%d, brain %s", m.match_id,
+      tostring(who), surface.name, c.opponents, c.difficulty, c.world_size, c.world_size, c.enemy_brain)
+  else
+    util.log("lobby: match %d started by %s on %s: %d opponent(s), %s, %s, map %s, brain %s, mode %s", m.match_id,
+      tostring(who), surface.name, c.opponents, c.difficulty, c.size, c.map, c.enemy_brain, tostring(c.mode))
+  end
   return surface
 end
 
@@ -406,8 +415,13 @@ events.on(defines.events.on_gui_selection_state_changed, function(e)
   else
     return
   end
-  util.log("lobby: player %d set %s -> %d opponent(s), %s, %s, %s, %s, world %s", e.player_index, tostring(what),
-    p.opponents, p.difficulty, p.size, p.map, p.mode, tostring(p.world_size or "default"))
+  if p.mode == "nation" then
+    util.log("lobby: player %d set %s -> %d opponent(s), %s, nation, world %s", e.player_index, tostring(what),
+      p.opponents, p.difficulty, tostring(p.world_size or "default"))
+  else
+    util.log("lobby: player %d set %s -> %d opponent(s), %s, %s, %s, %s, world %s", e.player_index, tostring(what),
+      p.opponents, p.difficulty, p.size, p.map, p.mode, tostring(p.world_size or "default"))
+  end
   -- every connected player sees the same choices; a mode change (and the nation count in Nation mode) also redraws
   -- the dialog of the player who made it (greyed size and map, the world size)
   local redraw_self = what == "mode" or (what == "opponents" and p.mode == "nation")

@@ -330,8 +330,30 @@ local function makers(item)
   return list
 end
 
+-- Phase 5 M1 integration: the city could make `name` itself from its stock (an enabled recipe whose ingredients it
+-- holds, or could make in turn one level down): such an ingredient is not what it lacks (an advanced-circuit row said
+-- "needs [copper cable]: made nowhere" while copper plates lay in stock).
+local function can_make(force, stock, name, depth)
+  for _, r in ipairs(makers(name)) do
+    local fr = force.recipes[r.name]
+    if fr and fr.enabled then
+      local ok = true
+      for _, ing in ipairs(r.ingredients) do
+        if ing.type == "item" and (stock[ing.name] or 0) < ing.amount
+           and not (depth < 1 and can_make(force, stock, ing.name, depth + 1)) then
+          ok = false
+          break
+        end
+      end
+      if ok then return true end
+    end
+  end
+  return false
+end
+
 --- Why a city cannot make enough of `item`: the first ingredient of its recipes that the city neither holds nor
---- makes, and the other city of the force that made or holds it (nil = nowhere). nil when nothing is missing.
+--- makes nor could make from its stock, and the other city of the force that made or holds it (nil = nowhere). nil
+--- when nothing is missing.
 function districts.hint(city_id, item, stock, flows)
   stock = stock or districts.stock(city_id)
   flows = flows or districts.flows(city_id)
@@ -342,7 +364,8 @@ function districts.hint(city_id, item, stock, flows)
     local fr = force.recipes[r.name]
     if fr and fr.enabled then
       for _, ing in ipairs(r.ingredients) do
-        if ing.type == "item" and (stock[ing.name] or 0) < ing.amount and (flows.made[ing.name] or 0) == 0 then
+        if ing.type == "item" and (stock[ing.name] or 0) < ing.amount and (flows.made[ing.name] or 0) == 0
+           and not can_make(force, stock, ing.name, 0) then
           for _, c in ipairs(districts.cities(force_name)) do
             if c.id ~= city_id then
               local other = districts.flows(c.id)
