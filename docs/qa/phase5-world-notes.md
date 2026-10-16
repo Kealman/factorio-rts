@@ -202,6 +202,10 @@ same time.
 | 3 | 3.08 / 3.16 / 3.18 s | 21.8–21.9 s | |
 | 4 | 3.86 / 3.93 / 3.98 s | 20.7–21.0 s | |
 
+A rerun on the synced `mods/` tree, 3 seeds at 3072 × 4 nations (`SEED=30724 tools/world-seeds.sh p5w-3072x4 3 '4'
+3072`): 9/9 checks, start 3.88–3.91 s, forced fill 20.8–21.2 s, spawn score spread 0.015–0.027, and every barrier at
+least `MIN_THICK` thick on sampled tiles (thinnest 30, most 32–35; 5 or 8 barriers per world).
+
 A 3072 world is playable 2.3–4.0 s after Start, well within the 20 s asked for, so the lobby does not mark it "(slow)".
 Generating the whole map by force would take 21–22 s, so only the core blocks; the far terrain fills in over about
 4 minutes of play, and the size tooltip says so. Planning takes 0.9–1.3 s at 3072. A run of the same matrix before the sync gave the same checks and

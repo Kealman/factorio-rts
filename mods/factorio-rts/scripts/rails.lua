@@ -47,7 +47,7 @@
 -- export). Locomotives are topped up with coal from the depot network at every stop.
 --
 -- storage.rails = {
---   version, test_nation (autotest), test_bridges = {[force] = true} (autotest),
+--   version, test_nation, test_forces, test_bridges = {[force] = true} (autotest only),
 --   depots  = {[depot un] = {un, force, surface, entity, platform = {axis, track, rails = {LuaEntity}, ends = {{x, y,
 --              d, l}, {x, y, d, l}}, stops = {LuaEntity}, area}, stop_name, line}},
 --   lines   = {[id] = line}, jobs = {[id] = survey job}, trains = {[train id] = train record}, dwelling = {[train id]},
@@ -2628,7 +2628,7 @@ match.on_teardown(function()
   end
   R.depots, R.lines, R.jobs, R.trains, R.dwelling, R.index, R.stops, R.stats, R.ai = {}, {}, {}, {}, {}, {}, {}, {}, {}
   R.depot_index = {}
-  R.test_nation, R.test_bridges = nil, nil
+  R.test_nation, R.test_bridges, R.test_forces = nil, nil, nil
   bind()
 end)
 
@@ -2780,6 +2780,7 @@ end
 local function at_setup(T)
   local R = rstate()
   R.test_nation = true
+  R.test_forces = {[AT.force] = true, [AT.ai_force] = true} -- logistics.lua: Nation hauler rules for these only
   local s = at_surface()
   at_generate(s, AT.gen_main)
   T.surface = s.index
@@ -3141,10 +3142,11 @@ local function at_hauler(T, tick)
       local burnt = (logistics.stats(AT.force).fuel or 0) - T.fuel0
       local per_leg = math.ceil(T.legs * 1.1 / balance.nation.hauler_tiles_per_coal)
       local cap = logistics.capacity(AT.force)
+      -- each departure from a hub takes per_leg coal (the hauler may already have left on its next trip)
       at_check(T, "rails_hauler_rules", iron > 0 and iron <= cap * 100 and cap == balance.nation.hauler_slots
-        and burnt >= per_leg and burnt <= 2 * per_leg + 1,
-        "hauler #%s delivered %d iron (capacity %d slots) over %.0f tiles per leg, burnt %d coal (%d per leg expected) "
-        .. "in %.0f s", tostring(T.hauler), iron, cap, T.legs, burnt, per_leg, (tick - T.t_hauler) / 60)
+        and burnt >= 2 * per_leg and burnt % per_leg == 0,
+        "hauler #%s delivered %d iron (capacity %d slots) over %.0f tiles per leg, burnt %d coal = %.1f legs of %d",
+        tostring(T.hauler), iron, cap, T.legs, burnt, burnt / per_leg, per_leg)
       T.stage = "done"
     end
   end
@@ -3168,6 +3170,7 @@ events.on_nth_tick(60, function(e)
       at_setup(T)
     else
       R.test_nation = true
+      R.test_forces = {[AT.force] = true, [AT.ai_force] = true}
       T.surface = at_surface().index
       for _, f in ipairs({AT.force, AT.ai_force}) do
         if not game.forces[f] then game.create_force(f) end

@@ -170,8 +170,10 @@ lines).
 0.005-0.17 ms/tick, districts.lua at most 0.002, ages.lua at most 0.001, ledgergui.lua 0.00004. The 21-minute runs took
 1267 s of wall time for 1260 s of game time with nine other servers on the machine: 60 UPS.
 
-**Save / load** (Nation, fixture running, saved at minute 3 and loaded): no errors on either side; after the load the
-auto petrochemical works kept switching with its target and the minute reports continued.
+**Save / load** (world, Nation): `tools/saveload-check.sh` with the fixture (saved at minute 3 after 12/12, loaded,
+200 s on): no errors on either side, the Auto petrochemical works kept following its target after the load. A second
+save taken while the Charter site was taking its deliveries (render objects in `storage.ages`) loaded cleanly and the
+site finished the Charter after the load (Age II at 0:36).
 
 ## 8. Gotchas
 

@@ -9,32 +9,33 @@ research panel, the depot, rail and kit recipes from the build menu and the fact
 
 ## 1. Results
 
-| Check (`[rts] rails autotest check ...`) | Result | Evidence (run `p5m-1`, live tree + this package, game speed 4) |
+| Check (`[rts] rails autotest check ...`) | Result | Evidence (run `p5live-rails4`: synced live tree, game speed 4) |
 |---|---|---|
 | `rails_depot_composite` | PASS | Depot = hub + 2 stockpiles + 40-tile platform (20 straight rails) + 2 stops; kind `hub`; default keep `{coal = 50}` |
-| `rails_survey`: 800 tiles, lake between, survey ≤ 10 s | PASS | 1.0 s game time (25 ticks of work), 266 pieces, 887 tiles of track for 800 straight |
+| `rails_survey`: 800 tiles, lake between, survey ≤ 10 s | PASS | 1.0 s game time, 309 pieces, 944 tiles of track for 800 straight, 719 fine expansions, 2,030 checks |
 | `rails_route_avoids` | PASS | 0 pieces in the lake (120 × 300 tiles), 0 in a block of foreign buildings on the straight line |
-| `rails_line_built` within ±5 % of billed rails | PASS | Bill 493 rails; net from the depots 496 (loaded 493, returned 0, robots 3): 0.6 %; open after 250 s |
-| `rails_deliver`: ≥ 4,000 iron in 3 minutes | PASS | 6,000 iron loaded, 887 tiles in 27.6 s, 4,092 counted 53 s after departure, 6,000 at 60 s |
+| `rails_line_built` within ±5 % of billed rails | PASS | Bill 529 rails; net from the depots 532 (loaded 529, returned 0, robots 3): 0.6 %; open after 277 s; 135 trees, 10 rocks and 4 cliffs cleared |
+| `rails_deliver`: ≥ 4,000 iron in 3 minutes | PASS | 6,000 iron loaded; 4,026 counted 54 s after departure (the counter runs while unloading), 6,000 a few seconds later |
 | `rails_cut`: 3 rails destroyed → no_path + "Line cut" | PASS | Train `no_path` 1.0 s after the cut; line state `cut`; alert `rts.alert-line-cut` |
-| `rails_repair` within 60 s | PASS | Crew from the far depot, line open again 14.0 s after the cut |
-| `rails_resume` within 60 s | PASS | Next delivery 24.0 s after the repair |
-| `rails_bridge` (elevated spans, Space Age) | PASS | 70-tile water band, 2 ramps, 33-49 elevated pieces, 11-14 supports standing, built in 75 s |
-| `rails_ai` (AI rail program) | PASS | rts-ai-2: two depots, 387-tile line, freight train, first delivery 168 s after the start |
-| `rails_hauler_rules` (Nation hauler fuel and slots) | PASS | 1,000 iron per trip (10 slots), 14 coal for 2 × 220-tile legs (7 per leg) |
+| `rails_repair` within 60 s | PASS | Crew from the far depot, line open again 15.0 s after the cut |
+| `rails_resume` within 60 s | PASS | Next delivery 25.0 s after the repair |
+| `rails_bridge` (elevated spans, Space Age) | PASS | 70-tile water band: 2 ramps, 22 elevated pieces, 8 supports, 296 tiles, built in 74 s |
+| `rails_ai` (AI rail program) | PASS | rts-ai-2: two depots, 391-tile line, freight train, first delivery 169 s after the start |
+| `rails_hauler_rules` (Nation hauler fuel and slots) | PASS | 1,000 iron per trip (10 slots); 21 coal = 3 departures × 7 for 220-tile legs |
 
-Summary line: `[rts] rails autotest summary 11/11 (all passed)`, 0 Lua errors. Further results: section 9.
+Summary line: `[rts] rails autotest summary 11/11 (all passed)`, 0 Lua errors; the Skirmish AI autotest running in
+the same game: 23/23. Further results: section 9.
 
 ## 2. Day-1 probes
 
 Probe mod `build/p5-rails-probe/rts-rail-probe2/` (P1 on a generated Nauvis surface, P2-P4 on lab tiles) and the
-autotest's census of its own generated map (seed 4242: 19,829 trees, 511 rocks, 351 cliffs, 4,682 ore entities and
-30,325 water tiles in the 1056 × 512-tile main box).
+autotest's census of its own generated map (seed 4242: 16,080 trees, 330 rocks, 434 cliffs, 9,707 ore entities and
+73,371 water tiles in the 1056 × 512-tile main box).
 
 | Question | Verdict | Evidence |
 |---|---|---|
 | P1: which build check lets the planner treat trees and rocks as clearable, but not water or buildings? | `build_check_type = manual_ghost` with `forced = true` | Ground rail over a tree or a rock: `manual` false, `manual_ghost` false, `manual_ghost + forced` **true**. Over water: false (but `script` and `script_ghost` true, the trap from the study). Own or foreign building: false. Ore: true for all checks. A ghost over a tree or rock does not revive; after the builder clears them it does. |
-| P1b: cliffs | Blocked by every check | `manual_ghost + forced` is false on cliffs too. The planner allows a ground piece whose 6×6 box holds only cliffs, trees and rocks (no water, buildings or rails) at +15 cost, and the crew blows the cliff up (7 cliffs on the 887-tile main line). |
+| P1b: cliffs | Blocked by every check | `manual_ghost + forced` is false on cliffs too. The planner allows a ground piece whose 6×6 box holds only cliffs, trees and rocks (no water, buildings or rails) at +15 cost, and the crew blows the cliff up (4 cliffs on the 944-tile main line). |
 | P1c: cost of the coarse-grid queries | about 2 µs each | Per 16 × 16 cell: `count_tiles_filtered` (water_tile) 2.1 µs, cliffs 1.4 µs, trees and rocks 2.1 µs; `can_place_entity` 1.3-1.8 µs |
 | P2: support-spot rule for elevated spans | **A `rail-support` must stand exactly on an elevated rail end, oriented along the rail (either way); build in order with one every ≤ 12 tiles** | Brute force over 29 × 7 positions × 16 directions for one elevated piece: only its two end positions, directions east or west, made it placeable. Spans built in order from a ramp: supports every 6, 10 and 12 tiles carried all 28 pieces; every 16, 20 and 22 tiles failed at the piece 11-12 tiles from the last support. A ramp's elevated end carries the first ~10 tiles. The planner puts one every 10 tiles; the builder tries both ends of a piece that still will not revive. |
 | P3: signals from `RailLocation` | **Works; a bidirectional pair = `in_signal_location` + `out_signal_location` of one rail end** | `create_entity{name = "rail-signal", position = loc.position, direction = loc.direction}` at both; a double-headed train ran 5 legs both ways on single track. `alternative_*` locations are nil on straight track. |
@@ -136,7 +137,8 @@ support, 2 per signal. A construction wagon therefore only carries rails (and it
   kits; leftover rails and coal return to the network.
 - **Blocked.** A piece that will not revive 20 times raises "Rail line blocked" at its position; the crew keeps
   retrying (a unit standing there moves on, a new building has to go).
-- Measured: 887 tiles in 250 s (initial build), 3 pieces in 14 s round trip (repair), 334-tile bridge line in 75 s.
+- Measured: 944 tiles in 277 s (initial build), 3 pieces in 15 s (repair, from the cut to the line open again),
+  296-tile bridge line in 74 s.
 
 ### 5.5 Freight train
 
@@ -150,7 +152,8 @@ support, 2 per signal. A construction wagon therefore only carries rails (and it
   the plan is loaded or nothing more moves. Nothing to carry: it waits and re-plans every second.
 - **Drop-off**: unloads everything at the same rate; a full network leaves the train waiting ("full").
 - **Fuel**: at every stop each locomotive is topped up to 20 coal from the depot network.
-- Measured on the 887-tile line: 6,000 iron loaded in 3.8 s, travel 27.6 s (32 tiles/s average), unloaded in 15 s.
+- Measured on the 887-tile line (run `p5m-1`): 6,000 iron loaded in 3.8 s, travel 27.6 s (32 tiles/s average),
+  unloaded in 15 s.
 
 ### 5.6 Line states, cuts and alerts
 
@@ -252,8 +255,10 @@ EXTRA_LUA=tools/probes/rails_saveload_trip.lua SPEED=2 tools/saveload-check.sh r
 # GUI probe (opens a window): append require("scripts.rails_gui") to a test copy's control.lua, tools/gui-run.sh
 ```
 
-The autotest uses its own surface `rts-railtest` (vanilla terrain, seed 4242) and the non-participating forces
-rts-ai-3 (lines) and rts-ai-2 (AI program), with `storage.rails.test_nation` standing in for Nation mode. Stages:
+The autotest uses its own surface `rts-railtest` (vanilla terrain, seed 4242), 3,000 tiles east of the arena
+coordinates (ai/hubs.lua compares building positions across surfaces), and the non-participating forces rts-ai-3
+(lines) and rts-ai-2 (AI program). `storage.rails.test_nation` stands in for Nation mode in rails.lua, and
+`storage.rails.test_forces` limits the Nation hauler rules in logistics.lua to those two forces. Stages:
 `main` (survey, build, deliver, cut, repair, resume, an idle minute), `bridge`, `ai`, `hauler`;
 `rails.AUTOTEST_STAGES` limits them, `rails.AUTOTEST_CONFIG` moves the depots or the lake.
 
@@ -276,9 +281,9 @@ rts-ai-3 (lines) and rts-ai-2 (AI program), with `storage.rails.test_nation` sta
 | `control.lua:34` | 4 | require `scripts.rails` and `scripts.railgui` after hubgui |
 | `data.lua:15` | 2 | require `prototypes.rails` after prototypes.logistics |
 | `scripts/logistics.lua:61` | 1 | `local balance = require("balance")` |
-| `scripts/logistics.lua:123` | 8 | `nation_mode()` (match mode, or the rails autotest flag) |
-| `scripts/logistics.lua:680` | 15 | hauler fuel in `go()`: 1 coal per 40 tiles from the departure hub, else waiting "no-fuel" |
-| `scripts/logistics.lua:775` | 3 | `logistics.capacity`: base 10 slots in Nation mode |
+| `scripts/logistics.lua:123` | 10 | `nation_mode(force)` (match mode; in the rails autotest its test forces only) |
+| `scripts/logistics.lua:682` | 15 | hauler fuel in `go()`: 1 coal per 40 tiles from the departure hub, else waiting "no-fuel" |
+| `scripts/logistics.lua:777` | 3 | `logistics.capacity`: base 10 slots in Nation mode |
 | `scripts/hubgui.lua:230` | 1 | hauler reason "no-fuel" in the hauler panel |
 | `scripts/hud.lua:146` | 2 | rail item and recipes added to m1-cities' `P4.NATION_ONLY` |
 | `scripts/hud.lua:238` | 1 | `rts-depot` in the Economy build tab |
@@ -317,5 +322,7 @@ and its unlocks to `research.EFFECTS` / `research.LOCKS` at load), buildings.lua
    the depot that needs them) instead of queueing factory work.
 10. **Build speed** (887 tiles in 250 s, 10 pieces per second within 48 tiles) is a tuning value in
    `balance.nation.rails`.
-11. `logistics.lua`'s `nation_mode()` also honours `storage.rails.test_nation`, so the rails autotest's haulers follow
-    Nation rules; the flag is test-only.
+11. **The AI hook in a real Nation match is only partly seen.** With the trigger lowered to 150 tiles (test probe) the
+    AIs planned their lines at minutes 8-9 and placed their first depot at minute 12 (that run paid the far depot from
+    the new city's empty network; the AI now pays from its capital). In another seed the AIs planned second cities but
+    never founded them, so there was nothing to connect. The full program is covered by the autotest's `rails_ai`.

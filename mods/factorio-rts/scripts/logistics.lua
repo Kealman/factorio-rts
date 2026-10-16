@@ -120,12 +120,14 @@ logistics.POLICY_SUBGROUPS = {"rts-intermediates", "rts-science", "rts-units"}
 -- Hubs are buildings (selection, HUD building page, removal events); the registry learns the name here.
 buildings.KIND_BY_NAME[logistics.HUB] = "hub"
 
--- Phase 5 M1 (m1-rails): Nation mode (storage.match.config.mode, or the rails autotest) changes hauler fuel and cargo
--- slots (balance.nation).
-local function nation_mode()
+-- Phase 5 M1 (m1-rails): Nation mode (storage.match.config.mode; in the rails autotest only its own test forces)
+-- changes hauler fuel and cargo slots (balance.nation).
+local function nation_mode(force_name)
   local m = storage.match
   local c = m and m.config
-  return c ~= nil and c.mode == "nation" or (storage.rails ~= nil and storage.rails.test_nation == true)
+  if c ~= nil and c.mode == "nation" then return true end
+  local R = storage.rails
+  return R ~= nil and R.test_forces ~= nil and R.test_forces[force_name] == true
 end
 -- Phase 5 M1: hub subtypes (a City Center is a hub, buildings.KIND_BY_NAME) with their own display name:
 -- [entity name] = fn(unit_number) -> LocalisedString. They get no "Hub n" number. Load time only (scripts/cities.lua).
@@ -679,7 +681,7 @@ local function go(h, hub_un, state)
   if not point then return false end
   -- Phase 5 M1 (m1-rails): in Nation mode a hauler leaving a hub burns 1 coal per hauler_tiles_per_coal tiles of the
   -- trip, taken from that hub's network; without it the hauler waits there ("no-fuel").
-  local per = nation_mode() and balance.nation and balance.nation.hauler_tiles_per_coal
+  local per = nation_mode(h.force) and balance.nation and balance.nation.hauler_tiles_per_coal
   if per and h.at_hub and near_hub(h, h.at_hub) then
     local need = math.ceil(util.distance(h.entity.position, point) * 1.1 / per)
     local net = logistics.hub_network(h.at_hub)
@@ -773,7 +775,7 @@ end
 function logistics.capacity(force_name)
   local bonus = research and research.hauler_slots and research.hauler_slots(force_name) or 0
   -- Phase 5 M1 (m1-rails): smaller trucks at nation scale (balance.nation.hauler_slots)
-  local base = nation_mode() and balance.nation and balance.nation.hauler_slots or logistics.BASE_SLOTS
+  local base = nation_mode(force_name) and balance.nation and balance.nation.hauler_slots or logistics.BASE_SLOTS
   return base + bonus
 end
 
