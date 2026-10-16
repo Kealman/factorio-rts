@@ -21,6 +21,7 @@ local selection = require("scripts.selection")
 local camera = require("scripts.camera")
 local territory = require("scripts.territory")
 local cities = require("scripts.cities")
+local demolish = require("scripts.demolish") -- Phase 5 M1 integration: the panel's Demolish button
 
 local citygui = {}
 
@@ -132,6 +133,12 @@ local function build_panel(player, g, c)
   add.add({type = "choose-elem-button", name = PREFIX .. "add", elem_type = "item", style = "slot_button",
            tooltip = {"rts.citygui-target-add"}, tags = {rts_citygui = "add", city = c.id}})
   label(add, "rts_hud_dim_label", {"rts.citygui-target-hint"}, WIDTH - 60)
+  -- Demolish the City Center (two presses, scripts/demolish.lua); the capital cannot be demolished (greyed)
+  local foot = frame.add({type = "flow", direction = "horizontal", style = "rts_hud_row"})
+  foot.add({type = "empty-widget", style = "rts_hud_filler"})
+  el.demolish = foot.add({type = "button", name = PREFIX .. "demolish", style = "rts_hud_button",
+    caption = {"rts.demolish"}, tags = {rts_citygui = "demolish", city = c.id}})
+  el.demolish.style.height = 24
   place_panel(player, frame)
 end
 
@@ -162,6 +169,18 @@ local function refresh_panel(player, g)
   local ids = {}
   for _, id in ipairs(c.networks or {}) do ids[#ids + 1] = "#" .. id end
   el.networks.caption = {"rts.citygui-networks", #ids, #ids > 0 and table.concat(ids, " ") or "-"}
+  local b = el.demolish
+  if b and b.valid then
+    local rec = c.force == player.force.name and buildings.get(c.center) or nil
+    local blocked = not rec or buildings.demolish_blocked(rec) ~= nil
+    local armed = not blocked and demolish.is_armed(player.index, {c.center})
+    b.enabled = not blocked
+    b.style = armed and "rts_hud_button_armed" or "rts_hud_button"
+    b.style.height = 24
+    b.caption = armed and {"rts.demolish-confirm"} or {"rts.demolish"}
+    b.tooltip = blocked and {"rts.demolish-tooltip-blocked"}
+      or {"rts.demolish-tooltip", math.floor(buildings.REFUND_RATIO * 100)}
+  end
   return true
 end
 
@@ -327,6 +346,13 @@ events.on(defines.events.on_gui_click, function(e)
     if c then camera.jump_to(player, c.position) end
   elseif action == "open" then
     citygui.open(player, tags.city)
+  elseif action == "demolish" then
+    local c = cities.get(tags.city)
+    local result = c and demolish.click(player, {c.center}) or "none"
+    util.log("citygui click demolish city=%s result=%s player=%d", tostring(tags.city), tostring(result), e.player_index)
+    show_panel(player)
+    show_list(player)
+    return
   else
     return
   end

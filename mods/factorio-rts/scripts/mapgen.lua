@@ -967,6 +967,21 @@ local function participants()
   return (m and m.forces) or {}
 end
 
+--- Match forces with a mining drill on (or next to) patch p, sorted.
+function mapgen.miners(surface, p)
+  local m = 3 -- an extractor mines a 5x5 area: one standing next to the patch box reaches its edge
+  local set = {}
+  for _, e in pairs(surface.find_entities_filtered({area = {{p.box.x0 - m, p.box.y0 - m}, {p.box.x1 + m, p.box.y1 + m}},
+                                                   type = "mining-drill"})) do
+    set[e.force.name] = true
+  end
+  local out = {}
+  for _, f in ipairs(participants()) do
+    if set[f] then out[#out + 1] = f end
+  end
+  return out
+end
+
 local function check_depletion(surface)
   for _, p in ipairs(storage.mapgen.patches) do
     if not p.depleted_tick then
@@ -975,7 +990,9 @@ local function check_depletion(surface)
         p.depleted_tick = game.tick
         local item = {"item-name." .. p.name}
         util.log("mapgen: patch %s depleted at %.0fs", p.id, (game.tick - (storage.match.tick_started or 0)) / 60)
-        local to = p.force and {p.force} or participants()
+        -- Phase 5 M1 integration: a patch without an owner (the middle, the world's regions) alerts only the forces
+        -- whose extractors stand on it, not every participant
+        local to = p.force and {p.force} or mapgen.miners(surface, p)
         for _, f in ipairs(to) do
           mapgen.alert(f, "patch-depleted", "rts.alert-patch-depleted", {item, {"rts.patch-kind-" .. p.kind}},
             p.center)

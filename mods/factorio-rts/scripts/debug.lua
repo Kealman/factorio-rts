@@ -1421,6 +1421,26 @@ local COMMANDS = {
       reply(cmd, string.format("rts-give: %d x %s into the %s pool", n, item, force_name))
     end,
   },
+  -- Phase 5 M1 integration: QA shortcut for GUI protocols (docs/qa/phase5-m1-protocol.md)
+  ["rts-research"] = {
+    help = "<technology> - finish an RTS technology for your force at once (admin, QA): rts-railways, rts-industrialisation, ...",
+    run = function(cmd)
+      if not admin_only(cmd) then return end
+      local name = (cmd.parameter or ""):match("^%s*(%S+)")
+      local force = game.forces[command_force(cmd)]
+      local tech = name and force and force.technologies[name]
+      if not (tech and string.sub(name, 1, 4) == "rts-") then
+        reply(cmd, "rts-research: unknown technology " .. tostring(name))
+        return
+      end
+      if not tech.enabled then
+        reply(cmd, "rts-research: " .. name .. " is not available in this mode")
+        return
+      end
+      tech.researched = true
+      reply(cmd, string.format("rts-research: %s researched for %s", name, force.name))
+    end,
+  },
   ["rts-eco"] = {
     help = "- print the economy summary (resources, bots, power) and production counters of both forces",
     run = function(cmd)
@@ -1510,5 +1530,13 @@ end
 function debug_tools.run_command(name, parameter, player_index)
   COMMANDS[name].run({name = name, parameter = parameter, tick = game.tick, player_index = player_index})
 end
+
+-- Phase 5 M1 integration: a GUI tester may end a QA session by typing RTS_QA_END in the console (F9): the line is
+-- logged with the state summary, so tools/gui-run.sh stops on it like on /rts-qa-end and Ctrl+Shift+E.
+events.on(defines.events.on_console_chat, function(e)
+  if not (e.message and string.find(e.message, "RTS_QA_END", 1, true)) then return end
+  for _, line in pairs(debug_tools.dump_lines()) do util.log("%s", line) end
+  util.log("RTS_QA_END by player=%s at tick %d (console chat)", tostring(e.player_index), game.tick)
+end)
 
 return debug_tools

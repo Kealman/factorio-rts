@@ -1238,6 +1238,12 @@ local function rebuild_recipe_buttons(player, h, un, rec)
     el.b_text.visible = true
     el.b_foot.visible = false
     set_text_width(el, PANEL_INNER)
+    -- Phase 5 M1 integration: the factory's category tabs stayed on every page without recipes (City Center, depot,
+    -- rolling stock) after a factory page
+    if el.b_tabs and el.b_tabs.valid then
+      el.b_tabs.clear()
+      el.b_tabs.visible = false
+    end
     return
   end
   grid.visible = true
@@ -1512,6 +1518,8 @@ end
 
 local function update_demolish_button(player, h, un, rec)
   local button = h.el.b_demolish
+  -- Phase 5 M1 integration: no Demolish for rolling stock (it would break the train; buildings.demolish_blocked)
+  button.visible = rec.kind ~= "train"
   local armed = demolish.is_armed(player.index)
   local blocked = buildings.demolish_blocked(rec)
   set_style(button, armed and "rts_hud_button_armed" or "rts_hud_button")
@@ -1699,13 +1707,15 @@ local function update_build_menu(player, h)
       local tab = BUILD_TAB_BY_KEY[key]
       if tab.nation then
         button.visible = nation
-        if not nation and prefs(player.index).build_tab == key then fill_build_grid(player.index, h) end
       else
         -- room for the Age II icon tab next to three text tabs (Russian captions fill the row)
         button.style.left_padding = nation and P4.TAB_PADDING_NATION or 8
         button.style.right_padding = nation and P4.TAB_PADDING_NATION or 8
       end
     end
+    -- Phase 5 M1 integration: the Nation-only items (depot, City charter, fort) of every tab follow the mode at once,
+    -- not only after a tab switch (the grid was filled in the lobby under the previous match's mode)
+    fill_build_grid(player.index, h)
   end
   for item, button in pairs(h.build_buttons or {}) do
     if button.valid then

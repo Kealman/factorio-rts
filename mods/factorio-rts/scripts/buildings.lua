@@ -319,6 +319,8 @@ function buildings.on_demolish_parts(fn) demolish_parts[#demolish_parts + 1] = f
 --- or nil when it can.
 function buildings.demolish_blocked(rec)
   if rec.kind == "cc" then return "protected" end
+  -- Phase 5 M1 (rails.lua): rolling stock is a building of kind "train"; removing one carriage breaks the train
+  if rec.kind == "train" then return "rolling-stock" end
   -- Nation mode (scripts/cities.lua): the capital's City Center. Read from storage, no module dependency.
   local cs = storage.city_state
   local id = cs and cs.by_center and rec.entity.valid and cs.by_center[rec.entity.unit_number]
@@ -337,13 +339,24 @@ function buildings.item_cost(name)
   local b = balance.buildings[name]
   if b and b.cost then return b.cost, b.count or 1 end
   local recipe = prototypes.recipe[name]
+  local item = name
+  if not recipe then
+    -- Phase 5 M1 integration: an entity placed by an item of another name (rts-city-center <- rts-city-charter)
+    local proto = prototypes.entity[name]
+    local places = proto and proto.items_to_place_this
+    local first = places and places[1]
+    item = first and (first.name or first) or nil
+    recipe = item and prototypes.recipe[item] or nil
+    local b2 = item and balance.buildings[item]
+    if b2 and b2.cost then return b2.cost, b2.count or 1 end
+  end
   if not recipe then return nil end
   local cost, count = {}, 1
   for _, ing in pairs(recipe.ingredients) do
     if ing.type == "item" then cost[ing.name] = (cost[ing.name] or 0) + ing.amount end
   end
   for _, prod in pairs(recipe.products) do
-    if prod.name == name then count = prod.amount or 1 end
+    if prod.name == item then count = prod.amount or 1 end
   end
   return cost, count
 end
