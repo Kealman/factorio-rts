@@ -77,7 +77,10 @@ local cc = clone({
 cc.flags = {"placeable-player", "player-creation", "not-deconstructable", "not-upgradable"}
 cc.is_military_target = true
 cc.logistics_radius = 25
-cc.construction_radius = 40
+-- Wave C (lead decision 2026-10-16): the CC's robots reach the natural expansion on every map size (natural pair
+-- 48-80 tiles out, scripts/mapgen.lua NATURAL_DIST), so a player can place a hub right at it; the logistic radius
+-- stays 25, so that hub forms its own network and haulers have work.
+cc.construction_radius = 80
 -- Large buffer, but the input is capped so filling it never takes more than half of the core's 4 MW.
 cc.energy_source = {
   type = "electric",

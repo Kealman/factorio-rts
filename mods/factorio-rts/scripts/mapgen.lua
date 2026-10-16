@@ -72,7 +72,8 @@ mapgen.GEOMETRY = {
   medium = {natural_a = 70, choke_a = 88, moat_len = 36, lake_r = {13, 17}, forests = 8},
   large = {natural_a = 76, choke_a = 96, moat_len = 48, lake_r = {14, 18}, forests = 10},
 }
-mapgen.NATURAL_DIST = {48, 84} -- a natural patch centre this far from its own CC
+mapgen.NATURAL_DIST = {48, 80} -- a natural patch centre this far from its own CC; the upper bound is the CC's
+                               -- construction radius (prototypes/buildings.lua), so its robots reach every natural
 mapgen.BASE_RING = 60        -- no terrain within this many tiles of a CC
 mapgen.MOAT_WIDTH = 16       -- water across the front line (14 or more stops every unit, measured)
 mapgen.MOAT_GAP = 14         -- the land gap (the choke) on the front line
