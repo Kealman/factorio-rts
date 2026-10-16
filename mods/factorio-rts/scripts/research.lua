@@ -96,6 +96,7 @@ research.EFFECTS = {
   ["rts-steam-power"] = {unlock = {"rts-steam-plant"}, flag = "steam"},
   ["rts-overcharge"] = {flag = "overcharge"},
   ["rts-scanner"] = {flag = "scanner"},
+  ["rts-geology"] = {flag = "geology"}, -- Phase 5 M2 world: extractors may mine uranium (scripts/world.lua)
 }
 
 -- Phase 5 E1 (scripts/ages.lua fills these at load, docs/qa/phase5-economy-notes.md): NATION_ONLY technologies are
@@ -104,6 +105,7 @@ research.EFFECTS = {
 -- research.age_of(force_name) -> age and research.is_nation() -> bool are set by ages.lua (nil: everything Age I,
 -- Skirmish). ages.lua also adds the age technologies' effects to EFFECTS.
 research.NATION_ONLY = {}
+research.NATION_ONLY["rts-geology"] = true -- Phase 5 M2 world: Geology (prototypes/world2.lua) exists in Nation mode only
 research.AGE_REQUIRED = {}
 research.age_of = nil
 research.is_nation = nil

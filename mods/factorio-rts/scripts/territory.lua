@@ -58,6 +58,7 @@ local economy = require("scripts.economy")
 local match = require("scripts.match")
 local balance = require("balance")
 local diplomacy = require("scripts.diplomacy") -- Phase 5 M2 diplomacy: attrition hits hostile units only
+local world = require("scripts.world") -- Phase 5 M2 world: claimable cells (territory.share; match.lua loads it first)
 
 local territory = {}
 
@@ -228,10 +229,22 @@ function territory.city_cells(city_id)
   return T and T.city_cells[city_id] or 0
 end
 
---- Fraction of the claimable cells a force owns (M1: every grid cell is claimable).
+--- Claimable cells a force owns (Phase 5 M2 world: world.claimable; every owned cell without a world).
+function territory.claimable_cells(force_name)
+  local T = grid()
+  local id = T and T.fids[force_name]
+  if not id then return 0 end
+  if not world.claimable_count() then return T.counts[id] or 0 end
+  return (T.claim and T.claim[id]) or 0
+end
+
+--- Fraction of the claimable cells a force owns. Phase 5 M2 world: claimable = land and marsh cells off the map rim
+--- (world.claimable_count); M1 counted every grid cell, so the Territory victory's 60 % was out of reach.
 function territory.share(force_name)
   local T = grid()
   if not T then return 0 end
+  local total = world.claimable_count()
+  if total and total > 0 then return territory.claimable_cells(force_name) / total end
   return territory.cells(force_name) / (T.w * T.h)
 end
 
@@ -344,6 +357,9 @@ end
 local function compute(T, j, budget)
   local srcs, cities_by_fid = job_sources(T, j)
   local sticky = territory.STICKY
+  -- Phase 5 M2 world: T.claim[fid] = the force's claimable cells (world.claimable), kept with T.counts
+  local claim, cl = world.claimable, T.claim or {}
+  T.claim = cl
   local width = j.x1 - j.x0 + 1
   local n = #srcs
   while j.row <= j.y1 and (budget >= width or budget == territory.CELL_BUDGET) do
@@ -378,6 +394,7 @@ local function compute(T, j, budget)
       if f ~= cur then
         if cur ~= 0 then
           T.counts[cur] = (T.counts[cur] or 0) - 1
+          if claim(cx, cy) then cl[cur] = (cl[cur] or 0) - 1 end -- Phase 5 M2 world
           j.delta[cur] = (j.delta[cur] or 0) - 1
           local L = j.lost[cur]
           if not L then
@@ -390,6 +407,7 @@ local function compute(T, j, budget)
         end
         if f ~= 0 then
           T.counts[f] = (T.counts[f] or 0) + 1
+          if claim(cx, cy) then cl[f] = (cl[f] or 0) + 1 end -- Phase 5 M2 world
           j.delta[f] = (j.delta[f] or 0) + 1
         end
         if not cmin then cmin = cx end

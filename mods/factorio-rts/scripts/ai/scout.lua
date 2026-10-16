@@ -56,6 +56,16 @@ function scout.seed(C)
   end
 end
 
+-- Phase 5 M2 world: a match force (the rivals; rts-neutral is not one). True outside a match (tests).
+local function rival(f)
+  local m = storage.match
+  if not m then return true end
+  for _, name in ipairs(m.forces or {}) do
+    if name == f then return true end
+  end
+  return false
+end
+
 --- Scan: add seen enemy buildings, forget the ones seen to be gone, drop seen guesses.
 function scout.step(C, surface)
   local force = game.forces[C.force]
@@ -66,7 +76,10 @@ function scout.step(C, surface)
   for _, rec in buildings.all() do
     local f = rec.force
     if f ~= C.force and rec.surface == surface.index then
-      if enemies[f] == nil then enemies[f] = is_enemy(force, f) end
+      -- Phase 5 M2 world: only the match forces' buildings become known targets. rts-neutral (city-states, trade
+      -- posts) stays hostile (diplomacy), but attacking or capturing it is m2-war's army targeting and the M2 AI's
+      -- decision, never the scan's finish, harass and best-target paths.
+      if enemies[f] == nil then enemies[f] = is_enemy(force, f) and rival(f) end
       local check = enemies[f]
       if check and rec.kind == "wall" and C.cfg.vision ~= "full" then
         walls = walls + 1

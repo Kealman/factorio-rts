@@ -16,4 +16,5 @@ require("prototypes.rails") -- Phase 5 M1: rail depot, train stop, rolling stock
 require("prototypes.abilities") -- Phase 4: Commander grid equipment and the stim sticker
 require("prototypes.cities") -- Phase 5 M1: City Center, City charter, fort, rts-attrition damage type (Nation mode)
 require("prototypes.world") -- Phase 5 M1: Nation-mode world tiles (mountain, ford, marsh) and noise (scripts/world.lua)
+require("prototypes.world2") -- Phase 5 M2 world: uranium, rare deposits, Geology, the N key (scripts/world.lua, strategic.lua)
 require("prototypes.trade") -- Phase 5 M2 treasury: trade post (hub subtype at world ports), Commerce I/II, market key M

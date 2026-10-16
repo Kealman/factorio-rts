@@ -1,4 +1,7 @@
 -- Phase 5 M1 world (docs/PHASE5-M1.md §3 world.lua; study docs/research/scale/world-map.md): Nation-mode maps.
+-- Phase 5 M2 world (docs/PHASE5-M2.md §3 "world.lua additions", study world-map.md §2.2-2.5, §5.3, §5.4): region
+-- kinds and generated names, the scarcity portfolio, city-states, ruins, ports, uranium and rare deposits, chokes from
+-- a distance transform; the strategic layer (chart labels, regional minimap) is scripts/strategic.lua.
 --
 -- Hybrid generation. Lua plans the strategic skeleton (spawns, mountain ranges with passes, rivers with fords, coasts,
 -- lakes, climate anchors, protected sites, ore deposits); prototypes/world.lua turns it into terrain through named
@@ -7,30 +10,42 @@
 --   world.size_for(nations)        the default size: 1536 for 2 nations, 2048 for 3-4 (1536 / 2048 / 3072 selectable)
 --   world.plan(config, seed)       skeleton + validation on engine samples (LuaSurface.calculate_tile_properties on
 --                                  an ungenerated sampler surface, 8-tile grid): land connectivity, start kits, spawn
---                                  scores; a failing skeleton is re-rolled (world.ATTEMPTS). Then sites and regions.
+--                                  scores; a failing skeleton is re-rolled (world.ATTEMPTS). Then (M2, on the sampled
+--                                  grid, own random stream) regions, chokes, uranium, ports, city-states, ruins, city
+--                                  sites, rare deposits, the scarcity record and the fairness measures.
 --   world.map_gen_settings(plan)   the arena's MapGenSettings (Nauvis tiles, trees, decoratives; no ore, no enemies)
 --   world.apply(surface, plan)     blocking core (CORE_RADIUS chunks around each spawn), spawn areas cleared, start
 --                                  kits placed; the rest of the map generates in the background and every planned
---                                  feature (ore deposit, oil field, ruin, port) is placed when its chunks exist
---   world.region_at(position)      -> region {id, name, label, kind = "highland"|"plain"|"swamp"|"coast", climate,
---                                     role, center, owner?, resources = {[name] = total}}
+--                                  feature (ore deposit, oil field, uranium, rare deposit, ruin, port, city-state) is
+--                                  placed when its chunks exist (city-states: cities.found for rts-neutral)
+--   world.region_at(position)      -> region {id, name (localised), label (English), kind = "highland" | "plain" |
+--                                     "lakeland" | "coast" | "swamp" | "desert" | "forest" | "mountain", climate, role,
+--                                     center, bbox, owner?, resources = {[name] = total}, sites = {site index, ...},
+--                                     owner_share = {[force] = share of the region's land}}
+--   world.place_name(position)     -> the localised region name there, or nil (alerts: "Iron Hills: hauler lost")
 --   world.regions(), world.spawns() -> {position, ...} (force order), world.spawn_of(force)
---   world.sites(kind?)             -> {{kind = "city_site"|"ruin"|"port"|"oil", position, region, ...}}
---   world.chokes()                 -> {{kind = "pass"|"ford", position, width, name, label, barrier}}
+--   world.sites(kind?)             -> {{kind = "city_site"|"ruin"|"port"|"oil"|"city_state"|"rare"|"uranium", position,
+--                                      region, name?, ...}}
+--   world.chokes()                 -> {{id, kind = "pass"|"ford"|"gap", position, width, name, label, regions = {a, b}}}
+--   world.scarcity()               -> {[force] = {home_specialty = region id, specialty = kind, lacks = {ore, ...}}}
+--   world.city_states()            -> {{site, name, city_id?, force?, turrets}, ...}
 --   world.reset()                  match teardown (match.lua)
 --
 -- Ore goes through mapgen.place_patch (exact totals) and is recorded with mapgen.record_patch, so the depletion
 -- alerts, the "ore remaining" report and /rts-mapgen cover the world; ruins and ports are mapgen ruins
--- (mapgen.add_ruin), captured like the Skirmish ruin.
+-- (mapgen.add_ruin), captured like the Skirmish ruin. Uranium (rts-uranium-ore) is mined by the ordinary extractor,
+-- but an extractor that would reach it is refused until the force has researched Geology (rts-geology).
 --
 -- Owns storage.world = {
 --   size, seed, surface, plan (skeleton, sites, regions, scores; no grid), regions, spawns = {{force, position}},
 --   sites, chokes, region_grid (32-tile Voronoi lookup), features (placement queue), pending = {[chunk key] = {i}},
---   fill = {total, generated, done, started, done_tick, last}, post (real-tile check after the fill), checks
+--   fill = {total, generated, done, started, done_tick, last}, post (real-tile check after the fill), checks,
+--   city_states = {{site, name, label, anchor, position, city_id, center, founded, turrets = {LuaEntity}}}
 -- }
 local util = require("scripts.util")
 local events = require("scripts.events")
 local mapgen = require("scripts.mapgen")
+local buildings = require("scripts.buildings") -- Phase 5 M2 world: the Geology build check (control.lua loads it earlier)
 
 local world = {}
 
@@ -57,11 +72,6 @@ world.MASSIFS = 2                -- free-standing short ranges in frontier regio
 world.write_images = false       -- QA: write the real-tile class grid as script-output/rts-world-<surface>.ppm
 world.QA_COUNTS = false          -- QA: whole-map tile and entity counts when the fill completes (about 100 ms in one
                                  -- tick at 2048, so off in play; tools/probes/world_seeds.lua turns it on)
-world.LABEL_COLORS = {region = {0.95, 0.92, 0.8}, pass = {0.85, 0.85, 0.9}, ford = {0.6, 0.85, 0.95}}
--- Chart labels keep a fixed size in the world (scale_with_zoom off): about 16 tiles tall for a region, 9 for a pass
--- or ford, readable in the map view at strategic zoom and only a few pixels in the HUD minimap (with
--- scale_with_zoom on, screen-sized names covered the whole minimap: GUI probe 2026-10-16).
-world.LABEL_SCALE = {region = 28, choke = 16}
 
 -- Volumes (balance.nation.world overrides, docs/PHASE5-M1.md §1). value = sum of ore x VALUE weight.
 local ok_balance, balance = pcall(require, "balance")
@@ -91,13 +101,71 @@ world.PORT_STOCK = {{"steel-plate", 300}, {"electronic-circuit", 100}}
 -- Phase 5 M2 treasury: fn(surface, position) -> port record; scripts/market.lua sets it (port sites become trade posts)
 world.place_port = nil
 
--- Names (locale rts-world.proper-<i>; English copies for the log).
-world.PROPER = {"Kerr", "Ash", "Varn", "Oster", "Bel", "Dorn", "Hale", "Iver", "Mar", "Brenn", "Corvo", "Elm", "Fenn",
-                "Gall", "Hask", "Ivo", "Jor", "Kell", "Lind", "Mott", "Nor", "Orrin", "Pell", "Quill", "Ros", "Sarn",
-                "Tor", "Ulm", "Vell", "Wren", "Yarr", "Zell", "Adder", "Brisk", "Cold", "Dunn", "Erne", "Frey",
-                "Grim", "Holt"}
+-- Phase 5 M2 world: balance.nation.world (pure data). Each key falls back to the default below.
+local function nbw(key, default)
+  local v = NB[key]
+  if v == nil then return default end
+  return v
+end
+world.W2 = {
+  city_states = nbw("city_states", {[2] = 4, [3] = 5, [4] = 6}),
+  city_state = nbw("city_state", {}),
+  uranium = nbw("uranium", {}),
+  rare = nbw("rare", {}),
+  ruins = nbw("ruins", {}),
+  ports = nbw("ports", {}),
+  chokes = nbw("chokes", {}),
+  scarce_fair = nbw("scarce_fair", 0.15),
+  need_bonus = nbw("need_bonus", 0.5),
+}
+local CS = world.W2.city_state
+local function cs(key, default) if CS[key] == nil then return default end return CS[key] end
+world.CS = {
+  tier = cs("tier", 1), garrison = cs("garrison", 4), garrison_every = cs("garrison_every", 10 * 3600),
+  garrison_max = cs("garrison_max", 10), turret = cs("turret", "rts-turret"), ring = cs("ring", 10),
+  ammo_keep = cs("ammo_keep", 200), spawn_gap = cs("spawn_gap", 300), spacing = cs("spacing", 200),
+  port_gap = cs("port_gap", 150), choke_offset = cs("choke_offset", {60, 90}), route_gap = cs("route_gap", 90),
+  stock = cs("stock", {
+    copper = {{"copper-plate", 400}, {"copper-cable", 400}},
+    iron = {{"iron-plate", 400}, {"steel-plate", 100}},
+    oil = {{"plastic-bar", 150}, {"sulfur", 100}},
+    coast = {{"raw-fish", 100}, {"stone-brick", 200}},
+    pass = {{"stone-brick", 300}, {"iron-gear-wheel", 150}},
+    ford = {{"stone", 300}, {"coal", 200}},
+  }),
+}
+world.URANIUM = {count = world.W2.uranium.count or {[2] = 1, [3] = 1, [4] = 2},
+                 amount = world.W2.uranium.amount or 20000, offset = world.W2.uranium.offset or 0.45,
+                 tech = world.W2.uranium.tech or "rts-geology", name = "rts-uranium-ore"}
+world.RARE = {count = world.W2.rare.count or {[1536] = 4, [2048] = 6, [3072] = 8},
+              amount = world.W2.rare.amount or 3000, side = world.W2.rare.side or 6,
+              kinds = world.W2.rare.kinds or {"saltpetre", "quartz", "tungsten", "diamonds", "rare-earths", "gold"},
+              city_state_share = world.W2.rare.city_state_share or 0.6}
+world.RUINS = {count = world.W2.ruins.count or {[1536] = 8, [2048] = 10, [3072] = 12},
+               min_spawn = world.W2.ruins.min_spawn or 300, spacing = world.W2.ruins.spacing or 220}
+world.PORTS = {spread_max = world.W2.ports.spread_max or 0.15, min_spawn = world.W2.ports.min_spawn or 300,
+               spacing = world.W2.ports.spacing or 500}
+world.CHOKES = {max_width = world.W2.chokes.max_width or 80, min_width = world.W2.chokes.min_width or 16,
+                window = world.W2.chokes.window or 24, min_side = world.W2.chokes.min_side or 40,
+                spacing = world.W2.chokes.spacing or 12, spawn_clear = world.W2.chokes.spawn_clear or 140,
+                max_tests = world.W2.chokes.max_tests or 120}
+world.BASIC_ORES = {"iron-ore", "copper-ore", "coal", "stone"}
+
+-- Names: generated proper names from a syllable table (locale rts-world.syl-a-<i>, syl-b-<i>, syl-c-<i>; the English
+-- copies below make the log labels), drawn without repeats from a random stream seeded by the world seed. A name is
+-- A + C, or A + B + C (30 %).
+world.SYL_A = {"Kar", "Bel", "Dor", "Ost", "Ver", "Ash", "Mor", "Tal", "Hel", "Gar", "Lin", "Ser", "Ul", "Vin", "Ror", "Eld",
+               "Fen", "Bran", "Cor", "Hal", "Tor", "Ys", "Mar", "Kel", "Ard", "Sel", "Thar", "Var", "Brin", "Oth", "Nor",
+               "Esk"}
+world.SYL_B = {"a", "e", "i", "o", "an", "el", "or", "is", "un", "ar"}
+world.SYL_C = {"mere", "dun", "holm", "wick", "garth", "ra", "ven", "dor", "lin", "mar", "tor", "rith", "an", "os",
+               "stead", "by", "moor", "ka", "nia", "wyn", "gard", "ost", "heim", "rin"}
+-- Region nouns per kind (locale rts-world.noun-<kind>-<n>, n = 1..3).
 world.NOUNS = {highland = {"Hills", "Highlands", "Heights"}, plain = {"Plains", "Fields", "Vale"},
-               swamp = {"Marsh", "Fens", "Mire"}, coast = {"Coast", "Shore", "Strand"}}
+               lakeland = {"Lakes", "Waters", "Meres"}, coast = {"Coast", "Shore", "Strand"},
+               swamp = {"Marsh", "Fens", "Mire"}, desert = {"Barrens", "Sands", "Wastes"},
+               forest = {"Woods", "Forest", "Weald"}, mountain = {"Peaks", "Crags", "Mountains"}}
+world.KINDS = {"highland", "plain", "lakeland", "coast", "swamp", "desert", "forest", "mountain"}
 
 local TAU = 2 * math.pi
 local floor, sqrt, max, min, abs = math.floor, math.sqrt, math.max, math.min, math.abs
@@ -245,10 +313,13 @@ local function shuffle(rng, t)
   return t
 end
 
--- Names: a shuffled proper-name list per plan, handed out in order.
+-- Skeleton name slots: M1 handed out proper names from a fixed list of 40 here. The skeleton keeps exactly these
+-- draws (a shuffled index list), so every seed keeps its M1 terrain; the names shown come from the syllable namer
+-- after validation (Phase 5 M2 world).
+local PROPER_SLOTS = 40
 local function namer(rng)
   local idx = {}
-  for i = 1, #world.PROPER do idx[i] = i end
+  for i = 1, PROPER_SLOTS do idx[i] = i end
   shuffle(rng, idx)
   local n = 0
   return function()
@@ -257,9 +328,36 @@ local function namer(rng)
   end
 end
 
+--- Phase 5 M2 world: a generator of unique proper names {loc = LocalisedString, en = English copy for the log}.
+local function syllable_namer(rng)
+  local used = {}
+  local na, nb, nc = #world.SYL_A, #world.SYL_B, #world.SYL_C
+  return function()
+    local a, b, c
+    for _ = 1, 80 do
+      a, c = rng(1, na), rng(1, nc)
+      b = rng() < 0.3 and rng(1, nb) or nil
+      local key = a .. ":" .. (b or 0) .. ":" .. c
+      if not used[key] then
+        used[key] = true
+        break
+      end
+    end
+    local loc = {"", {"rts-world.syl-a-" .. a}}
+    local en = world.SYL_A[a]
+    if b then
+      loc[#loc + 1] = {"rts-world.syl-b-" .. b}
+      en = en .. world.SYL_B[b]
+    end
+    loc[#loc + 1] = {"rts-world.syl-c-" .. c}
+    return {loc = loc, en = en .. world.SYL_C[c]}
+  end
+end
+world.syllable_namer = syllable_namer
+
 local function region_name(kind, noun, proper)
-  return {"rts-world.region-name", {"rts-world.noun-" .. kind .. "-" .. noun}, {"rts-world.proper-" .. proper}},
-         world.PROPER[proper] .. " " .. world.NOUNS[kind][noun]
+  return {"rts-world.region-name", {"rts-world.noun-" .. kind .. "-" .. noun}, proper.loc},
+         proper.en .. " " .. world.NOUNS[kind][noun]
 end
 
 -- Main patches of the start kit (match.ORE_PATCHES in the spawn's front axes, the Skirmish layout the AI planner
@@ -340,6 +438,87 @@ end
 
 local function protect(P, p, r, why)
   P.protect[#P.protect + 1] = {x = p.x, y = p.y, r = r, why = why}
+end
+
+-- Phase 5 M2 world: value of a deposit's ores for one nation (VALUE chain weights; the basic ores the nation lacks at
+-- home count 1 + need_bonus), plus its oil wells.
+local function deposit_value(ores, wells, lacks)
+  local v = 0
+  for _, o in ipairs(ores or {}) do
+    v = v + o[2] * (world.VALUE[o[1]] or 0.5) * ((lacks and lacks[o[1]]) and (1 + world.W2.need_bonus) or 1)
+  end
+  return v + (wells or 0) * world.VALUE.well
+end
+
+--- The basic ores a specialty kind does not hold: {[ore] = true}.
+function world.lacks_of(kind)
+  local have = {}
+  for _, o in ipairs((world.SPECIALTIES[kind] or {}).ores or {}) do have[o[1]] = true end
+  local out = {}
+  for _, ore in ipairs(world.BASIC_ORES) do
+    if not have[ore] then out[ore] = true end
+  end
+  return out
+end
+
+--- Phase 5 M2 world: the specialty kinds assigned to the spawns by permutation search (world-map.md §2.4). Nation value
+--- = every deposit's value (deposit_value, the nation's own lacks) shared by inverse square distance and divided by
+--- max(1, distance / 500), like the spawn score's expansion term. Returns the best order of `kinds` (index = spawn) and
+--- {spread, drawn_spread, values, permutations, changed}. Pure: straight-line distances, no random draws.
+function world.assign_specialties(spawns, kinds, spec_pos, oil_pos, contested)
+  local N = #kinds
+  local perms = {}
+  local function permute(arr, n)
+    if n <= 1 then
+      perms[#perms + 1] = {table.unpack(arr)}
+      return
+    end
+    for i = n, 1, -1 do
+      arr[n], arr[i] = arr[i], arr[n]
+      permute(arr, n - 1)
+      arr[n], arr[i] = arr[i], arr[n]
+    end
+  end
+  local idx = {}
+  for i = 1, N do idx[i] = i end
+  permute(idx, N) -- the identity comes first
+  local best, best_spread, best_values, drawn_spread
+  for pi, perm in ipairs(perms) do
+    local assigned, lacks = {}, {}
+    for i = 1, N do
+      assigned[i] = kinds[perm[i]]
+      lacks[i] = world.lacks_of(assigned[i])
+    end
+    local deps = {}
+    for j = 1, N do
+      local spec = world.SPECIALTIES[assigned[j]]
+      deps[#deps + 1] = {pos = spec_pos[j], ores = spec.ores, wells = spec.wells}
+      deps[#deps + 1] = {pos = oil_pos[j], wells = world.OIL_HOME.wells}
+    end
+    for _, c in ipairs(contested) do deps[#deps + 1] = {pos = c, ores = world.CONTESTED[c.kind]} end
+    deps[#deps + 1] = {pos = {x = 0, y = 0}, wells = world.OIL_CENTER.wells}
+    local values = {}
+    for i = 1, N do values[i] = 0 end
+    for _, d in ipairs(deps) do
+      local inv, ts = 0, {}
+      for i, sp in ipairs(spawns) do
+        ts[i] = max(1, dist(sp, d.pos))
+        inv = inv + 1 / (ts[i] * ts[i])
+      end
+      for i = 1, N do
+        values[i] = values[i] + deposit_value(d.ores, d.wells, lacks[i]) * (1 / (ts[i] * ts[i])) / inv / max(1, ts[i] / 500)
+      end
+    end
+    local hi, lo = -math.huge, math.huge
+    for i = 1, N do hi, lo = max(hi, values[i]), min(lo, values[i]) end
+    local spread = hi > 0 and (hi - lo) / hi or 0
+    if pi == 1 then drawn_spread = spread end
+    if not best or spread < best_spread - 1e-9 then best, best_spread, best_values = assigned, spread, values end
+  end
+  local changed = false
+  for i = 1, N do if best[i] ~= kinds[i] then changed = true end end
+  return best, {spread = best_spread, drawn_spread = drawn_spread, values = best_values, permutations = #perms,
+                changed = changed}
 end
 
 -- One skeleton attempt (pure: no surface). Returns P, or nil and a reason.
@@ -430,18 +609,48 @@ local function skeleton(cfg, seed, attempt)
   local spec_kinds = {}
   for i = 1, N do spec_kinds[i] = world.SPECIALTY_ORDER[i] end
   shuffle(rng, spec_kinds)
-  local function place_home(sp, base_angle, dist0, side, r)
+  local function place_home(sp, base_angle, dist0, side, r, discs)
     local u = norm(sp)
     local t = rot(u, math.pi / 2)
     for _, da in ipairs({0, -12, 12, -24, 24, -36}) do
       for _, dd in ipairs({0, -40, 40, -70}) do
         local a = math.rad(base_angle + da)
         local p = round(vadd(vadd(V(sp.x, sp.y), u, (dist0 + dd) * k * math.cos(a)), t, side * (dist0 + dd) * k * math.sin(a)))
-        local ok = clear_of(P, p, r, {edge = 120 * k, sea = 80, discs = P.home_discs})
+        local ok = clear_of(P, p, r, {edge = 120 * k, sea = 80, discs = discs or P.home_discs})
         if ok and dist(p, sp) > world.SPAWN_CLEAR + r - 40 then return p end
       end
     end
     return nil
+  end
+  -- Phase 5 M2 world: specialties by permutation search (world-map.md §2.4). Positions do not depend on the kind, so a
+  -- dry run of the placement below gives them without drawing from the random stream; world.assign_specialties then
+  -- values every assignment of the drawn kinds and keeps the one with the lowest spread of nation value (ties keep the
+  -- drawn order).
+  local r_c = (N == 2 and 0.58 or 0.62) * r_in
+  do
+    local discs, spec_pos, oil_pos = {}, {}, {}
+    for i, sp in ipairs(P.spawns) do
+      discs[#discs + 1] = {x = sp.x, y = sp.y, r = world.SPAWN_CLEAR - 60}
+      local r_spec = floor(52 * max(k, 0.85))
+      local p = place_home(sp, 72, 380, 1, r_spec, discs)
+      if not p then break end
+      discs[#discs + 1] = {x = p.x, y = p.y, r = r_spec}
+      local r_oil = floor(34 * max(k, 0.85))
+      local q = place_home(sp, 78, 300, -1, r_oil, discs)
+      if not q then break end
+      discs[#discs + 1] = {x = q.x, y = q.y, r = r_oil}
+      spec_pos[i], oil_pos[i] = p, q
+    end
+    if #spec_pos == N and #oil_pos == N then
+      local contested = {}
+      for i, b in ipairs(P.barriers) do
+        local kind = world.CONTESTED_ORDER[N][i]
+        if kind then contested[#contested + 1] = {kind = kind, x = math.cos(b.angle) * r_c, y = math.sin(b.angle) * r_c} end
+      end
+      local best, search = world.assign_specialties(P.spawns, spec_kinds, spec_pos, oil_pos, contested)
+      spec_kinds = best
+      P.specialty_search = search
+    end
   end
   P.home_discs = {}
   for i, sp in ipairs(P.spawns) do
@@ -471,7 +680,6 @@ local function skeleton(cfg, seed, attempt)
     P.lakes[#P.lakes + 1] = {x = lake.x, y = lake.y, r = 15, why = "home " .. sp.force}
   end
   -- Contested majors on the bisector directions inside the open centre, and the oil swamp in the middle.
-  local r_c = (N == 2 and 0.58 or 0.62) * r_in
   local order = world.CONTESTED_ORDER[N]
   for i, b in ipairs(P.barriers) do
     local kind = order[i]
@@ -1117,7 +1325,8 @@ local function validate(P, G)
 end
 
 ---------------------------------------------------------------------------
--- Sites, regions, chokes (after the skeleton is accepted)
+-- Sites, regions, chokes (after the skeleton is accepted). Phase 5 M2 world: everything below works on the sampled
+-- 8-tile grid with its own random streams, so the terrain of a seed stays the skeleton's.
 ---------------------------------------------------------------------------
 local function nearest_spawn_dist(P, p)
   local best = math.huge
@@ -1125,160 +1334,238 @@ local function nearest_spawn_dist(P, p)
   return best
 end
 
-local function plan_sites(P, G, R)
-  local k = P.size / 2048
-  local d1 = R.dists[1]
-  local rng = new_rng(P.seed, 1000 + P.attempt, P.nations)
-  local sites = {}
-  local function reachable(p) return path_tiles(G, d1, p) ~= nil end
-  local function far_from(p, list, r)
+-- Phase 5 M2 world: path distance field from one cell over the passable cells with 8 neighbours, chamfer weights 3
+-- (orthogonal) and 4 (diagonal; no corner cutting between two blocked cells), by a bucket queue. The M1 field (bfs) is
+-- 4-connected and counts a diagonal approach up to 41 % longer than a straight one; this one is within 6 % of the
+-- true length in every direction, which the fairness measures need. Returns {[cell] = chamfer units} (3 per cell).
+local function path_field(G, start, pass)
+  local n = G.n
+  local nn = n * n
+  local d = {}
+  if not start or not pass[start] then return d end
+  local buckets = {[0] = {start}}
+  d[start] = 0
+  local cur, last = 0, 0
+  while cur <= last do
+    local list = buckets[cur]
+    if list then
+      buckets[cur] = nil
+      local c3, c4 = cur + 3, cur + 4
+      local b3, b4 = buckets[c3] or {}, buckets[c4] or {}
+      for idx = 1, #list do
+        local k = list[idx]
+        if d[k] == cur then
+          local i = (k - 1) % n
+          local pw = i > 0 and pass[k - 1]
+          local pe = i < n - 1 and pass[k + 1]
+          local pn = k > n and pass[k - n]
+          local ps = k <= nn - n and pass[k + n]
+          local nk, o
+          if pw then nk = k - 1 o = d[nk] if not o or c3 < o then d[nk] = c3 b3[#b3 + 1] = nk end end
+          if pe then nk = k + 1 o = d[nk] if not o or c3 < o then d[nk] = c3 b3[#b3 + 1] = nk end end
+          if pn then nk = k - n o = d[nk] if not o or c3 < o then d[nk] = c3 b3[#b3 + 1] = nk end end
+          if ps then nk = k + n o = d[nk] if not o or c3 < o then d[nk] = c3 b3[#b3 + 1] = nk end end
+          if pw and pn then nk = k - n - 1 if pass[nk] then o = d[nk] if not o or c4 < o then d[nk] = c4 b4[#b4 + 1] = nk end end end
+          if pe and pn then nk = k - n + 1 if pass[nk] then o = d[nk] if not o or c4 < o then d[nk] = c4 b4[#b4 + 1] = nk end end end
+          if pw and ps then nk = k + n - 1 if pass[nk] then o = d[nk] if not o or c4 < o then d[nk] = c4 b4[#b4 + 1] = nk end end end
+          if pe and ps then nk = k + n + 1 if pass[nk] then o = d[nk] if not o or c4 < o then d[nk] = c4 b4[#b4 + 1] = nk end end end
+        end
+      end
+      -- only buckets that hold cells are kept (an empty one would extend the queue forever)
+      if #b3 > 0 then
+        buckets[c3] = b3
+        if c3 > last then last = c3 end
+      end
+      if #b4 > 0 then
+        buckets[c4] = b4
+        if c4 > last then last = c4 end
+      end
+    end
+    cur = cur + 1
+  end
+  return d
+end
+
+-- Path tiles from a path_field (source position `src`) to a position: the nearest passable cell within 2 cells (like
+-- path_tiles), never shorter than the straight line (the chamfer runs up to 6 % short on diagonals); nil when
+-- unreachable.
+local function path_len(G, d, src, p)
+  local k, i, j = cell_of(G, p)
+  if not k then return nil end
+  local best
+  for dj = -2, 2 do
+    for di = -2, 2 do
+      local ii, jj = i + di, j + dj
+      if ii >= 0 and jj >= 0 and ii < G.n and jj < G.n then
+        local v = d[jj * G.n + ii + 1]
+        if v then
+          v = v + 3 * math.max(math.abs(di), math.abs(dj))
+          if not best or v < best then best = v end
+        end
+      end
+    end
+  end
+  if not best then return nil end
+  return max(best * G.cell / 3, dist(src, p))
+end
+
+-- Shared context of the M2 planning steps: grid, distance fields, candidate cells, helpers.
+local function plan_context(P, G, R)
+  local X = {P = P, G = G, R = R, k = P.size / 2048, d1 = R.dists[1]}
+  X.has_sea = next(P.sea) ~= nil
+  X.cands = {}
+  for j = 2, G.n - 3, 4 do
+    for i = 2, G.n - 3, 4 do
+      local key = j * G.n + i + 1
+      if G.cls[key] == LAND then X.cands[#X.cands + 1] = cell_center(G, key) end
+    end
+  end
+  function X.reachable(p) return path_tiles(G, X.d1, p) ~= nil end
+  function X.far_from(p, list, r)
     for _, s in ipairs(list) do
-      if dist(p, s.position) < r then return false end
+      if dist(p, s.position or s) < r then return false end
     end
     return true
   end
-  local function off_deposits(p, margin)
+  -- away from every deposit disc (margin beyond its radius) and every start-kit patch. The gap of a point is cached
+  -- (X.gap_cache, keyed by the point table: the candidates are reused by every step); X.forget_gaps() after deposits
+  -- are added.
+  X.gap_cache = {}
+  local function gap_of(p)
+    local g = X.gap_cache[p]
+    if g then return g end
+    g = math.huge
+    for _, d in ipairs(P.deposits) do g = min(g, dist(p, d) - d.r) end
+    for _, sp in ipairs(P.spawns) do
+      for _, kp in ipairs(sp.kit) do g = min(g, dist(p, kp.center) - 20) end
+    end
+    X.gap_cache[p] = g
+    return g
+  end
+  function X.off_deposits(p, margin) return gap_of(p) >= margin end
+  function X.forget_gaps() X.gap_cache = {} end
+  -- away from every planned patch and oil well by `margin` tiles beyond the patch's half side
+  function X.off_patches(p, margin)
     for _, d in ipairs(P.deposits) do
-      if dist(p, d) < d.r + margin then return false end
+      for _, q in ipairs(d.patches or {}) do
+        if dist(p, q.center) < max(q.w, q.h) / 2 + margin then return false end
+      end
+      for _, w in ipairs(d.wells or {}) do
+        if dist(p, w) < margin then return false end
+      end
     end
     for _, sp in ipairs(P.spawns) do
       for _, kp in ipairs(sp.kit) do
-        if dist(p, kp.center) < 20 + margin then return false end
+        if dist(p, kp.center) < max(kp.w, kp.h) / 2 + margin then return false end
       end
     end
     return true
   end
-  -- candidates: every 4th cell
-  local cands = {}
-  for j = 2, G.n - 3, 4 do
-    for i = 2, G.n - 3, 4 do
-      local p = cell_center(G, j * G.n + i + 1)
-      if G.cls[j * G.n + i + 1] == LAND then cands[#cands + 1] = p end
+  -- coastal: land next to the sea (water within 5 cells, less than 120 tiles from a sea edge)
+  function X.coastal(p)
+    if not X.has_sea or sea_margin(P, p) >= 120 then return false end
+    local _, water = X.window(p, 5)
+    return water > 0
+  end
+  -- path tiles from every spawn ({[si] = tiles or nil}; octile path fields, see path_field)
+  -- path fields on a 16-tile grid (4x fewer cells; fairness needs no finer): a coarse cell is passable when at least 3
+  -- of its 4 cells are (a 30-tile barrier still blocks, a 34-tile pass or a ford still opens)
+  local n2 = G.n / 2
+  local G2 = {n = n2, cell = G.cell * 2, half = G.half}
+  local pass = {}
+  for j = 0, n2 - 1 do
+    for i = 0, n2 - 1 do
+      local k = 2 * j * G.n + 2 * i + 1
+      local c = 0
+      if passable(G.cls[k]) then c = c + 1 end
+      if passable(G.cls[k + 1]) then c = c + 1 end
+      if passable(G.cls[k + G.n]) then c = c + 1 end
+      if passable(G.cls[k + G.n + 1]) then c = c + 1 end
+      pass[j * n2 + i + 1] = c >= 3
     end
   end
-  -- city sites: one next to every non-start deposit first, then the best open land
-  local city = {}
-  for _, d in ipairs(P.deposits) do
-    local best, best_s
-    for _, p in ipairs(cands) do
-      local dd = dist(p, d)
-      if dd > d.r + 24 and dd < d.r + 110 and nearest_spawn_dist(P, p) > 230 * k and buildable_box(G, p, 20)
-         and off_deposits(p, 14) and far_from(p, city, 96) and reachable(p) then
-        local s = dd + 0.25 * nearest_spawn_dist(P, p)
-        if not best_s or s < best_s then best, best_s = p, s end
-      end
-    end
-    if best then city[#city + 1] = {kind = "city_site", position = round(best), deposit = d.id, score = 3} end
+  X.fields = {}
+  for si, sp in ipairs(P.spawns) do
+    local start = cell_of(G2, sp)
+    X.fields[si] = path_field(G2, start, pass)
   end
-  local target = P.size >= 3072 and 48 or (P.size >= 2048 and 32 or 22)
-  local scored = {}
-  for _, p in ipairs(cands) do
-    if nearest_spawn_dist(P, p) > 230 * k and buildable_box(G, p, 20) and off_deposits(p, 14) and reachable(p) then
-      local s = 0
-      for _, d in ipairs(P.deposits) do
-        if dist(p, d) < d.r + 140 then s = s + 1 end
-      end
-      local _, ci, cj = cell_of(G, p)
-      local water, open, tot = 0, 0, 0
-      for dj = -12, 12, 2 do
-        for di = -12, 12, 2 do
-          local ii, jj = ci + di, cj + dj
-          if ii >= 0 and jj >= 0 and ii < G.n and jj < G.n then
-            local c = G.cls[jj * G.n + ii + 1]
-            tot = tot + 1
-            if c == LAND then open = open + 1 end
-            if c == WATER then water = 1 end
-          end
-        end
-      end
-      scored[#scored + 1] = {p = p, s = s + 0.5 * water + open / max(1, tot) + 0.1 * rng()}
+  function X.paths(p)
+    local out = {}
+    for si, sp in ipairs(P.spawns) do out[si] = path_len(G2, X.fields[si], sp, p) end
+    return out
+  end
+  function X.path(si, p) return path_len(G2, X.fields[si], P.spawns[si], p) end
+  -- prefix sums of land and mountain cells: O(1) box tests
+  local n = G.n
+  local land, mtn, wat = {}, {}, {}
+  for j = 0, n do land[j * (n + 1) + 1], mtn[j * (n + 1) + 1], wat[j * (n + 1) + 1] = 0, 0, 0 end
+  for i = 0, n do land[i + 1], mtn[i + 1], wat[i + 1] = 0, 0, 0 end
+  for j = 1, n do
+    local rl, rm, rw = 0, 0, 0
+    for i = 1, n do
+      local c = G.cls[(j - 1) * n + i]
+      if c == LAND then rl = rl + 1 end
+      if c == MOUNTAIN then rm = rm + 1 end
+      if c == WATER then rw = rw + 1 end
+      local at, up = j * (n + 1) + i + 1, (j - 1) * (n + 1) + i + 1
+      land[at] = land[up] + rl
+      mtn[at] = mtn[up] + rm
+      wat[at] = wat[up] + rw
     end
   end
-  table.sort(scored, function(a, b) return a.s > b.s end)
-  for _, c in ipairs(scored) do
-    if #city >= target then break end
-    if far_from(c.p, city, 96) then city[#city + 1] = {kind = "city_site", position = round(c.p), score = c.s} end
+  local function box_sum(t, i0, j0, i1, j1) -- inclusive cell box, clamped by the caller
+    local w = n + 1
+    return t[(j1 + 1) * w + i1 + 2] - t[j0 * w + i1 + 2] - t[(j1 + 1) * w + i0 + 1] + t[j0 * w + i0 + 1]
   end
-  for _, s in ipairs(city) do sites[#sites + 1] = s end
-  -- ruins: low-value land far from every spawn
-  local ruins = {}
-  local rtarget = P.size >= 3072 and 14 or (P.size >= 2048 and 10 or 6)
-  shuffle(rng, cands)
-  local rscored = {}
-  for _, p in ipairs(cands) do
-    local ds = nearest_spawn_dist(P, p)
-    if ds > 320 * k and buildable_box(G, p, 12) and off_deposits(p, 60) and reachable(p) then
-      rscored[#rscored + 1] = {p = p, s = ds + 200 * rng()}
-    end
+  -- buildable_box on the prefix sums: every cell of the box land and inside the grid
+  function X.buildable(p, half_tiles)
+    local r = math.ceil(half_tiles / G.cell)
+    local _, i, j = cell_of(G, p)
+    if not i or i - r < 0 or j - r < 0 or i + r >= n or j + r >= n then return false end
+    return box_sum(land, i - r, j - r, i + r, j + r) == (2 * r + 1) * (2 * r + 1)
   end
-  table.sort(rscored, function(a, b) return a.s > b.s end)
-  for _, c in ipairs(rscored) do
-    if #ruins >= rtarget then break end
-    if far_from(c.p, ruins, 220 * k) and far_from(c.p, city, 40) then
-      ruins[#ruins + 1] = {kind = "ruin", position = round(c.p)}
-    end
+  -- a mountain cell within r cells
+  function X.mountain_near(p, r)
+    local _, i, j = cell_of(G, p)
+    if not i then return false end
+    return box_sum(mtn, max(0, i - r), max(0, j - r), min(n - 1, i + r), min(n - 1, j + r)) > 0
   end
-  for _, s in ipairs(ruins) do sites[#sites + 1] = s end
-  -- ports: on the coast (land next to the sea) or at the map edge, far from the spawns, spread out
-  local ports = {}
-  local ptarget = (P.nations <= 2 and P.size < 3072) and 2 or min(4, max(3, P.nations))
-  local pc = {}
-  local has_sea = next(P.sea) ~= nil
-  for _, p in ipairs(cands) do
-    local coastal
-    if has_sea then
-      local m = sea_margin(P, p)
-      if m < 120 then
-        local _, ci, cj = cell_of(G, p)
-        for dj = -5, 5 do
-          for di = -5, 5 do
-            local ii, jj = ci + di, cj + dj
-            if ii >= 0 and jj >= 0 and ii < G.n and jj < G.n and G.cls[jj * G.n + ii + 1] == WATER then coastal = true end
-          end
-        end
-      end
-    else
-      coastal = edge_margin(P, p) < 70 and edge_margin(P, p) > 30
-    end
-    if coastal and buildable_box(G, p, 12) and off_deposits(p, 40) and reachable(p) and nearest_spawn_dist(P, p) > 300 * k then
-      pc[#pc + 1] = p
-    end
+  -- land and water cells within r cells: land, water, total
+  function X.window(p, r)
+    local _, i, j = cell_of(G, p)
+    if not i then return 0, 0, 0 end
+    local i0, j0, i1, j1 = max(0, i - r), max(0, j - r), min(n - 1, i + r), min(n - 1, j + r)
+    return box_sum(land, i0, j0, i1, j1), box_sum(wat, i0, j0, i1, j1), (i1 - i0 + 1) * (j1 - j0 + 1)
   end
-  for _ = 1, ptarget do
-    local best, best_s
-    for _, p in ipairs(pc) do
-      if far_from(p, ports, 500 * k) and far_from(p, ruins, 80) then
-        local s = nearest_spawn_dist(P, p)
-        for _, q in ipairs(ports) do s = s + 0.5 * dist(p, q.position) end
-        if not best_s or s > best_s then best, best_s = p, s end
-      end
-    end
-    if best then ports[#ports + 1] = {kind = "port", position = round(best)} end
+  -- straight-line distance from p to the nearest spawn-to-centre segment (the main marching lines)
+  function X.route_gap(p)
+    local best = math.huge
+    for _, sp in ipairs(P.spawns) do best = min(best, (seg_dist(p, sp, V(0, 0)))) end
+    return best
   end
-  for _, s in ipairs(ports) do sites[#sites + 1] = s end
-  -- oil fields (m1-economy: the AI looks for kind "oil"): one site per planned field, at its centre
-  for _, d in ipairs(P.deposits) do
-    if d.wells and #d.wells > 0 then
-      local amount = 0
-      for _, w in ipairs(d.wells) do amount = amount + w.amount end
-      sites[#sites + 1] = {kind = "oil", position = V(d.x, d.y), deposit = d.id, role = d.role, force = d.force,
-                           wells = #d.wells, amount = amount}
-    end
-  end
-  return sites
+  return X
 end
 
--- Region grid: 32-tile Voronoi cells over the region centres. Drops filler centres in water or mountains.
-local function finish_regions(P, G)
+-- Region of a position on a plan's 32-tile region grid.
+local function plan_region_id(P, p)
+  local gn = P.region_grid_n
+  local i = max(0, min(gn - 1, floor((p.x + P.half) / 32)))
+  local j = max(0, min(gn - 1, floor((p.y + P.half) / 32)))
+  return P.region_grid[j * gn + i + 1]
+end
+world.plan_region_id = plan_region_id
+
+-- Regions: drop filler centres in water or mountains, the 32-tile Voronoi grid, kinds from the sampled cells and the
+-- climate, generated names.
+world.MOUNTAIN_SHARE = 0.06 -- a frontier region with this share of mountain cells is a "mountain" region (a range
+                            -- 40 tiles thick across a 2048 frontier region is 5-8 %)
+local function build_regions(P, G, names)
   local keep = {}
   for _, reg in ipairs(P.regions) do
     local k = cell_of(G, reg.center)
     if reg.role ~= "frontier" or (k and passable(G.cls[k])) then keep[#keep + 1] = reg end
   end
-  for i, reg in ipairs(keep) do
-    reg.id = i
-    reg.name, reg.label = region_name(reg.kind, reg.noun, reg.proper)
-  end
+  for i, reg in ipairs(keep) do reg.id = i end
   P.regions = keep
   local gn = P.size / 32
   local grid = {}
@@ -1294,45 +1581,879 @@ local function finish_regions(P, G)
     end
   end
   P.region_grid, P.region_grid_n = grid, gn
-  local function region_id(p)
-    local i = max(0, min(gn - 1, floor((p.x + P.half) / 32)))
-    local j = max(0, min(gn - 1, floor((p.y + P.half) / 32)))
-    return grid[j * gn + i + 1]
+  -- cell shares and bounding boxes per region (from the 8-tile grid)
+  local stats = {}
+  for _, reg in ipairs(keep) do
+    stats[reg.id] = {total = 0, mountain = 0, water = 0, marsh = 0}
+    reg.bbox = {x0 = math.huge, y0 = math.huge, x1 = -math.huge, y1 = -math.huge}
   end
-  -- resources per region
+  local n, cell = G.n, G.cell
+  for j = 0, n - 1 do
+    local y = -G.half + j * cell + cell / 2
+    for i = 0, n - 1 do
+      local x = -G.half + i * cell + cell / 2
+      local gi, gj = floor((x + P.half) / 32), floor((y + P.half) / 32)
+      local rid = grid[gj * gn + gi + 1]
+      local st = stats[rid]
+      local c = G.cls[j * n + i + 1]
+      st.total = st.total + 1
+      if c == MOUNTAIN then st.mountain = st.mountain + 1
+      elseif c == WATER then st.water = st.water + 1
+      elseif c == MARSH then st.marsh = st.marsh + 1 end
+      local bb = keep[rid].bbox
+      if x - cell / 2 < bb.x0 then bb.x0 = x - cell / 2 end
+      if y - cell / 2 < bb.y0 then bb.y0 = y - cell / 2 end
+      if x + cell / 2 > bb.x1 then bb.x1 = x + cell / 2 end
+      if y + cell / 2 > bb.y1 then bb.y1 = y + cell / 2 end
+    end
+  end
+  for _, reg in ipairs(keep) do
+    local st = stats[reg.id]
+    local share = st.total > 0 and st.mountain / st.total or 0
+    reg.mountain_share, reg.water_share = share, st.total > 0 and st.water / st.total or 0
+    if reg.role == "home" then
+      reg.kind = "plain"
+    elseif reg.role ~= "frontier" then
+      reg.kind = reg.kind == "swamp" and "swamp" or "highland"
+    elseif reg.kind == "coast" then
+      reg.kind = "coast"
+    elseif share >= world.MOUNTAIN_SHARE then
+      reg.kind = "mountain"
+    elseif reg.climate == "desert" then reg.kind = "desert"
+    elseif reg.climate == "forest" then reg.kind = "forest"
+    elseif reg.climate == "lakes" then reg.kind = "lakeland"
+    elseif reg.climate == "highland" or reg.kind == "highland" then reg.kind = "highland"
+    else reg.kind = "plain" end
+    reg.pname = names()
+    reg.name, reg.label = region_name(reg.kind, reg.noun, reg.pname)
+    reg.sites = {}
+  end
+  -- barriers keep a generated name too (dump, labels)
+  for _, b in ipairs(P.barriers) do
+    b.pname = names()
+    b.label = b.kind == "range" and (b.pname.en .. " Range") or ("River " .. b.pname.en)
+    b.name = {"rts-world." .. b.kind .. "-name", b.pname.loc}
+  end
+end
+
+---------------------------------------------------------------------------
+-- Chokes: planned crossings plus narrow places found by a distance transform on the passability grid
+---------------------------------------------------------------------------
+-- Distance (in cells, chamfer 1 / sqrt 2) of every passable cell to the nearest blocked cell (water, mountain) or the
+-- map border; blocked cells have 0.
+local function distance_field(G)
+  local n, cls = G.n, G.cls
+  local D = {}
+  local SQ = 1.41421
+  for k = 1, n * n do D[k] = passable(cls[k]) and 1e9 or 0 end
+  for j = 0, n - 1 do
+    for i = 0, n - 1 do
+      local k = j * n + i + 1
+      local d = D[k]
+      if d > 0 then
+        local b = min(i + 1, j + 1, n - i, n - j)
+        if b < d then d = b end
+        local v
+        if i > 0 then v = D[k - 1] + 1 if v < d then d = v end end
+        if j > 0 then
+          v = D[k - n] + 1 if v < d then d = v end
+          if i > 0 then v = D[k - n - 1] + SQ if v < d then d = v end end
+          if i < n - 1 then v = D[k - n + 1] + SQ if v < d then d = v end end
+        end
+        D[k] = d
+      end
+    end
+  end
+  for j = n - 1, 0, -1 do
+    for i = n - 1, 0, -1 do
+      local k = j * n + i + 1
+      local d = D[k]
+      if d > 0 then
+        local v
+        if i < n - 1 then v = D[k + 1] + 1 if v < d then d = v end end
+        if j < n - 1 then
+          v = D[k + n] + 1 if v < d then d = v end
+          if i < n - 1 then v = D[k + n + 1] + SQ if v < d then d = v end end
+          if i > 0 then v = D[k + n - 1] + SQ if v < d then d = v end end
+        end
+        D[k] = d
+      end
+    end
+  end
+  return D
+end
+world.distance_field = distance_field
+
+-- Is cell k a bottleneck? Cut a disc of radius D(k) + 1 cells around it and flood the passable cells of a window of
+-- `W` cells around it from the rim of the cut: two or more separate sides of at least `min_side` cells make a choke
+-- (one side, or sides joined around a small obstacle inside the window, do not). Returns the two largest sides
+-- {{x, y (cell centroid), size}, ...} or nil.
+local function bottleneck(G, D, k, W, min_side)
+  local n = G.n
+  local ci = (k - 1) % n
+  local cj = (k - 1 - ci) / n
+  local rc = D[k] + 1.0
+  local rc2, rim2 = rc * rc, (rc + 1.5) * (rc + 1.5)
+  local i0, i1, j0, j1 = max(0, ci - W), min(n - 1, ci + W), max(0, cj - W), min(n - 1, cj + W)
+  local comp = {}
+  local sides = {}
+  local R = math.ceil(rc + 1.5)
+  local qk, qi, qj = {}, {}, {}
+  for dj = -R, R do
+    for di = -R, R do
+      local r2 = di * di + dj * dj
+      local si, sj = ci + di, cj + dj
+      if r2 > rc2 and r2 <= rim2 and si >= i0 and si <= i1 and sj >= j0 and sj <= j1 then
+        local sk = sj * n + si + 1
+        if D[sk] > 0 and not comp[sk] then
+          local id = #sides + 1
+          comp[sk] = id
+          local head, tail = 1, 1
+          qk[1], qi[1], qj[1] = sk, si, sj
+          local size, sx, sy = 0, 0, 0
+          while head <= tail do
+            local kk, i, j = qk[head], qi[head], qj[head]
+            head = head + 1
+            size, sx, sy = size + 1, sx + i, sy + j
+            for nb = 1, 4 do
+              local ni, nj = i, j
+              if nb == 1 then ni = i - 1 elseif nb == 2 then ni = i + 1 elseif nb == 3 then nj = j - 1 else nj = j + 1 end
+              if ni >= i0 and ni <= i1 and nj >= j0 and nj <= j1 then
+                local nk = nj * n + ni + 1
+                if not comp[nk] and D[nk] > 0 then
+                  local ddi, ddj = ni - ci, nj - cj
+                  if ddi * ddi + ddj * ddj > rc2 then
+                    comp[nk] = id
+                    tail = tail + 1
+                    qk[tail], qi[tail], qj[tail] = nk, ni, nj
+                  end
+                end
+              end
+            end
+          end
+          sides[id] = {i = sx / size, j = sy / size, size = size}
+        end
+      end
+    end
+  end
+  local big = {}
+  for _, s in ipairs(sides) do
+    if s.size >= min_side then big[#big + 1] = s end
+  end
+  if #big < 2 then return nil end
+  table.sort(big, function(a, b) return a.size > b.size end)
+  local function pos(s) return V(-G.half + s.i * G.cell + G.cell / 2, -G.half + s.j * G.cell + G.cell / 2) end
+  return {pos(big[1]), pos(big[2])}, #big
+end
+
+local function plan_chokes(P, surface, G, names)
+  local C = world.CHOKES
+  local D = distance_field(G)
+  -- clearance width on the sampled grid around a point: the widest ridge within 2 cells, (2 D - 1) cells
+  local function measured(p)
+    local _, ci, cj = cell_of(G, p)
+    if not ci then return nil end
+    local best = 0
+    for dj = -2, 2 do
+      for di = -2, 2 do
+        local ii, jj = ci + di, cj + dj
+        if ii >= 0 and jj >= 0 and ii < G.n and jj < G.n then best = max(best, D[jj * G.n + ii + 1]) end
+      end
+    end
+    return best > 0 and floor((2 * best - 1) * G.cell + 0.5) or 0
+  end
+  -- planned crossings, moved from warped to plain coordinates (two fixed-point steps on the sampled warp)
+  local pts = {}
+  for _, c in ipairs(P.crossings) do pts[#pts + 1] = {x = c.x, y = c.y} end
+  if #pts > 0 then
+    local res = surface.calculate_tile_properties({"rts_w_dx", "rts_w_dy"}, pts)
+    local p1 = {}
+    for i, c in ipairs(P.crossings) do p1[i] = {x = c.x - res.rts_w_dx[i], y = c.y - res.rts_w_dy[i]} end
+    local res2 = surface.calculate_tile_properties({"rts_w_dx", "rts_w_dy"}, p1)
+    for i, c in ipairs(P.crossings) do
+      local p = round(V(c.x - res2.rts_w_dx[i], c.y - res2.rts_w_dy[i]))
+      local b = P.barriers[c.barrier]
+      local w = (b.ws and b.ws[c.seg]) or b.w
+      c.position = p
+      local width = c.kind == "pass" and 2 * sqrt(max(0, c.r * c.r - (w + 3) ^ 2)) or 2 * sqrt(max(0, c.r * c.r - (w + 1.5) ^ 2))
+      local t = norm(V(b.points[c.seg + 1].x - b.points[c.seg].x, b.points[c.seg + 1].y - b.points[c.seg].y))
+      local nrm = V(-t.y, t.x)
+      local ra = plan_region_id(P, vadd(p, nrm, w + 40))
+      local rb = plan_region_id(P, vadd(p, nrm, -(w + 40)))
+      local pname = names()
+      P.chokes[#P.chokes + 1] = {id = #P.chokes + 1, kind = c.kind, position = p, width = floor(width + 0.5),
+                                 name = {"rts-world." .. c.kind .. "-name", pname.loc}, pname = pname,
+                                 label = (c.kind == "pass" and "Gate of " or "Ford of ") .. pname.en,
+                                 barrier = c.barrier, crossing = c.id, r = c.r, regions = {ra, rb},
+                                 measured_width = measured(p)}
+    end
+  end
+  -- emergent chokes: ridge cells of the distance field (local maxima across the corridor) no wider than max_width,
+  -- grouped into 8-connected clusters; the narrowest cell of each cluster is tested as a bottleneck
+  local n = G.n
+  local dmin, dmax = (C.min_width / G.cell + 1) / 2, (C.max_width / G.cell + 1) / 2
+  -- a ridge cell lies between two obstacles: along its ridge axis the clearance falls on both sides and a blocked cell
+  -- (or the border) follows within its clearance + 1.5 cells on both sides (shoreline noise has open land on one side)
+  local cand = {}
+  local axes = {{1, 0, 1}, {0, 1, 1}, {1, 1, 1.41421}, {1, -1, 1.41421}}
+  local function walls(i, j, e, d)
+    local steps = math.ceil((d + 1.5) / e[3])
+    local hit = 0
+    for sgn = -1, 1, 2 do
+      for t = 1, steps do
+        local ii, jj = i + sgn * e[1] * t, j + sgn * e[2] * t
+        if ii < 0 or jj < 0 or ii >= n or jj >= n or D[jj * n + ii + 1] == 0 then
+          hit = hit + 1
+          break
+        end
+      end
+    end
+    return hit == 2
+  end
+  for j = 1, n - 2 do
+    for i = 1, n - 2 do
+      local k = j * n + i + 1
+      local d = D[k]
+      if d >= dmin and d <= dmax then
+        for _, e in ipairs(axes) do
+          local a, b = D[k - e[1] - e[2] * n], D[k + e[1] + e[2] * n]
+          if a <= d and b <= d and (a < d or b < d) and walls(i, j, e, d) then
+            cand[k] = true
+            break
+          end
+        end
+      end
+    end
+  end
+  local seen, clusters = {}, {}
+  for k in pairs(cand) do
+    if not seen[k] then
+      local list, q, head = {}, {k}, 1
+      seen[k] = true
+      while head <= #q do
+        local kk = q[head]
+        head = head + 1
+        list[#list + 1] = kk
+        local i = (kk - 1) % n
+        for dj = -1, 1 do
+          for di = -1, 1 do
+            local nk = kk + di + dj * n
+            if (di ~= 0 or dj ~= 0) and i + di >= 0 and i + di < n and cand[nk] and not seen[nk] then
+              seen[nk] = true
+              q[#q + 1] = nk
+            end
+          end
+        end
+      end
+      table.sort(list, function(a, b)
+        if D[a] ~= D[b] then return D[a] < D[b] end
+        return a < b
+      end)
+      clusters[#clusters + 1] = list
+    end
+  end
+  table.sort(clusters, function(a, b)
+    if D[a[1]] ~= D[b[1]] then return D[a[1]] < D[b[1]] end
+    return a[1] < b[1]
+  end)
+  local tests, found = 0, 0
+  local edge_cells = 6
+  for _, list in ipairs(clusters) do
+    if tests >= C.max_tests then break end
+    for t = 1, min(3, #list) do
+      local k = list[t]
+      local p = cell_center(G, k)
+      local i = (k - 1) % n
+      local j = (k - 1 - i) / n
+      local ok = i >= edge_cells and j >= edge_cells and i < n - edge_cells and j < n - edge_cells
+        and nearest_spawn_dist(P, p) >= C.spawn_clear
+      if ok then
+        for _, c in ipairs(P.chokes) do
+          if dist(p, c.position) < (c.r or 0) + 48 or (c.kind == "gap" and dist(p, c.position) < C.spacing * G.cell) then
+            ok = false
+            break
+          end
+        end
+      end
+      if ok then
+        tests = tests + 1
+        local sides = bottleneck(G, D, k, C.window, C.min_side)
+        if sides then
+          local pname = names()
+          found = found + 1
+          P.chokes[#P.chokes + 1] = {id = #P.chokes + 1, kind = "gap", position = round(p),
+                                     width = floor((2 * D[k] - 1) * G.cell + 0.5), measured_width = measured(p),
+                                     name = {"rts-world.gap-name", pname.loc}, pname = pname,
+                                     label = "Narrows of " .. pname.en, r = floor(D[k] * G.cell + 0.5),
+                                     regions = {plan_region_id(P, sides[1]), plan_region_id(P, sides[2])}}
+          break
+        end
+      end
+    end
+  end
+  P.choke_stats = {candidates = table_size(cand), clusters = #clusters, tests = tests, found = found}
+end
+
+---------------------------------------------------------------------------
+-- Uranium (contested: inside the oil swamp in the middle), ports (fair by path), city-states, ruins, city sites, oil
+-- sites, rare deposits
+---------------------------------------------------------------------------
+local function patch_side(total) return math.max(6, math.ceil(sqrt(total / world.DENSITY / 0.88))) end
+
+local function plan_uranium(P, X)
+  local center
+  for _, d in ipairs(P.deposits) do if d.role == "center_oil" then center = d end end
+  if not center then return end
+  local count = world.URANIUM.count[P.nations] or 1
+  local side = patch_side(world.URANIUM.amount)
+  local rays = {}
+  for _, b in ipairs(P.barriers) do if b.ray then rays[#rays + 1] = b end end
+  local picks = count >= 2 and {1, (#rays >= 4) and 3 or 2} or {1}
+  for _, ri in ipairs(picks) do
+    local b = rays[ri]
+    if b then
+      local spot
+      for _, f in ipairs({world.URANIUM.offset, 0.35, 0.55, 0.65, 0.25, 0.75, 0.85}) do
+        for _, da in ipairs({0, 0.2, -0.2, 0.4, -0.4, 0.6, -0.6}) do
+          local a = b.angle + da
+          local p = round(V(center.x + math.cos(a) * center.r * f, center.y + math.sin(a) * center.r * f))
+          local okw = true
+          for _, w in ipairs(center.wells or {}) do
+            if dist(p, w) < side / 2 + 6 then okw = false break end
+          end
+          for _, d in ipairs(P.deposits) do
+            if d.role == "uranium" and dist(p, d) < side + 16 then okw = false end
+          end
+          if okw and buildable_box(X.G, p, side / 2 - 2) then spot = p break end
+        end
+        if spot then break end
+      end
+      if spot then
+        local d = {id = #P.deposits + 1, role = "uranium", x = spot.x, y = spot.y, r = floor(side / 2 + 4), kind = "swamp",
+                   patch_kind = "uranium", patches = {{name = world.URANIUM.name, total = world.URANIUM.amount, w = side,
+                   h = side, center = V(spot.x, spot.y)}}}
+        P.deposits[#P.deposits + 1] = d
+        P.sites[#P.sites + 1] = {kind = "uranium", position = V(spot.x, spot.y), deposit = d.id,
+                                 amount = world.URANIUM.amount, resource = world.URANIUM.name}
+      end
+    end
+  end
+end
+
+-- Ports: 2 for 2 nations below 3072, else 3-4, on the coast (or the map edge), at least PORTS.min_spawn tiles from
+-- every spawn and PORTS.spacing apart; chosen by a greedy search from many starts that minimises the spread of the
+-- nations' path distance to their nearest port (coast preferred over a dry edge when the map has a sea).
+local function plan_ports(P, X, rng, names)
+  local G, k = X.G, X.k
+  local target = (P.nations <= 2 and P.size < 3072) and 2 or min(4, max(3, P.nations))
+  local min_spawn = max(world.PORTS.min_spawn, 300 * k)
+  local pc = {}
+  for _, p in ipairs(X.cands) do
+    local coast = X.coastal(p)
+    local edge = edge_margin(P, p) < 70 and edge_margin(P, p) > 30
+    if (coast or edge) and X.buildable(p, 12) and X.off_deposits(p, 40) and nearest_spawn_dist(P, p) > min_spawn then
+      local d = X.paths(p)
+      local all = true
+      for si in ipairs(P.spawns) do if not d[si] then all = false end end
+      if all then pc[#pc + 1] = {p = p, coast = coast, d = d} end
+    end
+  end
+  local N = #P.spawns
+  local function cost(set)
+    local hi, lo, dry = 0, math.huge, 0
+    for si = 1, N do
+      local best = math.huge
+      for _, c in ipairs(set) do best = min(best, c.d[si]) end
+      hi, lo = max(hi, best), min(lo, best)
+    end
+    for _, c in ipairs(set) do if X.has_sea and not c.coast then dry = dry + 1 end end
+    local spread = hi > 0 and (hi - lo) / hi or 0
+    return spread + 0.03 * dry, spread
+  end
+  local spacing = world.PORTS.spacing * k
+  local best_set, best_cost, best_spread
+  local starts = {}
+  for i = 1, #pc do starts[i] = i end
+  shuffle(rng, starts)
+  for si = 1, min(#starts, 24) do
+    local set = {pc[starts[si]]}
+    while #set < target do
+      local pick, pick_cost
+      for _, c in ipairs(pc) do
+        local okc = true
+        for _, q in ipairs(set) do
+          if c == q or dist(c.p, q.p) < spacing then okc = false break end
+        end
+        if okc then
+          set[#set + 1] = c
+          local cc = cost(set)
+          set[#set] = nil
+          if not pick_cost or cc < pick_cost then pick, pick_cost = c, cc end
+        end
+      end
+      if not pick then break end
+      set[#set + 1] = pick
+    end
+    local cc, spread = cost(set)
+    if #set > (best_set and #best_set or 0) or (best_set and #set == #best_set and cc < best_cost) then
+      best_set, best_cost, best_spread = set, cc, spread
+    end
+  end
+  local ports = {}
+  for _, c in ipairs(best_set or {}) do
+    local pname = names()
+    ports[#ports + 1] = {kind = "port", position = round(c.p), coast = c.coast, paths = c.d, pname = pname,
+                         name = {"rts-world.port-name", pname.loc}, label = "Port " .. pname.en}
+    P.sites[#P.sites + 1] = ports[#ports]
+  end
+  P.port_stats = {target = target, candidates = #pc, spread = best_spread}
+  return ports
+end
+
+-- City-states (world-map.md §5.3): each contested copper region (in the middle of its deposit), the oil swamp (beside
+-- it, away from the marching lines), the coast, then the major passes and fords (beside the crossing, out of turret
+-- reach of the path through it), then the contested iron regions; world.W2.city_states per nation count.
+local function plan_city_states(P, X, ports, names)
+  local G, k = X.G, X.k
+  local target = world.W2.city_states[P.nations] or 5
+  local list = {}
+  local function spot_ok(p, allow_deposit)
+    if not (X.buildable(p, 14) and X.reachable(p)) then return false end
+    if nearest_spawn_dist(P, p) < world.CS.spawn_gap then return false end
+    if not X.far_from(p, list, world.CS.spacing) or not X.far_from(p, ports, world.CS.port_gap) then return false end
+    if not X.off_patches(p, 14) then return false end
+    if not allow_deposit then
+      for _, d in ipairs(P.deposits) do
+        if d.role ~= "center_oil" and d.role ~= "uranium" and dist(p, d) < d.r + 10 then return false end
+      end
+    end
+    return true
+  end
+  local function add(p, anchor, extra)
+    local pname = names()
+    local s = {kind = "city_state", position = round(p), anchor = anchor, pname = pname,
+               name = {"rts-world.city-state-name", pname.loc}, label = "Free City of " .. pname.en}
+    for key, v in pairs(extra or {}) do s[key] = v end
+    list[#list + 1] = s
+    return s
+  end
+  local function ring(c, radii, steps)
+    local out = {}
+    for _, r in ipairs(radii) do
+      if r == 0 then
+        out[#out + 1] = V(c.x, c.y)
+      else
+        for a = 0, steps - 1 do
+          local ang = TAU * a / steps
+          out[#out + 1] = round(V(c.x + math.cos(ang) * r, c.y + math.sin(ang) * r))
+        end
+      end
+    end
+    return out
+  end
+  local function deposit_anchor(d, anchor)
+    for _, p in ipairs(ring(d, {0, 10, 16, 22, 30, d.r, d.r + 10, d.r + 20}, 16)) do
+      if spot_ok(p, true) then return add(p, anchor, {deposit = d.id}) end
+    end
+  end
+  -- contested copper
   for _, d in ipairs(P.deposits) do
-    local reg = keep[region_id(d)]
+    if #list < target and d.role == "contested" and d.contested == "copper" then deposit_anchor(d, "copper") end
+  end
+  -- the oil swamp in the middle: at its edge, off the marching lines through the centre (a 60-minute 1v1 showed an army
+  -- bound for the enemy capital razing a city-state 55 tiles from the centre): the spot farthest from the
+  -- spawn-to-centre lines up to ROUTE_GAP tiles, then the one nearest the swamp
+  local center
+  for _, d in ipairs(P.deposits) do if d.role == "center_oil" then center = d end end
+  if center and #list < target then
+    local best, best_s
+    for _, b in ipairs(P.barriers) do
+      if b.ray then
+        for _, da in ipairs({0, 0.17, -0.17, 0.35, -0.35}) do
+          for _, r in ipairs({55, 70, 85, 100, 115, 130}) do
+            local a = b.angle + da
+            local rr = r * max(k, 0.75)
+            local p = round(V(center.x + math.cos(a) * rr, center.y + math.sin(a) * rr))
+            if spot_ok(p, true) then
+              local s = min(X.route_gap(p), world.CS.route_gap * max(k, 0.75)) - 0.1 * rr
+              if not best_s or s > best_s then best, best_s = p, s end
+            end
+          end
+        end
+      end
+    end
+    if best then add(best, "oil", {deposit = center.id}) end
+  end
+  -- the coast: the most contested coastal spot (equal path distance to its two nearest nations)
+  if X.has_sea and #list < target then
+    local best, best_s
+    for _, p in ipairs(X.cands) do
+      if X.coastal(p) and spot_ok(p) then
+        local d = X.paths(p)
+        local a, b = math.huge, math.huge
+        for si in ipairs(P.spawns) do
+          local t = d[si] or math.huge
+          if t < a then a, b = t, a elseif t < b then b = t end
+        end
+        if b < math.huge then
+          local s = -abs(a - b) / b
+          if not best_s or s > best_s then best, best_s = p, s end
+        end
+      end
+    end
+    if best then add(best, "coast") end
+  end
+  -- major crossings: the main rays' inner crossings first
+  local crossings = {}
+  for _, c in ipairs(P.chokes) do
+    if c.crossing then crossings[#crossings + 1] = c end
+  end
+  table.sort(crossings, function(a, b)
+    local ca, cb = P.crossings[a.crossing], P.crossings[b.crossing]
+    if ca.along ~= cb.along then return ca.along < cb.along end
+    return a.id < b.id
+  end)
+  for _, c in ipairs(crossings) do
+    if #list >= target then break end
+    local o = world.CS.choke_offset
+    local best, best_d
+    for _, p in ipairs(ring(c.position, {o[1], (o[1] + o[2]) / 2, o[2]}, 24)) do
+      if spot_ok(p) then
+        local dd = dist(p, c.position)
+        if not best_d or dd < best_d then best, best_d = p, dd end
+      end
+    end
+    if best then add(best, c.kind, {choke = c.id}) end
+  end
+  -- fallback: contested iron
+  for _, d in ipairs(P.deposits) do
+    if #list < target and d.role == "contested" and d.contested ~= "copper" then deposit_anchor(d, "iron") end
+  end
+  for _, s in ipairs(list) do P.sites[#P.sites + 1] = s end
+  return list
+end
+
+-- Ruins (world-map.md §5.3): low-value land (desert, swamp, mountain regions, mountain rims, far corners) at least
+-- RUINS.min_spawn tiles from every spawn, RUINS.spacing apart, away from deposits, city-states and ports.
+local function plan_ruins(P, X, rng, city_states, ports)
+  local G, k = X.G, X.k
+  local target = world.RUINS.count[P.size] or (P.size >= 3072 and 12 or (P.size >= 2048 and 10 or 8))
+  local min_spawn = max(world.RUINS.min_spawn, 320 * k)
+  local scored = {}
+  for _, p in ipairs(X.cands) do
+    local ds = nearest_spawn_dist(P, p)
+    if ds > min_spawn and X.buildable(p, 12) and X.off_deposits(p, 60) and X.reachable(p)
+       and X.far_from(p, city_states, 140) and X.far_from(p, ports, 100) then
+      local s = ds + 200 * rng()
+      local reg = P.regions[plan_region_id(P, p)]
+      if reg then
+        if reg.role ~= "frontier" then s = s - 250 end
+        if reg.kind == "desert" or reg.kind == "swamp" or reg.kind == "mountain" then s = s + 150 end
+      end
+      if X.mountain_near(p, 3) then s = s + 120 end
+      if edge_margin(P, p) < 250 * k then s = s + 80 end
+      scored[#scored + 1] = {p = p, s = s}
+    end
+  end
+  table.sort(scored, function(a, b) return a.s > b.s end)
+  local ruins = {}
+  for _, c in ipairs(scored) do
+    if #ruins >= target then break end
+    if X.far_from(c.p, ruins, world.RUINS.spacing * k) then ruins[#ruins + 1] = {kind = "ruin", position = round(c.p)} end
+  end
+  for _, s in ipairs(ruins) do P.sites[#P.sites + 1] = s end
+  return ruins
+end
+
+-- City sites (for cities.lua): one next to every non-start deposit first (24-110 tiles from its edge), then the best
+-- open land; at least 96 apart, 230 from every spawn, and City Center spacing away from every city-state.
+local function plan_city_sites(P, X, rng, city_states, ruins)
+  local G, k = X.G, X.k
+  local spacing = 96
+  local city = {}
+  local function free(p) return X.far_from(p, city, spacing) and X.far_from(p, city_states, spacing) end
+  -- the static tests of a candidate, once: far from spawns, room for a city, off deposits, reachable
+  local good = {}
+  for _, p in ipairs(X.cands) do
+    if nearest_spawn_dist(P, p) > 230 * k and X.buildable(p, 20) and X.off_deposits(p, 14) and X.reachable(p) then
+      good[#good + 1] = p
+    end
+  end
+  for _, d in ipairs(P.deposits) do
+    if d.role ~= "uranium" and d.role ~= "rare" then
+      local best, best_s
+      for _, p in ipairs(good) do
+        local dd = dist(p, d)
+        if dd > d.r + 24 and dd < d.r + 110 and free(p) then
+          local s = dd + 0.25 * nearest_spawn_dist(P, p)
+          if not best_s or s < best_s then best, best_s = p, s end
+        end
+      end
+      if best then city[#city + 1] = {kind = "city_site", position = round(best), deposit = d.id, score = 3} end
+    end
+  end
+  local target = P.size >= 3072 and 48 or (P.size >= 2048 and 32 or 22)
+  local scored = {}
+  for _, p in ipairs(good) do
+    do
+      local s = 0
+      for _, d in ipairs(P.deposits) do
+        if dist(p, d) < d.r + 140 then s = s + 1 end
+      end
+      local open, water, tot = X.window(p, 12)
+      scored[#scored + 1] = {p = p, s = s + 0.5 * (water > 0 and 1 or 0) + open / max(1, tot) + 0.1 * rng()}
+    end
+  end
+  table.sort(scored, function(a, b) return a.s > b.s end)
+  for _, c in ipairs(scored) do
+    if #city >= target then break end
+    if free(c.p) and X.far_from(c.p, ruins, 40) then
+      city[#city + 1] = {kind = "city_site", position = round(c.p), score = c.s}
+    end
+  end
+  for _, s in ipairs(city) do P.sites[#P.sites + 1] = s end
+  return city
+end
+
+-- Rare deposits (world-map.md §2.4, deep-economy.md §3.7; resource entities only, bonuses are M3): RARE.city_state_share
+-- of them on city-state land (20-36 tiles from its City Center), the rest on mountain rims (desert and mountain regions
+-- preferred), away from spawns, deposits and other sites.
+local function plan_rare(P, X, rng, city_states)
+  local G, k = X.G, X.k
+  local count = world.RARE.count[P.size] or (P.size >= 3072 and 8 or (P.size >= 2048 and 6 or 4))
+  local kinds = {}
+  for i, kd in ipairs(world.RARE.kinds) do kinds[i] = kd end
+  shuffle(rng, kinds)
+  local side = world.RARE.side
+  local placed = {}
+  local function ok_spot(p)
+    if not (X.buildable(p, side / 2 + 1) and X.reachable(p) and X.off_patches(p, side + 6)) then return false end
+    if not X.far_from(p, placed, 120) then return false end
+    for _, s in ipairs(P.sites) do
+      if s.kind ~= "city_state" and dist(p, s.position) < 30 then return false end
+    end
+    return true
+  end
+  local function add(p, where)
+    local kind = kinds[(#placed % #kinds) + 1]
+    local d = {id = #P.deposits + 1, role = "rare", rare = kind, x = p.x, y = p.y, r = side, kind = "highland",
+               patch_kind = "rare", patches = {{name = "rts-rare-" .. kind, total = world.RARE.amount, w = side, h = side,
+               center = V(p.x, p.y)}}}
+    P.deposits[#P.deposits + 1] = d
+    placed[#placed + 1] = {kind = "rare", position = V(p.x, p.y), deposit = d.id, rare = kind, where = where,
+                           resource = "rts-rare-" .. kind, amount = world.RARE.amount}
+  end
+  local on_cs = min(#city_states, math.ceil(count * world.RARE.city_state_share))
+  for i = 1, on_cs do
+    local c = city_states[i]
+    local start = rng(0, 15)
+    for _, r in ipairs({24, 30, 36, 20}) do
+      local done = false
+      for a = 0, 15 do
+        local ang = TAU * ((a + start) % 16) / 16
+        local p = round(V(c.position.x + math.cos(ang) * r, c.position.y + math.sin(ang) * r))
+        if ok_spot(p) then
+          add(p, "city_state")
+          done = true
+          break
+        end
+      end
+      if done then break end
+    end
+  end
+  local scored = {}
+  for _, p in ipairs(X.cands) do
+    if #placed >= count then break end
+    if nearest_spawn_dist(P, p) > 250 * max(k, 0.75) and X.off_deposits(p, 30) then
+      local rim = X.mountain_near(p, 2)
+      local reg = P.regions[plan_region_id(P, p)]
+      local desert = reg and (reg.kind == "desert" or reg.kind == "mountain" or reg.climate == "desert")
+      if rim or desert then scored[#scored + 1] = {p = p, s = (rim and 1 or 0) + (desert and 1 or 0) + rng()} end
+    end
+  end
+  table.sort(scored, function(a, b) return a.s > b.s end)
+  for _, c in ipairs(scored) do
+    if #placed >= count then break end
+    if ok_spot(c.p) then add(c.p, "rim") end
+  end
+  for _, s in ipairs(placed) do P.sites[#P.sites + 1] = s end
+  return placed
+end
+
+-- Region resources (deposits, start kits), sites per region, the region of every site.
+local function finish_regions(P)
+  for _, reg in ipairs(P.regions) do
+    reg.resources = {}
+    reg.sites = {}
+  end
+  for _, d in ipairs(P.deposits) do
+    local reg = P.regions[plan_region_id(P, d)]
     d.region = reg.id
     for _, p in ipairs(d.patches or {}) do reg.resources[p.name] = (reg.resources[p.name] or 0) + p.total end
     for _, w in ipairs(d.wells or {}) do reg.resources["crude-oil"] = (reg.resources["crude-oil"] or 0) + w.amount end
   end
   for _, sp in ipairs(P.spawns) do
-    local reg = keep[region_id(sp)]
+    local reg = P.regions[plan_region_id(P, sp)]
     for _, p in ipairs(sp.kit) do reg.resources[p.name] = (reg.resources[p.name] or 0) + p.total end
   end
-  for _, s in ipairs(P.sites) do s.region = region_id(s.position) end
+  for i, s in ipairs(P.sites) do
+    s.region = plan_region_id(P, s.position)
+    local reg = P.regions[s.region]
+    reg.sites[#reg.sites + 1] = i
+  end
 end
 
--- Chokes: planned crossings, moved from warped to plain coordinates (one fixed-point step on the sampled warp).
-local function plan_chokes(P, surface)
-  local pts = {}
-  for _, c in ipairs(P.crossings) do pts[#pts + 1] = {x = c.x, y = c.y} end
-  if #pts == 0 then return end
-  local res = surface.calculate_tile_properties({"rts_w_dx", "rts_w_dy"}, pts)
-  local p1 = {}
-  for i, c in ipairs(P.crossings) do p1[i] = {x = c.x - res.rts_w_dx[i], y = c.y - res.rts_w_dy[i]} end
-  local res2 = surface.calculate_tile_properties({"rts_w_dx", "rts_w_dy"}, p1)
-  for i, c in ipairs(P.crossings) do
-    local p = round(V(c.x - res2.rts_w_dx[i], c.y - res2.rts_w_dy[i]))
-    local b = P.barriers[c.barrier]
-    local w = (b.ws and b.ws[c.seg]) or b.w
-    c.position = p
-    local width = c.kind == "pass" and 2 * sqrt(max(0, c.r * c.r - (w + 3) ^ 2)) or 2 * sqrt(max(0, c.r * c.r - (w + 1.5) ^ 2))
-    local nm = {"rts-world." .. c.kind .. "-name", {"rts-world.proper-" .. c.proper}}
-    P.chokes[#P.chokes + 1] = {kind = c.kind, position = p, width = floor(width + 0.5), name = nm,
-                               label = (c.kind == "pass" and "Gate of " or "Ford of ") .. world.PROPER[c.proper],
-                               barrier = c.barrier, crossing = c.id, r = c.r}
+-- Scarcity and fairness (docs/PHASE5-M2.md §4 World): per nation its home specialty, the basic ores its home lacks
+-- beyond the start kit, path tiles to its specialty; per scarce deposit (contested majors, the oil swamp, uranium) the
+-- path distances of the two nearest nations; per nation the path to its nearest port.
+local function plan_scarcity(P, X, ports)
+  local G, R = X.G, X.R
+  P.scarcity = {}
+  for si, sp in ipairs(P.spawns) do
+    local rec = {force = sp.force, lacks = {}}
+    local have = {}
+    for _, d in ipairs(P.deposits) do
+      if d.force == sp.force and (d.role == "specialty" or d.role == "home_oil") then
+        for _, p in ipairs(d.patches or {}) do have[p.name] = true end
+        if d.role == "specialty" then
+          rec.home_specialty, rec.specialty = d.region, d.specialty
+          rec.specialty_path = X.path(si, d)
+          local other
+          for sj in ipairs(P.spawns) do
+            if sj ~= si then
+              local t = X.path(sj, d)
+              if t and (not other or t < other) then other = t end
+            end
+          end
+          rec.specialty_other = other
+        end
+      end
+    end
+    for _, ore in ipairs(world.BASIC_ORES) do
+      if not have[ore] then rec.lacks[#rec.lacks + 1] = ore end
+    end
+    P.scarcity[sp.force] = rec
   end
+  -- scarce types
+  local types = {}
+  local function add(kind, d)
+    local paths = {}
+    for si in ipairs(P.spawns) do
+      local t = X.path(si, d)
+      if t then paths[#paths + 1] = {force = P.spawns[si].force, t = t} end
+    end
+    table.sort(paths, function(a, b) return a.t < b.t end)
+    local diff = (#paths >= 2 and paths[2].t > 0) and (paths[2].t - paths[1].t) / paths[2].t or 1
+    local T = types[kind]
+    if not T then
+      T = {kind = kind, deposits = {}}
+      types[kind] = T
+    end
+    T.deposits[#T.deposits + 1] = {id = d.id, a = paths[1] and paths[1].force, b = paths[2] and paths[2].force,
+                                   ta = paths[1] and paths[1].t, tb = paths[2] and paths[2].t, diff = diff,
+                                   ok = #paths >= 2 and diff <= world.W2.scarce_fair}
+  end
+  for _, d in ipairs(P.deposits) do
+    if d.role == "contested" then
+      add(d.patches[1] and d.patches[1].name or d.contested, d)
+    elseif d.role == "center_oil" then
+      add("crude-oil", d)
+    elseif d.role == "uranium" then
+      add(world.URANIUM.name, d)
+    end
+  end
+  for _, T in pairs(types) do
+    T.ok = true
+    for _, x in ipairs(T.deposits) do if not x.ok then T.ok = false end end
+  end
+  -- ports
+  local near, hi, lo = {}, 0, math.huge
+  for si, sp in ipairs(P.spawns) do
+    local best
+    for _, p in ipairs(ports) do
+      local t = p.paths and p.paths[si]
+      if t and (not best or t < best) then best = t end
+    end
+    near[sp.force] = best
+    if best then hi, lo = max(hi, best), min(lo, best) end
+  end
+  P.fair = {types = types, ports = {count = #ports, nearest = near, spread = (hi > 0 and lo < math.huge) and (hi - lo) / hi or 1}}
+end
+
+--- Phase 5 M2 world: the M2 planning steps on an accepted skeleton (own random streams; no terrain change).
+local function plan_w2(P, G, R, surface)
+  local times = {}
+  local function step(name)
+    local prof = helpers.create_profiler()
+    times[#times + 1] = {name, prof}
+    return prof
+  end
+  local t = step("context")
+  local X = plan_context(P, G, R)
+  local names = syllable_namer(new_rng(P.seed, 3000 + P.attempt, P.nations))
+  local rng = new_rng(P.seed, 1000 + P.attempt, P.nations)
+  P.sites = {}
+  t.stop() t = step("regions")
+  build_regions(P, G, names)
+  t.stop() t = step("chokes")
+  plan_chokes(P, surface, G, names)
+  t.stop() t = step("uranium+ports")
+  plan_uranium(P, X)
+  X.forget_gaps()
+  local ports = plan_ports(P, X, rng, names)
+  t.stop() t = step("city-states")
+  local city_states = plan_city_states(P, X, ports, names)
+  t.stop() t = step("ruins")
+  local ruins = plan_ruins(P, X, rng, city_states, ports)
+  t.stop() t = step("city sites")
+  plan_city_sites(P, X, rng, city_states, ruins)
+  t.stop() t = step("rare+scarcity")
+  -- oil fields (m1-economy: the AI looks for kind "oil"): one site per planned field, at its centre
+  for _, d in ipairs(P.deposits) do
+    if d.wells and #d.wells > 0 then
+      local amount = 0
+      for _, w in ipairs(d.wells) do amount = amount + w.amount end
+      P.sites[#P.sites + 1] = {kind = "oil", position = V(d.x, d.y), deposit = d.id, role = d.role, force = d.force,
+                               wells = #d.wells, amount = amount}
+    end
+  end
+  plan_rare(P, X, rng, city_states)
+  finish_regions(P)
+  plan_scarcity(P, X, ports)
+  t.stop()
+  local parts = {""}
+  for i, x in ipairs(times) do
+    parts[#parts + 1] = (i > 1 and "; " or "") .. x[1] .. " "
+    parts[#parts + 1] = x[2]
+  end
+  log({"", "[rts] world: M2 planning steps: ", parts})
+end
+
+-- Phase 5 M2 world: claimable cells for territory.share (the Territory victory, docs/PHASE5-M2.md D6): land and marsh
+-- cells of the sampled 8-tile grid (the territory grid has the same cells) that are not within CLAIM_RIM cells of the
+-- map border; mountain, water and ford cells are not claimable. One row string per grid row, "\1" = claimable.
+world.CLAIM_RIM = 2
+world.CLAIM_RANGE = {0.40, 0.95} -- the autotest's bounds of the claimable share of a map (measured 88-93 %)
+local function build_claimable(G)
+  local n, rim = G.n, world.CLAIM_RIM
+  local rows, count = {}, 0
+  for j = 0, n - 1 do
+    local row = {}
+    for i = 0, n - 1 do
+      local c = G.cls[j * n + i + 1]
+      local ok = (c == LAND or c == MARSH) and i >= rim and j >= rim and i < n - rim and j < n - rim
+      if ok then count = count + 1 end
+      row[i + 1] = ok and "\1" or "\0"
+    end
+    rows[j + 1] = table.concat(row)
+  end
+  return {n = n, rows = rows, count = count, total = n * n}
+end
+
+local function thousands(v)
+  local str = tostring(math.floor(v))
+  local out = str:reverse():gsub("(%d%d%d)", "%1,"):reverse()
+  return (out:gsub("^,", ""))
 end
 
 ---------------------------------------------------------------------------
@@ -1384,9 +2505,13 @@ function world.plan(config, seed)
   assert(best, "world: no skeleton could be planned: " .. table.concat(tried, " | "))
   local P, R, G = best, bestR, bestG
   local surface = sampler_surface(world.map_gen_settings(P))
-  P.sites = plan_sites(P, G, R)
-  finish_regions(P, G)
-  plan_chokes(P, surface)
+  local w2 = helpers.create_profiler() -- Phase 5 M2 world
+  plan_w2(P, G, R, surface)
+  P.claimable = build_claimable(G)
+  w2.stop()
+  util.log("world: claimable %d %% of %s cells (%s cells: land and marsh, %d-cell rim left out)",
+    math.floor(100 * P.claimable.count / P.claimable.total + 0.5), thousands(P.claimable.total),
+    thousands(P.claimable.count), world.CLAIM_RIM)
   if world.write_images then world.write_image({plan = P, surface = "plan", seed = P.seed}, G) end
   -- counts of the sampled terrain
   local counts = {land = 0, water = 0, mountain = 0, ford = 0, marsh = 0}
@@ -1413,7 +2538,39 @@ function world.plan(config, seed)
     tostring(P.thicken_rounds), P.attempt, #tried,
     table.concat(tried, " | "), R.spread, R.enemy_spread, R.conn_targets - #R.conn_bad, R.conn_targets,
     serpent.line(counts), #P.barriers, #P.crossings, #P.deposits, #P.regions, #P.sites), prof})
+  world.log_w2(P, w2)
   return P
+end
+
+--- Phase 5 M2 world: one log line with the M2 planning results (regions by kind, chokes, sites, scarcity, fairness).
+function world.log_w2(P, prof)
+  local kinds, sites, chokes = {}, {}, {}
+  for _, reg in ipairs(P.regions) do kinds[reg.kind] = (kinds[reg.kind] or 0) + 1 end
+  for _, s in ipairs(P.sites) do sites[s.kind] = (sites[s.kind] or 0) + 1 end
+  for _, c in ipairs(P.chokes) do chokes[c.kind] = (chokes[c.kind] or 0) + 1 end
+  local lacks, types = {}, {}
+  for _, sp in ipairs(P.spawns) do
+    local r = P.scarcity[sp.force]
+    lacks[#lacks + 1] = string.format("%s %s spec %s path %s/%s lacks [%s]", sp.force, tostring(r.specialty),
+      tostring(r.home_specialty), r.specialty_path and string.format("%.0f", r.specialty_path) or "-",
+      r.specialty_other and string.format("%.0f", r.specialty_other) or "-", table.concat(r.lacks, " "))
+  end
+  for kind, T in pairs(P.fair.types) do
+    local parts = {}
+    for _, x in ipairs(T.deposits) do
+      parts[#parts + 1] = string.format("#%d %s %.0f / %s %.0f (%.1f%%)", x.id, tostring(x.a), x.ta or -1, tostring(x.b),
+        x.tb or -1, 100 * x.diff)
+    end
+    types[#types + 1] = string.format("%s %s [%s]", kind, T.ok and "ok" or "UNFAIR", table.concat(parts, ", "))
+  end
+  table.sort(types)
+  local ss = P.specialty_search
+  log({"", string.format("[rts] world: M2 plan seed %d: regions %s; chokes %s (gap search: %s); sites %s; ports spread "
+    .. "%.3f (%d candidates); specialties %s; scarcity %s; scarce types %s; M2 planning in ", P.seed,
+    serpent.line(kinds), serpent.line(chokes), serpent.line(P.choke_stats), serpent.line(sites),
+    P.fair.ports.spread, P.port_stats and P.port_stats.candidates or 0,
+    ss and string.format("spread %.3f (drawn %.3f, %d permutations%s)", ss.spread, ss.drawn_spread, ss.permutations,
+      ss.changed and ", reassigned" or "") or "-", table.concat(lacks, "; "), table.concat(types, "; ")), prof})
 end
 
 ---------------------------------------------------------------------------
@@ -1436,16 +2593,18 @@ local function build_features(P)
   end
   for _, d in ipairs(P.deposits) do
     for _, p in ipairs(d.patches or {}) do
-      add({type = "patch", kind = "region", deposit = d.id, name = p.name, x = p.center.x, y = p.center.y, w = p.w,
-           h = p.h, total = p.total, half = max(p.w, p.h) / 2 + 3})
+      add({type = "patch", kind = d.patch_kind or "region", deposit = d.id, name = p.name, x = p.center.x, -- M2: uranium, rare
+           y = p.center.y, w = p.w, h = p.h, total = p.total, half = max(p.w, p.h) / 2 + 3})
     end
     if d.wells and #d.wells > 0 then
       add({type = "oil", deposit = d.id, x = d.x, y = d.y, half = d.r, wells = d.wells})
     end
   end
-  for _, s in ipairs(P.sites) do
+  for i, s in ipairs(P.sites) do
     if s.kind == "ruin" or s.kind == "port" then
       add({type = s.kind, x = s.position.x, y = s.position.y, half = 12, region = s.region})
+    elseif s.kind == "city_state" then -- Phase 5 M2 world: founded for rts-neutral once its ground exists
+      add({type = "city_state", site = i, x = s.position.x, y = s.position.y, half = 16, region = s.region})
     end
   end
   return list
@@ -1502,6 +2661,8 @@ local function place_feature(surface, W, f)
                                        capturing = "rts-world.port-capturing"} or nil
     local r = mapgen.add_ruin(surface, {x = f.x, y = f.y}, {stock = stock, keys = keys, kind = f.type})
     f.ok = r ~= nil
+  elseif f.type == "city_state" then
+    f.ok = world.found_city_state(surface, W, f.site) ~= nil
   end
   W.placed = (W.placed or 0) + 1
 end
@@ -1527,21 +2688,6 @@ local function index_features(surface, W)
     if missing == 0 then ready[#ready + 1] = f end
   end
   return ready
-end
-
--- Chart-mode labels: region names, passes and fords.
-local function draw_labels(surface, P, W)
-  W.labels = {}
-  for _, reg in ipairs(P.regions) do
-    W.labels[#W.labels + 1] = rendering.draw_text({text = reg.name, surface = surface, target = reg.center,
-      color = world.LABEL_COLORS.region, scale = world.LABEL_SCALE.region, alignment = "center",
-      vertical_alignment = "middle", render_mode = "chart"})
-  end
-  for _, c in ipairs(P.chokes) do
-    W.labels[#W.labels + 1] = rendering.draw_text({text = c.name, surface = surface, target = c.position,
-      color = world.LABEL_COLORS[c.kind], scale = world.LABEL_SCALE.choke, alignment = "center",
-      vertical_alignment = "middle", render_mode = "chart"})
-  end
 end
 
 local function count_map_chunks(surface, H)
@@ -1578,12 +2724,17 @@ function world.apply(surface, P)
       if e.valid then e.destroy() cleared = cleared + 1 end
     end
   end
+  W.city_states = {} -- Phase 5 M2 world: founded when their ground exists (place_feature)
+  world.neutral_force()
   W.features = build_features(P)
   local ready = index_features(surface, W)
   for _, f in ipairs(ready) do place_feature(surface, W, f) end
-  draw_labels(surface, P, W)
   local total = (P.size / 32) ^ 2
   W.fill = {total = total, generated = count_map_chunks(surface, P.half), started = game.tick, last = game.tick}
+  -- Phase 5 M2 world: the city-states' ground first, then the whole map (scripts/strategic.lua draws the chart layer)
+  for _, s in ipairs(P.sites) do
+    if s.kind == "city_state" then surface.request_to_generate_chunks(s.position, 1) end
+  end
   surface.request_to_generate_chunks({0, 0}, math.ceil(P.half / 32))
   prof.stop()
   -- start kit check (placed now: inside the core)
@@ -1731,10 +2882,11 @@ function world.write_image(W, G)
     for _, p in ipairs(d.patches or {}) do dot(p.center, ORE_RGB[p.name] or {255, 0, 0}, 1) end
     for _, w in ipairs(d.wells or {}) do dot(w, {150, 0, 150}, 0) end
   end
+  local SITE_RGB = {ruin = {255, 140, 0}, port = {0, 255, 255}, city_site = {255, 230, 0}, city_state = {255, 0, 0},
+                    uranium = {80, 255, 80}, rare = {255, 120, 220}} -- Phase 5 M2 world: city-states, uranium, rare
   for _, s in ipairs(P.sites) do
     if s.kind ~= "oil" then
-      dot(s.position, s.kind == "ruin" and {255, 140, 0} or (s.kind == "port" and {0, 255, 255} or {255, 230, 0}),
-        s.kind == "city_site" and 0 or 1)
+      dot(s.position, SITE_RGB[s.kind] or {255, 230, 0}, s.kind == "city_site" and 0 or (s.kind == "city_state" and 2 or 1))
     end
   end
   for _, c in ipairs(P.chokes) do dot(c.position, {255, 0, 255}, 1) end
@@ -1778,19 +2930,263 @@ events.on_nth_tick(600, function()
 end)
 
 ---------------------------------------------------------------------------
+-- Phase 5 M2 world: city-states (D7), their garrison, the Geology gate on uranium
+---------------------------------------------------------------------------
+world.NEUTRAL = "rts-neutral"
+world.NEUTRAL_COLOR = {r = 0.78, g = 0.76, b = 0.86, a = 1} -- chart names of city-states
+
+--- The city-states' force, created idempotently (other M2 packages do the same): at war with every match force, at
+--- peace with the vanilla forces (the ruins are "neutral"), its chart not shared.
+function world.neutral_force()
+  local f = game.forces[world.NEUTRAL] or game.create_force(world.NEUTRAL)
+  f.share_chart = false
+  f.ai_controllable = false
+  local m = storage.match
+  for _, name in ipairs((m and m.forces) or {}) do
+    local o = game.forces[name]
+    if o and o ~= f then
+      f.set_friend(o, false)
+      o.set_friend(f, false)
+      f.set_cease_fire(o, false)
+      o.set_cease_fire(f, false)
+    end
+  end
+  for _, vanilla in pairs({"enemy", "player", "neutral"}) do
+    local v = game.forces[vanilla]
+    if v then
+      f.set_cease_fire(v, true)
+      v.set_cease_fire(f, true)
+    end
+  end
+  return f
+end
+
+-- Garrison slots around a City Center: the four diagonals first, then the axes, then the eighths between them.
+local GARRISON_ANGLES = {45, 135, 225, 315, 0, 90, 180, 270, 22.5, 112.5, 202.5, 292.5, 67.5, 157.5, 247.5, 337.5}
+
+local function add_turret(surface, rec, c)
+  local name = world.CS.turret
+  if not prototypes.entity[name] then return nil end
+  for n = (rec.slot or 0) + 1, #GARRISON_ANGLES do
+    rec.slot = n
+    local a = math.rad(GARRISON_ANGLES[n])
+    local p = {x = floor(c.position.x + math.cos(a) * world.CS.ring + 0.5),
+               y = floor(c.position.y + math.sin(a) * world.CS.ring + 0.5)}
+    if not surface.can_place_entity({name = name, position = p, force = world.NEUTRAL}) then
+      p = surface.find_non_colliding_position(name, p, 3, 1, true)
+    end
+    local t = p and surface.create_entity({name = name, position = p, force = world.NEUTRAL, raise_built = true,
+                                           create_build_effect_smoke = false})
+    if t then
+      local ammo = t.get_inventory(defines.inventory.turret_ammo)
+      if ammo then ammo.insert({name = "firearm-magazine", count = 10}) end
+      rec.turrets[#rec.turrets + 1] = t
+      rec.added = (rec.added or 0) + 1
+      return t
+    end
+  end
+  return nil
+end
+
+-- The City Center's network gets its region's goods (balance.nation.world.city_state.stock by anchor) and the
+-- garrison's magazines.
+local function stock_city_state(rec, c)
+  local net = c.entity.valid and c.entity.logistic_network
+  local goods = world.CS.stock[rec.anchor] or world.CS.stock.pass or {}
+  local put = {}
+  local function insert(item, n)
+    if not (prototypes.item[item] and n > 0) then return end
+    local done = 0
+    if net and net.valid then done = net.insert({name = item, count = n}) end
+    if done < n then
+      for _, s in pairs(c.entity.surface.find_entities_filtered({name = "rts-stockpile", position = c.position, radius = 8,
+                                                                 force = world.NEUTRAL})) do
+        done = done + s.insert({name = item, count = n - done})
+        if done >= n then break end
+      end
+    end
+    put[#put + 1] = item .. " " .. done
+  end
+  for _, g in ipairs(goods) do insert(g[1], g[2]) end
+  insert("firearm-magazine", world.CS.ammo_keep)
+  return put
+end
+
+--- Found the city-state of site `si` (cities.found for rts-neutral with archetype "city_state"): its City Center, the
+--- region's goods in its stockpiles, world.CS.garrison turrets. Returns the city id or nil.
+function world.found_city_state(surface, W, si)
+  local s = W.sites[si]
+  local cities = loaded("scripts.cities")
+  if not (s and cities and cities.found) then return nil end
+  W.city_states = W.city_states or {}
+  world.neutral_force()
+  local id = cities.found(world.NEUTRAL, s.position, {archetype = "city_state", tier = world.CS.tier, title = s.name,
+                                                      why = "(city-state " .. s.label .. ")"})
+  local rec = {site = si, name = s.name, label = s.label, anchor = s.anchor, position = s.position, city_id = id,
+               founded = game.tick, turrets = {}}
+  W.city_states[#W.city_states + 1] = rec
+  s.city_id = id
+  local c = id and cities.get(id)
+  local put = {}
+  if c then
+    rec.center = c.center
+    put = stock_city_state(rec, c)
+    for _ = 1, world.CS.garrison do add_turret(surface, rec, c) end
+  end
+  util.log("world: city-state %s (%s) at %s: city %s, %d turrets, stock [%s]", s.label, tostring(s.anchor),
+    util.pos_str(s.position), tostring(id), #rec.turrets, table.concat(put, ", "))
+  return id
+end
+
+--- City-state records {site, name, label, anchor, position, city_id, center, founded, turrets}.
+function world.city_states() return (storage.world and storage.world.city_states) or {} end
+
+-- Garrison growth (4 + 1 per CS.garrison_every, at most CS.garrison_max turrets ever added; a destroyed turret is not
+-- replaced) and the magazine stock, for every city-state rts-neutral still holds.
+events.on_nth_tick(600, function()
+  local W = storage.world
+  if not (W and W.city_states and #W.city_states > 0) then return end
+  local surface = game.surfaces[W.surface]
+  local cities = loaded("scripts.cities")
+  if not (surface and cities) then return end
+  for _, rec in ipairs(W.city_states) do
+    local c = rec.city_id and cities.get(rec.city_id)
+    if c and c.force == world.NEUTRAL and c.entity and c.entity.valid then
+      local want = min(world.CS.garrison_max, world.CS.garrison + floor((game.tick - rec.founded) / world.CS.garrison_every))
+      if (rec.added or 0) < want and add_turret(surface, rec, c) then
+        util.log("world: city-state %s garrison +1 (%d turrets added)", rec.label, rec.added)
+      end
+      local net = c.entity.logistic_network
+      if net and net.valid then
+        local have = net.get_item_count("firearm-magazine")
+        if have < world.CS.ammo_keep / 2 then net.insert({name = "firearm-magazine", count = world.CS.ammo_keep - have}) end
+      end
+    end
+  end
+end)
+
+-- Geology (docs/PHASE5-M2.md §3): a mining drill whose mining area reaches uranium is refused until the force has
+-- researched world.URANIUM.tech. Players' ghosts and robot builds, like territory.lua's rules; script placements are
+-- trusted.
+local GEOLOGY_EVENTS = {[defines.events.on_built_entity] = "player", [defines.events.on_robot_built_entity] = "robot"}
+function world.geology_check(entity, e)
+  local who = GEOLOGY_EVENTS[e.name]
+  if not who then return true end
+  local W = storage.world
+  if not (W and W.plan) then return true end
+  local ghost = entity.type == "entity-ghost"
+  local name = ghost and entity.ghost_name or entity.name
+  local proto = prototypes.entity[name]
+  if not (proto and proto.type == "mining-drill" and proto.mining_drill_radius) then return true end
+  local research = loaded("scripts.research")
+  local force_name = entity.force.name
+  if research and research.has(force_name, world.URANIUM.tech) then return true end
+  local r = proto.mining_drill_radius
+  local p = entity.position
+  local surface = entity.surface
+  if surface.count_entities_filtered({area = {{p.x - r, p.y - r}, {p.x + r, p.y + r}}, name = world.URANIUM.name,
+                                      limit = 1}) == 0 then
+    return true
+  end
+  local item
+  if not ghost then
+    local items = entity.prototype.items_to_place_this
+    item = items and items[1]
+  end
+  entity.destroy()
+  local economy = loaded("scripts.economy")
+  if item and economy then economy.give(force_name, item.name, item.count or 1) end
+  local player = (e.player_index or 0) > 0 and game.get_player(e.player_index)
+  if player and player.valid then
+    player.create_local_flying_text({text = {"rts-world.geology-required"}, position = p, surface = surface,
+                                     color = {1, 0.4, 0.3}})
+  end
+  util.log("world: refused %s%s of %s at %s: uranium needs %s (%s)", name, ghost and " ghost" or "", force_name,
+    util.pos_str(p), world.URANIUM.tech, who)
+  return false
+end
+buildings.on_build_check(world.geology_check)
+
+---------------------------------------------------------------------------
 -- Queries
 ---------------------------------------------------------------------------
 local function W() return storage.world end
 
---- The region at a position, or nil (no world).
-function world.region_at(position)
+local function region_record(position)
   local w = W()
-  if not (w and w.region_grid) then return nil end
+  if not (w and w.region_grid and position) then return nil end
   local x, y = util.xy(position)
+  if not (x and y) then return nil end
   local n = w.region_grid_n
   local i = max(0, min(n - 1, floor((x + w.size / 2) / 32)))
   local j = max(0, min(n - 1, floor((y + w.size / 2) / 32)))
   return w.regions[w.region_grid[j * n + i + 1]]
+end
+
+--- Phase 5 M2 world: shares of a region's land by owner {[force] = 0..1}, sampled at the centre of every 32-tile cell
+--- of the region from territory.owner_at; cached until the territory module finishes its next job.
+function world.owner_share(reg)
+  local w = W()
+  local territory = loaded("scripts.territory")
+  if not (w and reg and territory and territory.owner_at) then return {} end
+  local T = storage.territory
+  local version = (T and T.active and T.stats and T.stats.jobs or -1) .. ":" .. tostring(T and T.match_id)
+  if reg.owner_share and reg.share_version == version then return reg.owner_share end
+  local n, H = w.region_grid_n, w.size / 2
+  local bb = reg.bbox or {x0 = -H, y0 = -H, x1 = H, y1 = H}
+  local i0, i1 = max(0, floor((bb.x0 + H) / 32)), min(n - 1, floor((bb.x1 - 0.01 + H) / 32))
+  local j0, j1 = max(0, floor((bb.y0 + H) / 32)), min(n - 1, floor((bb.y1 - 0.01 + H) / 32))
+  local counts, total = {}, 0
+  for j = j0, j1 do
+    for i = i0, i1 do
+      if w.region_grid[j * n + i + 1] == reg.id then
+        total = total + 1
+        local owner = territory.owner_at({x = -H + i * 32 + 16, y = -H + j * 32 + 16})
+        if owner then counts[owner] = (counts[owner] or 0) + 1 end
+      end
+    end
+  end
+  local share = {}
+  for f, c in pairs(counts) do share[f] = total > 0 and c / total or 0 end
+  reg.owner_share, reg.share_version = share, version
+  return share
+end
+
+--- The region at a position, or nil (no world): {id, name, label, kind, climate, role, center, bbox, resources, sites,
+--- owner?, owner_share}.
+function world.region_at(position)
+  local reg = region_record(position)
+  if reg then world.owner_share(reg) end
+  return reg
+end
+
+--- Phase 5 M2 world: the localised name of the region at a position, or nil (no world, no position). Alerts use it:
+--- "Iron Hills: hauler lost" (scripts/hud.lua).
+function world.place_name(position)
+  local reg = region_record(position)
+  return reg and reg.name or nil
+end
+
+--- Phase 5 M2 world: is territory cell (cx, cy) claimable? 0-based indices of the territory grid (8 tiles, origin at
+--- the map's top-left corner), which are the world grid's cells. False outside a world.
+function world.claimable(cx, cy)
+  local w = W()
+  local C = w and w.plan and w.plan.claimable
+  if not C or cx < 0 or cy < 0 or cx >= C.n or cy >= C.n then return false end
+  return string.byte(C.rows[cy + 1], cx + 1) == 1
+end
+
+--- Phase 5 M2 world: number of claimable cells of the world, or nil (no world).
+function world.claimable_count()
+  local w = W()
+  local C = w and w.plan and w.plan.claimable
+  return C and C.count or nil
+end
+
+--- Phase 5 M2 world: {[force] = {home_specialty = region id, specialty = kind, lacks = {ore, ...}, specialty_path}}.
+function world.scarcity()
+  local w = W()
+  return (w and w.plan and w.plan.scarcity) or {}
 end
 
 function world.regions() return (W() and W().regions) or {} end
@@ -1864,6 +3260,125 @@ function world.autotest_checks(check)
   check("world_fill", w.fill and w.fill.done and unplaced == 0, "%s, %d features unplaced",
     w.fill and (w.fill.done and string.format("fill done in %.0f s", (w.fill.done_tick - w.fill.started) / 60)
     or string.format("fill at %d/%d chunks", w.fill.generated, w.fill.total)) or "no fill", unplaced)
+  world.w2_checks(check, "")
+end
+
+--- Phase 5 M2 world: the M2 world checks (docs/PHASE5-M2.md §4 World) of the running world through check(name, ok,
+--- fmt, ...); `tag` is appended to every name (the seed matrix). City-state land needs the territory queue done.
+function world.w2_checks(check, tag)
+  local w = W()
+  if not (w and w.plan and w.plan.scarcity) then return end
+  local P = w.plan
+  tag = tag or ""
+  -- each nation lacks at least one basic ore beyond its start kit; its specialty 300-700 path tiles out, nearest
+  local lack_ok, spec_ok, parts, sparts = true, true, {}, {}
+  for _, sp in ipairs(P.spawns) do
+    local r = P.scarcity[sp.force]
+    if #r.lacks < 1 then lack_ok = false end
+    parts[#parts + 1] = string.format("%s (%s) lacks %s", sp.force, tostring(r.specialty), table.concat(r.lacks, " "))
+    local okp = r.specialty_path and r.specialty_path >= 300 * P.size / 2048 and r.specialty_path <= 700
+      and (not r.specialty_other or r.specialty_other > r.specialty_path)
+    if not okp then spec_ok = false end
+    sparts[#sparts + 1] = string.format("%s %s/%s%s", sp.force, tostring(r.specialty_path), tostring(r.specialty_other),
+      okp and "" or " BAD")
+  end
+  check("world_lacks" .. tag, lack_ok, "%s", table.concat(parts, "; "))
+  check("world_specialty" .. tag, spec_ok, "path tiles own/nearest other: %s", table.concat(sparts, "; "))
+  -- each scarce type reachable by two nations within +-scarce_fair
+  local fair_ok, fparts = true, {}
+  for kind, T in pairs(P.fair.types) do
+    if not T.ok then fair_ok = false end
+    local worst = 0
+    for _, x in ipairs(T.deposits) do worst = max(worst, x.diff) end
+    fparts[#fparts + 1] = string.format("%s %d deposit(s) worst %.1f%%%s", kind, #T.deposits, 100 * worst,
+      T.ok and "" or " UNFAIR")
+  end
+  table.sort(fparts)
+  check("world_scarce_fair" .. tag, fair_ok and #fparts > 0, "%s", table.concat(fparts, "; "))
+  -- named chokes
+  local named, by = 0, {}
+  for _, c in ipairs(P.chokes) do
+    if c.name and c.label then named = named + 1 end
+    by[c.kind] = (by[c.kind] or 0) + 1
+  end
+  -- docs/PHASE5-M2.md §4: at least 5 on a 4-nation map; smaller maps: every planned crossing named
+  local need = P.nations >= 4 and 5 or #P.crossings
+  check("world_chokes" .. tag, named >= need and named > 0, "%d named chokes (need %d) %s", named, need, serpent.line(by))
+  -- city-states: planned count, each with a City Center (live, registered) and land
+  local cities = loaded("scripts.cities")
+  local territory = loaded("scripts.territory")
+  local want = world.W2.city_states[P.nations] or 5
+  local planned, live, cparts = 0, 0, {}
+  for _, s in ipairs(P.sites) do if s.kind == "city_state" then planned = planned + 1 end end
+  for _, rec in ipairs(w.city_states or {}) do
+    local c = rec.city_id and cities and cities.get(rec.city_id)
+    local cells = (c and territory) and territory.city_cells(c.id) or 0
+    local ok = c ~= nil and c.entity ~= nil and c.entity.valid and cells > 0
+    if ok then live = live + 1 end
+    cparts[#cparts + 1] = string.format("%s %s %s %d cells %d turrets", rec.label, tostring(rec.anchor),
+      c and c.force or "-", cells, #rec.turrets)
+  end
+  local lo = P.nations >= 4 and 5 or want - 1
+  check("world_city_states" .. tag, planned >= lo and planned <= max(want, 6) and live == planned,
+    "%d planned (want %d), %d with a City Center and land: %s", planned, want, live, table.concat(cparts, "; "))
+  -- ports, fair by path
+  local F = P.fair.ports
+  check("world_ports" .. tag, F.count >= 2 and F.count <= 4 and F.spread <= world.PORTS.spread_max,
+    "%d ports, nearest-port path spread %.3f (max %.2f) %s", F.count, F.spread, world.PORTS.spread_max,
+    serpent.line(F.nearest))
+  -- ruins, uranium, rare deposits
+  local n = {}
+  local far = true
+  for _, s in ipairs(P.sites) do
+    n[s.kind] = (n[s.kind] or 0) + 1
+    if s.kind == "ruin" and nearest_spawn_dist(P, s.position) < world.RUINS.min_spawn then far = false end
+  end
+  check("world_sites" .. tag, (n.ruin or 0) >= 8 and (n.ruin or 0) <= 12 and far and (n.uranium or 0) >= 1
+    and (n.uranium or 0) <= 2 and (n.rare or 0) >= 4 and (n.rare or 0) <= 8,
+    "ruins %d (all >= %d tiles from spawns: %s), uranium %d, rare %d, ports %d, city sites %d", n.ruin or 0,
+    world.RUINS.min_spawn, tostring(far), n.uranium or 0, n.rare or 0, n.port or 0, n.city_site or 0)
+  -- region names for every spawn; chart labels for every region (scripts/strategic.lua)
+  local names_ok, nparts = true, {}
+  for _, sp in ipairs(P.spawns) do
+    local reg = world.region_at(sp)
+    if not (reg and reg.name and reg.label) then names_ok = false end
+    nparts[#nparts + 1] = sp.force .. " " .. (reg and reg.label or "NONE")
+  end
+  check("world_region_names" .. tag, names_ok, "%s", table.concat(nparts, "; "))
+  local strategic = loaded("scripts.strategic")
+  local lab_ok, lparts = strategic ~= nil, {}
+  local m = storage.match
+  for _, f in ipairs((m and m.forces) or {}) do
+    local cnt = strategic and strategic.counts(f) or {}
+    if (cnt.regions or 0) < #P.regions then lab_ok = false end
+    lparts[#lparts + 1] = string.format("%s regions %d/%d chokes %d cities %d total %d", f, cnt.regions or 0, #P.regions,
+      cnt.chokes or 0, cnt.cities or 0, cnt.total or 0)
+  end
+  check("world_chart_labels" .. tag, lab_ok, "%s", table.concat(lparts, "; "))
+  -- claimable cells (territory.share's denominator): CLAIM_RANGE of the map (measured 88-93 %: the worlds are
+  -- about 92 % land); territory's per-force counts agree with a recount
+  local C = P.claimable
+  local frac = C and C.count / C.total or 0
+  local T = storage.territory
+  local recount_ok, rparts = true, {}
+  if C and T and T.active and T.w == C.n then
+    local by = {}
+    for cy = 0, C.n - 1 do
+      local orow, crow = T.owner[cy + 1], C.rows[cy + 1]
+      for cx = 1, C.n do
+        local o = string.byte(orow, cx)
+        if o > 0 and string.byte(crow, cx) == 1 then by[o] = (by[o] or 0) + 1 end
+      end
+    end
+    for fid, name in ipairs(T.fnames) do
+      local have = (T.claim and T.claim[fid]) or 0
+      if have ~= (by[fid] or 0) then recount_ok = false end
+      rparts[#rparts + 1] = string.format("%s %d/%d", name, have, by[fid] or 0)
+    end
+  end
+  check("world_claimable" .. tag, C ~= nil and frac >= world.CLAIM_RANGE[1] and frac <= world.CLAIM_RANGE[2] and recount_ok,
+    "%.1f %% of %d cells claimable; owned claimable cells (territory/recount): %s", 100 * frac, C and C.total or 0,
+    table.concat(rparts, ", "))
 end
 
 ---------------------------------------------------------------------------
@@ -1882,11 +3397,13 @@ function world.dump(player)
     for _, sp in ipairs(P.spawns) do lines[#lines + 1] = string.format("[rts] world: spawn %s at %s", sp.force, util.pos_str(sp)) end
     for _, b in ipairs(P.barriers) do
       lines[#lines + 1] = string.format("[rts] world: %s%s %d (%s), half widths %s, real min thickness %s, %s -> %s",
-        b.spur and "spur " or (b.massif and "massif " or ""), b.kind, b.id, world.PROPER[b.proper],
+        b.spur and "spur " or (b.massif and "massif " or ""), b.kind, b.id, tostring(b.label),
         table.concat(b.ws or {b.w}, "/"), tostring(b.min_thick), util.pos_str(b.points[1]), util.pos_str(b.points[#b.points]))
     end
     for _, c in ipairs(P.chokes) do
-      lines[#lines + 1] = string.format("[rts] world: %s %s at %s, width %d", c.kind, c.label, util.pos_str(c.position), c.width)
+      lines[#lines + 1] = string.format("[rts] world: choke %d %s %s at %s, width %d (sampled %s), regions %s/%s",
+        c.id or 0, c.kind, c.label, util.pos_str(c.position), c.width, tostring(c.measured_width),
+        tostring(c.regions and c.regions[1]), tostring(c.regions and c.regions[2]))
     end
     for _, reg in ipairs(P.regions) do
       local res = {}
@@ -1898,6 +3415,31 @@ function world.dump(player)
     local by = {}
     for _, s in ipairs(P.sites) do by[s.kind] = (by[s.kind] or 0) + 1 end
     lines[#lines + 1] = "[rts] world: sites " .. serpent.line(by)
+    -- Phase 5 M2 world
+    for _, s in ipairs(P.sites) do
+      if s.kind == "city_state" or s.kind == "port" or s.kind == "uranium" or s.kind == "rare" then
+        lines[#lines + 1] = string.format("[rts] world: %s %s at %s (region %s)%s", s.kind, s.label or s.rare or s.resource
+          or "", util.pos_str(s.position), tostring(s.region), s.city_id and (" city " .. s.city_id) or "")
+      end
+    end
+    for force, r in pairs(P.scarcity or {}) do
+      lines[#lines + 1] = string.format("[rts] world: scarcity %s: specialty %s (region %s, %s path tiles), lacks %s",
+        force, tostring(r.specialty), tostring(r.home_specialty), tostring(r.specialty_path and math.floor(r.specialty_path)),
+        table.concat(r.lacks, ", "))
+    end
+    if P.fair then
+      for kind, T in pairs(P.fair.types) do
+        lines[#lines + 1] = string.format("[rts] world: scarce %s %s", kind, T.ok and "fair" or "UNFAIR")
+      end
+      lines[#lines + 1] = string.format("[rts] world: ports %d, nearest-port path spread %.3f", P.fair.ports.count,
+        P.fair.ports.spread)
+    end
+    for _, rec in ipairs(w.city_states or {}) do
+      local live = 0
+      for _, t in ipairs(rec.turrets) do if t.valid then live = live + 1 end end
+      lines[#lines + 1] = string.format("[rts] world: city-state %s city %s, %d/%d turrets", rec.label,
+        tostring(rec.city_id), live, rec.added or 0)
+    end
   end
   for _, line in ipairs(lines) do
     log(line)

@@ -149,6 +149,7 @@ for _, name in ipairs({"rts-house", "rts-apartment", "rts-farm", "rts-bakery", "
                        "rts-brick"}) do
   P4.NATION_ONLY[name] = true end -- Phase 5 M2 people: houses, the food chain, goods and factory bricks
 P4.crafter = function(kind) return kind == "factory" or kind == "district" end -- Phase 5 E1: districts are producers
+P4.place_name = require("scripts.world").place_name -- Phase 5 M2 world: region names in alerts (alert_text)
 -- Phase 5 E1: recipes an age locks (research.AGE_LOCKS: Age II goods, buildings, the Armoured car kit) exist in Nation
 -- mode only, like P4.NATION_ONLY.
 P4.visible_recipe = function(name)
@@ -1818,12 +1819,17 @@ end
 
 --- The alert's text as a localised string: {entry.text, params...} (supply.alert / logistics.alert format).
 local function alert_text(entry)
+  local t
   if type(entry.text) == "string" then
-    local t = {entry.text}
+    t = {entry.text}
     for _, param in ipairs(entry.params or {}) do t[#t + 1] = param end
-    return t
+  else
+    t = {"rts.alert-generic", tostring(entry.kind)}
   end
-  return {"rts.alert-generic", tostring(entry.kind)}
+  -- Phase 5 M2 world: Nation worlds name the region first ("Iron Hills: hauler lost"; scripts/world.lua place_name)
+  local place = entry.position and P4.nation() and P4.place_name and P4.place_name(entry.position)
+  if place then return {"rts-world.alert-place", place, t} end
+  return t
 end
 
 --- Alerts of a force, newest first: every entry younger than `max_age` ticks (all when nil), at most `limit`.
@@ -2335,6 +2341,7 @@ end)
 P4.KEYS = {
   {input = "rts-diplomacy", key = "F4", module = "scripts.diplomacygui", fn = "toggle"}, -- Phase 5 M2 diplomacy
   {input = "rts-market", key = "M", module = "scripts.marketgui", fn = "toggle"}, -- Phase 5 M2 treasury
+  {input = "rts-minimap-mode", key = "N", module = "scripts.strategic", fn = "toggle_minimap"}, -- Phase 5 M2 world
 }
 for _, k in ipairs(P4.KEYS) do
   events.on(k.input, function(e)

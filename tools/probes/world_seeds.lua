@@ -10,6 +10,10 @@ local lobby = require("scripts.lobby")
 local world = require("scripts.world")
 local ai = require("scripts.ai.init")
 local match = require("scripts.match")
+-- Phase 5 M2 world: city-state land (territory queue) and the chart labels (strategic) before the M2 checks; optional,
+-- so the probe still runs on a tree without the M2 world package
+local ok_territory, territory = pcall(require, "scripts.territory")
+local ok_strategic, strategic = pcall(require, "scripts.strategic")
 
 local CFG = {seeds = 20, nations = {2, 3, 4}, world_size = nil, images = false} -- tools/world-seeds.sh rewrites this line
 
@@ -93,6 +97,10 @@ events.on_nth_tick(1, function(e)
     check("world_start_kit_" .. tag, kit_ok, "%d patches, farthest edge %.0f tiles from its spawn", #W.checks.kit, worst)
     check("world_spread_" .. tag, V.spread <= world.SPREAD_MAX, "spawn score spread %.3f, nearest-enemy path spread %.3f, attempt %d of %d",
       V.spread, V.enemy_spread, P.attempt, V.attempts)
+    -- Phase 5 M2 world (docs/PHASE5-M2.md §4 World): scarcity, fairness, chokes, city-states, ports, names, labels
+    if ok_territory and territory.flush then territory.flush() end
+    if ok_strategic and strategic.refresh_all then strategic.refresh_all() end
+    if world.w2_checks then world.w2_checks(check, "_" .. tag) end
     local unplaced = 0
     for _, f in ipairs(W.features) do if not f.placed then unplaced = unplaced + 1 end end
     local counts = W.tile_counts or {}

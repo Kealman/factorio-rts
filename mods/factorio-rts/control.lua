@@ -51,6 +51,7 @@ local modules = {
   require("scripts.ages"),      -- Phase 5 E1: ages and the Railway Charter (after research, supply, match)
   require("scripts.districts"), -- Phase 5 E1: districts, oil, make targets, ledger data (after ages, production)
   require("scripts.ledgergui"), -- Phase 5 E1: city ledger (L) and age badge (after hud: its styles)
+  require("scripts.strategic"), -- Phase 5 M2 world: chart labels, regional minimap, strategic zoom (after cities, hud)
   require("scripts.population"), -- Phase 5 M2 people: residents, needs, growth, tiers by population, houses, food
                                  -- (after cities and districts: founding signals, the city ledger)
   require("scripts.labor"),      -- Phase 5 M2 people: staffing through labor modules, priorities, recruits (after

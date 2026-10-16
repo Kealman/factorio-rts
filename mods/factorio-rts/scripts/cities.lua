@@ -108,6 +108,7 @@ end
 --- Localised display name of a city.
 function cities.display_name(city)
   if not city then return {"rts.city-none"} end
+  if city.title and not (city.name and city.name ~= "") then return city.title end -- Phase 5 M2 world: city-states
   if city.name and city.name ~= "" then return city.name end
   if city.capital then return {"rts.city-capital-name"} end
   return {"rts.city-name-" .. (((city.name_index or 1) - 1) % cities.NAMES + 1)}
@@ -193,6 +194,10 @@ local function alert(force_name, kind, text, params, position)
   supply.alert(force_name, kind, text, params, position)
 end
 
+-- Phase 5 M2 world: the options of a script founding (cities.found without an entity). Its City Center's raise_built
+-- registers it (buildings.on_added below) before cities.found regains control, so the options wait here.
+local founding_opts
+
 local function register(entity, opts)
   local S = cstate()
   local un = entity.unit_number
@@ -200,7 +205,9 @@ local function register(entity, opts)
   if id then return cities.get(id) end
   local force_name = entity.force.name
   local nation = storage.nations[force_name]
-  local capital = opts.capital or (nation == nil or nation.capital == nil)
+  -- Phase 5 M2 world: a city-state (archetype "city_state", force rts-neutral) is never a capital and no nation
+  local city_state = opts.archetype == "city_state"
+  local capital = not city_state and (opts.capital or (nation == nil or nation.capital == nil))
   id = S.next_id
   if id > 255 then
     util.log("cities: city limit of the grid reached (255), %s at %s not registered", force_name,
@@ -218,8 +225,8 @@ local function register(entity, opts)
   local c = {id = id, force = force_name, name_index = name_index, capital = capital or nil,
              position = {x = p.x, y = p.y}, center = un, entity = entity, tier = tier,
              radius = cities.radius_of(tier, capital),
-             archetype = capital and "capital" or "city", founded = game.tick, buildings = 0, delivered = 0,
-             last_total = nil, networks = {}, make = {}}
+             archetype = opts.archetype or (capital and "capital" or "city"), founded = game.tick, buildings = 0,
+             delivered = 0, last_total = nil, networks = {}, make = {}, title = opts.title} -- Phase 5 M2 world: title
   storage.cities[id] = c
   S.by_center[un] = id
   if capital then
@@ -255,8 +262,10 @@ function cities.found(force, position, opts)
   local force_name = type(force) == "string" and force or force.name
   local surface = match.surface()
   local x, y = util.xy(position)
+  founding_opts = opts -- Phase 5 M2 world (see founding_opts)
   entity = surface and surface.create_entity({name = cities.CENTER, position = {math.floor(x + 0.5),
     math.floor(y + 0.5)}, force = force_name, raise_built = true})
+  founding_opts = nil
   if not entity then
     util.log("cities: found for %s at %s failed: no room", force_name, util.pos_str(position))
     return nil
@@ -300,7 +309,7 @@ buildings.on_added(function(un, rec)
     local nation = storage.nations[rec.force]
     if not (nation and nation.capital and cities.get(nation.capital)) then register(e, {capital = true, why = "(CC)"}) end
   elseif e.name == cities.CENTER then
-    register(e, {why = "(City Center)"})
+    register(e, founding_opts or {why = "(City Center)"}) -- Phase 5 M2 world: a script founding's options
   end
 end)
 

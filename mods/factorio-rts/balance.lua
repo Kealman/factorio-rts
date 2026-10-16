@@ -760,4 +760,39 @@ balance.nation.market = {
 }
 balance.buildings["rts-trade-post"] = {kind = "hub", supply_cap = 0}
 
+-- Phase 5 M2 world (docs/PHASE5-M2.md §3 "world.lua additions / strategic.lua", docs/qa/phase5-world2-notes.md): the
+-- scarcity portfolio, city-states, ruins, ports, chokes and the strategic layer of Nation worlds (scripts/world.lua,
+-- scripts/strategic.lua). Pure data; the M1 world keys (main_totals, natural, specialties, contested, oil_*) stay
+-- in scripts/world.lua.
+balance.nation.world = {
+  city_states = {[2] = 4, [3] = 5, [4] = 6},  -- per nation count: copper, the oil swamp, the coast, passes and fords
+  city_state = {
+    tier = 1,                                 -- village: 48 tiles of land (a town's 72 would reach the marching lines)
+    garrison = 4, garrison_every = 10 * 3600, garrison_max = 10, -- turrets: 4 + 1 per 10 minutes, at most 10
+    turret = "rts-turret", ring = 10,         -- around the City Center, fed from its network
+    ammo_keep = 200,                          -- magazines kept in its network
+    spawn_gap = 300, spacing = 200, port_gap = 150, -- tiles to spawns, other city-states, ports
+    choke_offset = {60, 90},                  -- tiles beside a pass or ford (out of turret reach of the path)
+    route_gap = 90,                           -- the oil swamp's city-state: tiles off the spawn-to-centre lines
+    stock = {                                 -- goods in its stockpiles at founding, by what it sits on
+      copper = {{"copper-plate", 400}, {"copper-cable", 400}},
+      iron = {{"iron-plate", 400}, {"steel-plate", 100}},
+      oil = {{"plastic-bar", 150}, {"sulfur", 100}},
+      coast = {{"raw-fish", 100}, {"stone-brick", 200}},
+      pass = {{"stone-brick", 300}, {"iron-gear-wheel", 150}},
+      ford = {{"stone", 300}, {"coal", 200}},
+    },
+  },
+  uranium = {count = {[2] = 1, [3] = 1, [4] = 2}, amount = 20000, offset = 0.45, tech = "rts-geology"},
+  rare = {count = {[1536] = 4, [2048] = 6, [3072] = 8}, amount = 3000, side = 6, city_state_share = 0.6,
+          kinds = {"saltpetre", "quartz", "tungsten", "diamonds", "rare-earths", "gold"}},
+  ruins = {count = {[1536] = 8, [2048] = 10, [3072] = 12}, min_spawn = 300, spacing = 220},
+  ports = {spread_max = 0.15, min_spawn = 300, spacing = 500}, -- nearest-port path spread across nations
+  chokes = {max_width = 80, min_width = 16, window = 24, min_side = 40, spacing = 12, spawn_clear = 140, max_tests = 120},
+  scarce_fair = 0.15,                         -- the two nearest nations of a scarce deposit within this path share
+  need_bonus = 0.5,                           -- specialty search: ores a nation lacks at home count 1.5x
+  minimap = {regional_tiles = 1000},          -- HUD minimap in regional mode (N switches to the whole world)
+  zoom = {furthest = 1.1},                    -- strategic zoom: the map view shows this many world widths
+}
+
 return balance
