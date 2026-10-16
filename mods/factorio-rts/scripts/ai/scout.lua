@@ -26,6 +26,7 @@ local scout = {}
 scout.PERIOD = 300 -- ticks between scans
 scout.SIGHT = 30   -- tiles; the units' vision_distance (prototypes/units.lua)
 scout.UNIT_CHECKS = 150 -- enemy units checked for sight per scan (honest vision)
+scout.WALL_CHECKS = 50  -- enemy wall segments (registered buildings) checked for sight per scan
 scout.HAULER_MEMORY = 60 * 60 -- a seen enemy hauler stays a harass target this long
 scout.ENEMY_ARMY_TICKS = 3 * 60 * 60 -- the largest enemy army seen is remembered this long
 
@@ -61,11 +62,17 @@ function scout.step(C, surface)
   if not force then return end
   local tick = game.tick
   local enemies = {}
+  local walls = 0
   for _, rec in buildings.all() do
     local f = rec.force
     if f ~= C.force and rec.surface == surface.index then
       if enemies[f] == nil then enemies[f] = is_enemy(force, f) end
-      if enemies[f] and scout.sees(C, force, surface, rec.position) then
+      local check = enemies[f]
+      if check and rec.kind == "wall" and C.cfg.vision ~= "full" then
+        walls = walls + 1
+        check = walls <= scout.WALL_CHECKS -- a long wall must not make every scan expensive
+      end
+      if check and scout.sees(C, force, surface, rec.position) then
         local un = rec.entity.unit_number
         local k = C.known[un]
         if not k then

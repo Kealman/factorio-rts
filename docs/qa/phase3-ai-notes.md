@@ -802,7 +802,12 @@ The doctrine's reserve raiders (4) stay out of defence, guard, patrol and attack
   non-finishing attack also needs 80 % of it. Without this the aggressive doctrine fed its army piecemeal into a
   defending one and lost its base by minute 6.
 - **Doctrine settings.** `cfg.retreat_ratio` and `cfg.target_penalty` come from the doctrine. `TARGET_PENALTY`
-  gained `lab` 15, `hub` 20 and `laser-turret` 12.
+  gained `lab` 15, `hub` 20, `laser-turret` 12, `steam-plant` and `radar` 30, `accumulator` 40 and `wall` 90.
+- **Walls.** Every wall segment is a registered building of kind `wall` (HUD agent, `buildings.lua`). Attacks prefer
+  what a wall protects (penalty 90), known walls count towards artillery in the mix, and with honest vision a scan
+  checks at most 50 enemy wall segments (`scout.WALL_CHECKS`), so a long wall does not make every scan expensive. The
+  AI builds no walls. Kinds used in steps and counts: `laser-turret`, `lab`, `hub`; `turret` is the gun turret only,
+  so the magazine budget is unaffected.
 - **Finishing** targets factories, then hubs, then stockpiles.
 - **Priority rebuild.** This fixes the Phase 3 1v3 failure `attack_rts-ai-1` ("never reached attack size after losing
   its barracks"). When the force had a factory or a barracks and has none left, `build_order.priority` queues one,

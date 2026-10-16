@@ -346,7 +346,8 @@ data.TURRET_MAGAZINES = 20 -- keep this many magazines in the network while turr
 -- so a lone factory cannot keep a beaten side alive (docs/qa/phase2-economy-notes.md open items).
 data.TARGET_PENALTY = {
   barracks = 0, factory = 0, lab = 15, hub = 20, turret = 10, ["laser-turret"] = 12, extractor = 25, smelter = 25,
-  solar = 35, cc = 45, stockpile = 60, spawn = 80, unit = 70,
+  solar = 35, ["steam-plant"] = 30, radar = 30, accumulator = 40, cc = 45, stockpile = 60, spawn = 80, unit = 70,
+  wall = 90, -- every wall segment is a registered building: attack what the wall protects, not the wall
 }
 
 return data
