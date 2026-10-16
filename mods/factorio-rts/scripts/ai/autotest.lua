@@ -18,7 +18,9 @@
 -- Phase 4 checks (each excused for a force that lost its CC before the deadline): lab_<force> (a lab stood),
 -- techs_6min_<force> (at least 2 technologies researched by 6 minutes), kinds_8min_<force> (at least 3 unit kinds
 -- spawned by 8 minutes, or by the end), hub_<force> (economic doctrine: a hub built and at least 1 hauler delivery),
--- harass_<force> (aggressive doctrine: at least 1 raider harass). DOCTRINES sets the doctrines (nil = the seeded
+-- harass_<force> (aggressive doctrine: at least 1 raider harass); these deadlines scale with the force's
+-- orders_data.TIME_SCALE (easy x1.5) and a check whose scaled deadline lies past the test is "not due". DOCTRINES sets
+-- the doctrines (nil = the seeded
 -- draw); the minute report adds research, hubs, haulers, the unit mix and supply, and the perf line the AI time
 -- per tick.
 local util = require("scripts.util")
@@ -56,6 +58,14 @@ autotest.DOCTRINES = {["rts-player"] = "economic", ["rts-ai-1"] = "aggressive"}
 local wall
 
 local function state() return storage.ai_autotest end
+
+-- Phase 4 deadlines scale with the commander's pacing (orders_data.TIME_SCALE: easy 1.5, normal 1, hard 0.7), like its
+-- build-order time gates (Wave C): easy researches and expands later by design. A scaled deadline past the end of the
+-- test makes the check "not due" (it passes and says so) unless the force met it anyway.
+local function scaled(C, ticks)
+  local scale = C and data.TIME_SCALE and data.TIME_SCALE[C.difficulty] or 1
+  return math.floor(ticks * math.max(1, scale) + 0.5)
+end
 
 local function check(name, ok, fmt, ...)
   local s = state()
@@ -314,10 +324,18 @@ local function finish(s, why)
     local lost_txt = lost and string.format(" (lost its CC at %.0fs)", lost / 60) or ""
     check("lab_" .. f, s.lab_at[f] ~= nil or excused(autotest.BUILD_DEADLINE), "%s: %s%s", f,
       s.lab_at[f] and string.format("first lab at %.0fs", s.lab_at[f] / 60) or "no lab", lost_txt)
+    local tech_deadline, kinds_deadline = scaled(C, autotest.TECH_DEADLINE), scaled(C, autotest.KINDS_DEADLINE)
+    local end_deadline = scaled(C, autotest.DURATION)
+    local function not_due(deadline)
+      return game.tick - s.started < deadline and string.format(", not due (deadline %.1f min at %s pace)",
+        deadline / autotest.MINUTE, C and C.difficulty or "?") or ""
+    end
     local techs = s.techs_at_deadline[f]
     if techs == nil then techs = tech.done_count(f) end
-    check("techs_6min_" .. f, techs >= 2 or excused(autotest.TECH_DEADLINE), "%s: %d technologies by %s%s [%s]", f,
-      techs, s.techs_at_deadline[f] and "6 min" or "the end", lost_txt, (function()
+    local techs_nd = techs < 2 and s.techs_at_deadline[f] == nil and not_due(tech_deadline) or ""
+    check("techs_6min_" .. f, techs >= 2 or excused(tech_deadline) or techs_nd ~= "", "%s: %d technologies by %s%s%s [%s]",
+      f, techs, s.techs_at_deadline[f] and string.format("%.1f min", tech_deadline / autotest.MINUTE) or "the end",
+      lost_txt, techs_nd, (function()
         local names = {}
         for name, t in pairs(C and C.tech and C.tech.done or {}) do names[#names + 1] = string.format("%s@%.0fs", name,
           (t - C.started) / 60) end
@@ -325,21 +343,24 @@ local function finish(s, why)
         return table.concat(names, " ")
       end)())
     local nk = s.kinds_at_deadline[f] or table_size(s.kinds[f] or {})
-    check("kinds_8min_" .. f, nk >= 3 or excused(autotest.KINDS_DEADLINE), "%s: %d unit kinds spawned [%s]%s", f, nk,
-      kinds_line(s.kinds[f]), lost_txt)
+    local kinds_nd = nk < 3 and s.kinds_at_deadline[f] == nil and not_due(kinds_deadline) or ""
+    check("kinds_8min_" .. f, nk >= 3 or excused(kinds_deadline) or kinds_nd ~= "", "%s: %d unit kinds spawned [%s]%s%s",
+      f, nk, kinds_line(s.kinds[f]), lost_txt, kinds_nd)
     if C then
       for _, l in ipairs(hubs.diagnose(C)) do util.log("%s", l) end
     end
     if C and C.doctrine == "economic" then
       local total, lst = delivered_total(f)
-      check("hub_" .. f, (s.hub_at[f] ~= nil and total > 0) or excused(autotest.DURATION), "%s: %s, %s%s; %s", f,
-        s.hub_at[f] and string.format("hub built at %.0fs", s.hub_at[f] / 60) or "no hub",
+      local hub_nd = not (s.hub_at[f] ~= nil and total > 0) and not_due(end_deadline) or ""
+      check("hub_" .. f, (s.hub_at[f] ~= nil and total > 0) or excused(end_deadline) or hub_nd ~= "",
+        "%s: %s, %s%s%s; %s", f, s.hub_at[f] and string.format("hub built at %.0fs", s.hub_at[f] / 60) or "no hub",
         s.delivery_at[f] and string.format("first hauler delivery at %.0fs", s.delivery_at[f] / 60) or "no delivery",
-        lost_txt, hubs.describe(C))
+        lost_txt, hub_nd, hubs.describe(C))
     end
     if C and C.doctrine == "aggressive" then
-      check("harass_" .. f, (C.stats.harass or 0) >= 1 or excused(autotest.DURATION), "%s: %d raider harass(es)%s",
-        f, C.stats.harass or 0, lost_txt)
+      local harass_nd = (C.stats.harass or 0) < 1 and not_due(end_deadline) or ""
+      check("harass_" .. f, (C.stats.harass or 0) >= 1 or excused(end_deadline) or harass_nd ~= "",
+        "%s: %d raider harass(es)%s%s", f, C.stats.harass or 0, lost_txt, harass_nd)
     end
     -- Phase 4: the economic and turtle doctrines push late; one whose pool never reached its attack size or parity
     -- with the enemy army it saw (army.lua PARITY) holds, by design, and the line says so
@@ -404,10 +425,11 @@ function autotest.tick(tick)
       s.delivery_at[f] = age
       util.log("ai autotest: %s: first hauler delivery at %.0fs", f, age / 60)
     end
-    if age >= autotest.TECH_DEADLINE and s.techs_at_deadline[f] == nil then
+    local C = ai.get(f)
+    if age >= scaled(C, autotest.TECH_DEADLINE) and s.techs_at_deadline[f] == nil then
       s.techs_at_deadline[f] = tech.done_count(f)
     end
-    if age >= autotest.KINDS_DEADLINE and s.kinds_at_deadline[f] == nil then
+    if age >= scaled(C, autotest.KINDS_DEADLINE) and s.kinds_at_deadline[f] == nil then
       s.kinds_at_deadline[f] = table_size(s.kinds[f] or {})
     end
     if not s.lines_at[f] and autotest.lines_running(f) then
