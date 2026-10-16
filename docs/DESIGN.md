@@ -32,7 +32,7 @@ Known hard limits (shape the design, do not block it):
 
 1. **No continuous mouse world position.** Only click/drag events deliver positions. Hover highlighting therefore uses `LuaPlayer.selected` + `on_selected_entity_changed`; drag rectangles use the native selection-tool box.
 2. **No runtime tint for `unit`.** Use `spider-unit` (force-tinted) as the primary unit class, or generate one `unit` prototype per team slot at data stage.
-3. **Scripted unit groups need `force.ai_controllable = true`,** which also enables engine-driven expansion for that force. Single-entity `commandable` orders do not need it. We command units individually or via groups created on demand and keep `ai_controllable` off for player forces unless groups prove necessary.
+3. **Scripted unit groups do not need `force.ai_controllable`** (the API doc says they do; 2.0.77 does not enforce it for groups made by `create_unit_group`). Spider-units join groups, also mixed with `unit` drones, and march and fight in them. Every RTS force keeps `ai_controllable` off, which also keeps engine-driven expansion off. Phase 5 divisions are unit groups: see `docs/qa/phase5-divisions-notes.md` (spike #3 found the same in Phase 1).
 4. **`max_failed_behavior_count`** can destroy units whose orders keep failing. Set it very high in map settings.
 
 ## 3. Core design decisions
