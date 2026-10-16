@@ -138,7 +138,9 @@ immune(city_power)
 
 local charter = table.deepcopy(data.raw.item.roboport)
 charter.name = "rts-city-charter"
-charter.localised_name = nil
+-- QA round 1: named explicitly. Left nil, Factorio 2.0 names an item with a place_result after its entity, so the
+-- build menu and the factory's recipe said "City Center"; the HUD tooltips add "Builds a City Center".
+charter.localised_name = {"item-name.rts-city-charter"}
 charter.localised_description = {"item-description.rts-city-charter"}
 charter.icons = table.deepcopy(city.icons)
 charter.icon = nil
@@ -196,3 +198,4 @@ data:extend({
   recipe("rts-fort", FORT.cost, FORT.time, "a-b[fort]"),
 })
 data.raw.recipe["rts-fort"].subgroup = "rts-defense"
+data.raw.recipe["rts-city-charter"].localised_name = {"recipe-name.rts-city-charter"} -- QA round 1 (see the item)

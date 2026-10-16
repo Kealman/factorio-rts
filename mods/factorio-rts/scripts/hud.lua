@@ -584,15 +584,25 @@ local function item_lock(force, item)
   return recipe and recipe_lock(force, recipe.name) or false
 end
 
+-- Phase 5 M1 QA round 1: an item that places an entity of another name (the City charter places a City Center) says
+-- so in its build and recipe tooltips: {"", tooltip, "\n", "Builds a [entity] City Center."}.
+local function with_places_note(tooltip, item)
+  local proto = item and prototypes.item[item]
+  local place = proto and proto.place_result
+  if not (place and place.name ~= item) then return tooltip end
+  return {"", tooltip, "\n", {"rts.tooltip-places", "[entity=" .. place.name .. "]", place.localised_name}}
+end
+
 local function build_tooltip(item, in_network, lock)
   local recipe = recipe_for(item)
   local how = recipe and {"rts.build-recipe", cost_text(recipe), product_amount(recipe), seconds_text(recipe.energy)}
     or {"rts.build-no-recipe"}
   if lock then
-    return {"rts.build-tooltip-locked", prototypes.item[item].localised_name, {"rts.in-stock", in_network}, how,
-            tech_name(lock)}
+    return with_places_note({"rts.build-tooltip-locked", prototypes.item[item].localised_name,
+                             {"rts.in-stock", in_network}, how, tech_name(lock)}, item)
   end
-  return {"rts.build-tooltip", prototypes.item[item].localised_name, {"rts.in-stock", in_network}, how}
+  return with_places_note({"rts.build-tooltip", prototypes.item[item].localised_name, {"rts.in-stock", in_network},
+                           how}, item)
 end
 
 --- Recipe button tooltip; barracks kits add the unit's supply cost, locked recipes the technology.
@@ -601,6 +611,8 @@ local function recipe_tooltip(recipe, lock)
   local base = unit and {"rts.recipe-tooltip-unit", recipe.localised_name, cost_text(recipe),
                          seconds_text(recipe.energy), supply.cost(unit)}
     or {"rts.recipe-tooltip", recipe.localised_name, cost_text(recipe), seconds_text(recipe.energy)}
+  local product = recipe.products and recipe.products[1]
+  if product and product.type == "item" then base = with_places_note(base, product.name) end
   if lock then return {"rts.recipe-locked-tooltip", base, tech_name(lock)} end
   return base
 end
@@ -1655,12 +1667,13 @@ local function update_strip(player, h)
   local own = player.force.name
   local enemy = own == ENEMY and PLAYER or ENEMY
   el.own.caption = {"rts.army", count_force(own)}
-  -- Phase 3 fog: only the enemy units in sight while the match runs ("?" when none), the real total after it.
+  -- Phase 3 fog: only the enemy units in sight while the match runs, the real total after it. Phase 5 M1 QA round 1:
+  -- 0 instead of "?" when none is in sight ("?" read as "unknown" in the middle of fights).
   if m and m.phase == "ended" then
     el.enemy.caption = {"rts.enemies-total", match.enemy_unit_count(own)}
   else
     local seen = match.enemy_units_seen and match.enemy_units_seen(own) or 0
-    el.enemy.caption = {"rts.enemies-seen", seen > 0 and seen or "?"}
+    el.enemy.caption = {"rts.enemies-seen", seen}
   end
 
   -- Phase 4: supply used / cap, red at the cap, yellow from 90 %
