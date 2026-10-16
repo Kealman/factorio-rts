@@ -239,17 +239,41 @@ events.on(defines.events.on_tick, function(e)
   end
 end)
 
--- Phase 5 M1 QA round 1 (finding 5): with hover selection off (update_entity_selection) player.selected changes only
--- when the engine sets it itself (a ghost the player just placed, a build) and then stays; in the remote view a
--- selected ghost or entity shows the vanilla info box in the top-right corner, half under the HUD minimap and stale.
--- Nothing in the RTS reads player.selected (selection.lua picks by position), so it is cleared.
-local function clear_hover(player)
+-- Phase 5 M1 QA round 1 (finding 5): with hover selection off (update_entity_selection) the engine still selects an
+-- entity now and then by itself, and the selection then stays: in the remote view the vanilla info box of that entity
+-- sits in the top-right corner, half under the HUD minimap. The QA run saw it after a City Center ghost was placed;
+-- a Codex click check saw the box of a Factory stay for minutes after its ghost was placed with the mouse, while
+-- player.selected read nil. Nothing in the RTS reads player.selected (selection.lua picks by position), so a set one
+-- is cleared at once, and for HOVER_RESET_TICKS after every build by the player the selection is cleared whether or
+-- not player.selected reports it.
+local HOVER_RESET_TICKS = 120
+
+local function clear_hover(player, p)
   local sel = player.selected
-  if not sel then return end
-  local name = sel.valid and (sel.type == "entity-ghost" and ("ghost of " .. sel.ghost_name) or sel.name) or "?"
-  player.clear_selected_entity()
-  util.log("camera: cleared the hover selection (%s) of player %d", name, player.index)
+  if sel then
+    local name = sel.valid and (sel.type == "entity-ghost" and ("ghost of " .. sel.ghost_name) or sel.name) or "?"
+    player.clear_selected_entity()
+    util.log("camera: cleared the hover selection (%s) of player %d", name, player.index)
+  elseif p.hover_reset then
+    player.clear_selected_entity()
+  end
+  if p.hover_reset and game.tick >= p.hover_reset then p.hover_reset = nil end
 end
+
+local function arm_hover_reset(player, tick)
+  if player and player.connected and player.permission_group and player.permission_group.name == PERMISSION_GROUP then
+    local p = util.pstorage(player.index)
+    p.hover_reset = math.max(p.hover_reset or 0, tick + HOVER_RESET_TICKS)
+  end
+end
+
+events.on(defines.events.on_built_entity, function(e) arm_hover_reset(game.get_player(e.player_index), e.tick) end)
+-- the box of a ghost went on showing the building the robots made of it (the QA run's Factory): their builds too
+events.on(defines.events.on_robot_built_entity, function(e)
+  local entity = e.entity
+  if not (entity and entity.valid) then return end
+  for _, player in pairs(entity.force.connected_players) do arm_hover_reset(player, e.tick) end
+end)
 
 events.on_nth_tick(10, function()
   for _, player in pairs(game.connected_players) do
@@ -257,7 +281,7 @@ events.on_nth_tick(10, function()
       local p = util.pstorage(player.index)
       p.last_remote_pos = player.position
       p.last_zoom = player.zoom
-      if player.permission_group and player.permission_group.name == PERMISSION_GROUP then clear_hover(player) end
+      if player.permission_group and player.permission_group.name == PERMISSION_GROUP then clear_hover(player, p) end
     end
   end
 end)
