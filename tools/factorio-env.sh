@@ -23,5 +23,7 @@ factorio_isolated_config() {
   mkdir -p "$dir"
   # [controls]: GRAVE only opens the console on a Latin keyboard layout; F9 works with any input source (QA runs).
   printf '[path]\nread-data=__PATH__system-read-data__\nwrite-data=%s\n\n[other]\ncheck-updates=false\n\n[controls]\ntoggle-console-alternative=F9\n' "$dir" > "$dir/config.ini"
+  # RTS_LOCALE=ru (GUI runs): the client's language
+  if [ -n "${RTS_LOCALE:-}" ]; then printf '\n[general]\nlocale=%s\n' "$RTS_LOCALE" >> "$dir/config.ini"; fi
   echo "$dir/config.ini"
 }

@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Phase 4 validation matrix: every scenario below runs in parallel through tools/autotest-run.sh (8-minute AI
 # autotests at game speed 1, so the perf lines measure real UPS) plus the legacy Phase 1/2 unit autotest; the -nosa
-# scenarios run with Space Age, quality and elevated rails disabled.
+# scenarios run with Space Age, quality and elevated rails disabled. -stress adds 105 units per force at 60 s and logs
+# per-module handler times; -restart restarts the match at 4 minutes and runs the AI autotest again (speed 3).
 # Usage: tools/autotest-matrix.sh <tag> [scenario-name-filter]
 # Output: build/matrix-<tag>/<scenario>.txt and a one-line-per-run table at the end.
 set -uo pipefail
@@ -17,11 +18,13 @@ SCENARIOS=(
   "legacy-units|{opponents = 1, difficulty = \"normal\", size = \"small\", enemy_brain = \"waves\"}|330"
   "1v1-normal-small-nosa|{opponents = 1, difficulty = \"normal\", size = \"small\", enemy_brain = \"ai\"}|640|base"
   "legacy-units-nosa|{opponents = 1, difficulty = \"normal\", size = \"small\", enemy_brain = \"waves\"}|330|base"
+  "1v3-normal-small-stress|{opponents = 3, difficulty = \"normal\", size = \"small\", enemy_brain = \"ai\"}|640|sa|STRESS=60:70 PERF=1"
+  "1v1-normal-small-restart|{opponents = 1, difficulty = \"normal\", size = \"small\", enemy_brain = \"ai\"}|900|sa|RESTART_AT=240 SPEED=3"
 )
 for s in "${SCENARIOS[@]}"; do
-  IFS='|' read -r name match cap variant <<< "$s"
+  IFS='|' read -r name match cap variant extra <<< "$s"
   [ -n "$FILTER" ] && [[ "$name" != *$FILTER* ]] && continue
-  VARIANT="${variant:-sa}" tools/autotest-run.sh "mx-$TAG-$name" "$match" "$cap" > "$OUT/$name.txt" 2>&1 &
+  env VARIANT="${variant:-sa}" ${extra:-} tools/autotest-run.sh "mx-$TAG-$name" "$match" "$cap" > "$OUT/$name.txt" 2>&1 &
 done
 wait
 echo "=== matrix $TAG ==="
