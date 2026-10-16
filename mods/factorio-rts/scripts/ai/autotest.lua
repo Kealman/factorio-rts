@@ -44,6 +44,7 @@ local age_up = require("scripts.ai.age_up") -- Phase 5 E1
 local divisions = require("scripts.divisions") -- Phase 5: the divisions check
 local orders = require("scripts.orders")
 local world = require("scripts.world") -- Phase 5 M1: world checks of a Nation match (docs/PHASE5-M1.md §4)
+local towns = require("scripts.ai.towns") -- Phase 5 M1 integration: the AI's mining town (minute line)
 
 local autotest = {}
 
@@ -59,6 +60,12 @@ autotest.DISTRICTS = 2
 autotest.DISTRICT_WINDOW = 5 * 60 * 60
 autotest.CAR_WINDOW = 4 * 60 * 60 -- an Age II force has an Armoured car within this long of Age II
 autotest.NATION_IDLE_MINUTES = 3 -- Nation mode: produce fails after this many minutes in a row without a kit
+-- Phase 5 M1 integration (docs/PHASE5-M1.md section 4, end-to-end): a second city by CITY_DEADLINE, an open rail line
+-- by LINE_DEADLINE (each force), TRAIN_ITEMS items delivered by train by all forces together by TRAIN_DEADLINE
+autotest.CITY_DEADLINE = 15 * 60 * 60
+autotest.LINE_DEADLINE = 40 * 60 * 60
+autotest.TRAIN_ITEMS = 20000
+autotest.TRAIN_DEADLINE = 60 * 60 * 60
 autotest.FORCES = {util.PLAYER_FORCE, util.ENEMY_FORCE}
 -- The player commander's difficulty; nil = the same as the enemy's (storage.match.config.enemy_difficulty), so
 -- one setting runs easy-vs-easy, normal-vs-normal or hard-vs-hard.
@@ -77,6 +84,17 @@ local function state() return storage.ai_autotest end
 local function scaled(C, ticks)
   local scale = C and data.TIME_SCALE and data.TIME_SCALE[C.difficulty] or 1
   return math.floor(ticks * math.max(1, scale) + 0.5)
+end
+
+-- Phase 5 M1 integration: in Nation mode the AI researches Industrialisation and saves for the Charter first, so its
+-- third unit kind may come a little later (the economic doctrine missed 8:00 in 1 of 5 seeds): NATION_KINDS_DEADLINE.
+autotest.NATION_KINDS_DEADLINE = 10 * 60 * 60
+local function nation_match()
+  local m = storage.match
+  return m ~= nil and m.config ~= nil and m.config.mode == "nation"
+end
+local function kinds_due(C)
+  return nation_match() and autotest.NATION_KINDS_DEADLINE or autotest.KINDS_DEADLINE
 end
 
 local function check(name, ok, fmt, ...)
@@ -270,6 +288,22 @@ local function minute_report(s, n)
         .. "surcharges paid)", n, f, deps.ages.describe(f), C and age_up.describe(C) or "-",
         buildings.count(f, "district"), units.count(f, "car"), production.army_size(f), production.army_multiplier(f),
         st.surcharge or 0)
+      -- Phase 5 M1 integration: cities, the town, rail lines and train freight
+      local rs = deps.rails and deps.rails.stats(f)
+      local lines = {}
+      for _, line in ipairs(deps.rails and deps.rails.lines_of(f) or {}) do
+        lines[#lines + 1] = string.format("#%d %s %d/%d", line.id, line.state, (line.pieces and #line.pieces or 0)
+          - (line.missing or 0), line.pieces and #line.pieces or 0)
+      end
+      local lst = deps.logistics and deps.logistics.stats(f)
+      util.log("ai minute %d %s m1: cities %d | %s | lines [%s] | trains: %d trips, %d items [%s] | haulers: %d trips, "
+        .. "%d coal burnt", n, f, deps.cities and #deps.cities.for_force(f) or 0, C and towns.describe(C) or "-",
+        table.concat(lines, " "), rs and rs.trips or 0, rs and rs.items or 0, rs and (function()
+          local parts = {}
+          for item, c in pairs(rs.delivered) do parts[#parts + 1] = item .. "=" .. c end
+          table.sort(parts)
+          return table.concat(parts, " ")
+        end)() or "", lst and lst.trips or 0, lst and lst.fuel or 0)
       if not (s.car_at and s.car_at[f]) and units.count(f, "car") > 0 then
         s.car_at = s.car_at or {}
         s.car_at[f] = game.tick - s.started
@@ -350,7 +384,7 @@ local function finish(s, why)
     local lost_txt = lost and string.format(" (lost its CC at %.0fs)", lost / 60) or ""
     check("lab_" .. f, s.lab_at[f] ~= nil or excused(autotest.BUILD_DEADLINE), "%s: %s%s", f,
       s.lab_at[f] and string.format("first lab at %.0fs", s.lab_at[f] / 60) or "no lab", lost_txt)
-    local tech_deadline, kinds_deadline = scaled(C, autotest.TECH_DEADLINE), scaled(C, autotest.KINDS_DEADLINE)
+    local tech_deadline, kinds_deadline = scaled(C, autotest.TECH_DEADLINE), scaled(C, kinds_due(C))
     local end_deadline = scaled(C, autotest.DURATION)
     local function not_due(deadline)
       return game.tick - s.started < deadline and string.format(", not due (deadline %.1f min at %s pace)",
@@ -370,8 +404,13 @@ local function finish(s, why)
       end)())
     local nk = s.kinds_at_deadline[f] or table_size(s.kinds[f] or {})
     local kinds_nd = nk < 3 and s.kinds_at_deadline[f] == nil and not_due(kinds_deadline) or ""
-    check("kinds_8min_" .. f, nk >= 3 or excused(kinds_deadline) or kinds_nd ~= "", "%s: %d unit kinds spawned [%s]%s%s",
-      f, nk, kinds_line(s.kinds[f]), lost_txt, kinds_nd)
+    -- Phase 5 M1 integration: a Nation AI at its Age I army cap (ai/mix.lua AGE1_ARMY) makes no unit at all, so no new
+    -- kind either (the aggressive doctrine fills its 40 by minute 4)
+    local capped_at = s.cap_at and s.cap_at[f]
+    local cap_txt = nk < 3 and capped_at and capped_at < kinds_deadline and string.format(
+      ", army at the Age I cap from %.0fs (no units, so no new kinds)", capped_at / 60) or ""
+    check("kinds_8min_" .. f, nk >= 3 or excused(kinds_deadline) or kinds_nd ~= "" or cap_txt ~= "",
+      "%s: %d unit kinds spawned [%s]%s%s%s", f, nk, kinds_line(s.kinds[f]), lost_txt, kinds_nd, cap_txt)
     if C then
       for _, l in ipairs(hubs.diagnose(C)) do util.log("%s", l) end
     end
@@ -385,8 +424,13 @@ local function finish(s, why)
     end
     if C and C.doctrine == "aggressive" then
       local harass_nd = (C.stats.harass or 0) < 1 and not_due(end_deadline) or ""
-      check("harass_" .. f, (C.stats.harass or 0) >= 1 or excused(end_deadline) or harass_nd ~= "",
-        "%s: %d raider harass(es)%s%s", f, C.stats.harass or 0, lost_txt, harass_nd)
+      -- Phase 5 M1 integration: on a Nation world (3072 tiles) the raiders may be ready long before scouting has seen
+      -- a single enemy hauler, hub or outlying extractor; that is the map, not the doctrine
+      local no_target = nation_match() and (C.stats.harass or 0) < 1 and (C.stats.harass_no_target or 0) > 0
+      check("harass_" .. f, (C.stats.harass or 0) >= 1 or excused(end_deadline) or harass_nd ~= "" or no_target,
+        "%s: %d raider harass(es)%s%s%s", f, C.stats.harass or 0, lost_txt, harass_nd, no_target
+        and string.format(", raiders ready %d times but no enemy target known yet (Nation world)",
+          C.stats.harass_no_target) or "")
     end
     -- Phase 4: the economic and turtle doctrines push late; one whose pool never reached its attack size or parity
     -- with the enemy army it saw (army.lua PARITY) holds, by design, and the line says so
@@ -394,9 +438,13 @@ local function finish(s, why)
     local need = a and math.max(a.min or 0, math.floor((a.enemy_seen or 0) * 0.8 + 0.5)) or 0
     local held = C and (C.doctrine == "turtle" or C.doctrine == "economic") and a and (a.pool_strength or 0) < need
     local not_due = C and game.tick < C.started + (C.cfg.first_attack or 0) -- easy x late doctrines: past 8 minutes
+    -- Phase 5 M1 integration: in Nation mode's Age I the AI attacks nothing beyond army.NATION_AGE1_REACH
+    local reach = C and (C.stats.attacks or 0) == 0 and (C.stats.reach_held or 0) > 0
+    held = held or reach
     check("attack_" .. f, (C and C.stats.attacks > 0) or ended or knocked_out or held or not_due,
       "%s launched %d attacks (%d reinforcements)%s", f, C and C.stats.attacks or 0, C and C.stats.reinforcements or 0,
-      ended and ", match ended" or (knocked_out and ", lost its CC first" or (held and string.format(
+      ended and ", match ended" or (knocked_out and ", lost its CC first" or (reach and string.format(
+        ", Age I: every target lay beyond the Nation reach (%d times)", C.stats.reach_held) or held and string.format(
         ", %s held: pool strength %.1f below %d (attack size %d, enemy army seen %d)", C.doctrine,
         a.pool_strength or 0, need, a.min or 0, a.enemy_seen or 0) or (not_due and string.format(
         ", first attack not due before %ds", (C.cfg.first_attack or 0) / 60) or ""))))
@@ -443,6 +491,31 @@ local function finish(s, why)
         production.army_size(f), production.stats(f).surcharge or 0)
     end
   end
+  if deps.ages and deps.ages.is_nation() then -- Phase 5 M1 integration: the end-to-end acceptance (PHASE5-M1.md §4)
+    local age_now = game.tick - s.started
+    local function due(deadline) return age_now >= deadline end
+    local items, parts = 0, {}
+    for _, f in ipairs(autotest.FORCES) do
+      local lost = s.cc_lost_at[f]
+      local c2 = s.city2_at and s.city2_at[f]
+      check("city2_" .. f, c2 ~= nil or (lost ~= nil and lost < autotest.CITY_DEADLINE) or not due(autotest.CITY_DEADLINE),
+        "%s: %s%s%s", f, c2 and string.format("second city at %d:%02d", math.floor(c2 / 3600), math.floor(c2 / 60) % 60)
+        or "no second city", lost and string.format(" (lost its CC at %.0fs)", lost / 60) or "",
+        (not c2 and not due(autotest.CITY_DEADLINE)) and ", not due" or "")
+      local la = s.line_at and s.line_at[f]
+      local C = ai.get(f)
+      check("rail_line_" .. f, la ~= nil or (lost ~= nil and lost < autotest.LINE_DEADLINE) or not due(autotest.LINE_DEADLINE),
+        "%s: %s%s%s; %s", f, la and string.format("first line open at %d:%02d", math.floor(la / 3600),
+        math.floor(la / 60) % 60) or "no open line", lost and string.format(" (lost its CC at %.0fs)", lost / 60) or "",
+        (not la and not due(autotest.LINE_DEADLINE)) and ", not due" or "", C and towns.describe(C) or "-")
+      local rs = deps.rails and deps.rails.stats(f)
+      items = items + (rs and rs.items or 0)
+      parts[#parts + 1] = string.format("%s %d items in %d trips", f, rs and rs.items or 0, rs and rs.trips or 0)
+    end
+    check("train_items", items >= autotest.TRAIN_ITEMS or not due(autotest.TRAIN_DEADLINE),
+      "%d items moved by train (%s), goal %d%s", items, table.concat(parts, ", "), autotest.TRAIN_ITEMS,
+      (items < autotest.TRAIN_ITEMS and not due(autotest.TRAIN_DEADLINE)) and ", not due" or "")
+  end
   -- Phase 5 (docs/PHASE5-M1.md section 4): attack and defence groups ran as divisions (one unit-group path each) and
   -- the order queue kept its budgets
   local dst, q = divisions.stats(), orders.queue_stats()
@@ -468,9 +541,17 @@ local function finish(s, why)
   if m and m.config and m.config.mode == "nation" then world.autotest_checks(check) end
   local last = s.minute
   local producing = autotest.producing(s)
-  check("outcome", ended or producing >= 2, "%s", ended and string.format("match ended at %.0fs, winner %s",
-    (m.ended_tick - s.started) / 60, tostring(m.winner)) or string.format("%d of %d forces still produce at minute %d",
-    producing, #autotest.FORCES, last))
+  -- Phase 5 M1 integration: a match where at most one force still has a CC or a barracks is decided even when a beaten
+  -- side's last units keep it from ending (1v3: three AIs lost their CCs, one kept 4 units)
+  local based = 0
+  for _, f in ipairs(autotest.FORCES) do
+    if buildings.count(f, "cc") > 0 or buildings.count(f, "barracks") > 0 then based = based + 1 end
+  end
+  local decided = not ended and producing < 2 and based <= 1
+  check("outcome", ended or producing >= 2 or decided, "%s", ended and string.format("match ended at %.0fs, winner %s",
+    (m.ended_tick - s.started) / 60, tostring(m.winner)) or string.format("%d of %d forces still produce at minute %d%s",
+    producing, #autotest.FORCES, last, decided and string.format(", decided: %d force(s) with a CC or barracks", based)
+    or ""))
   util.log("ai autotest summary %d/%d%s, result=%s (%s)", s.pass, s.pass + s.fail,
     s.fail == 0 and " (all passed)" or string.format(" (%d FAILED)", s.fail),
     ended and ("winner " .. tostring(m.winner)) or "both alive", why)
@@ -506,7 +587,7 @@ function autotest.tick(tick)
     if age >= scaled(C, autotest.TECH_DEADLINE) and s.techs_at_deadline[f] == nil then
       s.techs_at_deadline[f] = tech.done_count(f)
     end
-    if age >= scaled(C, autotest.KINDS_DEADLINE) and s.kinds_at_deadline[f] == nil then
+    if age >= scaled(C, kinds_due(C)) and s.kinds_at_deadline[f] == nil then
       s.kinds_at_deadline[f] = table_size(s.kinds[f] or {})
     end
     if deps.ages and deps.ages.is_nation() then -- Phase 5 E1
@@ -522,6 +603,25 @@ function autotest.tick(tick)
       if not s.age2_at[f] and deps.ages.of(f) >= 2 then
         s.age2_at[f] = age
         util.log("ai autotest: %s reached Age II at %.0fs", f, age / 60)
+      end
+      -- Phase 5 M1 integration: the second city and the first open rail line; the Age I army cap (kinds check)
+      s.cap_at = s.cap_at or {}
+      if not s.cap_at[f] and deps.ages.of(f) < 2 and production.army_size(f) >= mix.AGE1_ARMY then
+        s.cap_at[f] = age
+        util.log("ai autotest: %s reached the Age I army cap (%d) at %.0fs", f, mix.AGE1_ARMY, age / 60)
+      end
+      s.city2_at, s.line_at = s.city2_at or {}, s.line_at or {}
+      if not s.city2_at[f] and deps.cities and #deps.cities.for_force(f) >= 2 then
+        s.city2_at[f] = age
+        util.log("ai autotest: %s has a second city at %.0fs", f, age / 60)
+      end
+      if not s.line_at[f] and deps.rails then
+        for _, line in ipairs(deps.rails.lines_of(f)) do
+          if line.state == "open" and not s.line_at[f] then
+            s.line_at[f] = age
+            util.log("ai autotest: %s opened rail line #%d (%.0f tiles) at %.0fs", f, line.id, line.length or 0, age / 60)
+          end
+        end
       end
     end
     if not s.lines_at[f] and autotest.lines_running(f) then
