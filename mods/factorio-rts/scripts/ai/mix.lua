@@ -13,6 +13,9 @@
 -- (heavies need steel, raiders circuits, artillery steel and explosives). Supply (supply.get): a kind that does not
 -- fit under the cap is not chosen; with no room at all the barracks stop (recipe cleared once their output is empty)
 -- and C.capped asks ai/tech.lua to research supply.
+-- Phase 5 E1 (Nation mode): no Age I kind beyond AGE1_ARMY army units unless a base threat is fresh (the army soft
+-- cap, production.lua), nothing while the commander saves for a district item (C.nation.saving, ai/age_up.lua), and
+-- the Armoured car joins the mix in Age II (CAR_WEIGHT).
 -- Workshop first: plates are always short while barracks run, and production.lua serves the oldest-starved consumer
 -- with up to two crafts' worth, so the workshop's 2-plate gears and 1-plate circuits came one every ~20 s and science
 -- kits barely came at all. The barracks therefore yield (pause, recipe cleared) while the workshop has been starved
@@ -47,8 +50,14 @@ mix.YIELD_SPAWN_GAP = 40 * 60 -- no yield when no unit spawned for this long (a 
 mix.WORKSHOP_RECIPES = {["rts-science-basic"] = true, ["rts-science-advanced"] = true, ["rts-hauler-kit"] = true,
                         ["rts-gear"] = true, ["rts-cable"] = true, ["rts-circuit"] = true, ["rts-explosives"] = true}
 mix.SWITCH_PROGRESS = 0.15 -- a busy barracks changes recipe only this early in a craft (its ingredients return)
-mix.ORDER = {"walker", "drone", "heavy", "raider", "artillery"}
-mix.ARMY_KINDS = {walker = true, drone = true, heavy = true, raider = true, artillery = true}
+mix.ORDER = {"walker", "drone", "heavy", "raider", "artillery", "car"}
+mix.ARMY_KINDS = {walker = true, drone = true, heavy = true, raider = true, artillery = true, car = true}
+-- Phase 5 E1: a Nation-mode force in Age II adds the Armoured car with this weight (balance.nation.economy.ai)
+mix.CAR_WEIGHT = require("balance").nation.economy.ai.car_weight
+-- Phase 5 E1: a Nation-mode AI makes no Age I unit beyond this army size (the army soft cap makes them dearer, the
+-- plates go to districts, the Charter and Armoured cars) unless a base threat is fresh
+mix.AGE1_ARMY = require("balance").nation.economy.ai.age1_army
+mix.THREAT_TICKS = 5 * 60
 
 -- Barracks kinds from balance.lua: tier-1 units with a barracks kit (mk2 come from research, haulers from the
 -- factory). {[kind] = {unit, kit, supply, cost, counters}}
@@ -68,7 +77,7 @@ do
         end
       end
       mix.KINDS[def.kind] = {unit = name, kit = def.kit, supply = def.supply or 1, cost = def.cost or {},
-                             counters = list}
+                             counters = list, nation_only = def.nation_only}
     end
   end
 end
@@ -106,10 +115,12 @@ function mix.desired(C)
       total = total + known[kind]
     end
   end
+  local ages = deps.ages -- Phase 5 E1: Age II kinds (the Armoured car) only for a Nation-mode force in Age II
+  local age2 = ages ~= nil and ages.is_nation() and ages.of(C.force) >= 2
   if total > 0 then
     for _, kind in ipairs(mix.ORDER) do
       local def = mix.KINDS[kind]
-      if def then
+      if def and (age2 or not def.nation_only) then
         for _, target in ipairs(def.counters) do
           if seen[target] then w[kind] = (w[kind] or 0) + mix.COUNTER_GAIN * seen[target] / total end
         end
@@ -117,6 +128,7 @@ function mix.desired(C)
     end
   end
   if not C.cfg.heavy then w.heavy = nil end
+  if age2 then w.car = (w.car or 0) + mix.CAR_WEIGHT end -- Phase 5 E1: Age II armies are built around the car
   return w, seen
 end
 
@@ -127,6 +139,14 @@ function mix.available(C, kind)
   if kind == "heavy" and not C.cfg.heavy then return false, "difficulty" end
   local research = deps.research
   if research and not research.is_unlocked(C.force, def.unit) then return false, "locked" end
+  local ages = deps.ages
+  if ages and ages.is_nation() then
+    local threat = C.army and C.army.threat and game.tick - C.army.threat.tick <= mix.THREAT_TICKS
+    if C.nation and C.nation.saving and not threat then return false, "saving" end -- ai/age_up.lua
+    if not def.nation_only and not threat and production.army_size(C.force) >= mix.AGE1_ARMY then
+      return false, "army cap"
+    end
+  end
   for item, n in pairs(def.cost) do
     if construction.have(C, item) < n and not construction.flowing(C, item) then return false, "no " .. item end
   end

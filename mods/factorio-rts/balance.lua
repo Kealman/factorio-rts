@@ -146,6 +146,23 @@ end
 mk2("rts-walker", "rts-walker-mk2", "rts-walker-mk2-kit", {["steel-plate"] = 5})
 mk2("rts-walker-heavy", "rts-heavy-mk2", "rts-heavy-mk2-kit", {["steel-plate"] = 5})
 
+-- Phase 5 E1 (Nation mode, Age II; docs/qa/phase5-economy-notes.md): the Armoured car, a motorised unit built from
+-- engines and steel beams (the Age II goods districts make cheaply). Fast, tough against bullets, strong against walkers
+-- and raiders; artillery (armored bonus) and heavies are its answer. nation_only: never in Skirmish (its kit recipe
+-- unlocks at Age II, scripts/ages.lua; the HUD hides it outside Nation mode; balance-sim's Phase 4 counter scenarios
+-- leave it out).
+balance.units["rts-armoured-car"] = {
+  kind = "car", tier = 1, role = "assault", supply = 3, nation_only = true,
+  kit = "rts-armoured-car-kit", cost = {["engine-unit"] = 2, ["rts-steel-beam"] = 2, ["iron-plate"] = 10}, time = 8,
+  unlock = "age 2",
+  health = 800, speed = 1.6, size = 0.9,
+  range = 18, cooldown = 12, damage = 12, damage_type = "physical",
+  resist = {physical = 30, impact = 30}, tags = {"armored"},
+  ammo_category = "rts-car",
+  counters = {"walker", "raider"},
+  strong = {"walker", "raider", "drone"}, weak = {"heavy", "artillery"},
+}
+
 balance.buildings = {
   -- Phase 2 buildings (values unchanged; prototypes/buildings.lua and recipes.lua read them from here)
   ["rts-command-center"] = {kind = "cc", health = 3000, supply_cap = 40}, -- match start only
@@ -241,6 +258,20 @@ E.auto_dwell = 30 * 60       -- an auto machine keeps a still-short recipe this 
 E.auto_margin = 0.25         --   (by at least this share of its target) takes over
 E.default_targets = {}       -- make targets a new city starts with (the player sets the rest in the ledger, L)
 
+-- Owner's design constraint (2026-10-16): the economy is the road to victory, walker spam is not.
+-- Age II "Mk2 line": every unit of a force in Age II deals +attack damage (its ammo category) and takes (1 - armor) of
+-- the damage it is hit by (scripts/research.lua heals the share back, as Armor II/III): mk2 numbers (+25 % damage,
+-- +40 % health) for every unit kind. Nation mode only.
+E.age2_bonus = {attack = 0.25, armor = 0.2857}
+-- Army soft cap (scripts/production.lua): every `step` army units beyond `free` raise the cost of an Age I kit by
+-- `raise` (+10 % per 10 units beyond 20). The surcharge (that share of every kit ingredient, rounded up) is taken
+-- from the barracks' logistic network when the kit becomes a unit; a kit waits while the network cannot pay it.
+-- Age II kits (nation_only units) pay none. Nation mode only.
+E.army_softcap = {free = 20, step = 10, raise = 0.10}
+-- Efficiency floor for Age II goods made in districts versus hand-built machines (raw plates, stone, coal and crude
+-- per item; checked by tools/probes/economy_e1.lua, district_efficiency).
+E.district_efficiency = 1.5
+
 -- Industrialisation (advanced kits) unlocks the Railway Charter; the Charter (deliveries to a site in the capital)
 -- brings Age II. Age I goods only: Age II recipes stay locked until the Charter is done.
 E.charter = {
@@ -267,7 +298,8 @@ E.techs = {
    prerequisites = {"rts-industrialisation"}, effect = {attack = 1}},
 }
 
-local DISTRICT_COST = {["iron-plate"] = 80, ["steel-plate"] = 20, ["electronic-circuit"] = 15}
+-- No steel: an Age I economy makes little of it and research kits take it; stone piles up (the AI held 900)
+local DISTRICT_COST = {["iron-plate"] = 80, stone = 40, ["electronic-circuit"] = 15}
 E.buildings = {
   ["rts-pumpjack"] = {kind = "pumpjack", family = "oil", cost = {["iron-plate"] = 30, ["steel-plate"] = 5,
                       ["electronic-circuit"] = 5}, time = 6, health = 600, mining_speed = 0.5},
@@ -276,6 +308,9 @@ E.buildings = {
   ["rts-chemical-plant"] = {kind = "district", family = "chemistry", cost = {["iron-plate"] = 30, ["steel-plate"] = 5,
                             ["electronic-circuit"] = 5}, time = 6, health = 800, power = "200kW",
                             categories = {"rts-chemistry"}},
+  -- Age II turret: a 3x3 gun emplacement on magazines (fed like the turret), outranges walkers (20) and heavies.
+  ["rts-bunker"] = {kind = "turret", family = "military", cost = {["rts-steel-beam"] = 8, concrete = 20,
+                    ["iron-plate"] = 20}, time = 10, health = 3000, range = 26, cooldown = 30, damage_modifier = 12},
 }
 -- The ten districts: 5x5 assembling machines with compressed multi-stage recipes (one category each).
 E.districts = {
@@ -314,42 +349,47 @@ E.recipes = {
   -- and sulfur (oil): goods from at least three production stages.
   ["rts-science-industrial"] = {category = "rts-science", cost = {["engine-unit"] = 1, ["advanced-circuit"] = 1,
                                 sulfur = 1}, results = {["rts-science-industrial"] = 2}, time = 12, order = "c"},
+  -- Age II unit kit (barracks): balance.units["rts-armoured-car"]
+  ["rts-armoured-car-kit"] = {category = "rts-units", cost = balance.units["rts-armoured-car"].cost,
+                              results = {["rts-armoured-car-kit"] = 1}, time = balance.units["rts-armoured-car"].time,
+                              order = "h"},
 
-  -- Districts (compressed recipes; first guesses for the balance pass, about 2x the output of the machines they
-  -- replace, with the intermediate steps skipped)
+  -- Districts (compressed recipes, intermediate steps skipped): about twice the throughput of the machines they
+  -- replace and more output per input (Age II goods at least E.district_efficiency x per raw plate; Age I goods
+  -- 1.2-1.5x), so the industrial chain is the efficient road to an Age II army.
   ["rts-dsm-iron"] = {category = "rts-district-smelting", cost = {["iron-ore"] = 10},
-                      results = {["iron-plate"] = 10}, time = 8, order = "a"},
+                      results = {["iron-plate"] = 12}, time = 8, order = "a"},
   ["rts-dsm-copper"] = {category = "rts-district-smelting", cost = {["copper-ore"] = 10},
-                        results = {["copper-plate"] = 10}, time = 8, order = "b"},
-  ["rts-dsm-brick"] = {category = "rts-district-smelting", cost = {stone = 10}, results = {["stone-brick"] = 5},
+                        results = {["copper-plate"] = 12}, time = 8, order = "b"},
+  ["rts-dsm-brick"] = {category = "rts-district-smelting", cost = {stone = 10}, results = {["stone-brick"] = 6},
                        time = 6, order = "c"},
-  ["rts-dst-steel"] = {category = "rts-district-steel", cost = {["iron-plate"] = 8},
+  ["rts-dst-steel"] = {category = "rts-district-steel", cost = {["iron-plate"] = 6},
                        results = {["steel-plate"] = 4}, time = 8, order = "a"},
-  ["rts-dst-steel-ore"] = {category = "rts-district-steel", cost = {["iron-ore"] = 8, coal = 1},
+  ["rts-dst-steel-ore"] = {category = "rts-district-steel", cost = {["iron-ore"] = 6, coal = 1},
                            results = {["steel-plate"] = 4}, time = 10, order = "b"},
   ["rts-dci-circuit"] = {category = "rts-district-circuits", cost = {["iron-plate"] = 2, ["copper-plate"] = 3},
-                         results = {["electronic-circuit"] = 2}, time = 3, order = "a"},
+                         results = {["electronic-circuit"] = 3}, time = 3, order = "a"},
   ["rts-dci-cable"] = {category = "rts-district-circuits", cost = {["copper-plate"] = 5},
-                       results = {["copper-cable"] = 10}, time = 2, order = "b"},
+                       results = {["copper-cable"] = 15}, time = 2, order = "b"},
   ["rts-del-advanced-circuit"] = {category = "rts-district-electronics", cost = {["electronic-circuit"] = 2,
-                                  ["plastic-bar"] = 2, ["copper-plate"] = 2}, results = {["advanced-circuit"] = 1},
+                                  ["plastic-bar"] = 2, ["copper-plate"] = 1}, results = {["advanced-circuit"] = 2},
                                   time = 4, order = "a"},
-  ["rts-dpe-plastic"] = {category = "rts-district-petrochem", cost = {["rts-crude-oil"] = 4, coal = 1},
-                         results = {["plastic-bar"] = 4, sulfur = 1}, time = 4, order = "a"},
-  ["rts-dpe-sulfur"] = {category = "rts-district-petrochem", cost = {["rts-crude-oil"] = 3}, results = {sulfur = 3},
+  ["rts-dpe-plastic"] = {category = "rts-district-petrochem", cost = {["rts-crude-oil"] = 3, coal = 1},
+                         results = {["plastic-bar"] = 8, sulfur = 2}, time = 4, order = "a"},
+  ["rts-dpe-sulfur"] = {category = "rts-district-petrochem", cost = {["rts-crude-oil"] = 2}, results = {sulfur = 10},
                         time = 3, order = "b"},
-  ["rts-den-engine"] = {category = "rts-district-engines", cost = {["steel-plate"] = 2, ["iron-plate"] = 6},
+  ["rts-den-engine"] = {category = "rts-district-engines", cost = {["steel-plate"] = 2, ["iron-plate"] = 3},
                         results = {["engine-unit"] = 2}, time = 8, order = "a"},
   ["rts-dmu-magazine"] = {category = "rts-district-munitions", cost = {["iron-plate"] = 10},
                           results = {["firearm-magazine"] = 15}, time = 4, order = "a"},
   ["rts-dmu-explosives"] = {category = "rts-district-munitions", cost = {coal = 4, ["iron-plate"] = 2},
                             results = {["rts-explosives"] = 4}, time = 4, order = "b"},
   ["rts-dra-rail"] = {category = "rts-district-rails", cost = {["steel-plate"] = 4, stone = 2},
-                      results = {rail = 5}, time = 4, order = "a"}, -- vanilla rail (m1-rails' item)
+                      results = {rail = 8}, time = 4, order = "a"}, -- vanilla rail (m1-rails' item)
   ["rts-dra-beam"] = {category = "rts-district-rails", cost = {["steel-plate"] = 3},
-                      results = {["rts-steel-beam"] = 3}, time = 3, order = "b"},
+                      results = {["rts-steel-beam"] = 4}, time = 3, order = "b"},
   ["rts-dco-concrete"] = {category = "rts-district-construction", cost = {["stone-brick"] = 5, stone = 2},
-                          results = {concrete = 6}, time = 4, order = "a"},
+                          results = {concrete = 10}, time = 4, order = "a"},
   ["rts-dco-wall"] = {category = "rts-district-construction", cost = {["stone-brick"] = 8},
                       results = {["rts-wall"] = 10}, time = 4, order = "b"},
   ["rts-dsc-basic"] = {category = "rts-district-science", cost = {["iron-plate"] = 4, ["copper-plate"] = 2},
@@ -367,9 +407,13 @@ E.ai = {
   district_gap = 60,         -- seconds between two district orders
   capital = {
     [1] = {["iron-gear-wheel"] = 20, ["electronic-circuit"] = 30},
-    [2] = {["iron-gear-wheel"] = 20, ["electronic-circuit"] = 60, ["steel-plate"] = 40, ["rts-science-advanced"] = 10},
+    -- Age II: the Armoured car's engines and steel beams first
+    [2] = {["iron-gear-wheel"] = 20, ["electronic-circuit"] = 40, ["steel-plate"] = 40, ["engine-unit"] = 10,
+           ["rts-steel-beam"] = 10},
   },
-  districts = {"rts-district-circuits", "rts-district-steel", "rts-district-science"},
+  districts = {"rts-district-steel", "rts-district-engines", "rts-district-rails"},
+  car_weight = 3,            -- Age II: Armoured car weight in the barracks mix (ai/mix.lua; walkers are 1-2)
+  age1_army = 40,            -- no Age I units beyond this army size (the soft cap makes them dear) unless threatened
 }
 
 for name, b in pairs(E.buildings) do balance.buildings[name] = b end

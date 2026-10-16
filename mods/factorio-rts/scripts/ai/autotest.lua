@@ -57,6 +57,8 @@ autotest.END_GRACE = 60 * 60 -- at DURATION, a side that stopped producing gets 
 autotest.AGE_DEADLINE = 20 * 60 * 60
 autotest.DISTRICTS = 2
 autotest.DISTRICT_WINDOW = 5 * 60 * 60
+autotest.CAR_WINDOW = 4 * 60 * 60 -- an Age II force has an Armoured car within this long of Age II
+autotest.NATION_IDLE_MINUTES = 3 -- Nation mode: produce fails after this many minutes in a row without a kit
 autotest.FORCES = {util.PLAYER_FORCE, util.ENEMY_FORCE}
 -- The player commander's difficulty; nil = the same as the enemy's (storage.match.config.enemy_difficulty), so
 -- one setting runs easy-vs-easy, normal-vs-normal or hard-vs-hard.
@@ -263,8 +265,15 @@ local function minute_report(s, n)
   if deps.ages and deps.ages.is_nation() then -- Phase 5 E1
     for _, f in ipairs(autotest.FORCES) do
       local C = ai.get(f)
-      util.log("ai minute %d %s nation: %s | %s | districts %d", n, f, deps.ages.describe(f),
-        C and age_up.describe(C) or "-", buildings.count(f, "district"))
+      local st = production.stats(f)
+      util.log("ai minute %d %s nation: %s | %s | districts %d | cars %d, army %d (Age I kit cost x%.1f, %d "
+        .. "surcharges paid)", n, f, deps.ages.describe(f), C and age_up.describe(C) or "-",
+        buildings.count(f, "district"), units.count(f, "car"), production.army_size(f), production.army_multiplier(f),
+        st.surcharge or 0)
+      if not (s.car_at and s.car_at[f]) and units.count(f, "car") > 0 then
+        s.car_at = s.car_at or {}
+        s.car_at[f] = game.tick - s.started
+      end
     end
   end
   util.log("ai minute %d match: phase=%s winner=%s", n, tostring(m and m.phase), tostring(m and m.winner))
@@ -425,6 +434,13 @@ local function finish(s, why)
       check("districts_" .. f, nd_ok or nd2 ~= "" or buildings.count(f, "cc") == 0,
         "%s: %d districts%s; %s", f, buildings.count(f, "district"), nd_ok and "" or nd2,
         C and age_up.describe(C) or "-")
+      -- the Age II army: an Armoured car within CAR_WINDOW of Age II (first seen in a minute report)
+      local car_at = s.car_at and s.car_at[f]
+      local car_nd = (not at or game.tick - s.started < at + autotest.CAR_WINDOW) and ", not due" or ""
+      check("cars_" .. f, car_at ~= nil or car_nd ~= "" or buildings.count(f, "cc") == 0,
+        "%s: %s%s; army %d, %d surcharges paid", f, car_at and string.format("first Armoured car by %d:%02d",
+          math.floor(car_at / 3600), math.floor(car_at / 60) % 60) or "no Armoured car", car_at and "" or car_nd,
+        production.army_size(f), production.stats(f).surcharge or 0)
     end
   end
   -- Phase 5 (docs/PHASE5-M1.md section 4): attack and defence groups ran as divisions (one unit-group path each) and
@@ -527,8 +543,20 @@ function autotest.tick(tick)
     if age >= autotest.BUILD_DEADLINE then
       for _, f in ipairs(autotest.FORCES) do
         -- a barracks only produces while a CC network feeds it
-        if buildings.count(f, "barracks") > 0 and buildings.count(f, "cc") > 0
-           and (s.per_minute[f][s.minute] or 0) == 0 then
+        -- Phase 5 E1: a Nation-mode AI at its Age I army cap, or saving for a district item this minute, makes no kit
+        -- on purpose (ai/mix.lua AGE1_ARMY, ai/age_up.lua C.nation.saving)
+        local C = ai.get(f)
+        local N = C and C.nation
+        local capped = deps.ages and deps.ages.is_nation() and (production.army_size(f) >= mix.AGE1_ARMY
+          or (N and N.saving_tick and game.tick - N.saving_tick <= autotest.MINUTE))
+        local zero = buildings.count(f, "barracks") > 0 and buildings.count(f, "cc") > 0
+          and (s.per_minute[f][s.minute] or 0) == 0 and not capped
+        -- Phase 5 E1: in Nation mode a short pause is part of the economy (surcharge waits, Charter deliveries): the
+        -- check fails only after NATION_IDLE_MINUTES minutes in a row without a kit
+        s.zero_run = s.zero_run or {}
+        s.zero_run[f] = zero and (s.zero_run[f] or 0) + 1 or 0
+        local nation = deps.ages and deps.ages.is_nation()
+        if zero and (not nation or s.zero_run[f] >= autotest.NATION_IDLE_MINUTES) then
           s.produced_ok[f] = false
         end
       end

@@ -109,6 +109,9 @@ research.age_of = nil
 research.is_nation = nil
 research.INDUSTRIAL = "rts-science-industrial"
 research.AGE_LOCKS = {} -- [recipe] = pseudo technology name ("rts-age-2") the HUD shows for a recipe an age locks
+-- Age II "Mk2 line" (Nation mode, balance.nation.economy.age2_bonus via ages.lua): {attack = x, armor = share} added to
+-- the unit ammo damage and the armor share of a force in Age II. nil = none.
+research.AGE2_BONUS = nil
 
 -- name -> technology that unlocks it
 research.LOCKS = {}
@@ -117,6 +120,16 @@ for tech, eff in pairs(research.EFFECTS) do
 end
 
 local function is_rts_name(name) return string.sub(name, 1, #research.PREFIX) == research.PREFIX end
+
+-- Phase 5 E1: the age a Nation-mode force still lacks for `name` (technology, unit or kit), or nil. Ages gate nothing
+-- outside Nation mode.
+local function age_missing(force_name, name)
+  local need = research.AGE_REQUIRED[name]
+  if not (need and research.age_of and research.is_nation and research.is_nation()) then return nil end
+  if research.age_of(force_name) < need then return need end
+  return nil
+end
+research.age_missing = age_missing
 
 local function is_rts_force(force)
   return force and force.valid and is_rts_name(force.name)
@@ -265,11 +278,16 @@ function research.apply(force)
   end
   local d = derive()
   local dmg = t.attack * research.ATTACK_STEP
+  -- Phase 5 E1: the Age II Mk2 line adds to every unit's damage (not the turrets') and to the armor share
+  local age2 = research.AGE2_BONUS and research.is_nation and research.is_nation() and research.age_of
+    and research.age_of(name) >= 2 and research.AGE2_BONUS or nil
+  local unit_dmg = dmg + (age2 and age2.attack or 0)
+  if age2 then t.armor = t.armor + age2.armor end
   for _, cat in ipairs(d.unit_categories) do
     local old = a.ammo[cat] or 0
-    if not near(old, dmg) then
-      force.set_ammo_damage_modifier(cat, force.get_ammo_damage_modifier(cat) - old + dmg)
-      a.ammo[cat] = dmg
+    if not near(old, unit_dmg) then
+      force.set_ammo_damage_modifier(cat, force.get_ammo_damage_modifier(cat) - old + unit_dmg)
+      a.ammo[cat] = unit_dmg
     end
   end
   for _, turret in ipairs(d.turrets) do
@@ -395,6 +413,7 @@ end
 ---------------------------------------------------------------------------
 --- True unless `name` (unit, kit, building or recipe) is locked by a technology the force has not researched.
 function research.is_unlocked(force_name, name)
+  if age_missing(force_name, name) then return false end -- Phase 5 E1: an Age II unit before Age II
   if not research.LOCKS[name] then return true end
   local u = R().unlocked[force_name]
   return u ~= nil and u[name] == true
@@ -424,7 +443,7 @@ function research.uses_mk2(force_name) return R().mk2[force_name] == true end
 --- Why a barracks holds a kit: {reason = "locked" | "supply", tech?, unit, tick, used?, cap?} or nil.
 function research.block_of(unit_number)
   local rec = storage.buildings and storage.buildings[unit_number]
-  return rec and rec.research_block
+  return rec and (rec.research_block or rec.surcharge_block) -- Phase 5 E1: the army soft cap (production.lua)
 end
 
 --- "done" | "researching" | "queued" | "available" | "locked" (prerequisites missing) | "disabled"
@@ -441,8 +460,7 @@ function research.status(force_name, tech_name, queue_set)
   end
   if queue_set[tech_name] then return "queued" end
   if not tech.enabled then return "disabled" end
-  local need = research.AGE_REQUIRED[tech_name] -- Phase 5 E1
-  if need and research.age_of and research.age_of(force_name) < need then return "age" end
+  if age_missing(force_name, tech_name) then return "age" end -- Phase 5 E1 (Nation mode)
   for _, pre in pairs(tech.prerequisites) do
     if not pre.researched then return "locked" end
   end
@@ -517,8 +535,8 @@ end
 function research.gate(rec, kit, def)
   local force_name = rec.force
   ensure(force_name)
-  local age = research.AGE_REQUIRED[def.unit] or research.AGE_REQUIRED[kit] -- Phase 5 E1: Age II units
-  if age and research.age_of and research.age_of(force_name) < age then
+  local age = age_missing(force_name, def.unit) or age_missing(force_name, kit) -- Phase 5 E1: Age II units
+  if age then
     block(rec, {reason = "age", tech = "age " .. age, age = age, unit = def.unit, kit = kit})
     return nil
   end

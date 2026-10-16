@@ -17,6 +17,7 @@ local ages = require("scripts.ages")
 local districts = require("scripts.districts")
 local ledgergui = require("scripts.ledgergui")
 local production = require("scripts.production")
+local events_bus = require("scripts.events")
 
 local function check(name, ok, fmt, ...)
   util.log("e1 gui probe %s: %s %s", name, ok and "PASS" or "FAIL", string.format(fmt, ...))
@@ -158,6 +159,73 @@ end)
 
 step(function(player, P)
   shot(player, "district-panel-fixed")
+  return 30
+end)
+
+-- the factory page's category tabs (Nation mode)
+local function find(el, name)
+  if not (el and el.valid) then return nil end
+  if el.name == name then return el end
+  for _, c in pairs(el.children) do
+    local f = find(c, name)
+    if f then return f end
+  end
+end
+
+local function recipe_buttons(player)
+  local h = util.pstorage(player.index).hud
+  local names = {}
+  for name in pairs(h and h.recipe_buttons or {}) do names[#names + 1] = name end
+  table.sort(names)
+  return names
+end
+
+step(function(player, P)
+  local F = player.force.name
+  local home = match.home(F)
+  local surface = match.surface()
+  local pos = surface.find_non_colliding_position("rts-factory", {x = home.x - 12.5, y = home.y - 10.5}, 10, 1, true)
+  P.factory = surface.create_entity({name = "rts-factory", position = pos, force = F, raise_built = true})
+  selection.select_building(player.index, P.factory.unit_number)
+  return 60
+end)
+
+step(function(player, P)
+  shot(player, "factory-buildings")
+  local names = recipe_buttons(player)
+  P.tab_buildings = #names
+  check("factory_tab_buildings", #names <= 30 and find(player.gui.screen, "rts_hud_factory_tab_age2") ~= nil,
+    "%d buttons on the Buildings tab (pause, auto and the recipes): %s", #names, table.concat(names, " "))
+  return 30
+end)
+
+step(function(player, P)
+  local el = find(player.gui.screen, "rts_hud_factory_tab_age2")
+  if el then events_bus.dispatch(defines.events.on_gui_click, {element = el, player_index = player.index,
+                                                          name = defines.events.on_gui_click}) end
+  return 60
+end)
+
+step(function(player, P)
+  shot(player, "factory-age2")
+  local names = recipe_buttons(player)
+  local set = {}
+  for _, n in ipairs(names) do set[n] = true end
+  check("factory_tab_age2", set["rts-district-steel"] and set["rts-bunker"] and set["rts-pumpjack"]
+    and not set["rts-extractor"], "%d buttons on the Age II tab: %s", #names, table.concat(names, " "))
+  local el = find(player.gui.screen, "rts_hud_factory_tab_intermediates")
+  if el then events_bus.dispatch(defines.events.on_gui_click, {element = el, player_index = player.index,
+                                                          name = defines.events.on_gui_click}) end
+  return 60
+end)
+
+step(function(player, P)
+  shot(player, "factory-intermediates")
+  local names = recipe_buttons(player)
+  local set = {}
+  for _, n in ipairs(names) do set[n] = true end
+  check("factory_tab_intermediates", set["rts-gear"] and set["rts-engine"] and set["rts-steel-beam"]
+    and not set["rts-district-steel"], "%d buttons on the Intermediates tab: %s", #names, table.concat(names, " "))
   return 30
 end)
 

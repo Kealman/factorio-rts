@@ -2,13 +2,14 @@
 # Balance simulator run (docs/qa/phase4-balance-notes.md): copies mods/factorio-rts to build/<name>/, adds
 # tools/balance-sim/balancesim.lua as scripts/balancesim.lua (required at the end of the copy's control.lua) and runs
 # a headless server until "[rts] bsim done" (or CAP seconds). Usage: tools/balance-sim/run.sh <name> [sa|base] [cap=400]
-# Env: SIM_FROM_HEAD="scripts/hud.lua" takes those files from git HEAD instead of the working tree.
+# Env: SIM_FROM_HEAD="scripts/hud.lua" takes those files from git HEAD instead of the working tree; SIM_TREE=<dir> takes
+# the mod from that directory instead of mods/factorio-rts; SIM_ONLY=<Lua pattern> runs only the matching scenarios.
 set -uo pipefail
 source "$(dirname "$0")/../factorio-env.sh"
 NAME="${1:?name}"; VARIANT="${2:-sa}"; CAP="${3:-400}"
 DIR="$RTS_BUILD_DIR/$NAME"
 rm -rf "$DIR"; mkdir -p "$DIR"
-cp -R "$RTS_MODS_DIR/factorio-rts" "$DIR/"
+cp -R "${SIM_TREE:-$RTS_MODS_DIR/factorio-rts}" "$DIR/factorio-rts" # SIM_TREE: another copy of the mod
 cp "$RTS_ROOT/tools/balance-sim/balancesim.lua" "$DIR/factorio-rts/scripts/balancesim.lua"
 # SIM_FROM_HEAD="scripts/hud.lua ...": take these mod files from git HEAD (another agent's half-finished edit in the
 # working tree must not stop a balance run; the simulator does not use the HUD).

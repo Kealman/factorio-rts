@@ -7,7 +7,9 @@
 --     rts-steel-beam, rts-science-industrial (the Age II science kit, a tinted chemical science pack). Plastic, sulfur,
 --     engines, advanced circuits, concrete and rails (m1-rails' item) are the vanilla items.
 --   * Buildings: rts-pumpjack (vanilla pumpjack on vanilla crude-oil, no power), rts-refinery and rts-chemical-plant
---     (vanilla graphics, no fluid boxes, item recipes only). The ten districts are in prototypes/districts.lua.
+--     (vanilla graphics, no fluid boxes, item recipes only), rts-bunker (Age II turret). The ten districts are in
+--     prototypes/districts.lua.
+--   * Age II unit: rts-armoured-car (a `unit` with the tank hull scaled down) and its barracks kit.
 --   * Recipe categories: rts-age2 (added to the factory), rts-oil (refinery), rts-chemistry (chemical plant).
 --   * Recipes from balance.nation.economy.recipes and .buildings: all start disabled; scripts/ages.lua enables them for
 --     a force when it reaches Age II.
@@ -288,11 +290,125 @@ data:extend({
   M.building_recipe("rts-chemical-plant", "rts-districts", "c"),
 })
 
+
 -------------------------------------------------------------------------------
--- Age II recipes (factory, refinery, chemical plant; district recipes are in prototypes/districts.lua)
+-- Age II military (owner's constraint 2026-10-16: the economy is the road to victory)
+-------------------------------------------------------------------------------
+-- Armoured car (balance.units["rts-armoured-car"]): a `unit` like the drone (so orders, divisions and the AI army
+-- drive it unchanged) with the vanilla tank hull scaled down as its run and attack animation. Hitscan machine gun.
+local CAR = balance.units["rts-armoured-car"]
+local CAR_SCALE = 0.72
+local CAR_TINT = {r = 0.75, g = 0.8, b = 0.7, a = 1}
+local CAR_SPEED = 0.115 * CAR.speed -- tiles per tick: the walker moves about 11.5 tiles/s = 0.19; x1.6 = 0.31
+
+local function car_animation()
+  local src = data.raw.car["tank"] or data.raw.car["car"]
+  local anim = table.deepcopy(src.animation)
+  M.rescale(anim, CAR_SCALE, CAR_TINT)
+  return anim
+end
+
+local car_src = data.raw.unit["rts-drone"]
+assert(car_src, "factorio-rts: rts-drone must exist before prototypes/age2.lua")
+local car = table.deepcopy(car_src)
+local tank = data.raw.car["tank"] or data.raw.car["car"]
+car.name = "rts-armoured-car"
+car.localised_name = {"entity-name.rts-armoured-car"}
+car.localised_description = {"entity-description.rts-armoured-car"}
+car.icons = icon_layers(tank, CAR_TINT)
+car.icon = nil
+car.icon_size = nil
+car.order = "z[rts]-rts-armoured-car"
+car.max_health = CAR.health
+car.healing_per_tick = 0
+local resist = {}
+for damage_type, percent in pairs(CAR.resist) do resist[#resist + 1] = {type = damage_type, percent = percent} end
+table.sort(resist, function(a, b) return a.type < b.type end)
+car.resistances = resist
+car.trigger_target_mask = {"common", balance.target_types.armored}
+car.collision_box = {{-CAR.size, -CAR.size}, {CAR.size, CAR.size}}
+car.selection_box = {{-CAR.size - 0.2, -CAR.size - 0.2}, {CAR.size + 0.2, CAR.size + 0.2}}
+car.sticker_box = {{-CAR.size, -CAR.size}, {CAR.size, CAR.size}}
+car.movement_speed = CAR_SPEED
+car.distance_per_frame = 0.3
+car.rotation_speed = 0.05
+car.vision_distance = math.max(30, CAR.range + 2)
+car.run_animation = car_animation()
+car.corpse = data.raw.corpse["tank-remnants"] and "tank-remnants" or nil
+car.dying_explosion = data.raw.explosion["tank-explosion"] and "tank-explosion" or car.dying_explosion
+car.dying_sound = nil
+car.walking_sound = nil
+car.working_sound = nil
+car.water_reflection = nil
+car.damaged_trigger_effect = nil
+car.is_military_target = true
+local gun = data.raw.gun["submachine-gun"]
+car.attack_parameters = {
+  type = "projectile",
+  ammo_category = CAR.ammo_category,
+  cooldown = CAR.cooldown,
+  range = CAR.range,
+  animation = car_animation(),
+  sound = gun and table.deepcopy(gun.attack_parameters.sound) or nil,
+  ammo_type = {
+    target_type = "entity",
+    action = {type = "direct", action_delivery = {
+      type = "instant",
+      source_effects = {{type = "create-explosion", entity_name = "explosion-gunshot"}},
+      target_effects = {
+        {type = "create-entity", entity_name = "explosion-hit", offset_deviation = {{-0.3, -0.3}, {0.3, 0.3}}},
+        {type = "damage", damage = {amount = CAR.damage, type = CAR.damage_type}},
+      },
+    }},
+  },
+}
+
+local car_kit = {
+  type = "item",
+  name = CAR.kit,
+  localised_name = {"item-name." .. CAR.kit},
+  localised_description = {"item-description." .. CAR.kit},
+  icons = icon_layers(tank, CAR_TINT),
+  subgroup = "rts-units",
+  order = "h[armoured-car-kit]",
+  stack_size = 10,
+  auto_recycle = false,
+}
+
+-- Bunker (balance.nation.economy.buildings["rts-bunker"]): the turret's gun on a 3x3 emplacement, more health, range
+-- and damage per magazine.
+local B = E.buildings["rts-bunker"]
+local tsrc = data.raw["ammo-turret"]["rts-turret"]
+assert(tsrc, "factorio-rts: rts-turret must exist before prototypes/age2.lua")
+local bunker = table.deepcopy(tsrc)
+bunker.name = "rts-bunker"
+bunker.localised_name = nil
+bunker.localised_description = nil
+M.rescale(bunker, 1.5, {r = 0.75, g = 0.75, b = 0.65, a = 1})
+bunker.collision_box = {{-1.4, -1.4}, {1.4, 1.4}}
+bunker.selection_box = {{-1.5, -1.5}, {1.5, 1.5}}
+bunker.max_health = B.health
+bunker.minable = {mining_time = 0.5, result = "rts-bunker"}
+bunker.attack_parameters.range = B.range
+bunker.attack_parameters.cooldown = B.cooldown
+bunker.attack_parameters.damage_modifier = B.damage_modifier
+bunker.icons = icon_layers(tsrc, {r = 0.75, g = 0.75, b = 0.65, a = 1})
+bunker.icon = nil
+bunker.icon_size = nil
+bunker.map_color = {r = 0.85, g = 0.5, b = 0.2}
+bunker.next_upgrade = nil
+bunker.fast_replaceable_group = nil
+bunker.circuit_connector = nil
+bunker.circuit_wire_max_distance = nil
+local bunker_item = M.building_item(bunker, "gun-turret", "rts-districts", "e[bunker]", 10)
+
+data:extend({car, car_kit, bunker, bunker_item, M.building_recipe("rts-bunker", "rts-districts", "e")})
+
+-------------------------------------------------------------------------------
+-- Age II recipes (factory, refinery, chemical plant, the car kit; district recipes are in prototypes/districts.lua)
 -------------------------------------------------------------------------------
 local SUBGROUP = {["rts-age2"] = "rts-age2-goods", ["rts-oil"] = "rts-age2-goods",
-                  ["rts-chemistry"] = "rts-age2-goods", ["rts-science"] = "rts-science"}
+                  ["rts-chemistry"] = "rts-age2-goods", ["rts-science"] = "rts-science", ["rts-units"] = "rts-units"}
 local list = {}
 for name, spec in pairs(E.recipes) do
   if SUBGROUP[spec.category] then list[#list + 1] = M.recipe(name, spec, SUBGROUP[spec.category]) end

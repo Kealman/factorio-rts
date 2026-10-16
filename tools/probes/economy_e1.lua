@@ -5,9 +5,16 @@
 -- Two seconds into a Nation-mode match both AI commanders are stopped and the probe drives rts-player by script.
 -- Log lines "[rts] economy e1 <check>: PASS|FAIL ...", then "[rts] economy e1 summary <passed>/<total>" and the stop
 -- marker RTS_ECONOMY_E1_DONE.
+--   efficiency  (static, prototypes) raw plates, stone, coal and crude per Age II good: the district chain needs at least
+--             balance.nation.economy.district_efficiency x less than the hand-built chain, for every Age II good
+--   softcap   army of 42 (36 walkers spawned by script, supply raised): an Age I kit becoming a unit takes the +20 %
+--             surcharge (2 iron, 1 copper for a walker kit) from the network; with no iron the kit waits ("surcharge"),
+--             with iron back it deploys. An Armoured car kit in Age I is held ("age").
 --   charter   Industrialisation researched by script, the Railway Charter started next to the capital, its goods put
 --             into the capital's network: the site takes them, counts down and the force enters Age II; the enemy
---             force stays in Age I (age, district recipe, Age II technology status)
+--             force stays in Age I (age, district recipe, Age II technology status); age2_military: the held car kit
+--             deploys an Armoured car without surcharge, and the force carries the Age II Mk2 line (unit damage +25 %,
+--             armor share 0.29), the enemy none
 --   switch    an auto factory with make targets gears 20 and explosives 30 makes gears first; once the gear stock
 --             reaches its target the factory switches to explosives within 5 s
 --   oil       city B (a hub 100 tiles away, or a second city when scripts/cities.lua is loaded) has an oil field with
@@ -23,9 +30,11 @@ local buildings = require("scripts.buildings")
 local production = require("scripts.production")
 local logistics = require("scripts.logistics")
 local research = require("scripts.research")
+local units = require("scripts.units")
 local match = require("scripts.match")
 local ages = require("scripts.ages")
 local districts = require("scripts.districts")
+local balance = require("balance")
 
 local F, ENEMY = util.PLAYER_FORCE, util.ENEMY_FORCE
 local NO_CIRCUIT_WINDOW = 60 * 60
@@ -91,7 +100,168 @@ end
 ---------------------------------------------------------------------------
 -- Steps
 ---------------------------------------------------------------------------
-local function start_charter(s)
+local start_charter -- below (the soft cap steps start it)
+
+---------------------------------------------------------------------------
+-- Static check: district efficiency (raw input per Age II good, hand-built chain vs district chain)
+---------------------------------------------------------------------------
+local RAW = {["iron-plate"] = true, ["copper-plate"] = true, stone = true, coal = true, ["rts-crude-oil"] = true,
+             ["iron-ore"] = true, ["copper-ore"] = true}
+local HAND = {["engine-unit"] = "rts-engine", ["rts-steel-beam"] = "rts-steel-beam",
+              ["advanced-circuit"] = "rts-advanced-circuit", ["plastic-bar"] = "rts-plastic", sulfur = "rts-sulfur",
+              concrete = "rts-concrete", ["rts-petroleum"] = "rts-oil-processing", ["iron-gear-wheel"] = "rts-gear",
+              ["copper-cable"] = "rts-cable", ["electronic-circuit"] = "rts-circuit", ["steel-plate"] = "steel-plate",
+              ["stone-brick"] = "stone-brick", ["rts-science-industrial"] = "rts-science-industrial", rail = "rts-rail"}
+local DISTRICT = {["engine-unit"] = "rts-den-engine", ["rts-steel-beam"] = "rts-dra-beam",
+                  ["advanced-circuit"] = "rts-del-advanced-circuit", ["plastic-bar"] = "rts-dpe-plastic",
+                  sulfur = "rts-dpe-sulfur", concrete = "rts-dco-concrete", ["electronic-circuit"] = "rts-dci-circuit",
+                  ["copper-cable"] = "rts-dci-cable", ["steel-plate"] = "rts-dst-steel", ["stone-brick"] = "rts-dsm-brick",
+                  ["rts-science-industrial"] = "rts-dsc-industrial", rail = "rts-dra-rail"}
+local GOODS = {"engine-unit", "rts-steel-beam", "advanced-circuit", "plastic-bar", "sulfur", "concrete",
+               "rts-science-industrial", "rail"}
+
+-- Raw units per item through the recipes of `path` (a district recipe where it has one, else the hand-built one).
+-- A by-product is free (the petrochemical works' sulfur).
+local function raw_cost(item, path, depth)
+  if RAW[item] then return 1 end
+  if (depth or 0) > 8 then return math.huge end
+  local r = prototypes.recipe[path[item] or HAND[item] or ""]
+  if not r then return nil end
+  local out = 0
+  for _, p in ipairs(r.products) do if p.name == item then out = out + (p.amount or 1) end end
+  local total = 0
+  for _, ing in ipairs(r.ingredients) do
+    local c = raw_cost(ing.name, path, (depth or 0) + 1)
+    if not c then return nil end
+    total = total + ing.amount * c
+  end
+  return total / out
+end
+
+local function check_efficiency()
+  local floor = balance.nation.economy.district_efficiency
+  local parts, ok = {}, true
+  for _, item in ipairs(GOODS) do
+    local hand, dist = raw_cost(item, {}), raw_cost(item, DISTRICT)
+    if hand and dist then
+      local ratio = hand / dist
+      if ratio < floor then ok = false end
+      parts[#parts + 1] = string.format("%s %.2f/%.2f=%.2fx", item, hand, dist, ratio)
+    else
+      parts[#parts + 1] = item .. " n/a"
+    end
+  end
+  local car = balance.units["rts-armoured-car"].cost
+  local function kit(path)
+    local t = 0
+    for item, n in pairs(car) do t = t + n * (raw_cost(item, path) or 0) end
+    return t
+  end
+  check("district_efficiency", ok, "raw per item hand/district (floor %.1fx): %s; Armoured car kit %.1f hand, %.1f "
+    .. "district", floor, table.concat(parts, ", "), kit({}), kit(DISTRICT))
+end
+
+---------------------------------------------------------------------------
+-- Army soft cap (Age I) and the Armoured car gate
+---------------------------------------------------------------------------
+local function cc_network()
+  local cc = buildings.main_cc(F)
+  return cc and cc.entity.logistic_network
+end
+
+local function setup_softcap(s)
+  local surface = match.surface()
+  local home = match.home(F)
+  storage.research.supply_bonus[F] = 200 -- room for the test army (supply.cap reads it)
+  for i = 1, 36 do
+    units.spawn("rts-walker", {x = home.x + 25 + (i % 6) * 3, y = home.y - 30 + math.floor(i / 6) * 3}, F, nil, surface)
+  end
+  -- barracks A makes walker kits, B Armoured car kits (set on the entity: the force has not unlocked it); both paused,
+  -- so only the kits put into their outputs deploy
+  local function barracks(want, recipe)
+    local pos = near_free(surface, "rts-barracks", want)
+    clear(surface, {{pos.x - 3, pos.y - 3}, {pos.x + 3, pos.y + 3}})
+    local b = place(surface, "rts-barracks", pos)
+    b.set_recipe(recipe)
+    b.disabled_by_script = true
+    return b
+  end
+  local a = barracks({x = home.x + 10.5, y = home.y + 12.5}, "rts-walker-kit")
+  local b = barracks({x = home.x + 18.5, y = home.y + 12.5}, "rts-armoured-car-kit")
+  s.bar_un, s.car_bar_un = a.unit_number, b.unit_number
+  s.army0 = production.army_size(F)
+  s.mult = production.army_multiplier(F)
+  s.step, s.t = "softcap_prime", game.tick
+  util.log("economy e1: soft cap: army %d, multiplier %.2f, barracks #%d (walker kits) #%d (car kits)", s.army0,
+    s.mult, s.bar_un, s.car_bar_un)
+end
+
+local function softcap_prime(s, tick)
+  if tick - s.t < 2 * 60 then return end -- the pull has filled their inputs by now
+  local net = cc_network()
+  s.iron0, s.copper0 = stock(net, "iron-plate"), stock(net, "copper-plate")
+  buildings.get(s.bar_un).entity.get_output_inventory().insert({name = "rts-walker-kit", count = 1})
+  s.step, s.t = "softcap_pay", tick
+end
+
+local function softcap_pay(s, tick)
+  local rec = buildings.get(s.bar_un)
+  local spawned = rec and rec.spawned or 0
+  if spawned < 1 and tick - s.t < 10 * 60 then return end
+  local net = cc_network()
+  local di, dc = s.iron0 - stock(net, "iron-plate"), s.copper0 - stock(net, "copper-plate")
+  check("softcap_surcharge", spawned == 1 and math.abs(s.mult - 1.2) < 1e-6 and di == 2 and dc == 1,
+    "army %d -> multiplier %.2f; the walker kit deployed (%d) and took %d iron, %d copper from the network", s.army0,
+    s.mult, spawned, di, dc)
+  -- now an empty network: the next kit waits
+  s.held_iron = net.remove_item({name = "iron-plate", count = 100000})
+  rec.entity.get_output_inventory().insert({name = "rts-walker-kit", count = 1})
+  buildings.get(s.car_bar_un).entity.get_output_inventory().insert({name = "rts-armoured-car-kit", count = 1})
+  s.step, s.t = "softcap_wait", tick
+end
+
+local function softcap_wait(s, tick)
+  if tick - s.t < 3 * 60 then return end
+  local rec = buildings.get(s.bar_un)
+  local b = rec and research.block_of(s.bar_un)
+  local held = rec and rec.entity.get_output_inventory().get_item_count("rts-walker-kit") or 0
+  check("softcap_wait", held == 1 and b ~= nil and b.reason == "surcharge" and (rec.spawned or 0) == 1,
+    "no iron in the network: kit held %d, block %s, spawned %d", held, b and b.reason or "none", rec and rec.spawned or -1)
+  cc_network().insert({name = "iron-plate", count = s.held_iron})
+  s.step, s.t = "softcap_resume", tick
+end
+
+local function softcap_resume(s, tick)
+  if tick - s.t < 3 * 60 then return end
+  local rec = buildings.get(s.bar_un)
+  local inv = rec.entity.get_output_inventory()
+  check("softcap_resume", (rec.spawned or 0) == 2 and inv.get_item_count("rts-walker-kit") == 0,
+    "iron back: the waiting walker kit deployed (spawned %d)", rec.spawned or 0)
+  local car = buildings.get(s.car_bar_un)
+  local cinv = car.entity.get_output_inventory()
+  local b = research.block_of(s.car_bar_un)
+  check("car_needs_age2", cinv.get_item_count("rts-armoured-car-kit") == 1 and b ~= nil and b.reason == "age",
+    "Age I: the Armoured car kit is held (%d in the output, block %s)", cinv.get_item_count("rts-armoured-car-kit"),
+    b and b.reason or "none")
+  start_charter(s)
+end
+
+local function check_age2_military(s)
+  local rec = buildings.get(s.car_bar_un)
+  local cars = 0
+  for _, u in pairs(storage.units) do
+    if u.force == F and u.kind == "car" and u.entity.valid then cars = cars + 1 end
+  end
+  local force, enemy = game.forces[F], game.forces[ENEMY]
+  local dmg, edmg = force.get_ammo_damage_modifier("rts-walker"), enemy.get_ammo_damage_modifier("rts-walker")
+  local armor, earmor = storage.research.armor[F] or 0, storage.research.armor[ENEMY] or 0
+  check("age2_military", cars == 1 and rec and rec.entity.get_output_inventory().get_item_count("rts-armoured-car-kit") == 0
+    and math.abs(dmg - 0.25) < 1e-6 and edmg == 0 and math.abs(armor - 0.2857) < 1e-3 and earmor == 0,
+    "Armoured cars %d (the held kit deployed), walker damage modifier %.2f (enemy %.2f), armor share %.3f (enemy %.3f)",
+    cars, dmg, edmg, armor, earmor)
+end
+
+function start_charter(s)
   local force = game.forces[F]
   force.technologies["rts-industrialisation"].researched = true
   check("charter_can_start", ages.can_start(F) == true, "can_start %s after Industrialisation; enemy %s",
@@ -119,7 +289,8 @@ local function check_charter(s)
     tostring(force.recipes["rts-advanced-circuit"].enabled), tostring(enemy.recipes["rts-advanced-circuit"].enabled))
   local st, est = research.status(F, "rts-supply-3"), research.status(ENEMY, "rts-supply-3")
   check("charter_age_tech", st ~= "age" and est == "age", "Supply III: %s, enemy %s", st, est)
-  s.step = "switch_setup"
+  storage.research.supply_bonus[F] = 200 -- the age-up re-applied research effects: room for the test army again
+  s.step, s.t = "age2_military", game.tick
 end
 
 local function setup_switch(s)
@@ -322,9 +493,23 @@ events.on_nth_tick(10, function(e)
     for un, rec in buildings.for_force(F, "factory") do production.set_recipe(un, nil) end
     util.log("economy e1: started at tick %d, mode %s", tick, tostring(m.config.mode))
     check("nation_mode", ages.is_nation(), "mode %s", tostring(m.config.mode))
-    start_charter(s)
+    check_efficiency()
+    setup_softcap(s)
+  elseif s.step == "softcap_prime" then
+    softcap_prime(s, tick)
+  elseif s.step == "softcap_pay" then
+    softcap_pay(s, tick)
+  elseif s.step == "softcap_wait" then
+    softcap_wait(s, tick)
+  elseif s.step == "softcap_resume" then
+    softcap_resume(s, tick)
   elseif s.step == "charter" then
     check_charter(s)
+  elseif s.step == "age2_military" then
+    if tick - s.t >= 3 * 60 then
+      check_age2_military(s)
+      s.step = "switch_setup"
+    end
   elseif s.step == "switch_setup" then
     setup_switch(s)
   elseif s.step == "switch" then

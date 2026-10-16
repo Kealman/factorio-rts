@@ -16,8 +16,10 @@
 -- it. The site is a 6x6 building (kind "project") in the capital; every PERIOD ticks it takes up to pull_per_second of
 -- each item it still needs from the logistic network it stands in (trains, haulers and robots fill that network).
 -- When everything is delivered a build_seconds countdown runs, then the force enters Age II: every recipe of
--- balance.nation.economy.recipes and .buildings is enabled for that force only, research.status lets the Age II
--- technologies through, an alert and a chat line go out, and the HUD badge (scripts/ledgergui.lua) changes. A site
+-- balance.nation.economy.recipes and .buildings is enabled for that force only (the Armoured car kit, the Bunker,
+-- districts, oil), research.status lets the Age II technologies and Armor I through, every unit of the force gets the
+-- Mk2 line (research.AGE2_BONUS: +25 % damage, +40 % effective health), an alert and a chat line go out, and the HUD
+-- badge (scripts/ledgergui.lua) changes. A site
 -- that is destroyed loses raze_loss of the delivered goods; starting it again resumes with the rest. Progress is drawn
 -- over the site (rendering) for every force.
 --
@@ -52,6 +54,16 @@ for _, t in ipairs(E.techs) do
   research.EFFECTS[t.name] = t.effect
   research.NATION_ONLY[t.name] = true
   if t.age and t.age > 1 then research.AGE_REQUIRED[t.name] = t.age end
+end
+-- Age II military (Nation mode; owner's constraint 2026-10-16): the Mk2 line for every unit comes with Age II
+-- (research.AGE2_BONUS), so Armor I (Mk2 walkers and heavies) waits for Age II too; Age II units need Age II.
+research.AGE2_BONUS = E.age2_bonus
+research.AGE_REQUIRED["rts-armor-1"] = 2
+for name, u in pairs(balance.units) do
+  if u.nation_only then
+    research.AGE_REQUIRED[name] = 2
+    if u.kit then research.AGE_REQUIRED[u.kit] = 2 end
+  end
 end
 
 -- Recipes a force gets at Age II (static: balance data).
@@ -145,6 +157,7 @@ function ages.set_age(force_name, age, why)
   if nations and nations[force_name] then nations[force_name].age = age end
   local force = game.forces[force_name]
   set_recipes(force, age)
+  if force then research.apply(force) end -- the Age II Mk2 line (unit damage, armor share)
   local secs = storage.match and storage.match.tick_started and (game.tick - storage.match.tick_started) / 60 or 0
   util.log("ages: %s age %d -> %d (%s) at %d:%02d match time, tick %d", force_name, old, age, why or "-",
     math.floor(secs / 60), math.floor(secs % 60), game.tick)

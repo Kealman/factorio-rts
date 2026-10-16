@@ -11,12 +11,19 @@
 --   laser     6 drones attack-move onto a powered rts-laser-turret: the laser must survive.
 --   siege     3 artillery attack-move onto an rts-turret 45 tiles away: the turret dies, the artillery takes no damage.
 --   block     2 walkers 2.5 tiles apart move 40 tiles (orders.move): both arrive within 10 s.
+--   age       Phase 5 E1 (Nation mode, docs/qa/phase5-economy-notes.md): an Age I walker army (sim-a, BUDGET) against an
+--             Age II army at `share` of that cost on force sim-age2, which carries the Age II Mk2 line
+--             (balance.nation.economy.age2_bonus: unit ammo damage modifier, research armor share). The Age II army
+--             must win (expect "B"); the metric is the Age II army's health left. Age II goods are priced at the
+--             hand-built line (WEIGHT), so an army made with districts is cheaper still.
+--   bunker    Phase 5 E1: 8 walkers attack-move onto an rts-bunker with 30 magazines: the bunker must survive.
 -- Log lines: "[rts] bsim result ..." per scenario and rep, "[rts] bsim summary ..." per scenario, "[rts] bsim done".
 local util = require("scripts.util")
 local events = require("scripts.events")
 local units = require("scripts.units")
 local orders = require("scripts.orders")
 local balance = require("balance")
+local research = require("scripts.research") -- Phase 5 E1: unit ammo categories, the armor share
 
 local sim = {}
 sim.SPEED = 8
@@ -29,8 +36,19 @@ sim.COLS = 6
 sim.TRACE = false
 sim.ONLY = nil -- Lua pattern: run only the scenarios whose id matches (run.sh sets it from SIM_ONLY)
 local FA, FB = "sim-a", "sim-b"
+local FC = "sim-age2" -- Phase 5 E1: the Age II side of the age scenarios
 local WEIGHT = {["iron-plate"] = 1, ["copper-plate"] = 1, ["steel-plate"] = 3, ["electronic-circuit"] = 4,
-                ["rts-explosives"] = 2}
+                ["rts-explosives"] = 2,
+                -- Phase 5 E1, Age II goods at the hand-built line's price: engine = steel + gear + 2 iron, steel beam =
+                -- 1.5 steel (prototypes/age2.lua recipes rts-engine, rts-steel-beam)
+                ["engine-unit"] = 7, ["rts-steel-beam"] = 4.5}
+-- Phase 5 E1: Age II armies {id, share of BUDGET, {{unit, share of the Age II budget}, ...}}
+sim.AGE_ARMIES = {
+  {"age2-cars-70", 0.7, {{"rts-armoured-car", 1}}},
+  {"age2-mix-70", 0.7, {{"rts-armoured-car", 0.6}, {"rts-walker", 0.4}}},
+  {"age2-cars-50", 0.5, {{"rts-armoured-car", 1}}},
+  {"age2-walkers-100", 1.0, {{"rts-walker", 1}}},
+}
 
 local function plog(fmt, ...) util.log("bsim " .. fmt, ...) end
 local function bs() return storage.debug and storage.debug.balancesim end
@@ -41,10 +59,10 @@ function sim.cost(name)
   return c
 end
 
--- tier-1 unit of each kind (barracks kits only)
+-- tier-1 unit of each kind (barracks kits only; the Nation-mode Age II units have their own scenarios)
 local KIND_UNIT = {}
 for name, u in pairs(balance.units) do
-  if u.tier == 1 and u.kit and not u.made_by then KIND_UNIT[u.kind] = name end
+  if u.tier == 1 and u.kit and not u.made_by and not u.nation_only then KIND_UNIT[u.kind] = name end
 end
 
 -- Army sizes with equal cost: na * ca ~ nb * cb near BUDGET.
@@ -79,6 +97,12 @@ local function scenarios()
   list[#list + 1] = {id = "laser-vs-6-drones", type = "laser"}
   list[#list + 1] = {id = "3-artillery-vs-turret", type = "siege"}
   list[#list + 1] = {id = "2-walkers-spread-2.5", type = "block"}
+  if balance.units["rts-armoured-car"] then -- Phase 5 E1
+    for _, a in ipairs(sim.AGE_ARMIES) do
+      list[#list + 1] = {id = a[1], type = "age", share = a[2], army = a[3], expect = "B"}
+    end
+    list[#list + 1] = {id = "bunker-vs-8-walkers", type = "bunker"}
+  end
   if sim.ONLY then
     local only = {}
     for _, sc in ipairs(list) do if sc.id:find(sim.ONLY) then only[#only + 1] = sc end end
@@ -162,6 +186,25 @@ local function setup_scenario(sc, i, rep)
     sc.T = build("rts-turret", cx + 25, cy, FB)
     sc.T.insert({name = "firearm-magazine", count = 20})
     sc.min_d = math.huge
+  elseif sc.type == "age" then
+    local na = math.floor(sim.BUDGET / sim.cost("rts-walker") + 0.5)
+    sc.na_walkers = na
+    sc.A = place("rts-walker", na, FA, cx - side * h, cy, -side, rng)
+    sc.B = {}
+    local vb = 0
+    local parts = #sc.army
+    for k, part in ipairs(sc.army) do
+      local n = math.max(1, math.floor(sim.BUDGET * sc.share * part[2] / sim.cost(part[1]) + 0.5))
+      vb = vb + n * sim.cost(part[1])
+      local y = cy + (k - (parts + 1) / 2) * 14
+      for _, e in ipairs(place(part[1], n, FC, cx + side * h, y, side, rng)) do sc.B[#sc.B + 1] = e end
+    end
+    sc.a, sc.b = "rts-walker", sc.id
+    sc.va, sc.vb = na * sim.cost("rts-walker"), vb
+  elseif sc.type == "bunker" then
+    sc.A = place("rts-walker", 8, FA, cx - h, cy, -1, rng)
+    sc.T = build("rts-bunker", cx + h, cy, FB)
+    sc.T.insert({name = "firearm-magazine", count = 30})
   elseif sc.type == "block" then
     sc.A = {}
     sc.A[1] = units.spawn("rts-walker", {x = cx - 20, y = cy}, FA, nil, S())
@@ -181,9 +224,11 @@ end
 local function start_scenario(sc)
   game.forces[FA].set_cease_fire(FB, false)
   game.forces[FB].set_cease_fire(FA, false)
+  game.forces[FA].set_cease_fire(FC, false)
+  game.forces[FC].set_cease_fire(FA, false)
   local h = sim.GAP / 2
   local target = sc.T and sc.T.valid and sc.T.position
-  if sc.type == "army" then
+  if sc.type == "army" or sc.type == "age" then
     -- the side issued first alternates with the rep as well
     local first, second = {sc.A, sc.cx + sc.side * h}, {sc.B, sc.cx - sc.side * h}
     if sc.side < 0 then first, second = second, first end
@@ -225,14 +270,14 @@ local function check_scenario(sc)
   local b_alive, b_hp = side_state(sc.B)
   sc.a_alive, sc.a_hp, sc.b_alive, sc.b_hp = a_alive, a_hp, b_alive, b_hp
   local timeout = t >= sim.TIMEOUT
-  if sc.type == "army" then
+  if sc.type == "army" or sc.type == "age" then
     if a_alive == 0 or b_alive == 0 or timeout then
       sc.winner = (a_alive > 0 and b_alive == 0) and "A" or (b_alive > 0 and a_alive == 0) and "B" or "none"
       if timeout and a_alive > 0 and b_alive > 0 then sc.winner = "timeout" end
       sc.time = t / 60
       return true
     end
-  elseif sc.type == "turret" or sc.type == "laser" or sc.type == "siege" then
+  elseif sc.type == "turret" or sc.type == "laser" or sc.type == "siege" or sc.type == "bunker" then
     if sc.type == "siege" and sc.T.valid then
       for _, e in pairs(sc.A) do
         if e.valid then sc.min_d = math.min(sc.min_d, util.distance(e, sc.T)) end
@@ -272,6 +317,10 @@ local function check_scenario(sc)
 end
 
 local function pass_of(sc)
+  if sc.type == "age" then
+    return sc.winner == "B", pct(sc.b_hp, sc.hpb0)
+  end
+  if sc.type == "bunker" then return sc.winner == "T", sc.T.valid and pct(sc.T.health, sc.T.max_health) or 0 end
   if sc.type == "army" then
     if sc.expect == "a" then
       -- army left = health left (units never heal, so damage is permanent loss); the unit count is logged too
@@ -292,7 +341,7 @@ end
 local function log_result(sc, rep)
   local ok, metric = pass_of(sc)
   sc.ok, sc.metric = ok, metric
-  if sc.type == "army" then
+  if sc.type == "army" or sc.type == "age" then
     plog("result %s rep=%d %s expect=%s winner=%s a=%s %d/%d (hp %.0f%%) b=%s %d/%d (hp %.0f%%) cost %d vs %d first hit %.1fs t=%.1fs %s",
       script.active_mods["space-age"] and "sa" or "base", rep, sc.id, sc.expect, sc.winner, sc.a, sc.a_alive, sc.na0,
       pct(sc.a_hp, sc.hpa0), sc.b, sc.b_alive, sc.nb0, pct(sc.b_hp, sc.hpb0), sc.va, sc.vb,
@@ -312,7 +361,7 @@ end
 
 local function cleanup()
   units.despawn_all()
-  for _, e in pairs(S().find_entities_filtered({force = {FA, FB}})) do
+  for _, e in pairs(S().find_entities_filtered({force = {FA, FB, FC}})) do
     if e.valid then e.destroy() end
   end
 end
@@ -321,7 +370,13 @@ events.on_init(function()
   storage.debug = storage.debug or {}
   storage.debug.autotest = false -- no match: the simulator owns the game
   storage.debug.balancesim = {round = 0, phase = "init", results = {}, owner = {}}
-  for _, f in ipairs({FA, FB}) do if not game.forces[f] then game.create_force(f) end end
+  for _, f in ipairs({FA, FB, FC}) do if not game.forces[f] then game.create_force(f) end end
+  -- Phase 5 E1: the Age II side carries the Age II Mk2 line (scripts/research.lua applies the same in a match)
+  local bonus = balance.nation and balance.nation.economy and balance.nation.economy.age2_bonus
+  if bonus then
+    for _, cat in ipairs(research.unit_ammo_categories()) do game.forces[FC].set_ammo_damage_modifier(cat, bonus.attack) end
+    storage.research.armor[FC] = bonus.armor
+  end
   local s = game.create_surface("bsim")
   s.generate_with_lab_tiles = true
   s.always_day = true
@@ -385,6 +440,10 @@ events.on_nth_tick(30, function(e)
     -- no shots before the start: units spawn in range of each other (artillery: 40 tiles)
     game.forces[FA].set_cease_fire(FB, true)
     game.forces[FB].set_cease_fire(FA, true)
+    game.forces[FA].set_cease_fire(FC, true)
+    game.forces[FC].set_cease_fire(FA, true)
+    game.forces[FB].set_cease_fire(FC, true)
+    game.forces[FC].set_cease_fire(FB, true)
     for i, sc in ipairs(d.list) do setup_scenario(sc, i, d.round) end
     d.phase = "settle"
     d.settle_tick = e.tick + 60

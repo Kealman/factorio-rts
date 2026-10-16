@@ -10,6 +10,8 @@
 --   3. The Railway Charter: started on a spot layout.find_spot reserves near the CC once Industrialisation is done,
 --      started again when razed.
 --   4. Age II: the districts of ai.districts, one every district_gap seconds, near the CC (districts run on Auto).
+--      While the next district's item is not made yet, C.nation.saving names it: the barracks make nothing (ai/mix.lua,
+--      unless a base threat is fresh) and the works factory has no targets, so the plates gather for it.
 -- State: C.nation = {works_key, works_un, districts = {plan keys}, district_at, targets = {[item] = n}, next}.
 local util = require("scripts.util")
 local buildings = require("scripts.buildings")
@@ -28,6 +30,9 @@ local age_up = {}
 age_up.PERIOD = 5 * 60
 age_up.FACTORY_GOODS = {["iron-gear-wheel"] = true, ["electronic-circuit"] = true}
 age_up.CHARTER_CAP = 50 -- at most this much of a Charter good is a make target at once
+age_up.DISTRICT_FIRST = {["engine-unit"] = true, ["rts-steel-beam"] = true} -- held back until the first district
+age_up.SAVE_MAX = 3 * 60 * 60  -- ticks the AI may save for one district item at a stretch ...
+age_up.SAVE_REST = 60 * 60     -- ... then this long without saving
 
 -- The builder factory makes the district items for the construction queue (orders_data.FACTORY_RECIPE).
 for _, name in ipairs(A.districts) do data.FACTORY_RECIPE[name] = name end
@@ -97,6 +102,27 @@ function age_up.step(C, surface)
   local secs = (game.tick - C.started) / 60
   local age = ages.of(C.force)
 
+  -- 0. saving for the next district: while its item is not made, the barracks (ai/mix.lua) and the works factory
+  --    pause, so its 80 plates, steel and circuits gather in the network (they never did between unit kits)
+  --    Safety valve: at most SAVE_MAX at a time, then SAVE_REST without (a stuck item must not stop the army for good)
+  N.saving = nil
+  for _, key in ipairs(N.districts) do
+    local e = C.plan[key]
+    if e and e.status ~= "built" and e.status ~= "bad" then
+      if construction.have(C, e.item) < 1 then
+        N.save_since = N.save_since or game.tick
+        if game.tick - N.save_since <= age_up.SAVE_MAX then
+          N.saving, N.saving_tick = e.item, game.tick
+        elseif game.tick - N.save_since > age_up.SAVE_MAX + age_up.SAVE_REST then
+          N.save_since = game.tick
+        end
+      else
+        N.save_since = nil
+      end
+      break
+    end
+  end
+
   -- 1. the works factory
   if not N.works_key and secs >= A.works_after then N.works_key = queue_building(C, surface, "rts-factory") end
 
@@ -105,6 +131,12 @@ function age_up.step(C, surface)
   if city then
     local want = {}
     for item, n in pairs(A.capital[age] or {}) do want[item] = n end
+    -- Age II: the first district before the car's engines and beams (their steel would starve the district item);
+    -- nothing while saving for a district item
+    if age >= 2 and #N.districts > 0 and not plan_entity(C, N.districts[1]) then
+      for item in pairs(age_up.DISTRICT_FIRST) do want[item] = nil end
+    end
+    if N.saving then want = {} end
     local p = ages.project(C.force)
     -- the Charter's goods once Industrialisation is under way (earlier, the stockpile took plates from the army)
     local force = game.forces[C.force]

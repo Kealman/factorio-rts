@@ -146,6 +146,31 @@ end
 for _, name in ipairs({"rts-depot", "rts-rail", "rts-locomotive-kit", "rts-cargo-wagon-kit", "rts-construction-wagon-kit"}) do
   P4.NATION_ONLY[name] = true end -- Phase 5 M1 (m1-rails): the depot item, the rail and kit recipes
 P4.crafter = function(kind) return kind == "factory" or kind == "district" end -- Phase 5 E1: districts are producers
+-- Phase 5 E1: recipes an age locks (research.AGE_LOCKS: Age II goods, buildings, the Armoured car kit) exist in Nation
+-- mode only, like P4.NATION_ONLY.
+P4.visible_recipe = function(name)
+  return P4.nation() or not (P4.NATION_ONLY[name] or research.AGE_LOCKS[name])
+end
+-- Phase 5 E1: the factory's recipe grid holds 28 buttons, Nation mode has more recipes: a tab row in the page header
+-- (Nation mode, factories only) shows one category at a time. Skirmish keeps the single grid.
+P4.FACTORY_TABS = {
+  {key = "buildings", sprite = "item/rts-factory", tooltip = "rts.factory-tab-buildings"},
+  {key = "logistics", sprite = "item/transport-belt", tooltip = "rts.factory-tab-logistics"},
+  {key = "intermediates", sprite = "item/iron-gear-wheel", tooltip = "rts.factory-tab-intermediates"},
+  {key = "science", sprite = "item/rts-science-basic", tooltip = "rts.factory-tab-science"},
+  {key = "age2", sprite = "item/rts-science-industrial", tooltip = "rts.factory-tab-age2"},
+}
+P4.LOGISTICS_PRODUCTS = {["transport-belt"] = true, ["fast-inserter"] = true, ["medium-electric-pole"] = true,
+  ["firearm-magazine"] = true, ["rts-hauler-kit"] = true, rail = true, ["rts-locomotive-kit"] = true,
+  ["rts-cargo-wagon-kit"] = true, ["rts-construction-wagon-kit"] = true}
+P4.recipe_tab = function(r)
+  if r.category == "rts-science" then return "science" end
+  if r.category == "rts-intermediates" or r.category == "rts-age2" then return "intermediates" end
+  local product = r.products and r.products[1]
+  if product and P4.LOGISTICS_PRODUCTS[product.name] then return "logistics" end
+  if r.subgroup and r.subgroup.name == "rts-districts" then return "age2" end
+  return "buildings"
+end
 -- Recipe grid of a barracks / factory: Pause first, then the recipes (group, subgroup, recipe order), at most
 -- RECIPE_COLUMNS per row, so a new recipe never moves Pause and only shifts the recipes after it.
 local RECIPE_COLUMNS = 6
@@ -245,7 +270,8 @@ local BUILD_TABS = {
   {key = "age2", sprite = "item/rts-science-industrial", tooltip = "rts.build-tab-age2-tooltip", nation = true,
    items = {"rts-pumpjack", "rts-refinery", "rts-chemical-plant", "rts-district-smelting", "rts-district-steel",
             "rts-district-circuits", "rts-district-electronics", "rts-district-petrochem", "rts-district-engines",
-            "rts-district-munitions", "rts-district-rails", "rts-district-construction", "rts-district-science"}},
+            "rts-district-munitions", "rts-district-rails", "rts-district-construction", "rts-district-science",
+            "rts-bunker"}},
 }
 local BUILD_TAB_BY_KEY = {}
 for _, tab in ipairs(BUILD_TABS) do BUILD_TAB_BY_KEY[tab.key] = tab end
@@ -729,6 +755,11 @@ local function build_building_page(panel, h)
 
   local header = page.add({type = "flow", direction = "horizontal", style = "rts_hud_row"})
   el.b_name = header.add({type = "label", style = "rts_hud_heading_label"})
+  -- Phase 5 E1: the factory's category tabs (Nation mode)
+  el.b_tabs = header.add({type = "flow", direction = "horizontal"})
+  el.b_tabs.style.horizontal_spacing = 2
+  el.b_tabs.style.left_margin = 8
+  el.b_tabs.visible = false
   add_filler(header)
   el.b_hp = header.add({type = "label", style = "rts_hud_mono_label", tooltip = {"rts.health"}})
   -- Demolish: two presses (first arms, second within 3 s executes); scripts/demolish.lua
@@ -1222,9 +1253,29 @@ local function rebuild_recipe_buttons(player, h, un, rec)
       style = "rts_hud_recipe_button", sprite = "utility/refresh", tooltip = {"rts.recipe-auto-tooltip"},
       tags = {rts_hud = "recipe", recipe = P4.AUTO}})
   end
+  -- Phase 5 E1: a factory in Nation mode shows one category tab at a time
+  local tabs = rec.kind == "factory" and P4.nation() and el.b_tabs ~= nil and el.b_tabs.valid
+  local tab = tabs and (prefs(player.index).factory_tab or "buildings") or nil
+  local tab_flow = el.b_tabs
+  if tab_flow and tab_flow.valid then
+    tab_flow.clear()
+    tab_flow.visible = tabs
+    if tabs then
+      for _, t in ipairs(P4.FACTORY_TABS) do
+        local b = tab_flow.add({type = "sprite-button", name = PREFIX .. "factory_tab_" .. t.key,
+          style = "rts_hud_tab_button", sprite = t.sprite, tooltip = {t.tooltip},
+          tags = {rts_hud = "factory_tab", tab = t.key}})
+        b.style.width = P4.AGE2_TAB_WIDTH
+        b.style.height = P4.DEMOLISH_HEIGHT
+        b.style.padding = 0
+        b.toggled = t.key == tab
+      end
+    end
+  end
   local names = {}
   for _, r in ipairs(machine_recipes(rec.entity)) do
-    if not P4.NATION_ONLY[r.name] or P4.nation() then -- Phase 5 M1: Nation-only recipes
+    -- Phase 5 M1/E1: Nation-only and age-locked recipes in Nation mode only; one category per factory tab
+    if P4.visible_recipe(r.name) and (not tab or P4.recipe_tab(r) == tab) then
       h.recipe_buttons[r.name] = grid.add({type = "sprite-button", name = PREFIX .. "recipe_" .. r.name,
         style = "rts_hud_recipe_button", sprite = "recipe/" .. r.name, tooltip = recipe_tooltip(r),
         tags = {rts_hud = "recipe", recipe = r.name}})
@@ -1234,8 +1285,8 @@ local function rebuild_recipe_buttons(player, h, un, rec)
   end
   -- QA log line: the button order, left to right and row by row ("hud: recipe buttons barracks#N player=N:
   -- pause rts-walker-kit rts-walker-heavy-kit (6 per row)")
-  util.log("hud: recipe buttons %s#%d player=%d: pause %s (%d per row)", rec.kind, un, player.index,
-    table.concat(names, " "), columns)
+  util.log("hud: recipe buttons %s#%d player=%d: pause %s (%d per row)%s", rec.kind, un, player.index,
+    table.concat(names, " "), columns, tab and (", tab " .. tab) or "")
 end
 
 --- Grey out the recipe buttons the force cannot use yet and mark the active one. Called on every panel refresh,
@@ -1300,6 +1351,12 @@ local function block_text(un)
   elseif b.reason == "supply" then
     return {"rts.barracks-blocked-supply", b.used or 0, b.cap or 0, unit},
            {"rts.barracks-blocked-supply-tooltip", unit, supply.cost(b.unit or ""), b.used or 0, b.cap or 0}
+  elseif b.reason == "surcharge" then -- Phase 5 E1: the army soft cap (production.lua)
+    local pct = math.floor(((b.mult or 1) - 1) * 100 + 0.5)
+    return {"rts.barracks-blocked-surcharge", pct, "[item=" .. tostring(b.item) .. "]", unit},
+           {"rts.barracks-blocked-surcharge-tooltip", unit, pct}
+  elseif b.reason == "age" then -- Phase 5 E1: an Age II unit before Age II
+    return {"rts.barracks-blocked-age", unit}, {"rts.barracks-blocked-age-tooltip", unit}
   end
   return {"rts.barracks-blocked-other", tostring(b.reason)}, ""
 end
@@ -2099,6 +2156,10 @@ local function on_click(e)
     if toggle then toggle(player) end
   elseif action == "build_tab" then
     hud.set_build_tab(player, element.tags.tab)
+  elseif action == "factory_tab" then -- Phase 5 E1: the factory page's category tabs
+    prefs(player.index).factory_tab = element.tags.tab
+    h.bld_un = nil -- rebuild the recipe grid on the refresh below
+    util.log("hud factory tab %s player=%d", tostring(element.tags.tab), player.index)
   elseif action == "card" then
     hud.card_click(player, element.tags.unit, e.shift)
   elseif action == "research" then

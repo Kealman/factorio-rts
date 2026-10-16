@@ -32,10 +32,16 @@
 --     pass. See auto_choose for the rules.
 --   * production.on_flow(rec, item, count, "made" | "used") is called for items a producer hands to the network and
 --     ingredients it takes from it (the city ledger, scripts/districts.lua).
+--   * Army soft cap (Nation mode, balance.nation.economy.army_softcap): when an Age I kit becomes a unit, the barracks
+--     pays a surcharge from its logistic network: (multiplier - 1) of every kit ingredient, rounded up, where the
+--     multiplier is 1 + raise per `step` army units beyond `free` (production.army_multiplier). A kit waits in the
+--     output while the network cannot pay (rec.surcharge_block = {reason = "surcharge", mult, item, ...}; the HUD shows
+--     it through research.block_of).
 local util = require("scripts.util")
 local events = require("scripts.events")
 local units = require("scripts.units")
 local buildings = require("scripts.buildings")
+local balance = require("balance")
 
 local production = {}
 
@@ -71,6 +77,8 @@ production.KITS = {
   ["rts-artillery-kit"] = {unit = "rts-artillery", kind = "artillery"},
   ["rts-walker-mk2-kit"] = {unit = "rts-walker-mk2", kind = "walker"},
   ["rts-heavy-mk2-kit"] = {unit = "rts-heavy-mk2", kind = "heavy"},
+  -- Phase 5 E1: Age II (Nation mode; the kit recipe unlocks at Age II)
+  ["rts-armoured-car-kit"] = {unit = "rts-armoured-car", kind = "car"},
 }
 
 -- Phase 4: fn(barracks_record, kit_name, KITS entry) -> {unit, kind} to spawn, or nil to keep the kit in the output.
@@ -283,6 +291,78 @@ local function pull(rec, reserved)
 end
 
 ---------------------------------------------------------------------------
+-- Phase 5 E1: army soft cap (see the header)
+---------------------------------------------------------------------------
+local SOFTCAP = balance.nation and balance.nation.economy and balance.nation.economy.army_softcap
+local NO_ARMY = {hauler = true, commander = true}
+
+--- Army units of a force (haulers and the Commander excluded).
+function production.army_size(force_name)
+  local n = 0
+  for _, urec in units.for_force(force_name) do
+    if not NO_ARMY[urec.kind] then n = n + 1 end
+  end
+  return n
+end
+
+--- Cost multiplier of an Age I kit for a force (1 outside Nation mode or under the free army size).
+function production.army_multiplier(force_name, size)
+  if not (SOFTCAP and production.auto_active and production.auto_active()) then return 1 end
+  size = size or production.army_size(force_name)
+  local over = math.max(0, size - SOFTCAP.free)
+  return 1 + SOFTCAP.raise * math.floor(over / SOFTCAP.step)
+end
+
+local function age1_kit(def)
+  local u = balance.units[def.unit]
+  return not (u and u.nation_only)
+end
+
+-- Take the surcharge of one kit from the barracks' network. Returns true when paid (or none is due), the items taken
+-- (to give back if the unit cannot be placed), or false when the network cannot pay.
+local function pay_surcharge(rec, kit, def)
+  if not age1_kit(def) then return true end
+  local mult = production.army_multiplier(rec.force)
+  if mult <= 1 then return true end
+  local r = prototypes.recipe[kit]
+  if not r then return true end
+  local network = production.network_for(rec.entity)
+  if not network then -- outside every logistic network the surcharge cannot be paid
+    if not rec.surcharge_block then
+      util.log("production: barracks #%d (%s) holds %s: army surcharge x%.1f, no logistic network",
+        rec.entity.unit_number, rec.force, kit, mult)
+    end
+    rec.surcharge_block = {reason = "surcharge", unit = def.unit, kit = kit, mult = mult, item = "iron-plate",
+                           tick = game.tick}
+    return false
+  end
+  local due = {}
+  for _, ing in ipairs(r.ingredients) do
+    local n = math.ceil(ing.amount * (mult - 1) - 1e-9)
+    if n > 0 then
+      if network.get_item_count(ing.name) < n then
+        if not rec.surcharge_block then
+          util.log("production: barracks #%d (%s) holds %s: army surcharge x%.1f, network short of %d %s",
+            rec.entity.unit_number, rec.force, kit, mult, n, ing.name)
+        end
+        rec.surcharge_block = {reason = "surcharge", unit = def.unit, kit = kit, mult = mult, item = ing.name,
+                               tick = game.tick}
+        return false
+      end
+      due[#due + 1] = {name = ing.name, count = n}
+    end
+  end
+  for _, d in ipairs(due) do
+    network.remove_item(d)
+    if production.on_flow then production.on_flow(rec, d.name, d.count, "used") end
+  end
+  rec.surcharge_block = nil
+  local st = production.stats(rec.force)
+  st.surcharge = (st.surcharge or 0) + 1
+  return true, due
+end
+
+---------------------------------------------------------------------------
 -- Barracks: kits -> units
 ---------------------------------------------------------------------------
 function production.schedule_check(rec, tick)
@@ -357,7 +437,15 @@ local function check_barracks(rec)
         -- Phase 4 gate (research.lua): unit locked by research, mk2 swap after Armor I, supply cap; nil = keep the kit
         local spawn = def
         if production.kit_gate then spawn = production.kit_gate(rec, kit, def) end
-        if not (spawn and spawn_from_kit(rec, kit, spawn)) then break end -- no room / gated: the kit waits
+        -- Phase 5 E1: the army soft cap's surcharge, paid before the unit appears (given back if it cannot)
+        local paid, due = true, nil
+        if spawn then paid, due = pay_surcharge(rec, kit, def) end
+        if not paid then break end
+        if not (spawn and spawn_from_kit(rec, kit, spawn)) then
+          local network = due and production.network_for(e)
+          for _, d in ipairs(due or {}) do if network then network.insert(d) end end
+          break -- no room / gated: the kit waits
+        end
         out.remove({name = kit, count = 1})
       end
     end
