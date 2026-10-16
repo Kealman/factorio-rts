@@ -52,7 +52,7 @@ Every side starts with a Command Center (CC), the same stock and 6 walkers. Huma
 | Q or right click | Stop placing |
 | T | Research panel |
 | L, or a click on the age badge | Nation: city ledger (age, national project, goods, make targets) |
-| Delete or Backspace, or the **Demolish** button | Demolish the selected own building: the first press arms (the button turns red), a second press within 3 s demolishes it. 50 % of its cost goes back to the nearest other stockpile of its logistic network (with none there, to your Command Center's network; the contents spill on the ground). A hub, depot or City Center takes its stockpiles with it. The Command Center, the capital and trains cannot be demolished ("Locomotive cannot be demolished.") |
+| Delete or Backspace, or the **Demolish** button | Demolish the selected own building: the first press arms (the button turns red), a second press within 3 s demolishes it. 50 % of its cost goes back to the nearest other stockpile of its logistic network, else to another own stockpile within 64 tiles, else to your Command Center's network; a refund with no room anywhere spills on the ground with an alert. The building's contents go to another stockpile of its network or spill on the ground. A hub, depot or City Center takes its stockpiles with it. The Command Center, the capital and trains cannot be demolished ("Locomotive cannot be demolished.") |
 | F3 | Jump to the newest alert (press again for older ones) |
 | F10 | Match menu: resume, restart, concede (click twice); after the match, the results again |
 | F11 | How to play |
@@ -230,11 +230,11 @@ A refused ghost disappears with a flying text such as "Enemy land: nothing can b
 
 ### The city panel, make targets and the ledger
 
-**The city panel** opens left of the stockpile panel when you select your CC or a City Center, or with the magnifier in the city list. It shows the name (a field to rename it), tier and land radius, your nation's age, the city's land cells and their share of your nation, its supply, what the next tier needs, the logistic networks on its land, the city's make targets, and a **Demolish** button (greyed for the capital). Demolishing a City Center (two presses, like any building) ends the city: its land goes, and half of the charter's cost returns to another stockpile of its network (a depot's, for example), else to your Command Center's network.
+**The city panel** opens left of the stockpile panel when you select your CC or a City Center, or with the magnifier in the city list. It shows the name (a field to rename it), tier and land radius, your nation's age, the city's land cells and their share of your nation, its supply, what the next tier needs, the logistic networks on its land, the city's make targets, and a **Demolish** button (greyed for the capital). Demolishing a City Center (two presses, like any building) ends the city: its land goes, and half of the charter's cost returns to another stockpile of its network (a depot's, for example), else to another own stockpile within 64 tiles, else to your Command Center's network.
 
 **Make targets** tell a city how many of a good to keep in stock. Add one with the item button under "Make targets" and type a number (empty clears it). In Nation mode a new factory or district starts on **Auto**: every second it switches to the good with the largest shortfall among its city's targets that its inputs allow, and stops when every target is met. Choosing a recipe or Pause in the building page fixes it; the **Auto** button (the circular arrows next to Pause) switches it back.
 
-**The city ledger** (L, or a click on the age badge) shows one city at a time: a city drop-down, the age and the national project with its progress, then one row per good with its stock, made and used per minute, the make target (editable), the shortfall and a hint for a short good whose input is missing, such as "needs [plastic]: made in <city> (ship it here)" or "needs [crude oil]: made nowhere". Under the table you can add a target for any good. The footer counts the city's factories and districts on Auto and on a fixed recipe.
+**The city ledger** (L, or a click on the age badge) shows one city at a time: a city drop-down, the age and the national project with its progress, then one row per good with its stock, made and used per minute, the make target (editable), the shortfall and a hint for a short good whose input is missing (one the city neither holds, makes, could make from its stock, nor has a target or a producer for), such as "needs [plastic]: made in <city> (ship it here)" or "needs [crude oil]: made nowhere". Under the table you can add a target for any good. The footer counts the city's factories and districts on Auto and on a fixed recipe.
 
 ### Haulers in Nation mode
 
@@ -276,7 +276,7 @@ Today's game is **Age I**. *Industrialisation* (tier-2 research, 20 advanced kit
 - **Research** with industrial kits: Supply III (+15), Mining III (+25 %), Hauler capacity II (+10 slots), Attack IV (+15 %).
 - **Districts** (below) and the build menu's **Age II** tab (the icon tab after Defence).
 
-**The army soft cap** (Nation mode): every 10 army units beyond 20 make Age I unit kits 10 % dearer. When a kit becomes a unit, the barracks takes that share of each kit ingredient (rounded up) from its network; while the network cannot pay, the kit waits and the barracks page shows "Army surcharge +N %: waiting for [item]". Haulers and the Commander do not count, and Age II kits pay nothing. The economy, not walker spam, is the road to a winning army.
+**The army soft cap** (Nation mode): every 10 army units beyond 20 make Age I unit kits 10 % dearer. When a kit becomes a unit, the barracks takes that share of each kit ingredient (rounded up) from its network; while the network cannot pay, the kit waits and the barracks page shows "Army surcharge +N %: waiting for [item]". From the 21st army unit the barracks page shows the current surcharge, +0 % until the first step at 30 units. Haulers and the Commander do not count, and Age II kits pay nothing. The economy, not walker spam, is the road to a winning army.
 
 ### Districts
 

@@ -302,6 +302,7 @@ end
 ---------------------------------------------------------------------------
 buildings.REFUND_RATIO = 0.5  -- share of the item cost that comes back
 buildings.SINK_RANGE = 40     -- tiles: where a building without a logistic network looks for a stockpile
+buildings.REFUND_RANGE = 64   -- tiles: other own stockpiles a refund may go to when its network has none (M1)
 -- Inventories whose items are recovered when their building goes (stockpile chest, turret ammo, furnace and
 -- assembler slots, fuel, lab inputs); roboport robots go down with the building.
 buildings.CONTENT_INVENTORIES = {"chest", "turret_ammo", "fuel", "furnace_source", "furnace_result",
@@ -494,8 +495,21 @@ function buildings.demolish(entity, opts)
   for item, n in pairs(refund) do stacks[#stacks + 1] = {name = item, count = n} end
   local refunded = {}
   local lost = insert_into(sinks, stacks)
-  -- Phase 5 M1 integration: a lone hub or City Center (no other stockpile in its network) refunds into the force's
-  -- pool, the Command Center's network, instead of dropping the refund
+  -- Phase 5 M1 integration: a lone hub or City Center (no other stockpile in its network) refunds into the nearest
+  -- other own stockpile within REFUND_RANGE tiles, else into the force's pool (the Command Center's network); what
+  -- still has no room spills on the ground and the player gets an alert (demolish.lua), never a silent loss
+  if #lost > 0 and opts.refund ~= false then
+    local near = {}
+    for sun, r in pairs(storage.buildings) do
+      if r.kind == "stockpile" and r.force == force_name and r.surface == rec.surface and not exclude[sun]
+         and r.entity.valid then
+        local d = util.distance(r.entity.position, pos)
+        if d <= buildings.REFUND_RANGE then near[#near + 1] = {entity = r.entity, d = d, un = sun} end
+      end
+    end
+    table.sort(near, function(a, b) if a.d ~= b.d then return a.d < b.d end return a.un < b.un end)
+    lost = insert_into(near, lost)
+  end
   if #lost > 0 and opts.refund ~= false then
     local cc = buildings.main_cc(force_name)
     local pool = cc and cc.entity.valid and cc.entity.logistic_network
@@ -508,6 +522,7 @@ function buildings.demolish(entity, opts)
       lost = rest
     end
   end
+  local refund_spilled = #lost > 0 and spill(surface, pos, lost) or 0 -- on the ground, with an alert (demolish.lua)
   local lost_by = {}
   for _, st in ipairs(lost) do lost_by[st.name] = st.count end
   for item, n in pairs(refund) do refunded[item] = n - (lost_by[item] or 0) end
@@ -525,9 +540,11 @@ function buildings.demolish(entity, opts)
   table.sort(shown)
   util.log("buildings: demolished %s #%d (%s) of %s at %s: refund [%s]%s, contents %d (%d spilled), %d parts", name, un,
     rec.kind, force_name, util.pos_str(pos), table.concat(shown, ", "),
-    lost_n > 0 and string.format(" (%d dropped, no room)", lost_n) or "", total, spilled, parts)
+    lost_n > 0 and string.format(" (%d spilled on the ground, no stockpile with room)", lost_n) or "", total, spilled,
+    parts)
   return true, {name = name, kind = rec.kind, position = {x = pos.x, y = pos.y}, refund = refunded,
-                moved = total - spilled, spilled = spilled, parts = parts, unit_number = un}
+                moved = total - spilled, spilled = spilled, parts = parts, unit_number = un,
+                refund_spilled = refund_spilled}
 end
 
 ---------------------------------------------------------------------------

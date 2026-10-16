@@ -87,6 +87,19 @@ local function execute(player_index, list)
       supply.alert(force, "demolished", "rts.alert-demolished-many", {#infos}, first.position)
     end
   end
+  -- Phase 5 M1 integration: a refund that found no stockpile with room spilled on the ground: never silently
+  local refund_spilled, at = 0, nil
+  for _, info in ipairs(infos) do
+    if (info.refund_spilled or 0) > 0 then
+      refund_spilled = refund_spilled + info.refund_spilled
+      at = at or info.position
+    end
+  end
+  if refund_spilled > 0 then
+    supply.alert(force, "demolished", "rts.alert-demolish-refund-spilled", {refund_spilled}, at)
+    say(player_index, {"rts.alert-demolish-refund-spilled", refund_spilled})
+    util.log("demolish: refund spilled player=%d items=%d", player_index, refund_spilled)
+  end
   return #infos, infos
 end
 

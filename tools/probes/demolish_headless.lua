@@ -7,6 +7,7 @@
 --     to another stockpile, refund 16/2 -> 16 iron 5 copper.
 --  3. a loaded stockpile in the network: contents moved, refund 10 iron 2 copper; one far from every stockpile:
 --     contents spilled as items on the ground; two walls in one batch: 1 stone brick refunded (5 walls cost 5).
+--     A lone hub refunds into a stockpile 40 tiles away; with no sink and no pool the refund spills with an alert.
 --  4. the Command Center is refused ("blocked", still standing); a ghost is cancelled; an armed request expires
 --     after CONFIRM_TICKS; hub teardown leaves no other-force damage. Log lines "[rts] demolish probe ...".
 local events = require("scripts.events")
@@ -124,6 +125,39 @@ local function run()
       ground)
   else
     check("far stockpile spill", false, "no spot")
+  end
+
+  -- 3b. Phase 5 M1: a lone hub refunds into another own stockpile within REFUND_RANGE; with no sink and no pool the
+  -- refund spills and the player gets the "refund spilled" alert
+  local lpos = spot(surface, "rts-hub", {x = home.x + 90, y = home.y + 90})
+  local lone = lpos and surface.create_entity({name = "rts-hub", position = lpos, force = F, raise_built = true})
+  local rpos = lone and spot(surface, "rts-stockpile", {x = lone.position.x - 40, y = lone.position.y})
+  local recv = rpos and surface.create_entity({name = "rts-stockpile", position = rpos, force = F, raise_built = true})
+  if lone and recv then
+    local d = util.distance(lone.position, recv.position)
+    r1, r2 = demolish_selected(lone.unit_number)
+    local gi, gc = recv.get_item_count("iron-plate"), recv.get_item_count("copper-plate")
+    check("lone hub refund nearby", r2 == "done" and not lone.valid and gi == 16 and gc == 5,
+      "%s %s, receiver %.0f tiles away got iron %d copper %d (want 16, 5)", r1, r2, d, gi, gc)
+    local alerts0 = #(storage.alerts or {})
+    local rp = recv.position
+    selection.select_building(0, recv.unit_number)
+    local s1 = demolish.request(0)
+    local main_cc = buildings.main_cc
+    buildings.main_cc = function() return nil end -- no pool: nowhere for the refund to go
+    local ok, s2 = pcall(demolish.request, 0)
+    buildings.main_cc = main_cc
+    local alert
+    for i = alerts0 + 1, #(storage.alerts or {}) do
+      local a = storage.alerts[i]
+      if a.text == "rts.alert-demolish-refund-spilled" then alert = a end
+    end
+    local ground = surface.count_entities_filtered({name = "item-on-ground", position = rp, radius = 8})
+    check("refund spill alert", ok and s1 == "armed" and s2 == "done" and alert ~= nil and alert.params[1] == 12
+          and ground > 0, "%s %s, alert %s, %d item(s) on the ground", tostring(s1), tostring(s2),
+      alert and tostring(alert.params[1]) or "none", ground)
+  else
+    check("lone hub refund nearby", false, "no spot (hub %s, receiver %s)", tostring(lone), tostring(recv))
   end
 
   local w1 = surface.create_entity({name = "rts-wall", position = spot(surface, "rts-wall", {x = home.x + 20, y = home.y - 14}), force = F, raise_built = true})

@@ -351,21 +351,41 @@ local function can_make(force, stock, name, depth)
   return false
 end
 
+-- Phase 5 M1 integration: {[item] = true} made by the current recipes of the city's factories and districts.
+local function city_products(city_id, force_name)
+  local out = {}
+  for _, rec in buildings.for_force(force_name) do
+    if (rec.kind == "factory" or rec.kind == "district") and rec.entity.valid then
+      local r = rec.entity.get_recipe()
+      if r and districts.city_of(rec.entity, force_name) == city_id then
+        for _, p in ipairs(r.products) do out[p.name] = true end
+      end
+    end
+  end
+  return out
+end
+
 --- Why a city cannot make enough of `item`: the first ingredient of its recipes that the city neither holds nor
---- makes nor could make from its stock, and the other city of the force that made or holds it (nil = nowhere). nil
---- when nothing is missing.
+--- makes nor could make from its stock, nor has a make target or a producer's recipe for, and the other city of the
+--- force that made or holds it (nil = nowhere). nil when nothing is missing.
 function districts.hint(city_id, item, stock, flows)
   stock = stock or districts.stock(city_id)
   flows = flows or districts.flows(city_id)
   local force_name = districts.city_force(city_id)
   local force = force_name and game.forces[force_name]
   if not force then return nil end
+  local targets, products = districts.make_targets(city_id), nil
+  local function planned(name) -- the city already plans to make it: a make target or a producer set to it
+    if (targets[name] or 0) > 0 then return true end
+    products = products or city_products(city_id, force_name)
+    return products[name] == true
+  end
   for _, r in ipairs(makers(item)) do
     local fr = force.recipes[r.name]
     if fr and fr.enabled then
       for _, ing in ipairs(r.ingredients) do
         if ing.type == "item" and (stock[ing.name] or 0) < ing.amount and (flows.made[ing.name] or 0) == 0
-           and not can_make(force, stock, ing.name, 0) then
+           and not can_make(force, stock, ing.name, 0) and not planned(ing.name) then
           for _, c in ipairs(districts.cities(force_name)) do
             if c.id ~= city_id then
               local other = districts.flows(c.id)

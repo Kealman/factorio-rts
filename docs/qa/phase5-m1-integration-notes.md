@@ -92,9 +92,9 @@ reaches Age II late (24:53); it is the same seed that stalled at 72 % Charter in
 | # | Finding | Fix |
 |---|---|---|
 | 1 | Factory tab icons stayed on City Center, depot and locomotive pages | already fixed (B1 above) |
-| 2 | A lone hub or City Center lost its demolish refund (its own stockpiles go with it) | the refund goes to the force's Command Center network when no other stockpile of the building's network takes it (`buildings.demolish`); only what does not fit there is dropped |
+| 2 | A lone hub or City Center lost its demolish refund (its own stockpiles go with it) | the refund goes to the force's Command Center network when no other stockpile of the building's network takes it (`buildings.demolish`); extended in B3 |
 | 3 | The CC's building-page Demolish was clickable and then refused | greyed with the "cannot be demolished" tooltip, like the city panel's; the hub panel greys it for a capital City Center too |
-| 4 | The army surcharge showed only while a kit waited | the barracks line reads "Units from here: N · all barracks: M · army surcharge +P %" in yellow while the multiplier is above 1, with the rule in its tooltip |
+| 4 | The army surcharge showed only while a kit waited | the barracks line reads "Units from here: N · all barracks: M · army surcharge +P %" in yellow while the multiplier is above 1, with the rule in its tooltip; from 21 units in B3 |
 | 5 | The ledger hint named an ingredient the city could make itself ("needs [copper cable]: made nowhere") | `districts.hint` skips an ingredient an enabled recipe of the force could make from the city's stock (one level down) |
 | 6 | The Bunker counted as an economic building (own land only) | `territory.CLASS_BY_NAME["rts-bunker"] = "outpost"`, like turret, fort and laser turret |
 | 7 | The build menu changed height with the tab, so the tab row moved | the menu takes the rows of the largest tab of the mode: two rows for every tab in Nation mode (tabs always at y≈712), one in Skirmish (unchanged) |
@@ -104,6 +104,33 @@ reaches Age II late (24:53); it is the same seed that stalled at 72 % Charter in
 Item 9 (fixed factory recipes repeat) stays as documented in the protocol. Checks after these fixes: smoke 65/65,
 demolish probe 0 failures, economy fixture 18/18, rails autotest 12/12, a 30-minute Nation run 39/39, the GUI probe
 again (0 errors; the protocol's build-menu coordinates follow the fixed tab row).
+
+### B3. The lead's follow-up on the same findings
+
+| # | Item | Change |
+|---|---|---|
+| 1 | Bunker class | already in `territory.CLASS_BY_NAME` (B2, finding 6); no change |
+| 2 | Surcharge visible past 20 army units | `production.army_past_free` tells the HUD when the army is past the free share. From the 21st army unit the barracks line reads "... army surcharge +P %" in yellow, at +0 % until the first step at 30 units, the paid state included (`hud.lua`) |
+| 3 | Refund of a lone hub or City Center | `buildings.demolish` tries, in order: the stockpiles of the building's network; any other own stockpile within 64 tiles (`buildings.REFUND_RANGE`), nearest first; the Command Center's network. What still has no room spills on the ground, and `demolish.lua` raises the alert "Demolish refund: N items found no stockpile with room and lie on the ground" with a chat line. The demolish probe checks both paths (a lone hub refunding to a stockpile 40 tiles away, and a spill with no sink and no pool) |
+| 4 | Capital Demolish on the building page | already greyed with the "cannot be demolished" tooltip (B2, finding 3); no change |
+| 5 | Ledger hint | `districts.hint` also skips an ingredient the city has a make target for, or that one of its factories or districts has as its current recipe |
+| 6 | Build-menu tab row | already fixed (B2, finding 7); the protocol's coordinates are current |
+| 7 | Texts | already in (B2, item 10); the Demolish tooltip now names the refund order |
+| 8 | Russian no-coal alert | checked: "Транспортёр 12 стоит без угля: Хаб 3"; the colon avoids declining the hub name |
+
+Checks after B3: smoke 65/65; demolish probe 24 checks, 0 failures; economy fixture 18/18; rails autotest 12/12; the
+GUI probe (`tools/probes/m1_docs_gui.lua`, English) 0 errors; and the Nation 1v1 acceptance on seed 501 (60 minutes,
+PERF=1) 39/39 with 0 errors:
+
+| | rts-player | rts-ai-1 |
+|---|---|---|
+| Second city | 7:54 | 7:03 |
+| Age II | 14:46 | 13:19 |
+| First line open | 23:23 | 23:30 |
+| Items by train | 13,032 (59 trips) | 13,071 (60 trips) |
+
+26,103 items in total. UPS at speed 1: 60.0 in minutes 56-59 and 59.9 in minute 60, the minute that also runs the
+end-of-test summary; the earlier accepted run (a14) measured the same.
 
 ### E. Docs
 

@@ -313,6 +313,14 @@ function production.army_multiplier(force_name, size)
   return 1 + SOFTCAP.raise * math.floor(over / SOFTCAP.step)
 end
 
+--- Phase 5 M1 integration: true while the army is past the soft cap's free share (Nation mode), and the multiplier.
+--- The barracks page shows the surcharge line from the first unit past `free`, at +0 % until the first step.
+function production.army_past_free(force_name)
+  if not (SOFTCAP and production.auto_active and production.auto_active()) then return false, 1 end
+  local size = production.army_size(force_name)
+  return size > SOFTCAP.free, production.army_multiplier(force_name, size)
+end
+
 local function age1_kit(def)
   local u = balance.units[def.unit]
   return not (u and u.nation_only)

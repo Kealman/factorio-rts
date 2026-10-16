@@ -1405,9 +1405,11 @@ local function update_producer(player, h, un, rec)
       el.b_line2.style.font_color = COLOR.white
       el.b_line2.caption = {"rts.barracks-made", st.spawned or 0, stats.walkers}
       el.b_line2.tooltip = {"rts.barracks-made-tooltip", stats.kits, stats.walkers, stats.heavies}
-      -- Phase 5 M1 integration: the army soft cap's surcharge while it is being paid (Nation mode)
-      local mult = production.army_multiplier and production.army_multiplier(rec.force) or 1
-      if mult > 1 then
+      -- Phase 5 M1 integration: the army soft cap's surcharge whenever the army is past its free share (Nation mode),
+      -- the paid state included; +0 % below the first step
+      local past, mult = false, 1
+      if production.army_past_free then past, mult = production.army_past_free(rec.force) end
+      if past then
         local pct = math.floor((mult - 1) * 100 + 0.5)
         el.b_line2.style.font_color = COLOR.yellow
         el.b_line2.caption = {"rts.barracks-made-surcharge", st.spawned or 0, stats.walkers, pct}
