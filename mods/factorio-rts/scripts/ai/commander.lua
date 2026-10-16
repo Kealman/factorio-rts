@@ -511,6 +511,7 @@ function commander.run(C)
       construction.repair(C)
     end
     hubs.step(C)
+    if deps.cities then deps.cities.ai_step(C, surface) end -- Phase 5 M1: Nation mode second city (no-op in Skirmish)
     stop("construction")
     start("production")
     if tick >= (C.next_tech or 0) then

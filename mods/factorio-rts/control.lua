@@ -28,7 +28,12 @@ local modules = {
   require("scripts.orders"),
   require("scripts.logistics"), -- Phase 4: hubs, stockpile policies, haulers (after orders: right-click hook)
   require("scripts.hubgui"),    -- Phase 4: hub and hauler panels
+  require("scripts.demolish"),  -- Phase 5: demolish own buildings (Delete, Demolish buttons)
   require("scripts.commander"), -- Phase 4: Commander hero (after logistics: its right-click hook follows the haulers')
+  require("scripts.territory"), -- Phase 5 M1: ownership grid, borders, build rules, attrition (Nation mode; after
+                                -- logistics and commander: hubs and forts are sources, the build check sits in buildings)
+  require("scripts.cities"),    -- Phase 5 M1: City Centers, the capital, tiers, make targets (after territory)
+  require("scripts.citygui"),   -- Phase 5 M1: city panel and city list (after cities, before the HUD)
   require("scripts.abilities"), -- Phase 4: abilities (after research: adds the Commander to the damage filter; its
                                 -- targeted-ability right-click hook is registered first)
   require("scripts.abilitygui"), -- Phase 4: ability bar (bottom centre)

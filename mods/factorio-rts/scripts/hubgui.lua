@@ -19,6 +19,7 @@ local selection = require("scripts.selection")
 local orders = require("scripts.orders")
 local camera = require("scripts.camera")
 local logistics = require("scripts.logistics")
+local demolish = require("scripts.demolish")
 
 local hubgui = {}
 
@@ -145,6 +146,11 @@ local function build_hub(player, g, un)
   g.el.network = label(frame, "rts_hud_label")
   g.el.haulers = label(frame, "rts_hud_label")
   label(frame, "rts_hud_dim_label", {"rts.hubgui-hint"})
+  if rec.kind == "hub" then
+    -- Demolish (two presses, scripts/demolish.lua); never for the Command Center
+    g.el.demolish = frame.add({type = "button", name = PREFIX .. "demolish", style = "rts_hud_button",
+                               caption = {"rts.demolish"}, tags = {rts_hubgui = "demolish"}})
+  end
   local scroll = frame.add({type = "scroll-pane", horizontal_scroll_policy = "never", vertical_scroll_policy = "auto"})
   scroll.style.maximal_height = LIST_HEIGHT
   scroll.style.horizontally_stretchable = true
@@ -177,6 +183,14 @@ local function refresh_hub(player, g)
   if not rec then return false end
   local entry = logistics.entry_for_hub(un)
   local el = g.el
+  if el.demolish and el.demolish.valid then
+    local armed = demolish.is_armed(player.index, {un})
+    if armed ~= (el.demolish.style.name == "rts_hud_button_armed") then
+      el.demolish.style = armed and "rts_hud_button_armed" or "rts_hud_button"
+    end
+    el.demolish.caption = armed and {"rts.demolish-confirm"} or {"rts.demolish"}
+    el.demolish.tooltip = {"rts.demolish-tooltip", math.floor(buildings.REFUND_RATIO * 100)}
+  end
   if entry then
     el.network.caption = {"rts.hubgui-network", entry.id, #entry.hubs}
     el.network.style.font_color = COLOR.white
@@ -358,6 +372,12 @@ events.on(defines.events.on_gui_click, function(e)
     g.closed = g.key
     util.log("hubgui click close %s player=%d", tostring(g.key), e.player_index)
     destroy(g)
+    return
+  end
+  if action == "demolish" then
+    local result = demolish.click(player, {g.un})
+    util.log("hubgui click demolish hub=#%s result=%s player=%d", tostring(g.un), result, e.player_index)
+    show(player)
     return
   end
   local list = selected_haulers(g)

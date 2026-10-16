@@ -22,6 +22,7 @@
 -- first. When a CC goes, its core parts are destroyed too (docs/qa/phase2-prototypes-notes.md gotcha 7).
 local util = require("scripts.util")
 local events = require("scripts.events")
+local balance = require("balance")
 
 local buildings = {}
 
@@ -45,6 +46,10 @@ buildings.KIND_BY_NAME = {
   ["rts-steam-plant"] = "steam-plant",
   ["rts-accumulator"] = "accumulator",
   ["rts-radar"] = "radar",
+  -- Phase 5 M1 (prototypes/cities.lua, Nation mode): the City Center is a hub subtype (logistics.lua builds its
+  -- composite like a hub's; scripts/cities.lua tells it apart by name); the fort is a strongpoint and a territory source.
+  ["rts-city-center"] = "hub",
+  ["rts-fort"] = "fort",
 }
 
 buildings.CC_NAME = "rts-command-center"
@@ -61,12 +66,17 @@ buildings.EXIT_DISTANCE = 6
 buildings.ARENA_CENTRE = {x = 0, y = 0}
 
 local added_callbacks, removed_callbacks = {}, {}
+local build_checks = {} -- Phase 5 M1: build rules (scripts/territory.lua), see buildings.on_build_check
 
 --- fn(unit_number, record) after a building is registered. Call at load time (module top level).
 function buildings.on_added(fn) added_callbacks[#added_callbacks + 1] = fn end
 
 --- fn(unit_number, record) after a building left the registry (record.entity may be invalid). Load time only.
 function buildings.on_removed(fn) removed_callbacks[#removed_callbacks + 1] = fn end
+
+--- Phase 5 M1: fn(entity, event) -> false when it refused the build (and removed the entity), for every entity or
+--- ghost the build events below report, before it is registered. Load time only (scripts/territory.lua).
+function buildings.on_build_check(fn) build_checks[#build_checks + 1] = fn end
 
 function buildings.init()
   storage.buildings = storage.buildings or {}
@@ -288,11 +298,221 @@ function buildings.place_cc(surface, position, force)
 end
 
 ---------------------------------------------------------------------------
+-- Demolition (docs/qa/phase5-m1-protocol-notes.md "Demolish"; scripts/demolish.lua is the player-facing part)
+---------------------------------------------------------------------------
+buildings.REFUND_RATIO = 0.5  -- share of the item cost that comes back
+buildings.SINK_RANGE = 40     -- tiles: where a building without a logistic network looks for a stockpile
+-- Inventories whose items are recovered when their building goes (stockpile chest, turret ammo, furnace and
+-- assembler slots, fuel, lab inputs); roboport robots go down with the building.
+buildings.CONTENT_INVENTORIES = {"chest", "turret_ammo", "fuel", "furnace_source", "furnace_result",
+                                 "furnace_modules", "crafter_input", "crafter_output", "lab_input"}
+local demolish_checks, demolish_parts = {}, {}
+
+--- fn(rec) -> reason string when the building must not be demolished, else nil. Load time only.
+function buildings.on_demolish_check(fn) demolish_checks[#demolish_checks + 1] = fn end
+
+--- fn(rec) -> array of LuaEntity that are part of this building (hub stockpiles): they go with it, free of refund,
+--- and their contents are recovered. Load time only (scripts/logistics.lua).
+function buildings.on_demolish_parts(fn) demolish_parts[#demolish_parts + 1] = fn end
+
+--- Why a building cannot be demolished: "protected" for a Command Center or a capital City Center, a hook's reason,
+--- or nil when it can.
+function buildings.demolish_blocked(rec)
+  if rec.kind == "cc" then return "protected" end
+  -- Nation mode (scripts/cities.lua): the capital's City Center. Read from storage, no module dependency.
+  local cs = storage.city_state
+  local id = cs and cs.by_center and rec.entity.valid and cs.by_center[rec.entity.unit_number]
+  local city = id and storage.cities and storage.cities[id]
+  if city and city.capital then return "protected" end
+  for i = 1, #demolish_checks do
+    local why = demolish_checks[i](rec)
+    if why then return why end
+  end
+  return nil
+end
+
+--- {[item] = amount, count = items per craft} of a building prototype's cost: balance.buildings, else its recipe
+--- (hub, lab, ...). nil when it has none.
+function buildings.item_cost(name)
+  local b = balance.buildings[name]
+  if b and b.cost then return b.cost, b.count or 1 end
+  local recipe = prototypes.recipe[name]
+  if not recipe then return nil end
+  local cost, count = {}, 1
+  for _, ing in pairs(recipe.ingredients) do
+    if ing.type == "item" then cost[ing.name] = (cost[ing.name] or 0) + ing.amount end
+  end
+  for _, prod in pairs(recipe.products) do
+    if prod.name == name then count = prod.amount or 1 end
+  end
+  return cost, count
+end
+
+-- Nearest own stockpile (not in `exclude`) on the logistic network `net_id`; without a network, within SINK_RANGE.
+local function sink_candidates(surface_index, force_name, position, net_id, exclude)
+  local list = {}
+  for un, rec in pairs(storage.buildings) do
+    if rec.kind == "stockpile" and rec.force == force_name and rec.surface == surface_index
+       and not exclude[un] and rec.entity.valid then
+      local e = rec.entity
+      local d = util.distance(e.position, position)
+      local net = e.logistic_network
+      local ok
+      if net_id then ok = net and net.valid and net.network_id == net_id else ok = d <= buildings.SINK_RANGE end
+      if ok then list[#list + 1] = {entity = e, d = d} end
+    end
+  end
+  table.sort(list, function(a, b) return a.d < b.d end)
+  return list
+end
+
+-- Insert item stacks ({name, count, quality}) into the candidates in order. Returns what did not fit.
+local function insert_into(candidates, stacks)
+  local rest = {}
+  for _, st in ipairs(stacks) do
+    local left = st.count
+    for _, c in ipairs(candidates) do
+      if left <= 0 then break end
+      if c.entity.valid then left = left - c.entity.insert({name = st.name, count = left, quality = st.quality}) end
+    end
+    if left > 0 then rest[#rest + 1] = {name = st.name, count = left, quality = st.quality} end
+  end
+  return rest
+end
+
+local function spill(surface, position, stacks)
+  local n = 0
+  for _, st in ipairs(stacks) do
+    surface.spill_item_stack({position = position, stack = {name = st.name, count = st.count, quality = st.quality},
+                              enable_looted = false, allow_belts = false})
+    n = n + st.count
+  end
+  return n
+end
+
+-- Items in the recovered inventories of an entity, emptied: array of {name, count, quality}.
+local function take_contents(entity)
+  local out = {}
+  for _, key in ipairs(buildings.CONTENT_INVENTORIES) do
+    local id = defines.inventory[key]
+    local inv = id and entity.get_inventory(id)
+    if inv and inv.valid then
+      for _, item in pairs(inv.get_contents()) do
+        out[#out + 1] = {name = item.name, count = item.count, quality = item.quality}
+      end
+      inv.clear()
+    end
+  end
+  return out
+end
+
+--- Demolish one own building (or cancel a ghost). Removes it through the registry first (on_removed callbacks:
+--- hub parts, logistics policy, territory, cities, selection), then destroys it and its parts. Attached stockpiles
+--- (hub), hidden parts and contents are handled; contents go to the nearest other own stockpile (same logistic
+--- network) and what does not fit is spilled. 50 % of the item cost goes into the nearest own stockpile of the
+--- building's network (the rest is dropped).
+--- opts: force = force name that must own it, refund = false (no refund), exclude = {[unit_number] = true} stockpiles
+--- that are going too (a batch), carry = table that collects fractional refunds across a batch.
+--- opts.carry also keeps the sub-item remainders between calls (5 walls cost 5 bricks: 2 walls refund 1).
+--- Returns true, info {name, kind, position, refund = {[item] = n}, moved = n, spilled = n, parts = n} or false,
+--- reason ("invalid" | "not-building" | "protected" | "foreign" | a hook's reason).
+function buildings.demolish(entity, opts)
+  opts = opts or {}
+  if not (entity and entity.valid) then return false, "invalid" end
+  if opts.force and entity.force.name ~= opts.force then return false, "foreign" end
+  if entity.type == "entity-ghost" then
+    local name = entity.ghost_name
+    local p = entity.position
+    entity.destroy()
+    return true, {name = name, kind = "ghost", position = {x = p.x, y = p.y}, refund = {}, moved = 0, spilled = 0,
+                  parts = 0}
+  end
+  local un = entity.unit_number
+  local rec = un and storage.buildings[un]
+  if not rec then return false, "not-building" end
+  local why = buildings.demolish_blocked(rec)
+  if why then return false, why end
+
+  local surface, force_name, pos, name = entity.surface, rec.force, entity.position, entity.name
+  local exclude = opts.exclude or {}
+  exclude[un] = true
+  local part_entities = {}
+  for i = 1, #demolish_parts do
+    for _, part in ipairs(demolish_parts[i](rec) or {}) do
+      if part.valid and part.unit_number then
+        part_entities[#part_entities + 1] = part
+        exclude[part.unit_number] = true
+      end
+    end
+  end
+
+  -- The network is read while the entity still exists (a hub is its own network node).
+  local net = entity.logistic_network
+  if not (net and net.valid) then net = surface.find_logistic_network_by_position(pos, force_name) end
+  local net_id = net and net.valid and net.network_id or nil
+  local sinks = sink_candidates(rec.surface, force_name, pos, net_id, exclude)
+
+  local contents = take_contents(entity)
+  local parts = 0
+  for _, part in ipairs(part_entities) do
+    if part.valid then
+      for _, st in ipairs(take_contents(part)) do contents[#contents + 1] = st end
+      local pun = part.unit_number
+      if storage.buildings[pun] then remove(pun, part, "demolished (part)") end
+      part.destroy()
+      parts = parts + 1
+    end
+  end
+  remove(un, entity, "demolished")
+  entity.destroy()
+
+  local refund = {}
+  if opts.refund ~= false then
+    local cost, count = buildings.item_cost(name)
+    local carry = opts.carry
+    for item, amount in pairs(cost or {}) do
+      local exact = amount / count * buildings.REFUND_RATIO + ((carry and carry[item]) or 0)
+      local whole = math.floor(exact + 1e-9)
+      if carry then carry[item] = exact - whole end
+      if whole > 0 then refund[item] = whole end
+    end
+  end
+  local stacks = {}
+  for item, n in pairs(refund) do stacks[#stacks + 1] = {name = item, count = n} end
+  local refunded = {}
+  local lost = insert_into(sinks, stacks)
+  local lost_by = {}
+  for _, st in ipairs(lost) do lost_by[st.name] = st.count end
+  for item, n in pairs(refund) do refunded[item] = n - (lost_by[item] or 0) end
+
+  local total = 0
+  for _, st in ipairs(contents) do total = total + st.count end
+  local rest = insert_into(sinks, contents)
+  local spilled = spill(surface, pos, rest)
+  local lost_n = 0
+  for _, st in ipairs(lost) do lost_n = lost_n + st.count end
+  local shown = {}
+  for item, n in pairs(refunded) do
+    if n > 0 then shown[#shown + 1] = n .. " " .. item end
+  end
+  table.sort(shown)
+  util.log("buildings: demolished %s #%d (%s) of %s at %s: refund [%s]%s, contents %d (%d spilled), %d parts", name, un,
+    rec.kind, force_name, util.pos_str(pos), table.concat(shown, ", "),
+    lost_n > 0 and string.format(" (%d dropped, no room)", lost_n) or "", total, spilled, parts)
+  return true, {name = name, kind = rec.kind, position = {x = pos.x, y = pos.y}, refund = refunded,
+                moved = total - spilled, spilled = spilled, parts = parts, unit_number = un}
+end
+
+---------------------------------------------------------------------------
 -- Events
 ---------------------------------------------------------------------------
 local function on_built(e)
   local entity = e.entity or e.destination
-  if entity and entity.valid and buildings.KIND_BY_NAME[entity.name] then buildings.register(entity) end
+  if not (entity and entity.valid) then return end
+  for i = 1, #build_checks do
+    if not build_checks[i](entity, e) then return end -- Phase 5 M1: refused (territory), already removed
+  end
+  if buildings.KIND_BY_NAME[entity.name] then buildings.register(entity) end
 end
 
 events.on(defines.events.on_built_entity, on_built)

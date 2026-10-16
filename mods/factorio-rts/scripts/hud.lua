@@ -60,6 +60,7 @@ local economy = require("scripts.economy")
 local supply = require("scripts.supply")
 local research = require("scripts.research")
 local logistics = require("scripts.logistics")
+local demolish = require("scripts.demolish")
 local balance = require("balance")
 
 local hud = {}
@@ -129,8 +130,16 @@ local P4 = {
   KILL_WIDTH = 260, KILL_SHOWN = 5, KILL_TICKS = 20 * 60, KILL_FADE_TICKS = 5 * 60, KILL_KEEP = 30,
   FEED_PERIOD = 10, -- ticks; alert lines and kill feed (fading) refresh
   HELP_WIDTH = 640, HELP_LINES = 10, -- "How to play": rts.help-1 .. rts.help-10
+  DEMOLISH_HEIGHT = 22, -- the building page's Demolish button (header row)
 }
 P4.CARDS_WIDTH = P4.CARD_MAX * P4.CARD_SIZE + (P4.CARD_MAX - 1) * P4.CARD_SPACING -- 190
+-- Phase 5 M1 (scripts/cities.lua, scripts/territory.lua): build items and factory recipes shown in Nation mode only;
+-- the strip shows the territory share and a Cities button (scripts/citygui.lua city list) in Nation mode.
+P4.NATION_ONLY = {["rts-city-charter"] = true, ["rts-fort"] = true}
+P4.nation = function()
+  local m = storage.match
+  return m ~= nil and m.config ~= nil and m.config.mode == "nation"
+end
 -- Recipe grid of a barracks / factory: Pause first, then the recipes (group, subgroup, recipe order), at most
 -- RECIPE_COLUMNS per row, so a new recipe never moves Pause and only shifts the recipes after it.
 local RECIPE_COLUMNS = 6
@@ -222,7 +231,7 @@ local BUILD_TABS = {
    items = {"rts-extractor", "rts-smelter", "rts-stockpile", "transport-belt", "fast-inserter", "medium-electric-pole",
             "rts-hub"}},
   {key = "production", caption = "rts.build-tab-production", tooltip = "rts.build-tab-production-tooltip",
-   items = {"rts-barracks", "rts-factory", "rts-lab"}},
+   items = {"rts-barracks", "rts-factory", "rts-lab", "rts-city-charter", "rts-fort"}}, -- Phase 5 M1: Nation only
   {key = "defence", caption = "rts.build-tab-defence", tooltip = "rts.build-tab-defence-tooltip",
    items = {"rts-turret", "rts-laser-turret", "rts-wall", "rts-solar-array", "rts-steam-plant", "rts-accumulator",
             "rts-radar"}},
@@ -262,6 +271,12 @@ P4.ALERT_STYLE = {
   ["commander-down"] = {icons = {"entity/rts-commander", "utility/danger_icon"}, color = "red",
                         sound = "utility/alert_destroyed"},
   ["commander-ready"] = {icons = {"entity/rts-commander", "utility/check_mark_green"}, color = "green"},
+  -- Phase 5 M1 (scripts/cities.lua)
+  ["city-founded"] = {icons = {"item/rts-city-charter", "utility/check_mark_green"}, color = "green"},
+  ["city-tier"] = {icons = {"item/rts-city-charter", "utility/check_mark_green"}, color = "green"},
+  ["city-lost"] = {icons = {"item/rts-city-charter", "utility/danger_icon"}, color = "red",
+                   sound = "utility/alert_destroyed"},
+  ["territory-lost"] = {icons = {"utility/warning_icon"}, color = "yellow"},
 }
 P4.ALERT_DEFAULT_STYLE = {icons = {"utility/warning_icon"}, color = "white"}
 -- A text that overrides its kind's style: the ruin's previous owner gets kind "ruin-captured" with this text.
@@ -513,7 +528,7 @@ end
 local function build_items(tab)
   local list = {}
   for _, item in ipairs(tab and tab.items or BUILD_ITEMS) do
-    if prototypes.item[item] then list[#list + 1] = item end
+    if prototypes.item[item] and (not P4.NATION_ONLY[item] or P4.nation()) then list[#list + 1] = item end
   end
   return list
 end
@@ -696,6 +711,10 @@ local function build_building_page(panel, h)
   el.b_name = header.add({type = "label", style = "rts_hud_heading_label"})
   add_filler(header)
   el.b_hp = header.add({type = "label", style = "rts_hud_mono_label", tooltip = {"rts.health"}})
+  -- Demolish: two presses (first arms, second within 3 s executes); scripts/demolish.lua
+  el.b_demolish = header.add({type = "button", name = PREFIX .. "demolish", style = "rts_hud_button",
+                              caption = {"rts.demolish"}, tags = {rts_hud = "demolish"}})
+  el.b_demolish.style.height = P4.DEMOLISH_HEIGHT
 
   local body = page.add({type = "flow", direction = "horizontal"})
   body.style.horizontal_spacing = BODY_SPACING
@@ -781,6 +800,9 @@ local function build_strip(screen, h)
   el.research = strip_button("research", {"rts.button-key", {"rts.research-button"}, "T"},
     {"rts.research-button-tooltip"}, "research", 6)
   el.help = strip_button("help", "?", {"rts.help-button-tooltip"}, "help")
+  -- Phase 5 M1: territory share as a button that shows / hides the city list (Nation mode only, see update_strip)
+  el.cities = strip_button("cities", "", {"rts.territory-share-tooltip"}, "cities")
+  el.cities.visible = false
   -- Phase 3: the match menu (lobby.lua); F10 does the same.
   el.menu = row.add({type = "button", name = PREFIX .. "menu", caption = {"rts.menu-button"},
                      tooltip = {"rts.menu-button-tooltip"}, tags = {rts_hud = "menu"}})
@@ -1153,11 +1175,13 @@ local function rebuild_recipe_buttons(player, h, un, rec)
     tags = {rts_hud = "recipe", recipe = ""}})
   local names = {}
   for _, r in ipairs(machine_recipes(rec.entity)) do
-    h.recipe_buttons[r.name] = grid.add({type = "sprite-button", name = PREFIX .. "recipe_" .. r.name,
-      style = "rts_hud_recipe_button", sprite = "recipe/" .. r.name, tooltip = recipe_tooltip(r),
-      tags = {rts_hud = "recipe", recipe = r.name}})
-    h.recipe_locks[r.name] = false
-    names[#names + 1] = r.name
+    if not P4.NATION_ONLY[r.name] or P4.nation() then -- Phase 5 M1: Nation-only recipes
+      h.recipe_buttons[r.name] = grid.add({type = "sprite-button", name = PREFIX .. "recipe_" .. r.name,
+        style = "rts_hud_recipe_button", sprite = "recipe/" .. r.name, tooltip = recipe_tooltip(r),
+        tags = {rts_hud = "recipe", recipe = r.name}})
+      h.recipe_locks[r.name] = false
+      names[#names + 1] = r.name
+    end
   end
   -- QA log line: the button order, left to right and row by row ("hud: recipe buttons barracks#N player=N:
   -- pause rts-walker-kit rts-walker-heavy-kit (6 per row)")
@@ -1375,9 +1399,21 @@ local function update_other(player, h, un, rec)
   end
 end
 
+local function update_demolish_button(player, h, un, rec)
+  local button = h.el.b_demolish
+  local armed = demolish.is_armed(player.index)
+  local blocked = buildings.demolish_blocked(rec)
+  set_style(button, armed and "rts_hud_button_armed" or "rts_hud_button")
+  button.style.height = P4.DEMOLISH_HEIGHT
+  button.caption = armed and {"rts.demolish-confirm"} or {"rts.demolish"}
+  button.tooltip = blocked and {"rts.demolish-tooltip-blocked"}
+    or {"rts.demolish-tooltip", math.floor(buildings.REFUND_RATIO * 100)}
+end
+
 local function update_building(player, h, un, rec)
   local el = h.el
   local e = rec.entity
+  update_demolish_button(player, h, un, rec)
   if h.bld_un ~= un then rebuild_recipe_buttons(player, h, un, rec) end
   el.b_name.caption = {"rts.bld-title", e.localised_name, un}
   local hp, max = e.health or 0, e.max_health or 0
@@ -1497,6 +1533,13 @@ local function update_strip(player, h)
   el.supply.caption = {"rts.supply", sup.used, sup.cap}
   el.supply.style.font_color = sup.used >= sup.cap and COLOR.red
     or (sup.used >= 0.9 * sup.cap and COLOR.yellow or COLOR.white)
+  -- Phase 5 M1: territory share (scripts/territory.lua) and the Cities button, Nation mode only
+  local nation = P4.nation() and m.surface ~= nil
+  if el.cities and el.cities.valid then
+    el.cities.visible = nation
+    local share = nation and optional_fn("scripts.territory", {"share"})
+    if share then el.cities.caption = {"rts.territory-share", string.format("%.1f", share(own) * 100)} end
+  end
 
   local snap = snapshot(own)
   local res = h.res
@@ -1978,8 +2021,13 @@ local function on_click(e)
     hud.card_click(player, element.tags.unit, e.shift)
   elseif action == "research" then
     hud.toggle_research(player)
+  elseif action == "cities" then -- Phase 5 M1: city list (scripts/citygui.lua)
+    local toggle = optional_fn("scripts.citygui", {"toggle_list"})
+    if toggle then toggle(player) end
   elseif action == "help" then
     hud.toggle_help(player, element.name == PREFIX .. "help_close" and "close button" or "? button")
+  elseif action == "demolish" then
+    demolish.click(player)
   elseif action == "alert" then
     local target = h.alert_targets and h.alert_targets[element.tags.line]
     if target then

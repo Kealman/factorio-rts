@@ -48,6 +48,7 @@ Every side starts with a Command Center (CC), the same stock and 6 walkers. Huma
 | R / Shift + R | Rotate the building or ghost under the cursor (while placing: the ghost on the cursor) |
 | Q or right click | Stop placing |
 | T | Research panel |
+| Delete or Backspace, or the **Demolish** button | Demolish the selected own building: the first press arms (the button turns red), a second press within 3 s demolishes it. 50 % of its cost goes back to the nearest stockpile of its logistic network. A hub takes its stockpiles with it; the Command Center cannot be demolished |
 | F3 | Jump to the newest alert (press again for older ones) |
 | F10 | Match menu: resume, restart, concede (click twice); after the match, the results again |
 | F11 | How to play |

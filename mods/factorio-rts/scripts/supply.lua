@@ -53,6 +53,10 @@ do
 end
 
 local cost_cache = {} -- derived from static data only, identical on every client
+local cap_hooks = {}   -- Phase 5 M1: fn(force_name) -> cap delta (scripts/cities.lua: city tiers), see supply.on_cap
+
+--- Phase 5 M1: register fn(force_name) -> number added to the force's cap (may be negative). Load time only.
+function supply.on_cap(fn) cap_hooks[#cap_hooks + 1] = fn end
 
 --- Supply cost of one unit of this prototype name.
 function supply.cost(name)
@@ -95,6 +99,7 @@ function supply.cap(force_name)
   cap = cap + supply.HUB_CAP * buildings.count(force_name, "hub")
   local r = storage.research
   local bonus = r and r.supply_bonus and r.supply_bonus[force_name]
+  for i = 1, #cap_hooks do cap = cap + (cap_hooks[i](force_name) or 0) end -- Phase 5 M1: cities (Nation mode)
   return cap + (bonus or 0)
 end
 

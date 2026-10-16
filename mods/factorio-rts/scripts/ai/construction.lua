@@ -17,6 +17,7 @@ local economy = require("scripts.economy")
 local units = require("scripts.units")
 local orders = require("scripts.orders")
 local layout = require("scripts.ai.layout")
+local deps = require("scripts.ai.deps") -- Phase 5 M1: deps.territory (scripts/territory.lua, set by scripts/cities.lua)
 
 local construction = {}
 
@@ -148,7 +149,23 @@ local function clear_footprint(surface, e)
   return n
 end
 
+construction.TERRITORY_GRACE = 120 * 60 -- Phase 5 M1: a spot refused by the land rules waits this long + GIVE_UP_TICKS
+
 local function place_ghost(C, surface, e)
+  -- Phase 5 M1: Nation-mode land rules (territory.can_build). A refused spot waits like a blocked one (a hub's land may
+  -- come), with a longer grace, then the entry is given up.
+  local T = deps.territory
+  if T then
+    local ok, reason = T.can_build(C.force, e.name, {x = e.x, y = e.y}, e.dir)
+    if not ok then
+      if not e.blocked_since then
+        e.blocked_since = game.tick + construction.TERRITORY_GRACE
+        util.log("ai %s: %s at %s refused by territory (%s), waiting", C.force, e.name, util.pos_str({e.x, e.y}),
+          tostring(reason))
+      end
+      return false
+    end
+  end
   clear_footprint(surface, e)
   local g = surface.create_entity({name = "entity-ghost", inner_name = e.name, position = {e.x, e.y},
                                    direction = e.dir, force = C.force, create_build_effect_smoke = false})

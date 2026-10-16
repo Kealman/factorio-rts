@@ -121,6 +121,29 @@ function events.enable_profiling()
   end)
 end
 
+-- Phase 5 M1: script signals between modules (docs/PHASE5-M1.md, e.g. "rts_territory_changed"). They are not engine
+-- events: events.emit calls the handlers registered with events.on_signal synchronously, in registration order.
+local signal_handlers = {} -- [signal name] = {handler, ...}
+
+--- Register a handler for a script signal (load time only, like events.on). It receives the emitted data table.
+function events.on_signal(name, handler)
+  local list = signal_handlers[name]
+  if not list then
+    list = {}
+    signal_handlers[name] = list
+  end
+  list[#list + 1] = handler
+end
+
+--- Emit a script signal to every handler registered for it. Returns the number of handlers called.
+function events.emit(name, data)
+  local list = signal_handlers[name]
+  if not list then return 0 end
+  for i = 1, #list do list[i](data) end
+  return #list
+end
+events.raise = events.emit
+
 --- Called once when the mod is first added to a save (new game or existing save).
 function events.on_init(fn) init_handlers[#init_handlers + 1] = fn end
 

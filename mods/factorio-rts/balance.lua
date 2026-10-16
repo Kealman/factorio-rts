@@ -170,6 +170,33 @@ balance.buildings = {
                          health = 300},
   ["rts-radar"] = {kind = "radar", cost = {["iron-plate"] = 20, ["electronic-circuit"] = 10}, time = 6, health = 400,
                    reveal_chunks = 2}, -- radius: a 5x5-chunk square (160x160 tiles) stays visible
+  -- Phase 5 M1, Nation mode only (prototypes/cities.lua, scripts/cities.lua, scripts/territory.lua). The City Center is
+  -- a hub subtype (kind "hub": logistics.lua builds its composite); its item is the City charter (factory recipe).
+  ["rts-city-center"] = {kind = "hub", health = 1800, power = "1MW"},
+  ["rts-fort"] = {kind = "fort", cost = {["iron-plate"] = 30, ["stone"] = 20}, time = 6, health = 600, range = 18},
+}
+
+-- Phase 5 M1 Nation mode (docs/PHASE5-M1.md section 1): modules read balance.nation.<key> only when
+-- storage.match.config.mode == "nation". Territory and cities (scripts/territory.lua, scripts/cities.lua):
+balance.nation = balance.nation or {}
+balance.nation.territory = {
+  cell = 8,                                   -- tiles per grid cell side
+  radius = {city = {48, 72, 96}, fort = 24, hub = 16, radar = 16},      -- land radius in tiles (city: by tier)
+  capital_bonus = 24,                         -- tiles the capital claims beyond its tier's radius (study: +3 cells)
+  strength = {city = {3, 4, 5}, capital = 1, fort = 2, hub = 1.5, radar = 1}, -- capital: added to its tier's
+  sticky = 1.15,                              -- a challenger must beat the current owner's score by 15 %
+  attrition = {period = 300, share = 0.015, depth_cells = 2, supply_radius = 24, commander = 0.5}, -- ~18 %/min
+  fort_ammo = 20,                             -- free magazines a new fort gets
+}
+balance.nation.cities = {
+  capital_tier = 2,                           -- the starting CC registers as the capital at this tier
+  supply = {10, 20, 30},                      -- supply cap per tier (the capital adds tier supply minus the tier-2 20)
+  charter = {cost = {["iron-plate"] = 80, ["copper-plate"] = 30, ["stone"] = 40}, time = 20},
+  spacing = 96,                               -- tiles between City Centers (any force)
+  limit = 4,                                  -- cities per nation, capital included
+  tier_up = {[2] = {buildings = 10, delivered = 400}, [3] = {buildings = 25, delivered = 2000}},
+  ai_found_at = 300,                          -- seconds: the AI plans its second city from then on
+  ai_site_distance = 110,                     -- tiles from its capital when no world city site is known
 }
 
 balance.intermediates = {

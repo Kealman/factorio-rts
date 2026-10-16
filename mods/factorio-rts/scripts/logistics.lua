@@ -118,6 +118,9 @@ logistics.POLICY_SUBGROUPS = {"rts-intermediates", "rts-science", "rts-units"}
 
 -- Hubs are buildings (selection, HUD building page, removal events); the registry learns the name here.
 buildings.KIND_BY_NAME[logistics.HUB] = "hub"
+-- Phase 5 M1: hub subtypes (a City Center is a hub, buildings.KIND_BY_NAME) with their own display name:
+-- [entity name] = fn(unit_number) -> LocalisedString. They get no "Hub n" number. Load time only (scripts/cities.lua).
+logistics.NAME_HOOKS = {}
 
 local HUB_KINDS = {hub = true, cc = true}
 local TRAVEL = {to_pickup = true, to_dropoff = true, to_home = true}
@@ -208,7 +211,7 @@ local function ensure_policy(un, rec)
   if p then return p end
   local defaults = rec.kind == "cc" and logistics.DEFAULT_CC or logistics.DEFAULT_HUB
   p = {kind = rec.kind, force = rec.force, keep = copy(defaults.keep), export_above = copy(defaults.export_above)}
-  if rec.kind == "hub" then
+  if rec.kind == "hub" and not logistics.NAME_HOOKS[rec.entity.name] then -- Phase 5 M1: subtypes are not "Hub n"
     L.hub_counter[rec.force] = (L.hub_counter[rec.force] or 0) + 1
     p.index = L.hub_counter[rec.force]
   end
@@ -243,6 +246,9 @@ end
 --- Localised display name: "Command Center" or "Hub 3".
 function logistics.hub_name(unit_number)
   local p = lstate().hubs[unit_number]
+  local named = p and p.kind == "hub" and buildings.get(unit_number) -- Phase 5 M1: hub subtypes name themselves
+  local hook = named and logistics.NAME_HOOKS[named.entity.name]
+  if hook then return hook(unit_number) end
   if p and p.kind == "hub" then return {"rts.hub-name", p.index or unit_number} end
   if p and p.kind == "cc" then return {"entity-name.rts-command-center"} end
   local rec = buildings.get(unit_number)
@@ -335,6 +341,16 @@ buildings.on_removed(function(un, rec)
     util.log("logistics: hub #%d of %s at %s removed, %d parts destroyed", un, rec.force, util.pos_str(rec.position),
       destroyed)
   end
+end)
+
+-- Demolishing a hub takes its attached stockpiles with it (buildings.demolish).
+buildings.on_demolish_parts(function(rec)
+  local p = rec.kind == "hub" and rec.entity.valid and lstate().hubs[rec.entity.unit_number]
+  local out = {}
+  for _, s in ipairs(p and p.parts and p.parts.stockpiles or {}) do
+    if s.valid then out[#out + 1] = s end
+  end
+  return out
 end)
 
 ---------------------------------------------------------------------------

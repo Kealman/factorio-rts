@@ -60,6 +60,11 @@ for i, key in ipairs({"Z", "C", "V", "G"}) do
   inputs[#inputs + 1] = {name = "rts-ability-" .. i, key_sequence = key, consuming = "game-only"}
 end
 
+-- Phase 5: demolish the selected own building (scripts/demolish.lua; the first press arms, the second within 3 s
+-- executes). Delete, or Backspace for keyboards without a Delete key (a Mac laptop's "delete" key sends Backspace).
+inputs[#inputs + 1] = {name = "rts-demolish", key_sequence = "DELETE", alternative_key_sequence = "BACKSPACE",
+                       consuming = "game-only"}
+
 for i, input in ipairs(inputs) do
   input.type = "custom-input"
   input.order = string.format("z[rts]-%02d", i)

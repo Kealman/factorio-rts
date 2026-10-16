@@ -581,6 +581,7 @@ function research.on_damaged(e)
   local r = R()
   local share = r and r.armor[entity.force.name]
   if not share or e.final_health <= 0 or not derive().armored[entity.name] then return end
+  if e.damage_type.name == "rts-attrition" then return end -- Phase 5 M1: armor does not soften territory attrition
   local heal = e.final_damage_amount * share
   if heal <= 0 then return end
   entity.health = entity.health + heal
