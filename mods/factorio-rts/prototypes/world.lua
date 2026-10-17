@@ -24,7 +24,10 @@
 --   rts_w_half                    map half size; rts_w_warp: domain warp amplitude in tiles
 -- Ranges, passes, rivers, fords and lakes are evaluated in warped coordinates (rts_w_wx, rts_w_wy), so straight
 -- segments come out organic and a pass or ford stays exactly on its barrier. Sites use plain coordinates.
-local SLOTS = {range = 16, pass = 12, river = 12, ford = 16, site = 24, lake = 12, climate = 24}
+-- Phase 5 M3 world3: more slots for 5-6 nations and 4096 maps (scripts/world.lua world.SLOTS). An inert slot adds
+-- nothing (a range, river, pass, ford, site or lake far below zero; a climate delta of 0), so a plan that fits the
+-- M2 budget (world.SLOTS_M2) gets the same terrain as before.
+local SLOTS = {range = 32, pass = 16, river = 16, ford = 16, site = 32, lake = 16, climate = 40}
 
 local function const(name, value)
   return {type = "noise-expression", name = name, expression = tostring(value)}

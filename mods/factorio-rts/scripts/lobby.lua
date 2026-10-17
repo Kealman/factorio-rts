@@ -128,14 +128,22 @@ function lobby.show_lobby(player)
   -- Phase 5 M1: Mode. Nation fixes the map type (World, greyed); its size is a World size (world.SIZES), by default
   -- world.size_for(nations) until the player picks one (pending.world_size, nil = the default).
   local nation = p.mode == "nation"
-  grid.add({type = "label", caption = {"rts.lobby-mode"}, tooltip = {"rts.lobby-mode-tooltip"}})
+  -- Phase 5 M3 world3: the mode and size tooltips name the M3 world sizes (rts-world3 keys)
+  grid.add({type = "label", caption = {"rts.lobby-mode"}, tooltip = {"rts-world3.lobby-mode-tooltip"}})
   grid.add({type = "drop-down", name = PREFIX .. "mode", items = {{"rts.mode-skirmish"}, {"rts.mode-nation"}},
-            selected_index = nation and 2 or 1, tags = {rts_lobby = "mode"}, tooltip = {"rts.lobby-mode-tooltip"}})
-  grid.add({type = "label", caption = {"rts.lobby-opponents"}, tooltip = {"rts.lobby-opponents-tooltip"}})
+            selected_index = nation and 2 or 1, tags = {rts_lobby = "mode"}, tooltip = {"rts-world3.lobby-mode-tooltip"}})
+  -- Phase 5 M3 world3: in Nation mode the same drop-down counts nations, 2-6 (item i = i opponents)
   local opp = {}
-  for i = 1, match.MAX_OPPONENTS do opp[i] = tostring(i) end
-  grid.add({type = "drop-down", name = PREFIX .. "opponents", items = opp, selected_index = p.opponents,
-            tags = {rts_lobby = "opponents"}, tooltip = {"rts.lobby-opponents-tooltip"}})
+  if nation then
+    grid.add({type = "label", caption = {"rts-world3.lobby-nations"}, tooltip = {"rts-world3.lobby-nations-tooltip"}})
+    for i = 1, match.MAX_NATIONS - 1 do opp[i] = tostring(i + 1) end
+  else
+    grid.add({type = "label", caption = {"rts.lobby-opponents"}, tooltip = {"rts.lobby-opponents-tooltip"}})
+    for i = 1, match.MAX_OPPONENTS do opp[i] = tostring(i) end
+  end
+  grid.add({type = "drop-down", name = PREFIX .. "opponents", items = opp, selected_index = math.min(p.opponents, #opp),
+            tags = {rts_lobby = "opponents"},
+            tooltip = nation and {"rts-world3.lobby-nations-tooltip"} or {"rts.lobby-opponents-tooltip"}})
   grid.add({type = "label", caption = {"rts.lobby-difficulty"}, tooltip = {"rts.lobby-difficulty-tooltip"}})
   local diffs = {}
   for i, d in ipairs(match.DIFFICULTIES) do diffs[i] = {"rts.difficulty-" .. d} end
@@ -150,7 +158,7 @@ function lobby.show_lobby(player)
     for i, ws in ipairs(world.SIZES) do sizes[i] = {"rts.size-world", ws} end
     grid.add({type = "drop-down", name = PREFIX .. "size", items = sizes,
               selected_index = index_of(world.SIZES, p.world_size or world.size_for(p.opponents + 1)),
-              tags = {rts_lobby = "world_size"}, tooltip = {"rts.lobby-size-nation-tooltip"}})
+              tags = {rts_lobby = "world_size"}, tooltip = {"rts-world3.lobby-size-tooltip"}})
   else
     grid.add({type = "drop-down", name = PREFIX .. "size", items = sizes,
               selected_index = index_of(match.SIZE_ORDER, p.size), tags = {rts_lobby = "size"}})
@@ -162,6 +170,12 @@ function lobby.show_lobby(player)
   grid.add({type = "drop-down", name = PREFIX .. "map", items = maps,
             selected_index = nation and 1 or index_of(match.MAPS, p.map), tags = {rts_lobby = "map"},
             tooltip = nation and {"rts.lobby-map-nation-tooltip"} or {"rts.lobby-map-tooltip"}}).enabled = not nation
+  if nation then -- Phase 5 M3 world3: Map knowledge (Explore: fog as before; Survey: the generated world charted)
+    grid.add({type = "label", caption = {"rts-world3.lobby-survey"}, tooltip = {"rts-world3.lobby-survey-tooltip"}})
+    grid.add({type = "drop-down", name = PREFIX .. "survey", items = {{"rts-world3.survey-explore"},
+              {"rts-world3.survey-survey"}}, selected_index = p.survey and 2 or 1, tags = {rts_lobby = "survey"},
+              tooltip = {"rts-world3.lobby-survey-tooltip"}})
+  end
   if nation then -- Phase 5 M2 diplomacy (D6): Victory and Time limit, Nation mode only
     grid.add({type = "label", caption = {"rts.lobby-victory"}, tooltip = {"rts.lobby-victory-tooltip"}})
     local vitems = {}
@@ -177,6 +191,17 @@ function lobby.show_lobby(player)
     grid.add({type = "drop-down", name = PREFIX .. "time_limit", items = titems,
               selected_index = index_of(VICTORY.time_limits, p.time_limit or 0), tags = {rts_lobby = "time_limit"},
               tooltip = {"rts.lobby-time-limit-tooltip"}})
+  end
+  if nation then -- Phase 5 M3 world3: how the world is generated (the core at the start, the rest in the background)
+    local ws = p.world_size or world.size_for(p.opponents + 1)
+    local chunks = (ws / 32) ^ 2
+    -- minutes at the measured background rate (42-45 chunks per second at 60 UPS)
+    local gen = inner.add({type = "label", name = PREFIX .. "generation",
+                           caption = {"rts-world3.lobby-generation", ws, chunks, math.ceil(chunks / 42 / 60)}})
+    gen.style.single_line = false
+    gen.style.maximal_width = DIALOG_WIDTH - 40
+    gen.style.font_color = COLOR.dim
+    gen.style.top_margin = 8
   end
   -- Phase 5 M2 integration: the Nation hint (peace at the start, out without a city, the Victory rule)
   local hint = inner.add({type = "label", caption = {nation and "rts.lobby-hint-nation" or "rts.lobby-hint"}})
@@ -420,7 +445,8 @@ local function on_click(e)
     local p = pending()
     lobby.start_match({opponents = p.opponents, difficulty = p.difficulty, size = p.size, map = p.map,
                        enemy_brain = "ai", mode = p.mode, victory = p.victory, time_limit = p.time_limit, -- Phase 5 M2 diplomacy
-                       world_size = p.mode == "nation" and (p.world_size or world.size_for(p.opponents + 1)) or nil},
+                       world_size = p.mode == "nation" and (p.world_size or world.size_for(p.opponents + 1)) or nil,
+                       survey = p.mode == "nation" and p.survey or nil}, -- Phase 5 M3 world3
                       "player " .. player.index)
   elseif action == "restart" then
     if not can_control(player) then return end
@@ -457,6 +483,10 @@ events.on(defines.events.on_gui_selection_state_changed, function(e)
   local what = el.tags and el.tags.rts_lobby
   if what == "opponents" then
     p.opponents = el.selected_index
+    -- Phase 5 M3 world3: 5-6 nations need a bigger world than 2048 (the size follows unless the player picked one)
+    if p.mode == "nation" and p.world_size and p.opponents + 1 > world.max_nations(p.world_size) then
+      p.world_size = world.normalize_size(p.world_size, p.opponents + 1)
+    end
   elseif what == "difficulty" then
     p.difficulty = match.DIFFICULTIES[el.selected_index] or p.difficulty
   elseif what == "size" then
@@ -465,6 +495,9 @@ events.on(defines.events.on_gui_selection_state_changed, function(e)
     if p.mode ~= "nation" then p.map = match.MAPS[el.selected_index] or p.map end
   elseif what == "mode" then
     p.mode = el.selected_index == 2 and "nation" or "skirmish"
+    if p.mode ~= "nation" then p.opponents = math.min(p.opponents, match.MAX_OPPONENTS) end -- Phase 5 M3 world3
+  elseif what == "survey" then -- Phase 5 M3 world3
+    p.survey = el.selected_index == 2 or nil
   elseif what == "victory" then -- Phase 5 M2 diplomacy (D6)
     p.victory = VICTORY.modes[el.selected_index] or p.victory
   elseif what == "time_limit" then
@@ -472,6 +505,8 @@ events.on(defines.events.on_gui_selection_state_changed, function(e)
   elseif what == "world_size" then
     local ws = world.SIZES[el.selected_index]
     p.world_size = (ws and ws ~= world.size_for(p.opponents + 1)) and ws or nil -- the default follows the nations
+    -- Phase 5 M3 world3: a world holds at most world.max_nations(size) nations (4 on 2048)
+    if ws then p.opponents = math.min(p.opponents, world.max_nations(ws) - 1) end
   else
     return
   end
@@ -485,6 +520,7 @@ events.on(defines.events.on_gui_selection_state_changed, function(e)
   -- every connected player sees the same choices; a mode change (and the nation count in Nation mode) also redraws
   -- the dialog of the player who made it (greyed size and map, the world size)
   local redraw_self = what == "mode" or (what == "opponents" and p.mode == "nation")
+    or what == "world_size" -- Phase 5 M3 world3: the nation count and the generation line follow the size
   for _, player in pairs(game.connected_players) do
     if (redraw_self or player.index ~= e.player_index) and player.gui.screen[NAMES.lobby] then lobby.show_lobby(player) end
   end
@@ -535,7 +571,7 @@ match.on_force_out(function(force_name)
 end)
 
 commands.add_command("rts-match",
-  "<opponents 1-3> <easy|normal|hard> <small|medium|large> [chokes|open] [waves] [nation [1536|2048|3072] [conquest|territory|score] [t60|t90|t120]] - start a new match",
+  "<opponents 1-3 (nation: 1-5)> <easy|normal|hard> <small|medium|large> [chokes|open] [waves] [nation [2048|3072|4096] [survey] [conquest|territory|score] [t60|t90|t120]] - start a new match",
   function(cmd)
     local player = cmd.player_index and game.get_player(cmd.player_index)
     if player and not player.admin then
@@ -549,6 +585,7 @@ commands.add_command("rts-match",
       if args[i] == "waves" then cfg.enemy_brain = "waves" end
       if args[i] == "open" or args[i] == "chokes" then cfg.map = args[i] end
       if args[i] == "nation" then cfg.mode = "nation" end -- Phase 5 M1
+      if args[i] == "survey" then cfg.survey = true end -- Phase 5 M3 world3
       if args[i] == "conquest" or args[i] == "territory" or args[i] == "score" then cfg.victory = args[i] end -- Phase 5 M2 diplomacy
       if args[i] == "conquest_space" or args[i] == "any" then cfg.victory = args[i] end -- Phase 5 M3 age3
       if string.match(args[i], "^t%d+$") then cfg.time_limit = tonumber(string.sub(args[i], 2)) end -- t60: time limit

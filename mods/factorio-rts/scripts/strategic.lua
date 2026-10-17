@@ -17,6 +17,8 @@
 --                                       table). Regional: the HUD minimap shows about MINIMAP_TILES around the camera
 --                                       and follows it; world: the whole map (the Phase 4 view).
 --
+-- Phase 5 M3 world3: region names, choke markers and port names are drawn once the chunk under them exists (the plan
+-- assigns each to a chunk, scripts/worldgen.lua); the rest arrive with the signal "rts_world_labels" as the world fills.
 -- Every PERIOD ticks: a new Nation match refreshes every match force once its world exists; city changes (signals
 -- rts_city_founded / _lost / _tier, renames, captures) redraw the city names; division markers (own divisions, own
 -- force only) follow their divisions. Every MINIMAP_PERIOD ticks the minimap follows the camera, and the remote view's
@@ -33,6 +35,7 @@ local util = require("scripts.util")
 local events = require("scripts.events")
 local match = require("scripts.match")
 local world = require("scripts.world")
+local worldgen = require("scripts.worldgen") -- Phase 5 M3 world3: a label is drawn once its chunk exists
 local cities = require("scripts.cities")
 local balance = require("balance")
 
@@ -204,6 +207,38 @@ function strategic.counts(force_name)
   return out
 end
 
+-- Phase 5 M3 world3: one region name (and its resource line), one choke marker, one port name for a force.
+local function draw_region(F, surf, force_name, reg)
+  local sk = k()
+  local col = strategic.KIND_COLORS[reg.kind] or {0.95, 0.92, 0.8}
+  local o = placed(F, surf, force_name, reg.center, 0, reg.name, color3(col, 0.95), strategic.SCALE.region * sk)
+  F.regions[#F.regions + 1] = o
+  F.region_names[#F.region_names + 1] = o
+  local res = resources_text(reg)
+  if res then
+    F.regions[#F.regions + 1] = placed(F, surf, force_name, reg.center, 16 * sk, res, color3(col, 0.9),
+      strategic.SCALE.resources * sk, true)
+  end
+end
+
+local function draw_choke(F, surf, force_name, c)
+  local sk = k()
+  local col = strategic.CHOKE_COLORS[c.kind] or {1, 1, 1}
+  F.chokes[#F.chokes + 1] = rendering.draw_circle({color = color3(col, 0.9), radius = max_radius(c), width = 3,
+    filled = false, target = c.position, surface = surf, render_mode = "chart", forces = {force_name}})
+  local o = placed(F, surf, force_name, {x = c.position.x, y = c.position.y + max_radius(c)}, 7 * sk, c.name,
+    color3(col), strategic.SCALE.choke * sk)
+  F.chokes[#F.chokes + 1] = o
+  F.choke_names[#F.choke_names + 1] = o
+end
+
+local function draw_port(F, surf, force_name, p)
+  local sk = k()
+  F.ports[#F.ports + 1] = placed(F, surf, force_name, p.position, -8 * sk,
+    {"rts-world.chart-port", p.name or {"rts-world.port-label"}}, color3(strategic.PORT_COLOR), strategic.SCALE.port * sk,
+    true)
+end
+
 --- (Re)draw every chart-mode object of `force`: region names (and a resource line), choke markers (circle and name),
 --- city names, ports. Logs the object count.
 function strategic.refresh(force)
@@ -220,32 +255,16 @@ function strategic.refresh(force)
   F = {regions = {}, region_names = {}, chokes = {}, choke_names = {}, cities = {}, ports = {}, divisions = {}, meta = {},
        tier = F and F.tier or 1}
   s.forces[force_name] = F
-  local sk = k()
   local prof = helpers.create_profiler()
+  -- Phase 5 M3 world3: only labels whose chunk exists; the others come with "rts_world_labels"
   for _, reg in ipairs(world.regions()) do
-    local col = strategic.KIND_COLORS[reg.kind] or {0.95, 0.92, 0.8}
-    local o = placed(F, surf, force_name, reg.center, 0, reg.name, color3(col, 0.95), strategic.SCALE.region * sk)
-    F.regions[#F.regions + 1] = o
-    F.region_names[#F.region_names + 1] = o
-    local res = resources_text(reg)
-    if res then
-      F.regions[#F.regions + 1] = placed(F, surf, force_name, reg.center, 16 * sk, res, color3(col, 0.9),
-        strategic.SCALE.resources * sk, true)
-    end
+    if worldgen.generated(reg.center) then draw_region(F, surf, force_name, reg) end
   end
   for _, c in ipairs(world.chokes()) do
-    local col = strategic.CHOKE_COLORS[c.kind] or {1, 1, 1}
-    F.chokes[#F.chokes + 1] = rendering.draw_circle({color = color3(col, 0.9), radius = max_radius(c), width = 3,
-      filled = false, target = c.position, surface = surf, render_mode = "chart", forces = {force_name}})
-    local o = placed(F, surf, force_name, {x = c.position.x, y = c.position.y + max_radius(c)}, 7 * sk, c.name,
-      color3(col), strategic.SCALE.choke * sk)
-    F.chokes[#F.chokes + 1] = o
-    F.choke_names[#F.choke_names + 1] = o
+    if worldgen.generated(c.position) then draw_choke(F, surf, force_name, c) end
   end
   for _, p in ipairs(world.sites("port")) do
-    F.ports[#F.ports + 1] = placed(F, surf, force_name, p.position, -8 * sk,
-      {"rts-world.chart-port", p.name or {"rts-world.port-label"}}, color3(strategic.PORT_COLOR), strategic.SCALE.port * sk,
-      true)
+    if worldgen.generated(p.position) then draw_port(F, surf, force_name, p) end
   end
   draw_cities(F, surf, force_name)
   prof.stop()
@@ -432,6 +451,25 @@ end
 -- Ticks, signals, teardown
 ---------------------------------------------------------------------------
 local function mark_cities() S().dirty_cities = true end
+
+-- Phase 5 M3 world3: labels whose chunk was just generated (scripts/worldgen.lua), drawn for every refreshed force
+events.on_signal("rts_world_labels", function(d)
+  if not (d and d.labels and nation()) then return end
+  local s = S()
+  if s.match_id ~= storage.match.match_id then return end -- the first refresh of this match draws them
+  local surf = surface()
+  if not surf then return end
+  local P = storage.world.plan
+  for force_name, F in pairs(s.forces) do
+    if game.forces[force_name] then
+      for _, L in ipairs(d.labels) do
+        if L.kind == "region" and P.regions[L.id] then draw_region(F, surf, force_name, P.regions[L.id])
+        elseif L.kind == "choke" and P.chokes[L.id] then draw_choke(F, surf, force_name, P.chokes[L.id])
+        elseif L.kind == "port" and P.sites[L.id] then draw_port(F, surf, force_name, P.sites[L.id]) end
+      end
+    end
+  end
+end)
 events.on_signal("rts_city_founded", mark_cities)
 events.on_signal("rts_city_lost", mark_cities)
 events.on_signal("rts_city_tier", mark_cities)

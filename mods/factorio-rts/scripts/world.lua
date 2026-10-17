@@ -2,22 +2,28 @@
 -- Phase 5 M2 world (docs/PHASE5-M2.md §3 "world.lua additions", study world-map.md §2.2-2.5, §5.3, §5.4): region
 -- kinds and generated names, the scarcity portfolio, city-states, ruins, ports, uranium and rare deposits, chokes from
 -- a distance transform; the strategic layer (chart labels, regional minimap) is scripts/strategic.lua.
+-- Phase 5 M3 world3 (docs/PHASE5-M3.md D8, §3 "worldgen.lua"): world sizes 2048 (default), 3072 and 4096, 2-6 nations
+-- (at most 4 on 2048); generation and placement moved to scripts/worldgen.lua (the plan assigns every feature and
+-- label to chunks, a forced core, the rest in the background). A 2048 or 3072 world of 2-4 nations plans exactly as in
+-- M2 (same seed, same world): every M3 change below is gated by the extended plan (P.xl: 5-6 nations or 4096).
 --
 -- Hybrid generation. Lua plans the strategic skeleton (spawns, mountain ranges with passes, rivers with fords, coasts,
 -- lakes, climate anchors, protected sites, ore deposits); prototypes/world.lua turns it into terrain through named
 -- noise expressions that read the skeleton as numeric constants from MapGenSettings.property_expression_names.
 --
---   world.size_for(nations)        the default size: 1536 for 2 nations, 2048 for 3-4 (1536 / 2048 / 3072 selectable)
+--   world.size_for(nations)        the default size: 2048 for 2-4 nations, 3072 for 5-6 (2048 / 3072 / 4096 selectable;
+--                                  1536 still accepted from configs and probes)
 --   world.plan(config, seed)       skeleton + validation on engine samples (LuaSurface.calculate_tile_properties on
 --                                  an ungenerated sampler surface, 8-tile grid): land connectivity, start kits, spawn
 --                                  scores; a failing skeleton is re-rolled (world.ATTEMPTS). Then (M2, on the sampled
 --                                  grid, own random stream) regions, chokes, uranium, ports, city-states, ruins, city
 --                                  sites, rare deposits, the scarcity record and the fairness measures.
 --   world.map_gen_settings(plan)   the arena's MapGenSettings (Nauvis tiles, trees, decoratives; no ore, no enemies)
---   world.apply(surface, plan)     blocking core (CORE_RADIUS chunks around each spawn), spawn areas cleared, start
---                                  kits placed; the rest of the map generates in the background and every planned
---                                  feature (ore deposit, oil field, uranium, rare deposit, ruin, port, city-state) is
---                                  placed when its chunks exist (city-states: cities.found for rts-neutral)
+--   world.apply(surface, plan)     scripts/worldgen.lua (worldgen.start): blocking core around the spawns and the
+--                                  city-state and port sites, spawn areas cleared, start kits placed; the rest of the
+--                                  map generates in the background and every planned feature (ore deposit, oil field,
+--                                  uranium, rare deposit, ruin, port, city-state) is placed when its chunks exist
+--                                  (city-states: cities.found for rts-neutral)
 --   world.region_at(position)      -> region {id, name (localised), label (English), kind = "highland" | "plain" |
 --                                     "lakeland" | "coast" | "swamp" | "desert" | "forest" | "mountain", climate, role,
 --                                     center, bbox, owner?, resources = {[name] = total}, sites = {site index, ...},
@@ -38,8 +44,9 @@
 --
 -- Owns storage.world = {
 --   size, seed, surface, plan (skeleton, sites, regions, scores; no grid), regions, spawns = {{force, position}},
---   sites, chokes, region_grid (32-tile Voronoi lookup), features (placement queue), pending = {[chunk key] = {i}},
---   fill = {total, generated, done, started, done_tick, last}, post (real-tile check after the fill), checks,
+--   sites, chokes, region_grid (32-tile Voronoi lookup), features (= plan.features, the placement list; plan.chunk_index
+--   maps chunks to them, scripts/worldgen.lua), fill = {total, generated, done, started, done_tick, last}, post
+--   (real-tile check after the fill), checks,
 --   city_states = {{site, name, label, anchor, position, city_id, center, founded, turrets = {LuaEntity}}}
 -- }
 local util = require("scripts.util")
@@ -50,10 +57,15 @@ local buildings = require("scripts.buildings") -- Phase 5 M2 world: the Geology 
 local world = {}
 
 -- Must match prototypes/world.lua SLOTS (world.check_prototypes).
-world.SLOTS = {range = 16, pass = 12, river = 12, ford = 16, site = 24, lake = 12, climate = 24}
-world.SIZES = {1536, 2048, 3072} -- accepted config.world_size values (the lobby offers all three in Nation mode)
+world.SLOTS = {range = 32, pass = 16, river = 16, ford = 16, site = 32, lake = 16, climate = 40}
+-- Phase 5 M3 world3: the M2 slot budget; a plan of 2-4 nations up to 3072 keeps it (skeleton(): re-rolls and climate
+-- anchors as in M2, so the same seed gives the same world), an extended plan (5-6 nations or 4096) uses world.SLOTS.
+world.SLOTS_M2 = {range = 16, pass = 12, river = 12, ford = 16, site = 24, lake = 12, climate = 24}
+world.SIZES = {2048, 3072, 4096} -- Phase 5 M3 world3: the lobby's world sizes (2048 the default up to 4 nations)
+world.LEGACY_SIZES = {1536}      -- still accepted from a config (M1/M2 probes); the lobby no longer offers it
+world.MAX_NATIONS = 6            -- Phase 5 M3 world3: nations per world (at most world.max_nations(size))
 world.CELL = 8                   -- validation grid (tiles per cell)
-world.CORE_RADIUS = 6            -- chunks generated around each spawn before the match starts (192 tiles)
+world.CORE_RADIUS = 5            -- Phase 5 M3 world3: scripts/worldgen.lua's core radius around each spawn (chunks)
 world.CLEAR_RADIUS = 100         -- trees and rocks removed around each spawn (the AI's base and naturals)
 world.SPAWN_CLEAR = 175          -- protected disc around a spawn: no range, river, sea or marsh
 world.KIT_RADIUS = 150           -- the start kit lies within this many tiles of the spawn
@@ -96,6 +108,18 @@ world.CONTESTED = NB.contested or {
   copper = {{"copper-ore", 90000, 3}}, iron = {{"iron-ore", 90000, 3}}, coal = {{"coal", 112000, 3}},
 }
 world.CONTESTED_ORDER = {[2] = {"copper", "iron"}, [3] = {"copper", "iron", "coal"}, [4] = {"copper", "iron", "copper", "iron"}}
+-- Phase 5 M3 world3: balance.nation.world3 (pure data): counts for 5-6 nations and 4096 maps
+local W3B = (ok_balance and type(balance) == "table" and balance.nation and balance.nation.world3) or {}
+world.W3 = W3B
+for n, order in pairs(W3B.contested_order or {}) do world.CONTESTED_ORDER[n] = world.CONTESTED_ORDER[n] or order end
+--- A count from an M2 table (2-4 nations, 1536-3072) or else from the M3 one (5-6 nations, 4096), else `default`.
+local function count_of(t2, t3, key, default)
+  local v = t2 and t2[key]
+  if v == nil and t3 then v = t3[key] end
+  if v == nil then return default end
+  return v
+end
+world.count_of = count_of
 world.RUIN_STOCK = {{"steel-plate", 200}, {"electronic-circuit", 50}}
 world.PORT_STOCK = {{"steel-plate", 300}, {"electronic-circuit", 100}}
 -- Phase 5 M2 treasury: fn(surface, position) -> port record; scripts/market.lua sets it (port sites become trade posts)
@@ -261,19 +285,37 @@ local function edge_margin(P, p) return P.half - max(abs(p.x), abs(p.y)) end
 ---------------------------------------------------------------------------
 -- Sizes and config
 ---------------------------------------------------------------------------
---- Default map size (tiles) for a number of nations: 2 -> 1536, 3-4 -> 2048 (docs/PHASE5-M1.md §1; the lobby also
---- offers the other sizes of world.SIZES).
+--- Default map size (tiles) for a number of nations. Phase 5 M3 world3 (docs/PHASE5-M3.md D8): 2048 for 2-4 nations
+--- (M1 gave 2 nations 1536), 3072 for 5-6; the lobby also offers the other sizes of world.SIZES.
 function world.size_for(nations)
-  return (nations or 2) <= 2 and 1536 or 2048
+  return (nations or 2) <= world.max_nations(2048) and 2048 or 3072
 end
 
---- A valid world size: `size` when it is one of world.SIZES, else size_for(nations).
+--- Phase 5 M3 world3: the most nations a world size holds (balance.nation.world3.max_nations: 4 on 2048, 6 above).
+function world.max_nations(size)
+  local t = W3B.max_nations or {}
+  return t[size] or (size and size >= 3072 and world.MAX_NATIONS or 4)
+end
+
+--- A valid world size: `size` when it is one of world.SIZES (or world.LEGACY_SIZES) and holds `nations`, else the
+--- smallest size that does (size_for(nations) without a size). Phase 5 M3 world3.
 function world.normalize_size(size, nations)
   size = tonumber(size)
+  nations = nations or 2
+  local ok = false
   for _, s in ipairs(world.SIZES) do
-    if size == s then return s end
+    if size == s then ok = true end
   end
-  return world.size_for(nations)
+  for _, s in ipairs(world.LEGACY_SIZES) do
+    if size == s then ok = true end
+  end
+  if not ok then return world.size_for(nations) end
+  if nations > world.max_nations(size) then
+    for _, s in ipairs(world.SIZES) do
+      if s > size and nations <= world.max_nations(s) then return s end
+    end
+  end
+  return size
 end
 
 --- The last slot of every kind must exist (prototypes/world.lua and world.SLOTS agree). Returns ok, message.
@@ -528,9 +570,14 @@ local function skeleton(cfg, seed, attempt)
   local k = S / 2048
   local rng = new_rng(seed, attempt, N)
   local function rr(a, b) return a + (b - a) * rng() end
+  -- Phase 5 M3 world3: an extended plan (5-6 nations or a 4096 map) gets the M3 slots and counts; any other plan keeps
+  -- the M2 rules draw for draw (same seed, same world)
+  local xl = N > 4 or S > 3072
+  local kh = xl and min(k, W3B.home_scale_max or 1.5) or k -- specialty and home oil distances
   local P = {version = 1, seed = seed, attempt = attempt, size = S, half = H, nations = N, forces = cfg.forces,
              spawns = {}, barriers = {}, crossings = {}, lakes = {}, climate = {}, sea = {}, protect = {},
-             deposits = {}, regions = {}, sites = {}, chokes = {}}
+             deposits = {}, regions = {}, sites = {}, chokes = {}, xl = xl or nil,
+             slots = xl and world.SLOTS or world.SLOTS_M2}
   local name = namer(rng)
   -- Coasts: 0-2 sea edges.
   local edges = shuffle(rng, {"n", "s", "e", "w"})
@@ -538,7 +585,7 @@ local function skeleton(cfg, seed, attempt)
   local nsea = roll < 0.3 and 0 or (roll < 0.75 and 1 or 2)
   for i = 1, nsea do P.sea[edges[i]] = floor(rr(70, 120) * k) end
   -- Spawns on a ring, evenly spread with a little jitter; force order = config forces (rts-player first).
-  local R_s = ({[2] = 0.32, [3] = 0.30, [4] = 0.31})[N] * S
+  local R_s = (({[2] = 0.32, [3] = 0.30, [4] = 0.31})[N] or (W3B.spawn_ring or {})[N] or 0.33) * S -- M3: 5-6 nations
   local r_in = (N == 2 and 0.13 or 0.16) * S
   local th0 = rng() * TAU
   for i = 1, N do
@@ -607,15 +654,19 @@ local function skeleton(cfg, seed, attempt)
   end
   -- Home content per nation: start kit, specialty (tangential side), home oil (other side), home lake (outward).
   local spec_kinds = {}
-  for i = 1, N do spec_kinds[i] = world.SPECIALTY_ORDER[i] end
+  for i = 1, N do spec_kinds[i] = world.SPECIALTY_ORDER[(i - 1) % #world.SPECIALTY_ORDER + 1] end -- M3: 5-6 repeat kinds
   shuffle(rng, spec_kinds)
+  -- Phase 5 M3 world3: with 5-6 nations the neighbours are 60-72 degrees apart, so the specialty and the home oil sit
+  -- closer to the outward direction (balance.nation.world3.specialty_angle) and the home distances stop growing at 3072
+  local spec_angle = (xl and (W3B.specialty_angle or {})[N]) or 72
+  local oil_angle = spec_angle + 6
   local function place_home(sp, base_angle, dist0, side, r, discs)
     local u = norm(sp)
     local t = rot(u, math.pi / 2)
     for _, da in ipairs({0, -12, 12, -24, 24, -36}) do
       for _, dd in ipairs({0, -40, 40, -70}) do
         local a = math.rad(base_angle + da)
-        local p = round(vadd(vadd(V(sp.x, sp.y), u, (dist0 + dd) * k * math.cos(a)), t, side * (dist0 + dd) * k * math.sin(a)))
+        local p = round(vadd(vadd(V(sp.x, sp.y), u, (dist0 + dd) * kh * math.cos(a)), t, side * (dist0 + dd) * kh * math.sin(a)))
         local ok = clear_of(P, p, r, {edge = 120 * k, sea = 80, discs = discs or P.home_discs})
         if ok and dist(p, sp) > world.SPAWN_CLEAR + r - 40 then return p end
       end
@@ -631,12 +682,12 @@ local function skeleton(cfg, seed, attempt)
     local discs, spec_pos, oil_pos = {}, {}, {}
     for i, sp in ipairs(P.spawns) do
       discs[#discs + 1] = {x = sp.x, y = sp.y, r = world.SPAWN_CLEAR - 60}
-      local r_spec = floor(52 * max(k, 0.85))
-      local p = place_home(sp, 72, 380, 1, r_spec, discs)
+      local r_spec = floor(52 * max(kh, 0.85))
+      local p = place_home(sp, spec_angle, 380, 1, r_spec, discs)
       if not p then break end
       discs[#discs + 1] = {x = p.x, y = p.y, r = r_spec}
-      local r_oil = floor(34 * max(k, 0.85))
-      local q = place_home(sp, 78, 300, -1, r_oil, discs)
+      local r_oil = floor(34 * max(kh, 0.85))
+      local q = place_home(sp, oil_angle, 300, -1, r_oil, discs)
       if not q then break end
       discs[#discs + 1] = {x = q.x, y = q.y, r = r_oil}
       spec_pos[i], oil_pos[i] = p, q
@@ -658,8 +709,8 @@ local function skeleton(cfg, seed, attempt)
     P.home_discs[#P.home_discs + 1] = {x = sp.x, y = sp.y, r = world.SPAWN_CLEAR - 60}
     sp.kit = start_kit(P, sp)
     local spec = world.SPECIALTIES[spec_kinds[i]]
-    local r_spec = floor(52 * max(k, 0.85))
-    local p = place_home(sp, 72, 380, 1, r_spec)
+    local r_spec = floor(52 * max(kh, 0.85))
+    local p = place_home(sp, spec_angle, 380, 1, r_spec)
     if not p then return nil, "no room for the specialty of " .. sp.force end
     local d = {id = #P.deposits + 1, role = "specialty", specialty = spec_kinds[i], force = sp.force, x = p.x, y = p.y,
                r = r_spec, kind = spec.kind}
@@ -667,8 +718,8 @@ local function skeleton(cfg, seed, attempt)
     if spec.wells then d.wells = oil_wells(rng, d, spec.wells, world.OIL_HOME.amount) end
     P.deposits[#P.deposits + 1] = d
     P.home_discs[#P.home_discs + 1] = {x = p.x, y = p.y, r = r_spec}
-    local r_oil = floor(34 * max(k, 0.85))
-    local q = place_home(sp, 78, 300, -1, r_oil)
+    local r_oil = floor(34 * max(kh, 0.85))
+    local q = place_home(sp, oil_angle, 300, -1, r_oil)
     if not q then return nil, "no room for the home oil of " .. sp.force end
     local o = {id = #P.deposits + 1, role = "home_oil", force = sp.force, x = q.x, y = q.y, r = r_oil, kind = "swamp", patches = {}}
     o.wells = oil_wells(rng, o, world.OIL_HOME.wells, world.OIL_HOME.amount)
@@ -693,7 +744,8 @@ local function skeleton(cfg, seed, attempt)
   end
   local center = {id = #P.deposits + 1, role = "center_oil", x = 0, y = 0, r = floor(60 * max(k, 0.75)), kind = "swamp",
                   patches = {}}
-  center.wells = oil_wells(rng, center, world.OIL_CENTER.wells, world.OIL_CENTER.amount)
+  center.wells = oil_wells(rng, center, (xl and (W3B.center_oil_wells or {})[N]) or world.OIL_CENTER.wells, -- M3 world3
+    world.OIL_CENTER.amount)
   P.deposits[#P.deposits + 1] = center
   for _, d in ipairs(P.deposits) do protect(P, d, d.r + 12, "deposit " .. d.id) end
   -- Spur ranges behind highland specialties (free ends: units walk around them; cliffs on the rim).
@@ -741,6 +793,11 @@ local function skeleton(cfg, seed, attempt)
     if d.kind == "highland" then reg.climate = "highland" elseif d.kind == "swamp" then reg.climate = "swamp" end
   end
   local target = S >= 3072 and 28 or (S >= 2048 and 20 or 14)
+  local spacing = 300 * k
+  if xl then -- Phase 5 M3 world3: more regions on 4096 and for the homes and deposits of nations 5 and 6
+    target = count_of(nil, W3B.regions, S, target) + 4 * max(0, N - 4)
+    spacing = 300 * min(k, W3B.region_spacing_max or 1.5)
+  end
   local cands = {}
   local step = floor(96 * k)
   for x = -H + 80, H - 80, step do
@@ -754,7 +811,7 @@ local function skeleton(cfg, seed, attempt)
     if sea_margin(P, c) > 40 then
       local okc = true
       for _, reg in ipairs(P.regions) do
-        if dist(c, reg.center) < 300 * k then okc = false break end
+        if dist(c, reg.center) < spacing then okc = false break end
       end
       if okc then
         local kind = "plain"
@@ -770,9 +827,10 @@ local function skeleton(cfg, seed, attempt)
   end
   -- Massifs: short free-standing ranges through some frontier regions (highland character, local chokes).
   local massifs = 0
+  local max_massifs = xl and count_of(nil, W3B.massifs, S, world.MASSIFS) or world.MASSIFS -- Phase 5 M3 world3
   for _, reg in ipairs(P.regions) do
-    if massifs >= world.MASSIFS and reg.role == "frontier" and reg.climate ~= "lakes" then break end
-    if reg.role == "frontier" and reg.climate ~= "lakes" and massifs < world.MASSIFS then
+    if massifs >= max_massifs and reg.role == "frontier" and reg.climate ~= "lakes" then break end
+    if reg.role == "frontier" and reg.climate ~= "lakes" and massifs < max_massifs then
       local a = rng() * math.pi
       local t = V(math.cos(a), math.sin(a))
       local nrm = V(-t.y, t.x)
@@ -811,7 +869,7 @@ local function skeleton(cfg, seed, attempt)
   end
   -- Climate anchors (deposit regions first, then fillers) and lakeland lakes.
   local function anchor(p, r, m, a, s)
-    if #P.climate < world.SLOTS.climate then
+    if #P.climate < P.slots.climate then
       P.climate[#P.climate + 1] = {x = p.x, y = p.y, r = r, m = m, a = a, s = s}
     end
   end
@@ -833,7 +891,7 @@ local function skeleton(cfg, seed, attempt)
       elseif reg.climate == "lakes" then
         anchor(reg.center, 150 * k, 0.12, 0, 0)
         for j = 1, 2 do
-          if #P.lakes < world.SLOTS.lake then
+          if #P.lakes < P.slots.lake then
             local p = round(vadd(reg.center, V(math.cos(j * 2.4 + rng()), math.sin(j * 2.4 + rng())), 55 * k))
             local r = floor(rr(11, 17))
             local okl = clear_of(P, p, r + 6, {edge = 60, sea = 30, discs = P.protect, gap = 12})
@@ -852,8 +910,9 @@ local function skeleton(cfg, seed, attempt)
   for _, c in ipairs(P.crossings) do
     if c.kind == "pass" then npass = npass + 1 else nford = nford + 1 end
   end
-  if nr > world.SLOTS.range or nv > world.SLOTS.river or npass > world.SLOTS.pass or nford > world.SLOTS.ford
-     or #P.protect > world.SLOTS.site or #P.lakes > world.SLOTS.lake then
+  local SL = P.slots -- Phase 5 M3 world3: the M2 budget unless the plan is extended
+  if nr > SL.range or nv > SL.river or npass > SL.pass or nford > SL.ford
+     or #P.protect > SL.site or #P.lakes > SL.lake then
     return nil, string.format("slot budget: ranges %d rivers %d passes %d fords %d sites %d lakes %d", nr, nv, npass,
       nford, #P.protect, #P.lakes)
   end
@@ -1189,7 +1248,10 @@ end
 -- Per-spawn score (study 5.1): buildable land within KIT_RADIUS (0.35), water within 200 (0.15), defensibility from
 -- the land runs on the ring at 300 (0.20), expansion value (0.30): every deposit's value shared by inverse square
 -- path distance and divided by max(1, distance / 500), normalised by the best nation.
-local function score_spawns(P, G, dists)
+-- Phase 5 M3 world3: the octile path fields (below, Phase 5 M2) also serve an extended plan's validation
+local path_field, path_len, coarse_fields
+
+local function score_spawns(P, G, dists, pathf)
   local scores = {}
   local cell = G.cell
   for si, sp in ipairs(P.spawns) do
@@ -1238,7 +1300,7 @@ local function score_spawns(P, G, dists)
     d.value = value
     local inv, ds = 0, {}
     for si in ipairs(P.spawns) do
-      local t = path_tiles(G, dists[si], d)
+      local t = pathf and pathf(si, d) or path_tiles(G, dists[si], d) -- Phase 5 M3 world3: pathf (extended plan)
       ds[si] = t
       if t then inv = inv + 1 / (t * t) end
     end
@@ -1264,7 +1326,17 @@ end
 local function validate(P, G)
   local R = {reasons = {}}
   local dists = {}
-  for si, sp in ipairs(P.spawns) do dists[si] = bfs(G, cell_of(G, sp)) end
+  -- Phase 5 M3 world3: an extended plan (5-6 nations, 4096: 262,144 cells) floods the 8-tile grid from the first
+  -- spawn only (connectivity) and scores with the octile path fields of the 16-tile grid (the M2 fairness measures),
+  -- which the M2 steps reuse: five fewer floods of the fine grid, about 0.75 s of planning at 4096
+  local pathf
+  if P.xl then
+    dists[1] = bfs(G, cell_of(G, P.spawns[1]))
+    R.coarse = coarse_fields(P, G)
+    pathf = function(si, p) return path_len(R.coarse.G2, R.coarse.fields[si], P.spawns[si], p) end
+  else
+    for si, sp in ipairs(P.spawns) do dists[si] = bfs(G, cell_of(G, sp)) end
+  end
   -- connectivity from the first spawn: every spawn, every deposit (contested ones included), every region centre
   -- on land
   local d1 = dists[1]
@@ -1302,7 +1374,7 @@ local function validate(P, G)
     end
   end
   if #dep_bad > 0 then R.reasons[#R.reasons + 1] = "deposits off land: " .. table.concat(dep_bad, ", ") end
-  R.scores, R.spread = score_spawns(P, G, dists)
+  R.scores, R.spread = score_spawns(P, G, dists, pathf)
   if R.spread > world.SPREAD_MAX then R.reasons[#R.reasons + 1] = string.format("spawn score spread %.3f", R.spread) end
   -- nearest-enemy path spread (study: 12 %; informational)
   local near = {}
@@ -1310,7 +1382,7 @@ local function validate(P, G)
     local best
     for sj, sq in ipairs(P.spawns) do
       if sj ~= si then
-        local t = path_tiles(G, dists[si], sq)
+        local t = pathf and pathf(si, sq) or path_tiles(G, dists[si], sq)
         if t and (not best or t < best) then best = t end
       end
     end
@@ -1338,7 +1410,7 @@ end
 -- (orthogonal) and 4 (diagonal; no corner cutting between two blocked cells), by a bucket queue. The M1 field (bfs) is
 -- 4-connected and counts a diagonal approach up to 41 % longer than a straight one; this one is within 6 % of the
 -- true length in every direction, which the fairness measures need. Returns {[cell] = chamfer units} (3 per cell).
-local function path_field(G, start, pass)
+path_field = function(G, start, pass) -- Phase 5 M3 world3: forward-declared above (validate)
   local n = G.n
   local nn = n * n
   local d = {}
@@ -1389,7 +1461,7 @@ end
 -- Path tiles from a path_field (source position `src`) to a position: the nearest passable cell within 2 cells (like
 -- path_tiles), never shorter than the straight line (the chamfer runs up to 6 % short on diagonals); nil when
 -- unreachable.
-local function path_len(G, d, src, p)
+path_len = function(G, d, src, p) -- Phase 5 M3 world3: forward-declared above
   local k, i, j = cell_of(G, p)
   if not k then return nil end
   local best
@@ -1407,6 +1479,28 @@ local function path_len(G, d, src, p)
   end
   if not best then return nil end
   return max(best * G.cell / 3, dist(src, p))
+end
+
+-- The 16-tile grid of the octile path fields (a coarse cell is passable when at least 3 of its 4 cells are) and one
+-- field per spawn: {G2, fields = {[si] = field}}.
+coarse_fields = function(P, G)
+  local n2 = G.n / 2
+  local G2 = {n = n2, cell = G.cell * 2, half = G.half}
+  local pass = {}
+  for j = 0, n2 - 1 do
+    for i = 0, n2 - 1 do
+      local k = 2 * j * G.n + 2 * i + 1
+      local c = 0
+      if passable(G.cls[k]) then c = c + 1 end
+      if passable(G.cls[k + 1]) then c = c + 1 end
+      if passable(G.cls[k + G.n]) then c = c + 1 end
+      if passable(G.cls[k + G.n + 1]) then c = c + 1 end
+      pass[j * n2 + i + 1] = c >= 3
+    end
+  end
+  local fields = {}
+  for si, sp in ipairs(P.spawns) do fields[si] = path_field(G2, cell_of(G2, sp), pass) end
+  return {G2 = G2, fields = fields}
 end
 
 -- Shared context of the M2 planning steps: grid, distance fields, candidate cells, helpers.
@@ -1470,25 +1564,9 @@ local function plan_context(P, G, R)
   -- path tiles from every spawn ({[si] = tiles or nil}; octile path fields, see path_field)
   -- path fields on a 16-tile grid (4x fewer cells; fairness needs no finer): a coarse cell is passable when at least 3
   -- of its 4 cells are (a 30-tile barrier still blocks, a 34-tile pass or a ford still opens)
-  local n2 = G.n / 2
-  local G2 = {n = n2, cell = G.cell * 2, half = G.half}
-  local pass = {}
-  for j = 0, n2 - 1 do
-    for i = 0, n2 - 1 do
-      local k = 2 * j * G.n + 2 * i + 1
-      local c = 0
-      if passable(G.cls[k]) then c = c + 1 end
-      if passable(G.cls[k + 1]) then c = c + 1 end
-      if passable(G.cls[k + G.n]) then c = c + 1 end
-      if passable(G.cls[k + G.n + 1]) then c = c + 1 end
-      pass[j * n2 + i + 1] = c >= 3
-    end
-  end
-  X.fields = {}
-  for si, sp in ipairs(P.spawns) do
-    local start = cell_of(G2, sp)
-    X.fields[si] = path_field(G2, start, pass)
-  end
+  local C = R.coarse or coarse_fields(P, G) -- Phase 5 M3 world3: an extended plan computed them in validate
+  local G2 = C.G2
+  X.fields = C.fields
   function X.paths(p)
     local out = {}
     for si, sp in ipairs(P.spawns) do out[si] = path_len(G2, X.fields[si], sp, p) end
@@ -1904,11 +1982,15 @@ local function plan_uranium(P, X)
   local center
   for _, d in ipairs(P.deposits) do if d.role == "center_oil" then center = d end end
   if not center then return end
-  local count = world.URANIUM.count[P.nations] or 1
+  local count = count_of(world.URANIUM.count, W3B.uranium, P.nations, 1) -- Phase 5 M3 world3: 5-6 nations
   local side = patch_side(world.URANIUM.amount)
   local rays = {}
   for _, b in ipairs(P.barriers) do if b.ray then rays[#rays + 1] = b end end
   local picks = count >= 2 and {1, (#rays >= 4) and 3 or 2} or {1}
+  if count >= 3 then -- Phase 5 M3 world3: evenly spread over the rays
+    picks = {}
+    for i = 1, count do picks[i] = floor((i - 1) * #rays / count) + 1 end
+  end
   for _, ri in ipairs(picks) do
     local b = rays[ri]
     if b then
@@ -1946,6 +2028,7 @@ end
 local function plan_ports(P, X, rng, names)
   local G, k = X.G, X.k
   local target = (P.nations <= 2 and P.size < 3072) and 2 or min(4, max(3, P.nations))
+  if P.nations > 4 then target = count_of(nil, W3B.ports, P.nations, 4) end -- Phase 5 M3 world3
   local min_spawn = max(world.PORTS.min_spawn, 300 * k)
   local pc = {}
   for _, p in ipairs(X.cands) do
@@ -2015,7 +2098,7 @@ end
 -- reach of the path through it), then the contested iron regions; world.W2.city_states per nation count.
 local function plan_city_states(P, X, ports, names)
   local G, k = X.G, X.k
-  local target = world.W2.city_states[P.nations] or 5
+  local target = count_of(world.W2.city_states, W3B.city_states, P.nations, 5) -- Phase 5 M3 world3: 5-6 nations
   local list = {}
   local function spot_ok(p, allow_deposit)
     if not (X.buildable(p, 14) and X.reachable(p)) then return false end
@@ -2137,7 +2220,8 @@ end
 -- RUINS.min_spawn tiles from every spawn, RUINS.spacing apart, away from deposits, city-states and ports.
 local function plan_ruins(P, X, rng, city_states, ports)
   local G, k = X.G, X.k
-  local target = world.RUINS.count[P.size] or (P.size >= 3072 and 12 or (P.size >= 2048 and 10 or 8))
+  -- Phase 5 M3 world3: 4096 maps (balance.nation.world3.ruins)
+  local target = count_of(world.RUINS.count, W3B.ruins, P.size, P.size >= 3072 and 12 or (P.size >= 2048 and 10 or 8))
   local min_spawn = max(world.RUINS.min_spawn, 320 * k)
   local scored = {}
   for _, p in ipairs(X.cands) do
@@ -2193,6 +2277,7 @@ local function plan_city_sites(P, X, rng, city_states, ruins)
     end
   end
   local target = P.size >= 3072 and 48 or (P.size >= 2048 and 32 or 22)
+  if P.xl then target = count_of(nil, W3B.city_sites, P.size, target) + 4 * max(0, P.nations - 4) end -- Phase 5 M3 world3
   local scored = {}
   for _, p in ipairs(good) do
     do
@@ -2220,7 +2305,8 @@ end
 -- preferred), away from spawns, deposits and other sites.
 local function plan_rare(P, X, rng, city_states)
   local G, k = X.G, X.k
-  local count = world.RARE.count[P.size] or (P.size >= 3072 and 8 or (P.size >= 2048 and 6 or 4))
+  -- Phase 5 M3 world3: 4096 maps (balance.nation.world3.rare)
+  local count = count_of(world.RARE.count, W3B.rare, P.size, P.size >= 3072 and 8 or (P.size >= 2048 and 6 or 4))
   local kinds = {}
   for i, kd in ipairs(world.RARE.kinds) do kinds[i] = kd end
   shuffle(rng, kinds)
@@ -2433,7 +2519,8 @@ end
 -- cells of the sampled 8-tile grid (the territory grid has the same cells) that are not within CLAIM_RIM cells of the
 -- map border; mountain, water and ford cells are not claimable. One row string per grid row, "\1" = claimable.
 world.CLAIM_RIM = 2
-world.CLAIM_RANGE = {0.40, 0.95} -- the autotest's bounds of the claimable share of a map (measured 88-93 %)
+world.CLAIM_RANGE = {0.40, 0.97} -- the autotest's bounds of the claimable share of a map (measured 88-93 % at 2048;
+                                 -- Phase 5 M3 world3: 95.5 % on a 3072 world without sea, seed 30726, the M2 plan)
 local function build_claimable(G)
   local n, rim = G.n, world.CLAIM_RIM
   local rows, count = {}, 0
@@ -2463,7 +2550,7 @@ local function plan_config(config)
   local c = config or {}
   local nations = (tonumber(c.opponents) or 1) + 1
   if c.nations then nations = c.nations end
-  nations = max(2, min(4, nations))
+  nations = max(2, min(world.MAX_NATIONS, nations)) -- Phase 5 M3 world3: up to six nations
   local forces = {util.PLAYER_FORCE}
   for i = 1, nations - 1 do forces[#forces + 1] = "rts-ai-" .. i end
   return {nations = nations, size = world.normalize_size(c.world_size, nations), forces = forces}
@@ -2479,15 +2566,24 @@ function world.plan(config, seed)
   assert(okp, "world: prototypes/world.lua and world.SLOTS disagree: " .. msg)
   local best, bestR, bestG
   local tried = {}
+  -- Phase 5 M3 world3: the time of each M1 planning step over all attempts (log line "M1 planning steps")
+  local steps = {skeleton = helpers.create_profiler(true), thicken = helpers.create_profiler(true),
+                 sample = helpers.create_profiler(true), validate = helpers.create_profiler(true)}
+  local function timed(name, fn, ...)
+    steps[name].restart()
+    local a, b = fn(...)
+    steps[name].stop()
+    return a, b
+  end
   for attempt = 1, world.ATTEMPTS do
-    local P, why = skeleton(cfg, seed, attempt)
+    local P, why = timed("skeleton", skeleton, cfg, seed, attempt)
     if not P then
       tried[#tried + 1] = string.format("#%d skeleton: %s", attempt, why)
     else
-      local thin = thicken(P)
+      local thin = timed("thicken", thicken, P)
       local surface = sampler_surface(world.map_gen_settings(P))
-      local G = sample_grid(surface, P)
-      local R = validate(P, G)
+      local G = timed("sample", sample_grid, surface, P)
+      local R = timed("validate", validate, P, G)
       if #thin > 0 then
         local m = math.huge
         for _, x in ipairs(thin) do m = min(m, x.th) end
@@ -2504,6 +2600,8 @@ function world.plan(config, seed)
   end
   assert(best, "world: no skeleton could be planned: " .. table.concat(tried, " | "))
   local P, R, G = best, bestR, bestG
+  log({"", "[rts] world: M1 planning steps: skeleton ", steps.skeleton, "; thicken ", steps.thicken, "; sample ",
+    steps.sample, "; validate ", steps.validate})
   local surface = sampler_surface(world.map_gen_settings(P))
   local w2 = helpers.create_profiler() -- Phase 5 M2 world
   plan_w2(P, G, R, surface)
@@ -2577,8 +2675,10 @@ end
 -- world.apply: generation and placement
 ---------------------------------------------------------------------------
 local function chunk_key(cx, cy) return (cx + 1024) * 2048 + (cy + 1024) end
+world.chunk_key = chunk_key -- Phase 5 M3 world3: scripts/worldgen.lua (plan.chunk_index keys)
 
 -- Features: patches, oil fields, ruins, ports. Each knows its tile box; it is placed once all its chunks exist.
+-- Phase 5 M3 world3: built at planning (scripts/worldgen.lua keeps them in plan.features and maps them to chunks).
 local function build_features(P)
   local list = {}
   local function add(f)
@@ -2667,94 +2767,17 @@ local function place_feature(surface, W, f)
   W.placed = (W.placed or 0) + 1
 end
 
-local function index_features(surface, W)
-  W.pending = {}
-  local ready = {}
-  for i, f in ipairs(W.features) do
-    local b = f.box
-    local missing = 0
-    for cx = floor(b.x0 / 32), floor((b.x1 - 0.001) / 32) do
-      for cy = floor(b.y0 / 32), floor((b.y1 - 0.001) / 32) do
-        if not surface.is_chunk_generated({cx, cy}) then
-          missing = missing + 1
-          local key = chunk_key(cx, cy)
-          local l = W.pending[key]
-          if not l then l = {} W.pending[key] = l end
-          l[#l + 1] = i
-        end
-      end
-    end
-    f.missing = missing
-    if missing == 0 then ready[#ready + 1] = f end
-  end
-  return ready
-end
+world.build_features = build_features -- Phase 5 M3 world3: scripts/worldgen.lua
+world.place_feature = place_feature
+world.CLEAR_TYPES = CLEAR_TYPES
 
-local function count_map_chunks(surface, H)
-  local c = H / 32
-  local n = 0
-  for cx = -c, c - 1 do
-    for cy = -c, c - 1 do
-      if surface.is_chunk_generated({cx, cy}) then n = n + 1 end
-    end
-  end
-  return n
-end
-
---- Generate the world on `surface` (created with world.map_gen_settings(plan)): the blocking core around every spawn,
---- cleared spawn areas, the start kits; everything else in the background (on_chunk_generated). Writes storage.world.
+--- Generate the world on `surface` (created with world.map_gen_settings(plan)). Phase 5 M3 world3: the generation is
+--- scripts/worldgen.lua's (worldgen.start: the blocking core, cleared spawn areas, the start kits, the rest of the
+--- map in the background). Writes storage.world.
 function world.apply(surface, P)
-  local prof = helpers.create_profiler()
-  surface.map_gen_settings = world.map_gen_settings(P)
-  surface.always_day = true
-  local core = helpers.create_profiler()
-  for _, sp in ipairs(P.spawns) do surface.request_to_generate_chunks({sp.x, sp.y}, world.CORE_RADIUS) end
-  surface.force_generate_chunk_requests()
-  core.stop()
-  local W = {size = P.size, seed = P.seed, surface = surface.name, plan = P, regions = P.regions, sites = P.sites,
-             chokes = P.chokes, region_grid = P.region_grid, region_grid_n = P.region_grid_n, spawns = {}, oil = {},
-             checks = {}, started = game.tick}
-  for _, sp in ipairs(P.spawns) do W.spawns[#W.spawns + 1] = {force = sp.force, position = {x = sp.x, y = sp.y}} end
-  storage.world = W
-  mapgen.adopt(surface.name, "world", P.size)
-  local cleared = 0
-  for _, sp in ipairs(P.spawns) do
-    for _, e in pairs(surface.find_entities_filtered({position = {sp.x, sp.y}, radius = world.CLEAR_RADIUS,
-                                                      type = CLEAR_TYPES})) do
-      if e.valid then e.destroy() cleared = cleared + 1 end
-    end
-  end
-  W.city_states = {} -- Phase 5 M2 world: founded when their ground exists (place_feature)
-  world.neutral_force()
-  W.features = build_features(P)
-  local ready = index_features(surface, W)
-  for _, f in ipairs(ready) do place_feature(surface, W, f) end
-  local total = (P.size / 32) ^ 2
-  W.fill = {total = total, generated = count_map_chunks(surface, P.half), started = game.tick, last = game.tick}
-  -- Phase 5 M2 world: the city-states' ground first, then the whole map (scripts/strategic.lua draws the chart layer)
-  for _, s in ipairs(P.sites) do
-    if s.kind == "city_state" then surface.request_to_generate_chunks(s.position, 1) end
-  end
-  surface.request_to_generate_chunks({0, 0}, math.ceil(P.half / 32))
-  prof.stop()
-  -- start kit check (placed now: inside the core)
-  local kit = {}
-  for _, f in ipairs(W.features) do
-    if f.type == "patch" and (f.kind == "main" or f.kind == "natural") then
-      local sp
-      for _, s in ipairs(P.spawns) do if s.force == f.force then sp = s end end
-      local d = dist(V(f.x, f.y), sp) + max(f.w, f.h) / 2
-      kit[#kit + 1] = {force = f.force, name = f.name, kind = f.kind, placed = f.placed and true or false,
-                       tiles = f.tiles or 0, amount = f.amount or 0, total = f.total, dist = d}
-    end
-  end
-  W.checks.kit = kit
-  W.checks.core_chunks = W.fill.generated
-  log({"", string.format("[rts] world: %s generated: core %d chunks (radius %d around %d spawns), %d trees/rocks "
-    .. "cleared, %d of %d features placed, %d pending on %d chunks; background fill of %d chunks requested; core in ",
-    surface.name, W.fill.generated, world.CORE_RADIUS, #P.spawns, cleared, W.placed or 0, #W.features,
-    #W.features - (W.placed or 0), table_size(W.pending), total - W.fill.generated), core, "; apply in ", prof})
-  return W
+  local worldgen = loaded("scripts.worldgen")
+  assert(worldgen, "world.apply: scripts/worldgen.lua is not loaded")
+  return worldgen.start(surface, P)
 end
 
 ---------------------------------------------------------------------------
@@ -2762,6 +2785,8 @@ end
 ---------------------------------------------------------------------------
 local post_step -- forward
 
+--- The background fill is complete (scripts/worldgen.lua calls it): QA counts, the unplaced count, then the real-tile
+--- check over the next ticks.
 local function finish_fill(surface, W)
   local F = W.fill
   F.done, F.done_tick = true, game.tick
@@ -2788,57 +2813,73 @@ local function finish_fill(surface, W)
   W.post = {row = 0, n = W.size / world.CELL, cls = {}, agree = 0, total = 0}
 end
 
-events.on(defines.events.on_chunk_generated, function(e)
-  local W = storage.world
-  if not (W and W.fill and not W.fill.done and e.surface.name == W.surface) then return end
-  local cx, cy = e.position.x, e.position.y
-  local c = W.size / 64
-  if cx >= -c and cx < c and cy >= -c and cy < c then
-    W.fill.generated = W.fill.generated + 1
-    W.fill.last = game.tick
-  end
-  local key = chunk_key(cx, cy)
-  local list = W.pending and W.pending[key]
-  if list then
-    W.pending[key] = nil
-    for _, i in ipairs(list) do
-      local f = W.features[i]
-      f.missing = f.missing - 1
-      if f.missing <= 0 then place_feature(e.surface, W, f) end
-    end
-  end
-  if W.fill.generated >= W.fill.total then finish_fill(e.surface, W) end
-end)
+world.finish_fill = finish_fill -- Phase 5 M3 world3: scripts/worldgen.lua (on_chunk_generated moved there)
 
 -- Rows of the real-tile grid per tick (n = 256 at 2048: 32 ticks of 2,048 get_tile calls).
 world.POST_ROWS = 8
+-- Phase 5 M3 world3: the real-tile check in slices that keep every tick short on a 4096 map: grid rows for at most
+-- POST_CELLS cells per tick (8 rows at 2048, 4 at 4096), class counts on the way, the flood POST_BFS cells per tick.
+world.POST_CELLS = 2048
+world.POST_BFS = 20000
 
 post_step = function(W)
   local surface = game.surfaces[W.surface]
   local Q = W.post
   if not surface then W.post = nil return end
   local n, cell, H = Q.n, world.CELL, W.size / 2
-  for _ = 1, world.POST_ROWS do
-    if Q.row >= n then break end
-    local j = Q.row
-    for i = 0, n - 1 do
-      local t = surface.get_tile(-H + i * cell + cell / 2, -H + j * cell + cell / 2)
-      local nm = t.name
-      local c
-      if nm == "rts-ford" then c = FORD
-      elseif nm == "rts-mountain" then c = MOUNTAIN
-      elseif nm == "rts-marsh" then c = MARSH
-      elseif t.collides_with("player") then c = WATER
-      else c = LAND end
-      Q.cls[j * n + i + 1] = c
+  Q.counts = Q.counts or {[LAND] = 0, [WATER] = 0, [MOUNTAIN] = 0, [FORD] = 0, [MARSH] = 0}
+  local rows = max(1, min(world.POST_ROWS, floor(world.POST_CELLS / n)))
+  if Q.row < n then
+    for _ = 1, rows do
+      if Q.row >= n then break end
+      local j = Q.row
+      for i = 0, n - 1 do
+        local t = surface.get_tile(-H + i * cell + cell / 2, -H + j * cell + cell / 2)
+        local nm = t.name
+        local c
+        if nm == "rts-ford" then c = FORD
+        elseif nm == "rts-mountain" then c = MOUNTAIN
+        elseif nm == "rts-marsh" then c = MARSH
+        elseif t.collides_with("player") then c = WATER
+        else c = LAND end
+        Q.cls[j * n + i + 1] = c
+        Q.counts[c] = Q.counts[c] + 1
+      end
+      Q.row = Q.row + 1
     end
-    Q.row = Q.row + 1
+    return
   end
-  if Q.row < n then return end
-  -- flood from the first spawn on the real grid
+  -- flood from the first spawn on the real grid (bfs(), resumable: POST_BFS cells per tick)
   local G = {n = n, cell = cell, half = H, cls = Q.cls}
   local P = W.plan
-  local d1 = bfs(G, cell_of(G, P.spawns[1]))
+  local B = Q.bfs
+  if not B then
+    local start = cell_of(G, P.spawns[1])
+    B = {d = {}, q = {}, head = 1, tail = 0}
+    if start and passable(Q.cls[start]) then
+      B.d[start], B.q[1], B.tail = 1, start, 1
+    end
+    Q.bfs = B
+  end
+  do
+    local cls, d, q = Q.cls, B.d, B.q
+    local head, tail = B.head, B.tail
+    local stop = head + world.POST_BFS
+    while head <= tail and head < stop do
+      local k = q[head]
+      head = head + 1
+      local nd = d[k] + 1
+      local i = (k - 1) % n
+      local nb
+      if i > 0 then nb = k - 1 if not d[nb] and passable(cls[nb]) then d[nb] = nd tail = tail + 1 q[tail] = nb end end
+      if i < n - 1 then nb = k + 1 if not d[nb] and passable(cls[nb]) then d[nb] = nd tail = tail + 1 q[tail] = nb end end
+      if k > n then nb = k - n if not d[nb] and passable(cls[nb]) then d[nb] = nd tail = tail + 1 q[tail] = nb end end
+      if k <= n * (n - 1) then nb = k + n if not d[nb] and passable(cls[nb]) then d[nb] = nd tail = tail + 1 q[tail] = nb end end
+    end
+    B.head, B.tail = head, tail
+    if head <= tail then return end
+  end
+  local d1 = B.d
   local bad, targets = {}, 0
   local function target(label, p)
     targets = targets + 1
@@ -2848,8 +2889,8 @@ post_step = function(W)
   for _, d in ipairs(P.deposits) do target("deposit " .. d.id .. " " .. d.role, d) end
   for _, reg in ipairs(P.regions) do target("region " .. reg.id, reg.center) end
   for _, s in ipairs(P.sites) do target(s.kind .. " " .. util.pos_str(s.position), s.position) end
-  local cells = {land = 0, water = 0, mountain = 0, ford = 0, marsh = 0}
-  for _, c in pairs(Q.cls) do cells[world.CLASS[c]] = cells[world.CLASS[c]] + 1 end
+  local cells = {}
+  for c, v in pairs(Q.counts) do cells[world.CLASS[c]] = v end
   if world.write_images then world.write_image(W, G) end
   W.post = nil
   W.checks.post = {targets = targets, bad = bad, cells = cells}
@@ -2912,22 +2953,7 @@ events.on(defines.events.on_tick, function()
   if W and W.post then post_step(W) end
 end)
 
--- Watchdog (a safety net: measured saves kept their generation requests): a fill that finished no chunk for
--- FILL_WATCHDOG ticks asks for the map again. At 3072 the first background chunk finished only after 20-30 s (the
--- engine takes all requested chunks through the early generation stages first), so the window is a minute.
-world.FILL_WATCHDOG = 3600
-events.on_nth_tick(600, function()
-  local W = storage.world
-  if not (W and W.fill and not W.fill.done) then return end
-  local surface = game.surfaces[W.surface]
-  if not surface then return end
-  if game.tick - W.fill.last >= world.FILL_WATCHDOG then
-    surface.request_to_generate_chunks({0, 0}, math.ceil(W.size / 64))
-    W.fill.last = game.tick
-    util.log("world: no chunk of the fill finished for %d s (%d/%d chunks), generation requested again",
-      world.FILL_WATCHDOG / 60, W.fill.generated, W.fill.total)
-  end
-end)
+-- Phase 5 M3 world3: the fill watchdog moved to scripts/worldgen.lua (it re-requests the chunks in flight).
 
 ---------------------------------------------------------------------------
 -- Phase 5 M2 world: city-states (D7), their garrison, the Geology gate on uranium
@@ -3292,11 +3318,18 @@ function world.w2_checks(check, tag)
   tag = tag or ""
   -- each nation lacks at least one basic ore beyond its start kit; its specialty 300-700 path tiles out, nearest
   local lack_ok, spec_ok, parts, sparts = true, true, {}, {}
+  -- Phase 5 M3 world3: an extended plan's home distances stop growing at 3072's (balance.nation.world3.home_scale_max)
+  local spec_lo, spec_hi = 300 * P.size / 2048, 700
+  if P.xl then
+    local kk = P.size / 2048
+    local hs = world.W3.home_scale_max or 1.5
+    spec_lo, spec_hi = 300 * min(kk, hs), 700 * max(1, kk / hs)
+  end
   for _, sp in ipairs(P.spawns) do
     local r = P.scarcity[sp.force]
     if #r.lacks < 1 then lack_ok = false end
     parts[#parts + 1] = string.format("%s (%s) lacks %s", sp.force, tostring(r.specialty), table.concat(r.lacks, " "))
-    local okp = r.specialty_path and r.specialty_path >= 300 * P.size / 2048 and r.specialty_path <= 700
+    local okp = r.specialty_path and r.specialty_path >= spec_lo and r.specialty_path <= spec_hi
       and (not r.specialty_other or r.specialty_other > r.specialty_path)
     if not okp then spec_ok = false end
     sparts[#sparts + 1] = string.format("%s %s/%s%s", sp.force, tostring(r.specialty_path), tostring(r.specialty_other),
@@ -3327,7 +3360,7 @@ function world.w2_checks(check, tag)
   -- city-states: planned count, each with a City Center (live, registered) and land
   local cities = loaded("scripts.cities")
   local territory = loaded("scripts.territory")
-  local want = world.W2.city_states[P.nations] or 5
+  local want = count_of(world.W2.city_states, world.W3.city_states, P.nations, 5) -- Phase 5 M3 world3: 5-6 nations
   local planned, live, cparts = 0, 0, {}
   for _, s in ipairs(P.sites) do if s.kind == "city_state" then planned = planned + 1 end end
   for _, rec in ipairs(w.city_states or {}) do
@@ -3339,11 +3372,13 @@ function world.w2_checks(check, tag)
       c and c.force or "-", cells, #rec.turrets)
   end
   local lo = P.nations >= 4 and 5 or want - 1
+  if P.nations > 4 then lo = want - 1 end -- Phase 5 M3 world3
   check("world_city_states" .. tag, planned >= lo and planned <= max(want, 6) and live == planned,
     "%d planned (want %d), %d with a City Center and land: %s", planned, want, live, table.concat(cparts, "; "))
   -- ports, fair by path
   local F = P.fair.ports
-  check("world_ports" .. tag, F.count >= 2 and F.count <= 4 and F.spread <= world.PORTS.spread_max,
+  local max_ports = max(4, count_of(nil, world.W3.ports, P.nations, 4)) -- Phase 5 M3 world3: 5-6 nations
+  check("world_ports" .. tag, F.count >= 2 and F.count <= max_ports and F.spread <= world.PORTS.spread_max,
     "%d ports, nearest-port path spread %.3f (max %.2f) %s", F.count, F.spread, world.PORTS.spread_max,
     serpent.line(F.nearest))
   -- ruins, uranium, rare deposits
@@ -3353,8 +3388,12 @@ function world.w2_checks(check, tag)
     n[s.kind] = (n[s.kind] or 0) + 1
     if s.kind == "ruin" and nearest_spawn_dist(P, s.position) < world.RUINS.min_spawn then far = false end
   end
-  check("world_sites" .. tag, (n.ruin or 0) >= 8 and (n.ruin or 0) <= 12 and far and (n.uranium or 0) >= 1
-    and (n.uranium or 0) <= 2 and (n.rare or 0) >= 4 and (n.rare or 0) <= 8,
+  -- Phase 5 M3 world3: an extended plan's counts (balance.nation.world3) widen the M2 ranges
+  local ruin_hi = max(12, count_of(world.RUINS.count, world.W3.ruins, P.size, 12))
+  local uranium_hi = max(2, count_of(world.URANIUM.count, world.W3.uranium, P.nations, 2))
+  local rare_hi = max(8, count_of(world.RARE.count, world.W3.rare, P.size, 8))
+  check("world_sites" .. tag, (n.ruin or 0) >= 8 and (n.ruin or 0) <= ruin_hi and far and (n.uranium or 0) >= 1
+    and (n.uranium or 0) <= uranium_hi and (n.rare or 0) >= 4 and (n.rare or 0) <= rare_hi,
     "ruins %d (all >= %d tiles from spawns: %s), uranium %d, rare %d, ports %d, city sites %d", n.ruin or 0,
     world.RUINS.min_spawn, tostring(far), n.uranium or 0, n.rare or 0, n.port or 0, n.city_site or 0)
   -- region names for every spawn; chart labels for every region (scripts/strategic.lua)

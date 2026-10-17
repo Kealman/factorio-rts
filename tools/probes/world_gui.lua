@@ -61,8 +61,11 @@ events.on_nth_tick(30, function(e)
       tostring(storage.lobby.pending.mode), tostring(size and size.enabled), size and #size.items or 0,
       tostring(size and world.SIZES[size.selected_index]), world.size_for(storage.lobby.pending.opponents + 1),
       tostring(map and map.enabled))
-    -- pick 2048 (not the 2-nation default): the match must be started on it
-    size.selected_index = 2
+    -- pick 2048 (Phase 5 M3 world3: the 2-nation default too; world.SIZES is now 2048 / 3072 / 4096): the match must
+    -- be started on it
+    for i, ws in ipairs(world.SIZES) do
+      if ws == 2048 then size.selected_index = i end
+    end
     events.dispatch(defines.events.on_gui_selection_state_changed,
       {element = size, player_index = player.index, name = defines.events.on_gui_selection_state_changed})
     st.step = 2

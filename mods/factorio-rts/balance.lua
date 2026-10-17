@@ -1262,4 +1262,40 @@ balance.nation.ai3 = balance.nation.ai3 or {}
 balance.nation.ai3.budget = balance.nation.ai3.budget or 400
 balance.nation.ai3.tick_cap = balance.nation.ai3.tick_cap or 2000 -- all nations together, once each had its budget
 
+-- Phase 5 M3 world3 (docs/PHASE5-M3.md D8, §3 "worldgen.lua"; docs/qa/phase5-world3-notes.md): huge worlds (3072,
+-- 4096), up to six nations, background generation (scripts/worldgen.lua). Pure data. Counts here only cover what the
+-- M2 tables above do not (5-6 nations, 4096 maps); a 2048 or 3072 world of 2-4 nations is planned exactly as in M2.
+balance.nation.world3 = {
+  sizes = {2048, 3072, 4096},                 -- lobby world sizes (2048 the default up to 4 nations)
+  max_nations = {[2048] = 4, [3072] = 6, [4096] = 6},
+  spawn_ring = {[5] = 0.32, [6] = 0.33},      -- spawn ring radius x map size (2-4 nations: scripts/world.lua)
+  -- contested majors on the bisectors (one per neighbour pair): with 5-6 nations still one copper region per 2 nations
+  contested_order = {[5] = {"copper", "iron", "copper", "iron", "coal"},
+                     [6] = {"copper", "iron", "copper", "iron", "copper", "iron"}},
+  specialty_angle = {[5] = 50, [6] = 50},     -- degrees off the outward direction (2-4 nations: 72; 60 deg neighbours
+                                              -- put a 72 deg specialty on the barrier between them)
+  home_scale_max = 1.5,                       -- specialty, home oil: distances scale with the map up to 3072's
+  center_oil_wells = {[5] = 9, [6] = 10},
+  city_states = {[5] = 7, [6] = 8},
+  uranium = {[5] = 2, [6] = 3},
+  ports = {[5] = 5, [6] = 6},                 -- one per nation, as 4 for 4 (6 nations x 5 ports: path spread 0.151)
+  rare = {[4096] = 10},
+  ruins = {[4096] = 16},
+  regions = {[4096] = 44},                    -- region slots (frontier regions by Poisson disc)
+  region_spacing_max = 1.5,                   -- frontier region spacing 300 tiles x min(map scale, this)
+  city_sites = {[4096] = 64},
+  massifs = {[4096] = 4},
+  -- generation (scripts/worldgen.lua): the core (the spawns' squares) is forced before the match starts, the rest is
+  -- requested in the background (the city-state and port squares, feature and label chunks, then ring by ring from
+  -- the spawns), `window` chunks in flight
+  core = {spawn = 5, disc = 5, site = 3, port = 1}, -- chunk radius around every spawn (forced: chunk centres within
+                                              -- `disc` chunks; the square's corners first in the background), around
+                                              -- every city-state and port
+  window = 160,                               -- requested chunks in flight (the engine fills about 39 chunks/s)
+  period = 15,                                -- ticks between requester steps
+  watchdog = 3600,                            -- ticks without a generated chunk before the requests are repeated
+  area_max = 400,                             -- chunks per worldgen.request_area call
+  hud_period = 60,                            -- ticks between HUD progress line updates
+}
+
 return balance

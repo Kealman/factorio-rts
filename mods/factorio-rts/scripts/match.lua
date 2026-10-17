@@ -41,6 +41,7 @@ local production = require("scripts.production")
 local basetemplate = require("scripts.basetemplate")
 local mapgen = require("scripts.mapgen")
 local world = require("scripts.world") -- Phase 5 M1: Nation-mode worlds (config.mode == "nation")
+local worldgen = require("scripts.worldgen") -- Phase 5 M3 world3: world generation (core, background fill, placement)
 local balance = require("balance") -- Phase 5 M2 diplomacy: victory modes (balance.nation.diplomacy.victory)
 
 local match = {}
@@ -52,6 +53,7 @@ match.ARENA_PREFIX = "rts-arena-"
 match.AI_PREFIX = "rts-ai-"
 match.NEUTRAL = "rts-neutral" -- Phase 5 M2 diplomacy (D7): the city-states' force, Nation mode only
 match.MAX_OPPONENTS = 3
+match.MAX_NATIONS = world.MAX_NATIONS -- Phase 5 M3 world3: a Nation match has 2-6 nations (at most 4 on a 2048 world)
 local ARENA_TILE = "grass-1"
 
 -- Map sizes: the arena is [-half, half)^2; spawns sit on a circle of `radius` (size / 2 - 40). "legacy" is the
@@ -127,6 +129,8 @@ match.FORCE_COLORS = {
   ["rts-ai-1"] = {r = 0.95, g = 0.15, b = 0.1, a = 1},
   ["rts-ai-2"] = {r = 1.0, g = 0.75, b = 0.1, a = 1},
   ["rts-ai-3"] = {r = 0.25, g = 0.85, b = 0.3, a = 1},
+  ["rts-ai-4"] = {r = 0.7, g = 0.3, b = 0.95, a = 1}, -- Phase 5 M3 world3: nations 5 and 6
+  ["rts-ai-5"] = {r = 0.15, g = 0.85, b = 0.9, a = 1},
 }
 local WAVE_RADIUS = 16
 local RETARGET_RANGE = 300
@@ -156,6 +160,7 @@ function match.on_teardown(fn) teardown_callbacks[#teardown_callbacks + 1] = fn 
 local started_callbacks = {}
 function match.on_started(fn) started_callbacks[#started_callbacks + 1] = fn end
 match.on_teardown(function() world.reset() end) -- Phase 5 M1: storage.world (scripts/world.lua)
+match.on_teardown(function() worldgen.reset() end) -- Phase 5 M3 world3: storage.worldgen (scripts/worldgen.lua)
 
 ---------------------------------------------------------------------------
 -- Config
@@ -182,7 +187,12 @@ function match.normalize_config(c)
   -- scripts/world.lua, map "world", sized by nation count unless world_size names a valid size). Nation needs the AI.
   out.mode = (c.mode == "nation" and out.enemy_brain == "ai") and "nation" or "skirmish"
   if out.mode == "nation" then
-    out.world_size = world.normalize_size(c.world_size, out.opponents + 1)
+    -- Phase 5 M3 world3 (D8): 2-6 nations (config.nations, else opponents + 1); 5-6 need a 3072 or 4096 world
+    local nations = math.floor(tonumber(c.nations) or ((tonumber(c.opponents) or d.opponents) + 1))
+    out.nations = math.max(2, math.min(match.MAX_NATIONS, nations))
+    out.opponents = out.nations - 1
+    out.world_size = world.normalize_size(c.world_size, out.nations)
+    out.survey = c.survey and true or nil -- Phase 5 M3 world3: chart the generated world at the start (scripts/worldgen.lua)
     out.map = "world"
     if out.size == "legacy" then out.size = d.size end
     -- Phase 5 M2 diplomacy (D6): victory mode and time limit in minutes (0 = none); Score needs a limit
@@ -744,9 +754,11 @@ function match.start(cfg)
     m.forces[#m.forces + 1] = ai_force_name(i)
     m.ai_forces[#m.ai_forces + 1] = ai_force_name(i)
   end
-  m.spawns = spawn_points(c.opponents, size.radius)
-  -- Phase 5 M1: a Nation world plans its own spawns, scored for fairness (scripts/world.lua)
-  local wplan = c.mode == "nation" and world.plan(c, arena_seed(m)) or nil
+  -- Phase 5 M3 world3: a Nation world has up to 5 opponents; Skirmish spawn angles exist for 1-3 only
+  m.spawns = c.mode ~= "nation" and spawn_points(c.opponents, size.radius) or {}
+  -- Phase 5 M1: a Nation world plans its own spawns, scored for fairness (scripts/world.lua); Phase 5 M3 world3: the
+  -- plan assigns every feature and label to chunks (scripts/worldgen.lua)
+  local wplan = c.mode == "nation" and worldgen.plan(arena_seed(m), c.world_size, c.nations or (c.opponents + 1)) or nil
   if wplan then
     m.arena_half = wplan.half
     m.spawns = {}
@@ -771,7 +783,7 @@ function match.start(cfg)
   m.surface = surface.name
   setup_forces(m.forces)
   if wplan then
-    world.apply(surface, wplan) -- blocking core around the spawns; the rest fills in the background
+    worldgen.start(surface, wplan) -- Phase 5 M3 world3: the forced core; the rest fills in the background
   elseif plan then mapgen.build(surface, plan) else mapgen.reset() end
   m.placing = true
   place_bases(surface)
@@ -871,6 +883,7 @@ end
 function match.init()
   mapgen.init()
   world.init()
+  worldgen.init() -- Phase 5 M3 world3: a world still filling in an older save
   local m = storage.match
   if m and m.version == 3 then
     config()
