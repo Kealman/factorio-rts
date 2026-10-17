@@ -146,8 +146,10 @@ local function build_people(frame, el, c)
     caption = {"rts-people.citygui-priorities"}, tooltip = {"rts-people.citygui-priorities-tooltip"},
     tags = {rts_citygui = "prio_toggle", city = c.id}})
   el.p_prio_toggle.style.height = 24
-  -- Phase 5 M2 integration: two families per row (nine rows pushed the panel over the ability bar at 1280x800)
-  el.p_prio = frame.add({type = "table", column_count = 6})
+  -- Phase 5 M2 integration: two families per row (nine rows pushed the panel over the ability bar at 1280x800), each
+  -- with one "up" button (moving a family down is moving the next one up): with both arrows the Russian names were cut
+  -- and the right column's arrows stuck out of the panel
+  el.p_prio = frame.add({type = "table", column_count = 4})
   el.p_prio.style.horizontal_spacing = 4
   el.p_prio.style.vertical_spacing = 0
   el.p_prio_key = nil
@@ -168,13 +170,10 @@ local function refresh_priorities(g, c, open)
   for i, fam in ipairs(list) do
     local l = tbl.add({type = "label", style = "rts_hud_label", caption = {"rts-people.citygui-priority-row", i,
                        family_name(fam)}, tooltip = {"rts-people.family-" .. fam .. "-tooltip"}})
-    l.style.width = math.floor(WIDTH / 2) - 62
+    l.style.width = math.floor(WIDTH / 2) - 42
     tbl.add({type = "sprite-button", name = PREFIX .. "prio_up_" .. fam, sprite = "utility/hint_arrow_up",
              style = "frame_action_button", tooltip = {"rts-people.citygui-priority-up"},
              tags = {rts_citygui = "prio_up", city = c.id, family = fam}}).enabled = i > 1
-    tbl.add({type = "sprite-button", name = PREFIX .. "prio_down_" .. fam, sprite = "utility/hint_arrow_down",
-             style = "frame_action_button", tooltip = {"rts-people.citygui-priority-down"},
-             tags = {rts_citygui = "prio_down", city = c.id, family = fam}}).enabled = i < #list
   end
 end
 

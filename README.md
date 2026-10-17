@@ -52,7 +52,12 @@ Every side starts with a Command Center (CC), the same stock and 6 walkers. Huma
 | Q or right click | Stop placing |
 | T | Research panel |
 | L, or a click on the age badge | Nation: city ledger (age, national project, goods, make targets) |
-| Delete or Backspace, or the **Demolish** button | Demolish the selected own building: the first press arms (the button turns red), a second press within 3 s demolishes it. 50 % of its cost goes back to the nearest other stockpile of its logistic network, else to another own stockpile within 64 tiles, else to your Command Center's network; a refund with no room anywhere spills on the ground with an alert. The building's contents go to another stockpile of its network or spill on the ground. A hub, depot or City Center takes its stockpiles with it. The Command Center, the capital and trains cannot be demolished ("Locomotive cannot be demolished.") |
+| M, or a click on the treasury in the strip | Nation: market panel (prices, sell and buy at your port, tax level, contracts) |
+| F4 | Nation: diplomacy panel (war, ceasefire, peace, alliance, gifts, contracts, proposals) |
+| N | Nation: the HUD minimap shows the region around the camera or the whole world |
+| Right click your City Center or CC with units selected | Nation: they enter its garrison |
+| Right click your depot with units selected | Nation: they board a troop train there |
+| Delete or Backspace, or the **Demolish** button | Demolish the selected own building: the first press arms (the button turns red), a second press within 3 s demolishes it. 50 % of its cost goes back to the nearest other stockpile of its logistic network, else to another own stockpile within 64 tiles, else to your Command Center's network; a refund with no room anywhere spills on the ground with an alert. The building's contents go to another stockpile of its network or spill on the ground. A hub, depot or City Center takes its stockpiles with it. The Command Center, the capital and trains cannot be demolished ("Locomotive cannot be demolished."). Nation: with units and no building selected, Delete disbands them the same way (two presses; their recruits go home) |
 | F3 | Jump to the newest alert (press again for older ones) |
 | F10 | Match menu: resume, restart, concede (click twice); after the match, the results again |
 | F11 | How to play |
@@ -191,25 +196,27 @@ Easy opens with one iron and one copper smelter, and only half of its idle army 
 
 ## Nation mode
 
-Nation mode turns a match into a small state. You found cities on a large generated world, claim the land around them, connect them by rail, ship goods between them and race the AI to Age II. Everything you know from Skirmish still works; Nation adds the layers below. Skirmish matches are unchanged.
+Nation mode turns a match into a small state. You found cities on a large generated world, claim the land around them, feed and house their people, connect them by rail, ship goods between them, keep a treasury, trade on a world market, make war and peace with the other nations, and capture their cities. Everything you know from Skirmish still works; Nation adds the layers below. Skirmish matches are unchanged.
 
-**Starting a match.** In the lobby set **Mode** to *Nation*. The map type becomes *World* (greyed), and the size drop-down offers World 1536×1536, 2048×2048 or 3072×3072; the default follows the number of nations (2: 1536, 3 or 4: 2048). Every size is playable a few seconds after **Start match**, and the far terrain fills in while you play: about 1 minute on 1536, 1½ on 2048 and 4 on 3072. A Nation match is meant to run far longer than a skirmish.
+**Starting a match.** In the lobby set **Mode** to *Nation*. The map type becomes *World* (greyed), and the size drop-down offers World 1536×1536, 2048×2048 or 3072×3072; the default follows the number of nations (2: 1536, 3 or 4: 2048). Two more rows appear: **Victory** (Conquest, Territory or Score) and **Time limit** (60, 90, 120 minutes or unlimited); see "Diplomacy, wars and victory" below. Every size is playable a few seconds after **Start match**, and the far terrain fills in while you play: about 1 minute on 1536, 1½ on 2048 and 4 on 3072. A Nation match is meant to run far longer than a skirmish. F11 shows a Nation help page with every rule and hotkey below in short.
 
-**The world.** Mountain ranges (grey rock that no unit crosses) with passes, rivers with walkable fords, coasts, lakes, swamps, deserts and forests split the world into named regions. Every nation starts with the same ore within 150 tiles of its capital, laid out as in Skirmish; the richer deposits lie between the nations. Each nation has a home oil field about 300 tiles out, and a large contested oil swamp lies in the middle. Ruins (6 on a 1536 world) and ports (2) hold steel and circuits and are captured like the skirmish ruin. At the start only the land within 160 tiles of your capital is charted; the rest stays black until your units or buildings see it.
+**The world.** Mountain ranges (grey rock that no unit crosses) with passes, rivers with walkable fords, coasts, lakes, swamps, deserts and forests split the world into named regions (highland, plain, lakeland, coast, swamp, desert, forest, mountain) whose names appear on the map and in alerts ("Iron Hills: Hauler lost"). Every nation starts with the same ore within 150 tiles of its capital, laid out as in Skirmish, and gets one *home specialty* region a little closer to it than to anyone else; the large deposits lie between the nations, and on a 4-nation world there are only two large copper regions, so every nation lacks some ore and has to fight or trade for it. Each nation has a home oil field about 300 tiles out, and a large contested oil swamp lies in the middle; uranium (1–2 deposits on contested ground) is mined only after the *Geology* research, and 4–8 rare deposits on desert and mountain rims and city-state land have no use yet. **City-states** (4, 5 or 6 for 2, 3 or 4 nations) are neutral cities on scarce sites (contested copper, the oil swamp, the coast, passes and fords): see below. Ruins (8–12) hold steel and circuits and are captured like the skirmish ruin; **trade ports** (2–4, on the coast or the map edge, fair by path for every nation) are your way to the world market. Passes, fords and narrows are named chokes, marked on the map. At the start only the land within 160 tiles of your capital is charted; the rest stays black until your units or buildings see it.
+
+**The strategic map.** The HUD minimap shows the region around the camera (1,000 tiles); **N** switches it to the whole world and back. Zoom far out and the view turns into the map view: region names with their resources, choke circles, city and city-state names in their owner's colour, port names and markers for your divisions.
 
 ### Capital, cities and territory
 
 **The capital.** Your starting CC is your capital: a *town* whose land reaches 96 tiles around it. The HUD adds an **age badge** left of the top strip, a **Land N%** button on the strip (your share of the map) and the **city list** at the top left: one row per city with a button that jumps the camera there and a magnifier that opens its panel. The Land button shows or hides the list.
 
-**Founding a city.** The factory makes a **City charter** (80 iron, 30 copper, 40 stone, 20 s). Place it from the build menu's Production tab like a hub: at least 96 tiles from every other City Center of any nation, on your own or neutral land, never on enemy land, at most 4 cities per nation (capital included). New sites lie beyond your robots' reach, so walk the Commander next to the ghost; its robots build the City Center from your stock. A **City Center** has 1,800 HP, two stockpiles and its own logistic network (radius 16, 10 construction robots reaching 30 tiles, 6 logistic robots), 1 MW of power, and keeps 50 iron and 20 copper by default like a hub. An alert announces "City founded: <name>".
+**Founding a city.** The factory makes a **City charter** (80 iron, 30 copper, 40 stone, 20 s); founding moves 40 settlers from your nearest city that can spare them. Place it from the build menu's Production tab like a hub: at least 96 tiles from every other City Center of any nation, on your own or neutral land, never on enemy land, at most 4 cities per nation (capital included). New sites lie beyond your robots' reach, so walk the Commander next to the ghost; its robots build the City Center from your stock. A **City Center** has 1,800 HP, two stockpiles and its own logistic network (radius 16, 10 construction robots reaching 30 tiles, 6 logistic robots), 1 MW of power, and keeps 50 iron and 20 copper by default like a hub. An alert announces "City founded: <name>".
 
-**Tiers.** A city grows from village to town to city. Every 10 s it counts your buildings on its land (walls and stockpiles excluded) and the goods delivered to its market (its logistic network) since it was founded.
+**Tiers.** A city grows from village to town to city with its residents (see "People and labor"): it goes up at the next growth pass after it reaches the next threshold, and falls back only after two minutes below 80 % of its tier's threshold.
 
-| Tier | Land radius | Supply | Needs |
+| Tier | Land radius | Supply | Residents |
 |---|---|---|---|
-| Village | 48 tiles | 10 | founding |
-| Town | 72 tiles | 20 | 10 buildings, 400 goods delivered |
-| City | 96 tiles | 30 | 25 buildings, 2,000 goods delivered |
+| Village | 48 tiles | 10 | 20–99 |
+| Town | 72 tiles | 20 | 100–399 |
+| City | 96 tiles | 30 | 400 and more |
 
 The capital claims 24 tiles more than its tier (96 as a town, 120 as a city) and keeps the CC's supply: 40 as a town, 50 as a city. Its centre heals back half of every hit, so it takes about twice the damage to fall. A city whose City Center dies or is demolished is lost with its land ("City lost: <name>"); a lost capital passes to your next city.
 
@@ -247,7 +254,8 @@ Haulers carry 10 slots instead of 20 (*Hauler capacity I* and *II* add 10 each) 
 | Item | Cost |
 |---|---|
 | Rail depot | 40 iron, 10 steel, 10 copper (10 s) |
-| Rails | 2 steel + 1 stone → 2 rails (2 s) |
+| Rails | 1 steel + 1 stone → 2 rails (2 s) |
+| Rail works (district, below) | as a district; with Railways, already in Age I |
 | Locomotive kit | 40 iron, 10 steel, 10 circuits (10 s) |
 | Cargo wagon kit | 20 iron, 5 steel (6 s) |
 | Construction wagon kit | 30 iron, 10 steel (8 s) |
@@ -291,9 +299,63 @@ A district is one 5×5 building that runs a compressed production chain from its
 | Petrochemical works | 3 crude + 1 coal → 8 plastic + 2 sulfur; 2 crude → 10 sulfur |
 | Engine works | 2 steel + 3 iron → 2 engines |
 | Munitions works | 10 iron → 15 magazines; 4 coal + 2 iron → 4 explosives |
-| Rail works | 4 steel + 2 stone → 8 rails; 3 steel → 4 steel beams |
+| Rail works | 4 steel + 4 stone → 12 rails; 3 steel → 4 steel beams (comes with Railways in Age I; build menu Economy tab) |
 | Construction works | 5 bricks + 2 stone → 10 concrete; 8 bricks → 10 walls |
 | Science campus | 4 iron + 2 copper → 3 basic kits; 4 circuits + 2 steel → 3 advanced kits; 2 engines + 2 advanced circuits + 2 sulfur → 6 industrial kits |
+
+### People and labor
+
+**Residents.** Every city has residents: the capital starts with 200 (its centre houses 200) and 300 rations and 100 household goods in stock; a new city gets the 40 settlers its founding moved. Housing: a City Center 40, a **small house** (3×3, 15 stone + 5 iron) 20, an **apartment** (5×5, Age II, town and up; 30 bricks, 10 steel, 10 goods) 80, both on the land of the city they stand on (build menu, Production tab).
+
+**Needs.** A city eats 1 **ration** per 10 residents a minute and, from town tier, 1 **household good** per 25. Its City Center keeps 50 rations and 20 goods by default, so haulers and trains bring them like any good. Rations come from a **farm** (5×5, 1 grain every 4 s, at most 3/6/10 per city by tier) and a **bakery** (2 grain → 3 rations), or a **fishing hut** next to water (6 rations a minute); none of them needs power. Goods are a factory recipe (1 iron, 2 cable, 1 brick → 2 goods); the factory also makes bricks from stone. With Space Age rations spoil after 15 minutes.
+
+**Growth.** A city whose needs are met at 90 % or more, with free housing and (town and up) power, grows by 4 % of its housing a minute, more when its people are happy. Below 50 % rations it loses 3 % of its residents a minute and only half of its workers work. Happiness (0–100) follows food, goods, power, crowding, taxes and debt; it drives growth and taxes.
+
+**Workers.** 60 % of the residents work. Every building with jobs (extractor 4, smelter 4, factory 12, barracks 12, lab 8, farm 6, district 16, ...) takes its workers from the city whose land it stands on, in the order of the nation's **labor priorities** (military, power, food, extraction, metallurgy, chemistry, electronics, research, services). A building with 60 % of its workers runs at 60 % speed; one with none stops with "No workers". Selecting a staffed building shows a staffing box above the building page ("Staff 60 %: 7.2 of 12 workers") with a **Pin** button that serves it first.
+
+**Recruits.** A unit takes one resident per supply point from the barracks' city when its kit becomes a unit. The barracks waits with "No recruits" when the city has none: recruits are the unemployed workers plus the **draft** share (0/10/20/30/50 %) of the employed ones. **Disband** (the bin at the top right of the units page, or Delete with units selected; press twice) removes the selected units and sends their recruits home; nothing else is refunded.
+
+**The city panel** (click a City Center or the CC) adds the people section: residents and housing with the growth per minute, happiness and power, one bar per need, the workforce line, the draft drop-down and the **Priorities** list (two families per row, each with an up button: a family moves down when the next one moves up). While the city is under attack (a hit in the last 30 s, or its centre subdued or being captured) a red line says so with a **Jump** button, and the city list marks the city with a warning icon.
+
+### Treasury and trade
+
+**The treasury** is a number in crowns (₡); nothing is built with money. Every nation starts with ₡ 1,500. The strip shows "₡ 1,240 (+35/min)": white while the last minute was positive, yellow while it was negative, red below zero; a click (or **M**) opens the market.
+
+| Income and expenses (per minute) | Rule |
+|---|---|
+| Tax | 0.2 per resident × tax level (low 0.6, normal 1.0, high 1.4) × happiness (0.5 at 0 … 1.2 at 100) |
+| Exports | 0.9 × the market price |
+| Building upkeep | 1 per Age I building, 4 per Age II building, half for an idle crafter; walls, stockpiles, solar, accumulators, houses, apartments, farms, bakeries, fishing huts, City Centers, the CC and trade ports are free |
+| Army | 1 per supply point (haulers and the Commander are free) |
+| Transport | 2 per locomotive, 1 per 100 tiles of rail line |
+| Imports | 1.1 × the market price |
+| Interest | 5 % of the debt every 5 minutes |
+
+**Debt.** Below zero imports stop (stage 1); after 60 s wages go unpaid (stage 2: barracks hold their kits, every building works one staffing step lower); after 180 s, or at the credit line (10 minutes of gross income), unrest (stage 3: −25 happiness). Back at zero or more everything clears at once.
+
+**Trade ports** are gold buildings with two stockpiles and their own logistic network on the port sites; they start neutral with 300 steel, 100 circuits and 100 coal. One of your military units within 4 tiles for 10 s, with nobody else there, takes a port (a port held by another nation only while you are at war with it). Haul goods there with a hauler route or a train to a depot next to it.
+
+**The market panel** (M) shows the treasury line with the tax drop-down and the debt stage, the last minute's flows, the commerce cap bar and the port the buttons trade at, then one row per tradeable good: price (green above its base, red below), a 10-minute sparkline, the count at the port, an amount field and **Sell** / **Buy**. Selling takes the goods from the port's network now; bought goods appear in the port's stockpiles 30 s later. Prices follow a shared world stock (p = base × (S0 / S)^0.6, 0.4–3 × the base) and drift 5 % a minute back towards it, so every nation's sales move the price. The **commerce cap** limits what you sell and buy per minute: ₡ 300 + 150 per port held, +25 % per *Commerce* research. Contracts between nations (a fixed price per delivery, settled at both nations' ports) are offered from the diplomacy panel.
+
+### Diplomacy, wars and victory
+
+Nations start at **peace**. Between two nations the state is war, ceasefire, peace or alliance; city-states are always at war with everyone. **F4** opens the diplomacy panel: the victory mode and time left, a war-goal drop-down (nearest city, capital, tribute), one row per nation (state, their opinion of you as a bar and number, trade volume, war score and weariness, and **War**, **Ceasefire**, **Peace**, **Alliance** (**Leave**), **Gift ₡100** and **Contract** buttons), one row per city-state, your wars and the proposals to you with **Accept** and **Decline**. AI proposals also arrive as alerts with Accept and Decline. Opinions move with trade, contracts, common enemies, units on their land, attacks and gifts; each AI doctrine has its own thresholds for war, ceasefire and alliance. Attack orders on a nation you are not at war with are refused. A war ends in a treaty (white peace, ceded cities or a tribute) when its goal is met, by weariness, or after 45 minutes.
+
+**Victory** (lobby): **Conquest** is always on: hold every rival's first capital or knock every rival out (a nation with no city left is out). **Territory** adds: hold 45 % of the claimable land, or twice the land of the next nation (alliances count together) with at least 3 % of it, for 3 minutes. **Score** wins at the time limit: residents + treasury / 10 + land cells + army supply. Allies share a victory; when every remaining nation is allied the match ends.
+
+### Supply, capture, garrisons and troop trains
+
+**Supply.** Every division has supply points (0–100, the blue bar under its health bar on the division card). It burns 2 a minute on the march, 8 while fighting and 2 more in enemy land, nothing while idle at home. Within 64 tiles of your CC, a City Center, hub, depot or **field depot** (built by the Commander; 30 iron, 20 stone, 10 copper) whose network holds **supply crates** (factory: 4 iron + 2 coal; Age II also with explosives) it refills 20 a minute (1 crate per 10). Low (below 50): amber, no Armor healing, the card says "low supply". Out (0): red, "OUT OF SUPPLY", the units lose 1.5 % of their health every 10 s and refuse attack orders. Units outside divisions are always supplied unless they stand next to a division.
+
+**Capture.** A City Center (and the capital's CC) never dies: below 10 % health it is **subdued** ("Subdued" over it). Twenty seconds with your military units within 24 tiles and no defender ("Capture by You: N %") flip the city: its land, every building on it and 70 % of its residents become yours, and it sits 60 s in unrest (no worker works). The loser's capital moves to its largest remaining city. City-states are captured the same way.
+
+**Attack-moves** in Nation mode fight what can fight back (units, turrets, centres, barracks, hubs, depots, districts) and, at their point, the enemy buildings there; they spare rails, signals, poles, belts and inserters, so lines survive battles nearby. Raiders still sabotage everything they pass, and a right-click attack hits anything.
+
+**Garrison.** Right-click your City Center or CC with units selected: they enter it and man hidden guns around the centre (one per 4 supply points, at most 8). With the city selected, the division panel shows the garrison and a **Sortie** button; the garrison sorties by itself when the centre drops below half health.
+
+**Troop trains.** *Railways* also unlocks the troop wagon kit (30 iron, 10 steel; 16 supply of units per wagon). **Deploy troop train** in the depot panel assembles 2 locomotives and 1–3 troop wagons; route it like a freight train. Right-click an own depot with units selected: they walk beside the track and board; the train leaves when everyone is aboard and lets them out at the drop-off. A destroyed troop wagon kills its passengers. **Disband** in the train panel turns a standing train back into half of its kits.
+
+**City-states** are neutral cities (village land, 120 residents who neither eat nor grow) with their region's goods and 200 magazines in their stockpiles. Each starts with 6 machine-gun turrets around its centre and gets one more every 8 minutes (at most 10); its centre takes half damage. Capture one like any city to get its land and goods.
 
 ### Divisions (both modes)
 
@@ -302,6 +364,8 @@ A **division** is a group of combat units that moves as one formation along one 
 ### What the AI does in Nation mode
 
 The AI plays by the same rules. It mines coal once its iron core runs (haulers and trains need it; when no CC slot takes the coal belt, a coal hub next to the patch joins the CC's network) and puts two turrets towards the enemy. From 5:00 it founds a second city: a **mining town** next to an iron region patch 170–560 tiles from its capital (copper only when no iron is in reach), where six extractors feed two direct inserters (ore) and two smelters (plates) into the town's stockpiles. The town gets a depot at each end of a line, construction crews at both ends and a freight train that ships its ore and plates to the capital; while the line waits for its depots, kits and rails the barracks save plates (never below 20 army units). The AI pays depots, kits and rails straight from its capital's plates (circuits, gears and steel as the plates they are made of), but never takes the capital below a small reserve. It researches Industrialisation as soon as it can make advanced kits, runs the Railway Charter, and in Age II builds districts (Steel works, four Smelting works for the town's ore, Engine works, Rail works), a warehouse of six stockpiles where it stores the town's ore and plates, two Bunkers once a Smelting works makes bricks, and adds Armoured cars to its army. It stops making Age I units beyond 40 army units unless its base is threatened, and saves for district items instead, but never lets its army fall below 20 for the Charter, its town or a district. In Age I it attacks nothing farther than 500 tiles from its capital (raids go on); a share of its idle army (40 %, 10 to 16 units) stays home as a guard, an attack needs 1.2 times the enemy army it last saw, no attack leaves while its capital is under attack, and a heavy attack on the capital calls the nearest attack group back.
+
+As a nation the AI runs a **strategist** every 10 s (taxes, sales at its ports above a price floor, contracts for the ores it lacks with the nation it likes best, war and peace by its doctrine's table, and in 3- and 4-nation matches opportunity wars on a weakly held rival town) and a **governor** per city every 5 s (rations and goods kept, farms and bakeries by need, houses by jobs, the goods works, the draft, labor priorities by the city's role, two turrets and a farm at each town, supply haulers from the capital and an export hauler from a full town to the port). When a war starts a quarter of its idle army garrisons the capital; an attacked town gets a relief group; capture operations go for the war's goal cities, and in Age II at peace for a city-state on its own side of the map. Nations start at peace; in five test hours of four AIs, four matches had 4-6 wars each, most ending in a treaty (a ceded city, a tribute or a white peace), and 3-7 cities changed hands; the fifth stayed at peace.
 
 ## Development
 
@@ -321,5 +385,7 @@ The AI plays by the same rules. It mines coal once its iron core runs (haulers a
 - `tools/balance-sim/run.sh <name> [sa|base]` and `tools/balance-sim/both.sh` run the equal-cost unit fight simulator that checks the counter table (`docs/qa/phase4-balance-notes.md`).
 - `tools/locale-probe/gen.py <mod dir> <out.lua>` generates a probe that makes a GUI client translate every locale key the mod uses and logs the missing ones.
 - `tools/probes/*.lua` are test-only modules: `EXTRA_LUA=tools/probes/wavec_headless.lua` (a hub at the natural built by the Commander, hauler cargo between two networks, Concede) and `commander_field.lua` (Commander field construction) run headless through `tools/autotest-run.sh`; `menu_gui.lua` drives the F10 menu, Concede and Results in a GUI client; `m1_docs_gui.lua` walks a GUI client through the Nation panels of the Phase 5 M1 protocol and saves the screenshots its coordinates come from.
-- Admin console: `/rts-match` (add `nation [1536|2048|3072]` for a Nation match), `/rts-give <item> [n]` (into your CC's network), `/rts-spawn <unit> <count> [force]`, `/rts-research <technology>` (finish an RTS technology at once, e.g. `rts-railways`), `/rts-age [force] [age]` (show or set a nation's age), `/rts-world`, `/rts-dump`, `/rts-mapgen`, `/rts-ai-doctrine`, `/rts-qa-reset`, `/rts-qa-end`. The GUI QA protocols use a few of them as shortcuts, and a tester ends a session by typing `RTS_QA_END` in the console.
-- Interactive QA protocols and results are in `docs/qa/` (`phase1-protocol.md` to `phase4-protocol.md`, and `phase5-m1-protocol.md` for a Nation match). Mod layout, storage schema and module contracts are in `docs/PHASE1.md` to `docs/PHASE4.md` and `docs/PHASE5-M1.md`; per-module notes are in `docs/qa/*-notes.md`.
+- Admin console: `/rts-match` (add `nation [1536|2048|3072]` for a Nation match), `/rts-give <item> [n]` (into your CC's network), `/rts-spawn <unit> <count> [force]`, `/rts-research <technology>` (finish an RTS technology at once, e.g. `rts-railways`), `/rts-age [force] [age]` (show or set a nation's age), `/rts-treasury`, `/rts-market` (prices, ports, sell, buy, capture a port), `/rts-supply <sp>` (your divisions' supply points), `/rts-goto city-state|port|ai` (camera), `/rts-diplomacy [propose <from> <to> peace|ceasefire|alliance]`, `/rts-world`, `/rts-strategic`, `/rts-dump`, `/rts-mapgen`, `/rts-ai-doctrine`, `/rts-qa-reset`, `/rts-qa-end`. The GUI QA protocols use a few of them as shortcuts, and a tester ends a session by typing `RTS_QA_END` in the console.
+- `tools/matrix-compare.sh <tag-a> <tag-b>` compares two matrix runs line by line (every `[rts]` line before the stop marker, timings and static prototype counts normalised): `SEED=777 tools/autotest-matrix.sh a` on two trees, then compare; Skirmish must show 0 differing lines.
+- Nation fixtures for `tools/autotest-run.sh` (`EXTRA_LUA=...`): `m1_acceptance.lua` (the last 5 minutes at speed 1 for the UPS lines), `m2_acceptance.lua` (the M2 end-to-end checks: trade, wars, peace, captures, starving, plus the same final speed 1), `m2_integ.lua` (the M2 integration rules), `m2_targeting.lua` (attack-moves and rail protection), and the wave A fixtures `people_m2.lua`, `treasury_fixture.lua`, `diplomacy_accept.lua`, `war_autotest.lua`, `world2_autotest.lua`.
+- Interactive QA protocols and results are in `docs/qa/` (`phase1-protocol.md` to `phase4-protocol.md`, `phase5-m1-protocol.md` and `phase5-m2-protocol.md` for Nation matches). Mod layout, storage schema and module contracts are in `docs/PHASE1.md` to `docs/PHASE4.md`, `docs/PHASE5-M1.md` and `docs/PHASE5-M2.md`; per-module notes are in `docs/qa/*-notes.md`.

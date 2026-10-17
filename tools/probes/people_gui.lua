@@ -95,10 +95,11 @@ local function find(el, name)
   return nil
 end
 
--- the panel's controls through the real event handlers: Military one down, draft 50 %
+-- the panel's controls through the real event handlers: Military one down (Power, the next family, one up: the panel
+-- has only up buttons since the M2 integration), draft 50 %
 step(function(player, S)
   local g = storage.players[player.index].citygui
-  local down = find(g and g.frame, "rts_citygui_prio_down_military")
+  local down = find(g and g.frame, "rts_citygui_prio_up_power")
   if down then events.dispatch(defines.events.on_gui_click, {element = down, player_index = player.index,
                                                               button = defines.mouse_button_type.left}) end
   local dd = find(g and g.frame, "rts_citygui_draft")
