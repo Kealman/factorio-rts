@@ -16,6 +16,37 @@ local capture = require("scripts.capture")
 local rails = require("scripts.rails")
 
 local F, E = "rts-player", "rts-ai-1"
+-- true: flip the far city while the line is still being built (a crew out, pieces missing) instead of at minute 22
+local WHILE_BUILDING = false
+-- true: the far depot dies while the city is lost (seed 703: it fell in the fight for the town)
+local DESTROY_DEPOT = false
+
+-- one diagnostic line: state, missing, builder, platform rails and stops, a path between the platforms
+local function diag(R, line)
+  local A, B = rails.depot(line.a), rails.depot(line.b)
+  local function plat(d)
+    if not (d and d.platform) then return "no platform" end
+    local bad, stops = 0, 0
+    for _, r in ipairs(d.platform.rails or {}) do if not r.valid then bad = bad + 1 end end
+    for _, st in pairs(d.platform.stops or {}) do if st.valid and st.connected_rail then stops = stops + 1 end end
+    return string.format("%d/%d rails bad, %d stops", bad, #(d.platform.rails or {}), stops)
+  end
+  local path = "-"
+  if A and B and A.platform and B.platform then
+    local goals = {}
+    for _, st in pairs(B.platform.stops) do if st.valid and st.connected_rail then goals[#goals + 1] = {train_stop = st} end end
+    local rail = A.platform.rails[math.floor(#A.platform.rails / 2)]
+    if rail and rail.valid and #goals > 0 then
+      local ok, res = pcall(game.train_manager.request_train_path, {starts = {{rail = rail, direction = defines.rail_direction.front},
+        {rail = rail, direction = defines.rail_direction.back}}, goals = goals, type = "any-goal-accessible"})
+      path = tostring(ok and res and res.found_path)
+    end
+  end
+  local stale = 0
+  for _, p in ipairs(line.pieces or {}) do if p.e and not p.e.valid then stale = stale + 1 end end
+  return string.format("line #%d %s missing %d stale %d builder %s wait %s | A %s | B %s | path %s", line.id, line.state,
+    line.missing or -1, stale, tostring(line.builder), tostring(line.wait), plat(A), plat(B), path)
+end
 local function S()
   storage.rretake = storage.rretake or {step = "wait", pass = 0, fail = 0}
   return storage.rretake
@@ -33,10 +64,13 @@ events.on_nth_tick(60, function(ev)
   local R = storage.rails
   local age = ev.tick - m.tick_started
   if s.step == "wait" then
-    if age < 22 * 3600 then return end
+    if age < (WHILE_BUILDING and 10 or 22) * 3600 then return end
     local A = R and R.ai and R.ai[F]
     local line = A and A.line and R.lines[A.line]
     local city = A and A.far and cities.of_center(A.far)
+    if WHILE_BUILDING and line and not (line.state == "building" and (line.missing or 0) > 0 and line.builder) then
+      line = nil
+    end
     if not (line and city) then
       if age > 40 * 3600 then
         check("setup", false, "no program with a line and a far city by minute 40")
@@ -57,6 +91,13 @@ events.on_nth_tick(60, function(ev)
     for _, P in ipairs(R.ai_lost and R.ai_lost[F] or {}) do if P.far == s.far then kept = true end end
     check("lost", line and line.state == "lost" and kept, "line #%d %s -> %s, program kept %s", s.line, s.before,
       line and line.state or "-", tostring(kept))
+    if DESTROY_DEPOT and line then
+      local far = rails.depot(line.b)
+      if far and far.entity.valid then
+        util.log("rails retake: far depot #%d dies", line.b)
+        far.entity.die()
+      end
+    end
     capture.flip(s.city, F, "rails retake probe")
     s.t = ev.tick
     s.step = "restored"
@@ -65,18 +106,29 @@ events.on_nth_tick(60, function(ev)
     local line = R.lines[s.line]
     local A = R.ai and R.ai[F]
     local back = (A and A.far == s.far) and "main" or nil
-    for _, P in ipairs(R.ai_more and R.ai_more[F] or {}) do if P.far == s.far then back = "second" end end
+    local prog = back and A or nil
+    for _, P in ipairs(R.ai_more and R.ai_more[F] or {}) do if P.far == s.far then back, prog = "second", P end end
+    if DESTROY_DEPOT then
+      -- the program re-binds the line to a new depot or plans a new one: follow the program's line
+      s.prog = prog
+      check("restored", back ~= nil, "program %s (line #%s %s)", tostring(back), tostring(s.line), line and line.state or "-")
+      s.t = ev.tick
+      s.step = "open"
+      return
+    end
     check("restored", line and (line.state == "cut" or line.state == "building" or line.state == "open") and back ~= nil,
       "line #%d %s, program %s", s.line, line and line.state or "-", tostring(back))
     s.t = ev.tick
     s.step = "open"
   elseif s.step == "open" then
+    if DESTROY_DEPOT and s.prog and s.prog.line then s.line = s.prog.line end
     local line = R.lines[s.line]
+    if line and (ev.tick - s.t) % 1800 == 0 then util.log("rails retake: %s", diag(R, line)) end
     local routed
     for _, rec in pairs(R.trains) do
       if rec.kind == "cargo" and rec.force == F and rec.ai_line == s.line and rec.pickup and rec.dropoff then routed = rec end
     end
-    if (line and line.state == "open" and routed) or ev.tick - s.t > 10 * 3600 then
+    if (line and line.state == "open" and routed) or ev.tick - s.t > (DESTROY_DEPOT and 20 or 10) * 3600 then
       check("open_again", line and line.state == "open", "line #%d %s %.1f min after the city came back", s.line,
         line and line.state or "-", (ev.tick - s.t) / 3600)
       check("freight_again", routed ~= nil, "freight train %s on line #%d: %s", routed and tostring(routed.id) or "-",

@@ -629,6 +629,27 @@ buildings.on_removed(function(un, rec)
     end
   end
   util.log("rails: depot #%d of %s removed (platform rails stay)", un, d.force)
+  -- Phase 5 M2 integration: a line without one of its depots is lost (it stood "building" or "open" with no path to
+  -- the missing end; seed 703: the far depot died in the fight for the town). The AI program re-binds it to a new
+  -- depot on the same spot or plans a new line (rails.ai_program).
+  local line = d.line and R.lines[d.line]
+  local p = d.entity and d.entity.valid and d.entity.position or rec.position
+  local sp = d.platform and d.platform.spec
+  local spec = sp and {axis = sp.axis, track = sp.track, side = sp.side} or nil
+  if line and line.state ~= "lost" then
+    line.state = "lost"
+    line.lost_depot = {un = un, x = p and p.x, y = p and p.y, spec = spec}
+    local other = R.depots[line.a == un and line.b or line.a]
+    if other and other.line == line.id then other.line = nil end
+    util.log("rails: line #%d of %s lost: depot #%d is gone", line.id, line.force, un)
+  end
+  -- a line lost with its city (force change) whose depot dies meanwhile remembers where the depot stood
+  for _, id in ipairs(sorted_keys(R.lines)) do
+    local ln = R.lines[id]
+    if ln.state == "lost" and not ln.lost_depot and (ln.a == un or ln.b == un) then
+      ln.lost_depot = {un = un, x = p and p.x, y = p and p.y, spec = spec}
+    end
+  end
 end)
 
 local function platform_free(d)
@@ -2448,7 +2469,7 @@ end)
 --- carriages), its cargo and its coal go into the network of the depot whose platform it stands on, else its home
 --- depot. Troops aboard get out first (rails.on_disband). Returns {kits = {[item] = n}, depot = un} or nil, reason
 --- ("no-train" | "moving" | "no-depot").
-function rails.disband_train(train)
+function rails.disband_train(train, fallback)
   local rec = rails.train_record(train)
   if not (rec and train and train.valid) then return nil, "no-train" end
   if math.abs(train.speed) > 0.001 then return nil, "moving" end
@@ -2467,6 +2488,8 @@ function rails.disband_train(train)
     end
   end
   if not depot_un and rails.depot(rec.home) then depot_un = rec.home end
+  -- Phase 5 M2 integration: the AI scraps a train stranded on a lost line into a depot of its choice
+  if not depot_un and fallback and rails.depot(fallback) then depot_un = fallback end
   local net = depot_un and logistics.hub_network(depot_un)
   if not net then return nil, "no-depot" end
   if rails.on_disband then rails.on_disband(rec, train) end
@@ -2726,9 +2749,45 @@ function rails.ai_program(force_name, A)
     return
   end
   local line = A.line and R.lines[A.line]
-  -- Phase 5 M2 integration: a program taken up again whose line stayed lost (a depot gone) plans a new one
+  -- Phase 5 M2 integration: a lost line whose missing depot stood where this program's depot stands now (rebuilt on the
+  -- same site) is bound to it again; any other lost line is re-planned
   if line and line.state == "lost" then
-    A.line, line = nil, nil
+    local ld = line.lost_depot
+    -- the new depot's platform lies on the old one's track (the line's last piece joins it), not merely nearby
+    local function near(un)
+      local nd = rails.depot(un)
+      local e = nd and nd.entity
+      local ns = nd and nd.platform and nd.platform.spec
+      return ld and ld.x and ld.spec and e and e.valid and ns and math.abs(e.position.x - ld.x) <= 3
+        and math.abs(e.position.y - ld.y) <= 3 and ns.axis == ld.spec.axis and ns.track == ld.spec.track
+    end
+    local rebound
+    if ld and ld.un == line.b and line.a == da and db ~= ld.un and near(db) and not rails.depot(db).line then
+      line.b, rebound = db, db
+    elseif ld and ld.un == line.a and line.b == db and da ~= ld.un and near(da) and not rails.depot(da).line then
+      line.a, rebound = da, da
+    end
+    if rebound and rails.depot(da) and rails.depot(db) then
+      rails.depot(da).line, rails.depot(db).line = line.id, line.id
+      line.state, line.lost_depot, line.wait = line.opened and "cut" or "building", nil, nil
+      util.log("rails: AI %s binds line #%d to its new depot #%d", force_name, line.id, rebound)
+    else
+      -- its freight trains stand without a route on the old track and block the new line's crews: scrapped into the
+      -- capital-side depot (half of the kits back, like the train panel's Disband)
+      local old_id = line.id
+      for _, id in ipairs(sorted_keys(R.trains)) do
+        local trec = R.trains[id]
+        if trec and trec.force == force_name and trec.kind == "cargo" and trec.ai_line == old_id
+           and not (trec.pickup and trec.dropoff) then
+          local train = train_of(trec)
+          local ok, why = false, "gone"
+          if train and train.valid then ok, why = rails.disband_train(train, da) end
+          util.log("rails: AI %s scraps freight train %d of lost line #%d (%s)", force_name, id, old_id,
+            ok and "kits back" or tostring(why))
+        end
+      end
+      A.line, line = nil, nil
+    end
   end
   if not line or line.state == "failed" then
     if line and line.state == "failed" then
