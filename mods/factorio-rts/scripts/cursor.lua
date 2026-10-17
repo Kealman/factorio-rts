@@ -21,6 +21,10 @@ local WATCHDOG_TICKS = 10
 -- Not game state, so it is fine as a module local.
 local giving = false
 
+-- Phase 5 M2 QA round 1: fn(player, reason) after the tool came back (camera.lua refreshes the vanilla hover box).
+local given_hooks = {}
+function cursor.on_tool_given(fn) given_hooks[#given_hooks + 1] = fn end
+
 --- Item name of the ghost in the player's cursor, or nil.
 function cursor.ghost_name(player)
   local ghost = player.cursor_ghost
@@ -53,6 +57,9 @@ function cursor.ensure(player, force_replace, reason)
   local ok = stack.set_stack({name = util.CURSOR_ITEM, count = 1})
   giving = false
   util.log("cursor given player=%d reason=%s ok=%s", player.index, reason or "setup", tostring(ok))
+  if ok then
+    for _, fn in ipairs(given_hooks) do fn(player, reason or "setup") end
+  end
   return ok
 end
 

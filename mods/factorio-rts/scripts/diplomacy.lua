@@ -879,7 +879,12 @@ end
 local function answer_due(tick)
   local D = storage.diplomacy
   for id, P in pairs(D.proposals) do
-    if P.status == "pending" then
+    -- Phase 5 M2 QA round 1: a proposal the events made moot goes (a ceasefire offer waited on after white peace)
+    local moot = P.status == "pending" and invalid(P.from, P.to, P.kind, P.terms)
+    if moot and moot ~= "pending" then
+      P.status, P.reason, P.answered = "void", moot, tick
+      util.log("diplomacy: proposal #%d %s %s -> %s void (%s)", P.id, P.kind, P.from, P.to, moot)
+    elseif P.status == "pending" then
       if P.answer_at and tick >= P.answer_at then
         if diplomacy.is_human(P.to) then
           P.answer_at, P.expires = nil, tick + B.proposal_ttl -- a player took over the force: wait for them

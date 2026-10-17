@@ -14,7 +14,8 @@
 -- "Cities" button that shows or hides it (citygui.toggle_list).
 --
 -- Polling every POLL_PERIOD ticks, values every REFRESH_PERIOD. Owns storage.players[i].citygui = {frame, el, city,
--- key, pinned, closed, list = frame, list_rows, list_key, list_hidden}. Element names start with "rts_citygui_".
+-- key, pinned, closed, list = frame, list_rows, list_key, list_hidden, name_req, default_name}. Element names start
+-- with "rts_citygui_".
 -- Texts: [rts] keys "citygui-*" (locale/*/cities.cfg).
 local util = require("scripts.util")
 local events = require("scripts.events")
@@ -307,6 +308,10 @@ local function build_panel(player, g, c)
   el.name = rename.add({type = "textfield", name = PREFIX .. "name", text = c.name or "", lose_focus_on_confirm = true,
     tooltip = {"rts.citygui-rename-tooltip"}, tags = {rts_citygui = "name", city = c.id}})
   el.name.style.width = WIDTH - 60
+  -- Phase 5 M2 QA round 1: a city without its own name showed an empty field ("Capital" is a localised string, and a
+  -- textfield takes plain text): the field gets the default name once the player's client has translated it
+  g.default_name = nil
+  g.name_req = not c.name and player.request_translation(cities.display_name(c)) or nil
   rename.add({type = "sprite-button", name = PREFIX .. "rename", sprite = "utility/rename_icon",
               style = "tool_button", tooltip = {"rts.citygui-rename"}, tags = {rts_citygui = "rename", city = c.id}})
   el.tier = label(frame, "rts_hud_label")
@@ -557,9 +562,11 @@ end)
 local function rename(player, g, city_id)
   local el = g.el
   if not (el and el.name and el.name.valid) then return end
-  cities.rename(city_id, el.name.text)
-  util.log("citygui click rename city=%d name=%s player=%d", city_id, el.name.text, player.index)
-  show_panel(player)
+  local text = el.name.text
+  if g.default_name and text == g.default_name then text = "" end -- Phase 5 M2 QA round 1: the default name stays one
+  cities.rename(city_id, text)
+  util.log("citygui click rename city=%d name=%s player=%d", city_id, text, player.index)
+  show_panel(player, true) -- Phase 5 M2 QA round 1: rebuilt, so an emptied field shows the default name again
   show_list(player)
   -- Phase 5 M1 integration: the hub panel's title names the city too (logistics.NAME_HOOKS): rebuild it
   if hubgui then hubgui.refresh(player.index, true) end
@@ -631,6 +638,17 @@ events.on(defines.events.on_gui_confirmed, function(e)
   local element = e.element
   if not (element and element.valid) or element.tags.rts_citygui ~= "name" then return end
   rename(game.get_player(e.player_index), pstate(e.player_index), element.tags.city)
+end)
+
+-- Phase 5 M2 QA round 1: the default name for the name field (see build_panel)
+events.on(defines.events.on_string_translated, function(e)
+  local g = storage.players and storage.players[e.player_index] and storage.players[e.player_index].citygui
+  if not (g and g.name_req and g.name_req == e.id) then return end
+  g.name_req = nil
+  local field = g.el and g.el.name
+  if not (e.translated and field and field.valid) or field.text ~= "" then return end
+  field.text = e.result
+  g.default_name = e.result
 end)
 
 events.on(defines.events.on_gui_text_changed, function(e)

@@ -15,15 +15,16 @@
 -- with kind "troop", the depot rail panel's "Deploy troop train", or automatically when a division is told to embark at
 -- a depot that has the kits) and routes them like freight trains (right-click a depot = pickup, Shift = drop-off). A
 -- division ordered to embark (right-click an own depot or its platform, or divisions.order(id, "embark", depot_un))
--- walks to the platform; members within embark_radius of a troop wagon of a troop train standing at that depot board
--- while the wagon has room (capacity 16 supply): their records go into storage.rails.manifests[wagon unit_number] and
--- the entities go. D.aboard counts them, so the division stays while every member rides. At the pickup the train
--- leaves for its drop-off when nobody is still walking to it (or embark_wait after the last boarding, or full); at the
--- drop-off every manifest disembarks at once on the far side of the track (disembark_ring tiles out), the units rejoin
--- their division (divisions.attach) with the health they boarded with and walk clear of the platform; then the train
--- returns to the pickup. A destroyed troop wagon kills its manifest (alert); a troop train that lost its locomotives
--- lets its troops out where it stands. Garrisoned and travelling units keep counting against the supply cap (supply.used
--- is wrapped below).
+-- walks to the platform (Phase 5 M2 QA round 1: only when a troop train stands there, can be deployed there or is
+-- routed through it; otherwise the order is refused and the card reads "No troop train"); members within embark_radius
+-- of a troop wagon of a troop train standing at that depot board while the wagon has room (capacity 16 supply): their
+-- records go into storage.rails.manifests[wagon unit_number] and the entities go. D.aboard counts them, so the division
+-- stays while every member rides. At the pickup the train leaves for its drop-off when nobody is still walking to it
+-- (or embark_wait after the last boarding, or full); at the drop-off every manifest disembarks at once on the far side
+-- of the track (disembark_ring tiles out), the units rejoin their division (divisions.attach) with the health they
+-- boarded with and walk clear of the platform; then the train returns to the pickup. A destroyed troop wagon kills its
+-- manifest (alert); a troop train that lost its locomotives lets its troops out where it stands. Garrisoned and
+-- travelling units keep counting against the supply cap (supply.used is wrapped below).
 --
 -- Owns storage.garrison = {cities = {[city_id] = {force, records, points, turrets = {LuaEntity}, enabled}},
 --   pending = {[division_id] = city_id}, pending_units = {[unit_number] = city_id}, next_ammo, stats} and
@@ -487,8 +488,35 @@ local function boarding_spot(d, train)
   return {x = off, y = along}
 end
 
+-- Phase 5 M2 QA round 1 (step 21): a troop train of `force` that comes to depot `depot_un` (its pickup or drop-off).
+local function troop_train_coming(force, depot_un)
+  local R = storage.rails
+  for _, id in ipairs(sorted_keys(R and R.trains)) do
+    local rec = R.trains[id]
+    if rec.kind == "troop" and rec.force == force and (rec.pickup == depot_un or rec.dropoff == depot_un)
+       and rails.train_of(rec) then
+      return rec
+    end
+  end
+  return nil
+end
+
+--- Phase 5 M2 QA round 1 (step 21): can units of `force` board at depot `depot_un`? True when a troop train stands
+--- there, one can be deployed there now, or one is routed through it; else false and the reason (rails.deploy_check's).
+function garrison.can_embark(force, depot_un)
+  local d = rails.depot(depot_un)
+  if not (d and d.force == force) then return false, "no-depot" end
+  if not d.platform then return false, "no-platform" end
+  if garrison.troop_train_at(force, depot_un) or troop_train_coming(force, depot_un) then return true end
+  local why = rails.deploy_check(depot_un, "troop")
+  if why then return false, why end
+  return true
+end
+
 --- Division `id` boards a troop train at depot `depot_un` (unit number or the depot entity): it walks to the platform;
---- a troop train is deployed there from kits when none stands there. Returns true when the order was taken.
+--- a troop train is deployed there from kits when none stands there. Returns true when the order was taken; false and
+--- the reason when no troop train stands there, none can be deployed and none comes (the division stays as it was and
+--- its card reads "No troop train" for a while).
 function garrison.embark(id, depot_un)
   if not nation() then return false end
   if type(depot_un) == "table" and depot_un.valid then depot_un = depot_un.unit_number end
@@ -496,19 +524,26 @@ function garrison.embark(id, depot_un)
   local d = rails.depot(depot_un)
   if not (D and d and d.force == D.force and d.platform) then return false end
   local rec = garrison.troop_train_at(D.force, depot_un)
-  if not rec then
+  if not rec and not troop_train_coming(D.force, depot_un) then
     local train, why = rails.create_train(depot_un, "troop")
     if train then
       S().stats.trains = S().stats.trains + 1
       util.log("war: troop train %d deployed at depot #%d for division #%d", train.id, depot_un, id)
     else
-      util.log("war: division #%d embarks at depot #%d: no troop train there yet (%s)", id, depot_un, tostring(why))
+      -- Phase 5 M2 QA round 1 (step 21): no train, none to deploy, none coming: the card said "Boarding a train" for a
+      -- minute while the walkers stood on the platform track (and kept the next train from being placed)
+      D.no_train = {depot = depot_un, why = why, tick = game.tick}
+      util.log("war: division #%d %s cannot embark at depot #%d: no troop train (%s)", id, divisions.label(D), depot_un,
+        tostring(why))
+      return false, why
     end
   end
   local _, standing = garrison.troop_train_at(D.force, depot_un)
   divisions.order(id, "move", boarding_spot(d, standing))
   D.embark = {depot = depot_un, tick = game.tick, train = standing and standing.id or nil}
-  util.log("war: division #%d %s embarks at depot #%d", id, divisions.label(D), depot_un)
+  D.no_train = nil
+  util.log("war: division #%d %s embarks at depot #%d%s", id, divisions.label(D), depot_un,
+    standing and "" or " (its troop train is on the way)")
   return true
 end
 divisions.ORDER_HOOKS.embark = function(id, target) return garrison.embark(id, target) end
@@ -851,6 +886,10 @@ local function own_city_at(player_index, force, position, entities)
   return nil
 end
 
+-- Phase 5 M2 QA round 1: a click counts as "on the platform" within this many tiles of its track (the platform area
+-- reaches 4 tiles out: a right click visibly below the rails made two divisions board)
+local PLATFORM_HIT = 2.5
+
 local function own_depot_at(player_index, force, position, entities)
   for _, e in pairs(entities or {}) do
     if e.valid and e.unit_number and e.force.name == force and rails.depot(e.unit_number) then return e.unit_number end
@@ -858,12 +897,16 @@ local function own_depot_at(player_index, force, position, entities)
   local un, rec = selection.building_at(player_index, position)
   if rec and rails.depot(un) then return un end
   local R = storage.rails
+  local x, y = util.xy(position)
   for _, k in ipairs(sorted_keys(R and R.depots)) do
     local d = R.depots[k]
-    if d.force == force and d.entity.valid and d.platform then
-      local a = d.platform.area
-      local x, y = util.xy(position)
-      if x >= a[1][1] and x <= a[2][1] and y >= a[1][2] and y <= a[2][2] then return k end
+    local p = d.platform
+    if d.force == force and d.entity.valid and p then
+      local a = p.area
+      local along, across = x, y
+      local lo, hi = a[1][1], a[2][1]
+      if p.axis ~= "x" then along, across, lo, hi = y, x, a[1][2], a[2][2] end
+      if along >= lo and along <= hi and math.abs(across - p.track) <= PLATFORM_HIT then return k end
     end
   end
   return nil
@@ -872,6 +915,8 @@ end
 function garrison.right_click(player_index, position, entities, alt)
   if alt or not nation() then return nil end
   if selection.count(player_index) == 0 then return nil end
+  -- Phase 5 M2 QA round 1: with F armed the right click is an attack-move (it made two divisions board a train)
+  if orders.is_armed(player_index) then return nil end
   local force = selection.force_name(player_index)
   local city = own_city_at(player_index, force, position, entities)
   local depot = not city and own_depot_at(player_index, force, position, entities) or nil
@@ -899,6 +944,21 @@ function garrison.right_click(player_index, position, entities, alt)
     if #loose > 0 then n = n + garrison.enter_units(loose, city.id) end
     util.log("order garrison city=%d n=%d divisions=%d player=%d", city.id, n, #ids, player_index)
     return "garrison", n
+  end
+  -- Phase 5 M2 QA round 1: without a troop train to board the units stay as they are (no new division, no walk)
+  local ok, why = garrison.can_embark(force, depot)
+  if not ok then
+    for _, id in ipairs(ids) do
+      local D = divisions.get(id)
+      if D then D.no_train = {depot = depot, why = why, tick = game.tick} end -- the card reads "No troop train"
+    end
+    local player = game.get_player(player_index)
+    if player then
+      player.create_local_flying_text({text = {"rts-war.embark-no-train", {"rts.rails-why-" .. tostring(why)}},
+                                       position = position, color = {1, 0.85, 0.3}})
+    end
+    util.log("order embark depot=#%d refused (%s) player=%d", depot, tostring(why), player_index)
+    return "embark", 0
   end
   if #loose > 0 then
     local id = divisions.create(force, loose, {stance = "hold"}, {owner = "player"})

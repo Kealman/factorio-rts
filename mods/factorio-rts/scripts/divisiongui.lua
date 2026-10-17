@@ -161,10 +161,18 @@ local function health_color(ratio)
   return {0.95, 0.3, 0.25}
 end
 
+-- Phase 5 M2 QA round 1: how long a refused embark shows "No troop train" on the card (ticks)
+local NO_TRAIN_TICKS = 10 * 60
+
+local function no_train(D)
+  return D.no_train and not D.embark and game.tick - D.no_train.tick < NO_TRAIN_TICKS
+end
+
 local function order_caption(D)
   -- Phase 5 M2 war: on a troop train, boarding, going into a garrison
   if (D.aboard or 0) > 0 and next(D.units) == nil then return {"rts-war.state-aboard", D.aboard} end
   if D.embark then return {"rts-war.state-embarking"} end
+  if no_train(D) then return {"rts-war.state-no-train"} end -- Phase 5 M2 QA round 1
   local gs = storage.garrison
   if gs and gs.pending and gs.pending[D.id] then return {"rts-war.state-garrisoning"} end
   if D.state == "idle" or not D.order then return {"rts-div.state-idle"} end
@@ -313,6 +321,13 @@ local function update(g, ds)
       c.bar.tooltip = {"rts-div.hp-tooltip", math.floor(ratio * 100 + 0.5)}
       c.state.caption = order_caption(D)
       c.state.style.font_color = STATE_COLOR.normal
+      -- Phase 5 M2 QA round 1: a refused embark says why (amber, the reason in the tooltip)
+      if no_train(D) then
+        c.state.style.font_color = STATE_COLOR.low
+        c.state.tooltip = {"rts-war.embark-no-train", {"rts.rails-why-" .. tostring(D.no_train.why)}}
+      else
+        c.state.tooltip = ""
+      end
       if c.sp and c.sp.valid and ws then -- Phase 5 M2 war
         local sp = ws.sp(D.id)
         local st = ws.state(D.id)

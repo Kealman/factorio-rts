@@ -5,7 +5,8 @@
 --   last_remote_pos, last_zoom   tracked every 10 ticks, restored after an unwanted exit
 --   qa_pos, qa_zoom, qa_render   last camera state written to the log (QA lines "camera pan|zoom|render_mode")
 --   selftest_step                GUI self-test progress (dev only)
--- and storage.camera = {pending = {[player_index] = tick}, selftest = nil|true|false}
+-- and storage.camera = {pending = {[player_index] = tick}, selftest = nil|true|false,
+--                       pulse = {[player_index] = {at, on, reason}}}
 -- (deferred re-apply; the self-test switch set by /rts-selftest, nil = SELFTEST_DEFAULT).
 local util = require("scripts.util")
 local events = require("scripts.events")
@@ -240,40 +241,70 @@ events.on(defines.events.on_tick, function(e)
 end)
 
 -- Phase 5 M1 QA round 1 (finding 5): with hover selection off (update_entity_selection) the engine still selects an
--- entity now and then by itself, and the selection then stays: in the remote view the vanilla info box of that entity
--- sits in the top-right corner, half under the HUD minimap. The QA run saw it after a City Center ghost was placed;
--- a Codex click check saw the box of a Factory stay for minutes after its ghost was placed with the mouse, while
--- player.selected read nil. Nothing in the RTS reads player.selected (selection.lua picks by position), so a set one
--- is cleared at once, and for HOVER_RESET_TICKS after every build by the player the selection is cleared whether or
--- not player.selected reports it.
-local HOVER_RESET_TICKS = 120
-
-local function clear_hover(player, p)
+-- entity now and then by itself, and the selection then stays. Nothing in the RTS reads player.selected (selection.lua
+-- picks by position), so a set one is cleared at once.
+local function clear_hover(player)
   local sel = player.selected
   if sel then
     local name = sel.valid and (sel.type == "entity-ghost" and ("ghost of " .. sel.ghost_name) or sel.name) or "?"
     player.clear_selected_entity()
     util.log("camera: cleared the hover selection (%s) of player %d", name, player.index)
-  elseif p.hover_reset then
-    player.clear_selected_entity()
-  end
-  if p.hover_reset and game.tick >= p.hover_reset then p.hover_reset = nil end
-end
-
-local function arm_hover_reset(player, tick)
-  if player and player.connected and player.permission_group and player.permission_group.name == PERMISSION_GROUP then
-    local p = util.pstorage(player.index)
-    p.hover_reset = math.max(p.hover_reset or 0, tick + HOVER_RESET_TICKS)
   end
 end
 
-events.on(defines.events.on_built_entity, function(e) arm_hover_reset(game.get_player(e.player_index), e.tick) end)
--- the box of a ghost went on showing the building the robots made of it (the QA run's Factory): their builds too
-events.on(defines.events.on_robot_built_entity, function(e)
-  local entity = e.entity
-  if not (entity and entity.valid) then return end
-  for _, player in pairs(entity.force.connected_players) do arm_hover_reset(player, e.tick) end
+-- Phase 5 M2 QA round 1 (step 29): the box under the minimap is not the selected entity's tooltip. A build from a
+-- cursor that holds a ghost leaves the vanilla info box of the placed item in the top-right corner, and with hover
+-- selection off the engine never refreshes it: it stayed 72 s after Q in the QA run, with player.selected nil the
+-- whole time. A GUI probe with real clicks (docs/qa/phase5-m2-integration-notes.md section 7) reproduced it;
+-- clear_selected_entity, `selected = nil` and update_selected_entity left it, update_entity_selection on for one tick
+-- removed it, with the mouse over empty ground and over a ghost alike. While the cursor still holds the ghost the box
+-- stays whatever is done (it is the box of the building in hand), so the pulse runs whenever the RTS cursor comes back
+-- (Q, right click, F1, the build button again): the box goes when build mode ends. During the pulse tick the engine
+-- selects what is under the mouse; with the entity tooltip off that shows no box, and the selection is cleared on the
+-- next tick.
+function camera.hover_pulse(player, reason)
+  if not (player and player.valid and player.connected) then return end
+  if not (player.permission_group and player.permission_group.name == PERMISSION_GROUP) then return end
+  local c = storage.camera
+  c.pulse = c.pulse or {}
+  if c.pulse[player.index] then return end
+  c.pulse[player.index] = {at = game.tick + 1, reason = reason}
+end
+
+local function entity_text(e)
+  if not (e and e.valid) then return "nothing" end
+  return e.type == "entity-ghost" and ("ghost of " .. e.ghost_name) or e.name
+end
+
+local function set_hover(player, on)
+  local gvs = player.game_view_settings
+  gvs.update_entity_selection = on
+  player.game_view_settings = gvs -- a LuaStruct read may be a detached copy: write the whole struct back
+end
+
+events.on(defines.events.on_tick, function(e)
+  local pulse = storage.camera.pulse
+  if not pulse or next(pulse) == nil then return end
+  for index, P in pairs(pulse) do
+    if e.tick >= P.at then
+      local player = game.get_player(index)
+      if not (player and player.connected) then
+        pulse[index] = nil
+      elseif not P.on then
+        set_hover(player, true)
+        P.on, P.at = true, e.tick + 1
+      else
+        set_hover(player, false)
+        local sel = player.selected
+        if sel then player.clear_selected_entity() end
+        pulse[index] = nil
+        util.log("camera: hover pulse player=%d (%s), under the mouse: %s", index, P.reason or "-", entity_text(sel))
+      end
+    end
+  end
 end)
+
+cursor.on_tool_given(function(player, reason) camera.hover_pulse(player, "tool back: " .. tostring(reason)) end)
 
 events.on_nth_tick(10, function()
   for _, player in pairs(game.connected_players) do
@@ -281,7 +312,10 @@ events.on_nth_tick(10, function()
       local p = util.pstorage(player.index)
       p.last_remote_pos = player.position
       p.last_zoom = player.zoom
-      if player.permission_group and player.permission_group.name == PERMISSION_GROUP then clear_hover(player, p) end
+      local pulsing = storage.camera.pulse and storage.camera.pulse[player.index]
+      if not pulsing and player.permission_group and player.permission_group.name == PERMISSION_GROUP then
+        clear_hover(player)
+      end
     end
   end
 end)

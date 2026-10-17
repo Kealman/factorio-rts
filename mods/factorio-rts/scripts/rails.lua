@@ -8,7 +8,9 @@
 --   rails.lines[id] = {id, force, a, b, state = "surveying" | "building" | "open" | "cut" | "failed", rails = n (bill),
 --                      length (tiles of track), ...}        (rails.lines is storage.rails.lines)
 --   rails.create_train(depot_un, kind = "cargo" | "construction") -> LuaTrain or nil, reason   (kits from the depot
---                      network: 2 locomotive kits + 2 cargo wagon kits, or + 1 construction wagon kit)
+--                      network: 2 locomotive kits + 2 cargo wagon kits, or + 1 construction wagon kit; own units on
+--                      the platform track step aside first)
+--   rails.deploy_check(depot_un, kind) -> nil when a train of that kind can be deployed now, else the reason
 --   rails.set_route(train, pickup_depot_un, dropoff_depot_un) -> true | false
 --   rails.ai_step(C)   AI commander hook (scripts/ai/commander.lua), rails.ai_program(force, state) its core
 --
@@ -1310,37 +1312,35 @@ local function refuel(train, net)
   return put
 end
 
---- Spawn a train of `kind` ("cargo" | "construction") on a depot platform from kits in the depot's network.
---- Returns the LuaTrain, or nil and a reason ("no-depot", "no-platform", "busy", "no-kits", "no-fuel", "no-room").
-function rails.create_train(depot_un, kind)
-  -- Phase 5 M2 war: "troop" (2 locomotive kits + as many troop wagon kits as the network holds, at most max_wagons)
-  kind = (kind == "construction" or kind == "troop") and kind or "cargo"
-  local R = rstate()
-  local d = rails.depot(depot_un)
-  if not d then return nil, "no-depot" end
-  if not d.platform then return nil, "no-platform" end
-  if not platform_free(d) then return nil, "busy" end
-  local net = logistics.hub_network(depot_un)
-  if not net then return nil, "no-network" end
+-- Phase 5 M2 QA round 1 (step 20): the train layout, the own units that step off the platform track, and why a train
+-- cannot be deployed (rails.deploy_check, the depot panel's reason line). In the QA run a division waiting by the
+-- platform stood across its track: a walker's legs reach several tiles from its body and keep rolling stock from being
+-- placed, so Deploy refused "the train does not fit on the platform" with a 40-tile platform and a 28-tile train.
+local UNIT_TYPES = {"unit", "spider-unit", "spider-vehicle"}
+local LEGGED = {["spider-unit"] = true, ["spider-vehicle"] = true}
+local STEP_CLEAR = 2  -- tiles between the train's box and the legs of a unit that stepped aside
+local LEG_REACH = 4   -- assumed when the legs cannot be read
+
+local function kits_for(kind, net)
   local nw = nil
   if kind == "troop" then -- Phase 5 M2 war
     nw = math.max(1, math.min(net.get_item_count(rails.TWAGON_KIT), balance.nation.war.troop_wagon.max_wagons))
   end
-  local kits = kit_list(kind, nw)
-  for _, k in ipairs(kits) do
-    if net.get_item_count(k[1]) < k[2] then return nil, "no-kits" end
-  end
-  -- Phase 5 M1 integration: a train without coal never moves (an AI crew stood on its platform with 0 coal).
-  -- Phase 5 M2 integration: a construction train refuels nowhere but from its wagon, so it leaves only with a full
-  -- load for both locomotives (2 x fuel_target; an AI crew left with 2 coal and stood at piece 36 for half an hour)
-  local min_fuel = kind == "construction" and 2 * CFG.fuel_target or 2
-  if net.get_item_count(rails.FUEL) < min_fuel then return nil, "no-fuel" end
-  local surface, force_name = d.entity.surface, d.force
+  return kit_list(kind, nw)
+end
+
+-- Phase 5 M2 integration: a construction train refuels nowhere but from its wagon, so it leaves only with a full
+-- load for both locomotives (2 x fuel_target; an AI crew left with 2 coal and stood at piece 36 for half an hour)
+local function min_fuel(kind) return kind == "construction" and 2 * CFG.fuel_target or 2 end
+
+-- Carriage names front to back and their slots on the platform: the front locomotive at the end the line joins (or
+-- the second end), facing out; the last locomotive faces the other way.
+local function train_slots(d, kind, kits)
+  local R = rstate()
   local p = d.platform
-  -- the front locomotive at the end the line joins (or the second end), facing out
   local line = d.line and R.lines[d.line]
   local conn = 2
-  if line then conn = (line.a == depot_un) and (line.a_end or 2) or (line.b_end or 2) end
+  if line then conn = (line.a == d.un) and (line.a_end or 2) or (line.b_end or 2) end
   local e = p.ends[conn] or p.ends[2]
   local ox, oy = 0, 0
   if e.d == D.east then ox = 1 elseif e.d == D.west then ox = -1 elseif e.d == D.south then oy = 1 else oy = -1 end
@@ -1349,23 +1349,194 @@ function rails.create_train(depot_un, kind)
     names[#names + 1] = kind == "construction" and rails.CWAGON or (kind == "troop" and rails.TWAGON or rails.WAGON)
   end
   names[#names + 1] = rails.LOCO
-  local made = {}
+  local slots = {}
   for i, name in ipairs(names) do
     local back = 4 + (i - 1) * rails.CARRIAGE
-    local dir = (i == #names) and ((e.d + 8) % 16) or e.d
-    local ent = surface.create_entity({name = name, position = {e.x - ox * back, e.y - oy * back}, direction = dir,
-                                       force = force_name})
+    slots[i] = {name = name, x = e.x - ox * back, y = e.y - oy * back,
+                dir = (i == #names) and ((e.d + 8) % 16) or e.d}
+  end
+  return slots
+end
+
+-- The box a carriage (or the whole train) covers on the platform track.
+local function track_box(p, lo, hi)
+  if p.axis == "x" then return {{lo, p.track - 1.5}, {hi, p.track + 1.5}} end
+  return {{p.track - 1.5, lo}, {p.track + 1.5, hi}}
+end
+
+local function slot_box(p, slot)
+  local a = p.axis == "x" and slot.x or slot.y
+  return track_box(p, a - rails.CARRIAGE / 2, a + rails.CARRIAGE / 2)
+end
+
+local function in_box(pos, box)
+  return pos.x >= box[1][1] and pos.x <= box[2][1] and pos.y >= box[1][2] and pos.y <= box[2][2]
+end
+
+-- Units whose body or legs stand in `box`: own = true those of force_name, own = false everybody else's.
+-- {{entity, reach = how far its legs stand from its body}}.
+local function units_in(surface, force_name, box, own)
+  local big = {{box[1][1] - 12, box[1][2] - 12}, {box[2][1] + 12, box[2][2] + 12}}
+  local list = {}
+  for _, e in ipairs(surface.find_entities_filtered({area = big, type = UNIT_TYPES})) do
+    if e.valid and (e.force.name == force_name) == own then
+      local hit, reach = in_box(e.position, box), 0
+      if LEGGED[e.type] then
+        local ok, legs = pcall(e.get_spider_legs)
+        if ok and legs then
+          for _, leg in ipairs(legs) do
+            if leg.valid then
+              if in_box(leg.position, box) then hit = true end
+              reach = max(reach, util.distance(leg.position, e.position))
+            end
+          end
+        else
+          reach = LEG_REACH
+          local wide = {{box[1][1] - reach, box[1][2] - reach}, {box[2][1] + reach, box[2][2] + reach}}
+          hit = hit or in_box(e.position, wide)
+        end
+      end
+      if hit then list[#list + 1] = {entity = e, reach = reach} end
+    end
+  end
+  return list
+end
+
+-- Own units on the platform track step off it, to the side away from the depot (where troops board), far enough
+-- that their legs clear the train. Returns how many moved.
+local function step_aside(d, box)
+  local p = d.platform
+  local surface = d.entity.surface
+  local side = p.side or 1
+  local n = 0
+  for _, u in ipairs(units_in(surface, d.force, box, true)) do
+    local e = u.entity
+    local off = 1.5 + u.reach + STEP_CLEAR
+    local along = p.axis == "x" and e.position.x or e.position.y
+    local dest = p.axis == "x" and {x = along, y = p.track + side * off} or {x = p.track + side * off, y = along}
+    local pos = surface.find_non_colliding_position(e.name, dest, 6, 0.5) or dest
+    local across = p.axis == "x" and pos.y or pos.x
+    if (across - p.track) * side < off - 0.01 then pos = dest end -- the search may come back towards the track
+    if e.teleport(pos) then n = n + 1 end
+  end
+  return n
+end
+
+-- True when every platform rail under the train's slots stands (a carriage may fit beside a gap, the train would not
+-- join into one).
+local function track_whole(d, slots)
+  local p = d.platform
+  local a1 = p.axis == "x" and slots[1].x or slots[1].y
+  local a2 = p.axis == "x" and slots[#slots].x or slots[#slots].y
+  local box = track_box(p, min(a1, a2) - rails.CARRIAGE / 2, max(a1, a2) + rails.CARRIAGE / 2)
+  local want = 0
+  for _, r in ipairs(p.spec and p.spec.rails or {}) do
+    if in_box(r, box) then want = want + 1 end
+  end
+  local have = 0
+  for _, r in ipairs(d.entity.surface.find_entities_filtered({area = box, name = "straight-rail"})) do
+    if in_box(r.position, box) then have = have + 1 end
+  end
+  return have >= want
+end
+
+-- Why a carriage cannot stand in its slot (nil when it can, or when only own units are in the way: they step aside).
+local function slot_problem(d, slot)
+  local surface = d.entity.surface
+  if surface.can_place_entity({name = slot.name, position = {slot.x, slot.y}, direction = slot.dir, force = d.force})
+  then
+    return nil
+  end
+  local box = slot_box(d.platform, slot)
+  if not track_whole(d, {slot}) then return "no-track" end
+  if #units_in(surface, d.force, box, false) > 0 then return "enemy-on-track" end
+  if #units_in(surface, d.force, box, true) > 0 then return nil end
+  return "no-room"
+end
+
+--- Phase 5 M2 QA round 1: why a train of `kind` cannot be deployed at the depot now, or nil when it can (own units on
+--- the platform track do not count: they step aside). Reasons as rails.create_train's, plus "no-track" (a platform
+--- rail is gone) and "enemy-on-track".
+function rails.deploy_check(depot_un, kind)
+  kind = (kind == "construction" or kind == "troop") and kind or "cargo"
+  local d = rails.depot(depot_un)
+  if not d then return "no-depot" end
+  if not d.platform then return "no-platform" end
+  if not platform_free(d) then return "busy" end
+  local net = logistics.hub_network(depot_un)
+  if not net then return "no-network" end
+  local kits = kits_for(kind, net)
+  for _, k in ipairs(kits) do
+    if net.get_item_count(k[1]) < k[2] then return "no-kits" end
+  end
+  if net.get_item_count(rails.FUEL) < min_fuel(kind) then return "no-fuel" end
+  local slots = train_slots(d, kind, kits)
+  if not track_whole(d, slots) then return "no-track" end
+  for _, slot in ipairs(slots) do
+    local why = slot_problem(d, slot)
+    if why then return why end
+  end
+  return nil
+end
+
+--- Spawn a train of `kind` ("cargo" | "construction") on a depot platform from kits in the depot's network.
+--- Returns the LuaTrain, or nil and a reason ("no-depot", "no-platform", "busy", "no-kits", "no-fuel", "no-room",
+--- "no-track", "enemy-on-track"). Own units on the train's stretch of the platform track step off it.
+function rails.create_train(depot_un, kind)
+  -- Phase 5 M2 war: "troop" (2 locomotive kits + as many troop wagon kits as the network holds, at most max_wagons)
+  kind = (kind == "construction" or kind == "troop") and kind or "cargo"
+  local d = rails.depot(depot_un)
+  if not d then return nil, "no-depot" end
+  if not d.platform then return nil, "no-platform" end
+  if not platform_free(d) then return nil, "busy" end
+  local net = logistics.hub_network(depot_un)
+  if not net then return nil, "no-network" end
+  local kits = kits_for(kind, net)
+  for _, k in ipairs(kits) do
+    if net.get_item_count(k[1]) < k[2] then return nil, "no-kits" end
+  end
+  -- Phase 5 M1 integration: a train without coal never moves (an AI crew stood on its platform with 0 coal).
+  if net.get_item_count(rails.FUEL) < min_fuel(kind) then return nil, "no-fuel" end
+  local surface, force_name = d.entity.surface, d.force
+  local slots = train_slots(d, kind, kits)
+  if not track_whole(d, slots) then return nil, "no-track" end
+  local names = {}
+  for i, slot in ipairs(slots) do names[i] = slot.name end
+  -- Phase 5 M2 QA round 1: own units on the train's stretch of track step off it first (the engine snaps rolling stock
+  -- up to 2 tiles along the rail, and a carriage placed past a walker's legs did not couple with the next one: a GUI
+  -- check had "did not join into one train"), and again for a carriage that still cannot be placed
+  local p = d.platform
+  local a1 = p.axis == "x" and slots[1].x or slots[1].y
+  local a2 = p.axis == "x" and slots[#slots].x or slots[#slots].y
+  local margin = rails.CARRIAGE / 2 + 3
+  local made, moved = {}, step_aside(d, track_box(p, min(a1, a2) - margin, max(a1, a2) + margin))
+  for i, slot in ipairs(slots) do
+    local spec = {name = slot.name, position = {slot.x, slot.y}, direction = slot.dir, force = force_name}
+    local ent = surface.create_entity(spec)
+    if not ent then
+      local n = step_aside(d, slot_box(p, slot))
+      if n > 0 then
+        moved = moved + n
+        ent = surface.create_entity(spec)
+      end
+    end
     if not ent then
       for _, m in ipairs(made) do m.destroy() end
-      util.log("rails: depot #%d: %s %d of %d could not be placed", depot_un, name, i, #names)
-      return nil, "no-room"
+      local why = slot_problem(d, slot) or "no-room"
+      util.log("rails: depot #%d: %s %d of %d could not be placed (%s)", depot_un, slot.name, i, #slots, why)
+      return nil, why
     end
     made[#made + 1] = ent
   end
+  if moved > 0 then
+    util.log("rails: depot #%d: %d own unit(s) stepped off the platform track for a %s train", depot_un, moved, kind)
+  end
   local train = made[1].train
   if not (train and #train.carriages == #names) then
+    local at = {}
+    for _, m in ipairs(made) do at[#at + 1] = util.pos_str(m.position) end
     for _, m in ipairs(made) do if m.valid then m.destroy() end end
-    util.log("rails: depot #%d: rolling stock did not join into one train", depot_un)
+    util.log("rails: depot #%d: rolling stock did not join into one train (%s)", depot_un, table.concat(at, " "))
     return nil, "no-room"
   end
   for _, k in ipairs(kits) do net.remove_item({name = k[1], count = k[2]}) end
@@ -1384,7 +1555,7 @@ function rails.create_train(depot_un, kind)
   train.manual_mode = true
   local rec = {id = train.id, kind = kind, force = force_name, home = depot_un, loco = made[1], stock = made,
                state = "idle", created = game.tick, delivered = {}, trips = 0}
-  R.trains[train.id] = rec
+  rstate().trains[train.id] = rec
   util.log("rails: depot #%d (%s) deployed %s train %d: %d carriages, %d coal", depot_un, force_name, kind, train.id,
     #made, fuel)
   return train
@@ -1649,6 +1820,7 @@ local function open_line(line)
   line.opened = line.opened or game.tick
   line.reopened = game.tick
   line.blocked = nil
+  line.wait = nil -- Phase 5 M2 QA round 1: an open line showed the last construction train's "does not fit" reason
   local stats = rails.stats(line.force)
   local cl = line.cleared or {}
   util.log("rails: line #%d of %s %s: %d pieces, %.0f tiles, rails used %d (bill %d, loaded %d, returned %d, robots %d); "

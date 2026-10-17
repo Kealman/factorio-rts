@@ -194,6 +194,10 @@ local function build_depot(player, g, un)
   g.el.deploy_troop = troop_row.add({type = "button", name = PREFIX .. "deploy_troop",
     caption = {"rts-war.deploy-troop-train"}, style = "rts_hud_button", tooltip = {"rts-war.deploy-troop-train-tooltip"},
     tags = {rts_railgui = "deploy_troop", depot = un}})
+  -- Phase 5 M2 QA round 1: why a Deploy button is greyed, on the panel (it was only in chat after a click)
+  g.el.deploy_why = label(frame, "rts_hud_label")
+  g.el.deploy_why.style.font_color = COLOR.yellow
+  g.el.deploy_why.visible = false
   label(frame, "rts_hud_dim_label", {"rts.railgui-depot-hint"})
   label(frame, "rts_hud_heading_label", {"rts.railgui-lines"})
   g.el.lines = frame.add({type = "flow", direction = "vertical"})
@@ -228,12 +232,25 @@ local function refresh_depot(player, g)
   else
     el.detail.caption = ""
   end
-  local need = rails.kit_list("cargo")
-  el.deploy.enabled = d.platform ~= nil and st.loco >= need[1][2] and st.wagon >= need[2][2]
-  if el.deploy_troop and el.deploy_troop.valid then -- Phase 5 M2 war
-    local net = logistics.hub_network(g.id)
-    el.deploy_troop.enabled = d.platform ~= nil and st.loco >= 2 and net ~= nil
-      and net.get_item_count(rails.TWAGON_KIT) >= 1
+  -- Phase 5 M2 QA round 1: a button is enabled only when its train can be deployed now (rails.deploy_check: kits, coal,
+  -- a free and whole platform track; own units on it step aside), and the panel says why not
+  local why_cargo = rails.deploy_check(g.id, "cargo")
+  local why_troop = rails.deploy_check(g.id, "troop")
+  el.deploy.enabled = why_cargo == nil
+  if el.deploy_troop and el.deploy_troop.valid then el.deploy_troop.enabled = why_troop == nil end -- Phase 5 M2 war
+  if el.deploy_why and el.deploy_why.valid then
+    local why_lines = {""}
+    if why_cargo and why_cargo == why_troop then
+      why_lines[2] = {"rts.railgui-deploy-failed", {"rts.rails-why-" .. why_cargo}}
+    else
+      if why_cargo then why_lines[#why_lines + 1] = {"rts.railgui-deploy-why", {"rts.rails-why-" .. why_cargo}} end
+      if why_troop then
+        if #why_lines > 1 then why_lines[#why_lines + 1] = "\n" end
+        why_lines[#why_lines + 1] = {"rts-war.deploy-troop-why", {"rts.rails-why-" .. why_troop}}
+      end
+    end
+    el.deploy_why.visible = #why_lines > 1
+    el.deploy_why.caption = why_lines
   end
   local lines = rails.lines_of(d.force)
   el.lines.clear()

@@ -31,7 +31,9 @@ reads text that is on the screen or appears after a click; tooltips are not part
 `build/shots-m2d-ru4/`). The world is generated anew for every run:
 the capital's place, the terrain around it and the direction of the AI differ from run to run, so map positions are
 given relative to your Command Center (CC). Panels that grow with their content (the city panel, the depot panel) give
-the rows in order; when a row is not exactly at its coordinate, find it by its text one or two rows away.
+the rows in order; when a row is not exactly at its coordinate, find it by its text one or two rows away. After the
+first Codex run (QA round 1) the diplomacy panel, the offers frame, the depot panel's reason line and the step 29 point
+were measured again (`tools/probes/m2_qafix_gui.lua`, screenshots `build/shots-qf-v3/`).
 
 Background: `README.md` (section "Nation mode"), `docs/PHASE5-M2.md`, `docs/qa/phase5-m1-protocol.md` (the M1 parts of
 the HUD are unchanged) and `docs/qa/phase5-*-notes.md`.
@@ -77,7 +79,9 @@ RTS_LOCALE=en tools/gui-run.sh build/qa-p5m2 3600 'RTS_QA_END'
 - **Camera.** SPACE centres the camera on your CC and keeps the zoom. A click on a name in the city list centres the
   camera on that city. A click on the minimap moves the camera there. At the start zoom the CC's left and right
   stockpiles are 112 px apart and a tile is 16 px.
-- **Empty ground** (to deselect): any spot with no unit and no building; ≈(1000, 600) or ≈(200, 600) after SPACE.
+- **Empty ground** (to deselect): ≈(1000, 250) after SPACE, 22 tiles right of the CC and 9 up: no step places a unit
+  or a building there. Walkers, the Commander and the depots' platforms are below and beside the CC; a click there may
+  select one of them.
 - **Escape** closes the market, the diplomacy panel, the help page and an open console line. If the Factorio game menu
   opens instead, press Escape once more.
 - **Evidence.** Take a screenshot after every step. Report one of PASS, PARTIAL (the main effect is there, a detail
@@ -116,15 +120,15 @@ x≈212 (≈217 on a row whose name carries the warning icon of an attack). New 
 |---|---|---|
 | Strip, row 2 right end | x≈760–905, y≈44 | The treasury "₡ 1,505 (+5/min)" (the glyph may render like ¢). White while the last minute's net is positive, yellow below, red under zero. A click opens the market. Row 3 (y≈62): the victory goal, e.g. "Conquest: hold every rival capital or eliminate every rival. Time limit: unlimited". |
 | Alert lines | x 445–835, y 81–135 | Up to 3 lines. An alert with a position starts with its region: "Ashunka Fields: Port captured: Port of Ashunka Fields". |
-| Offers frame | x 445–835, y≈140–166, right under the alert lines | While an AI proposal waits: "AI 1 proposes a white peace (120 s)", **Accept** (≈744, 153), **Decline** (≈800, 153). |
+| Offers frame | x 445–835, from y≈140, right under the alert lines | One row per AI proposal that waits, 20 px apart: "AI 1 proposes a white peace (120 s)" (the seconds count down), **Accept** (≈744, 153), **Decline** (≈800, 153); a second row's buttons at y≈173. An AI at war may offer a ceasefire by itself: that row comes first. A proposal the events made pointless (a ceasefire offer after the peace) goes within a second. |
 | Lobby, Nation mode | dialog x 482–797, y 238–561 | Mode (≈601, 287), Opponents (≈601, 314), Difficulty (≈601, 341), Map size (≈620, 368), Map (greyed, ≈601, 395), **Victory** (≈601, 422), **Time limit** (≈601, 449), the hint, **Start match** (≈739, 540). In Skirmish the dialog is shorter and Mode sits at ≈(601, 314). |
 | Help page "How to play" | x 400–880, y 170–628 | × (≈861, 185). In Nation mode (or the lobby with Mode = Nation): 8 paragraphs, Nation mode, Controls, Cities and people, Treasury, Diplomacy and war, Supply, Rails and ages, **Keys**. |
 | City panel (people) | x 788–1013, from y 183 | Title and × (≈994, 198). **Under attack row** (only while the city was hit in the last 30 s or is subdued): red text and **Jump** (≈986, 219); every row below then moves 21 px down. Name field and pencil (≈886 / 991, 221), tier, age, land, supply, next tier (y≈242–314), **People** (y≈332), "Residents R / H housing (+N/min)" (≈350), "Happiness N · power ok" (≈368), two need bars: rations (≈395), goods (≈428), "Workforce …" (≈452–469), **Draft** drop-down (≈865, 490), **Priorities** (≈977, 490), networks, Make targets, **+**, Demolish (≈978, 588). With Priorities open, nine families in two columns, five rows 18 px apart from y≈512, each with one ▲ button (it moves the family one place up): left "1. Military", "3. Food", "5. Metallurgy", "7. Electronics", "9. Services" with ▲ at x≈890; right "2. Power", "4. Extraction", "6. Chemistry", "8. Research" with ▲ at x≈994; Demolish moves to ≈(978, 678). |
 | Staffing box | x 6–320, y≈672–698, right above the building page | "Staff 100 %: 12.0 of 12 workers · Capital · Services" and **Pin** (≈298, 686), "Unpin" once pinned. |
 | Market panel | centred, x 310–970, y 191–607 | Title "Market" and × (≈951, 205). Top: balance and net (≈380, 239), **Tax** drop-down (≈505, 239; it shifts a few px with the balance), the stage ("Solvent"); "Last minute: …"; **Commerce** bar (≈440, 275) and "₡ N / 450 per minute"; **Trade at** drop-down (≈780, 275). Goods table (scrolls), rows 22 px apart from y≈340: Stone brick, Concrete, Coal (384), Stone (406), Iron ore, Copper ore, Iron plate, Copper plate, **Steel plate (≈516)**, …; columns Price, 10 minutes, At port (≈660), Amount field (≈716), **Sell** (≈770), **Buy** (≈821). Bottom: Contracts. |
-| Diplomacy panel | centred, x 271–1007, y≈243–556 | Title and × (≈990, 257); "Victory: … · Our score: N"; **War goal** drop-down (≈398, 306). Table: Nation, State, Their opinion (bar and number), Trade ₡, War, Actions. Row "AI 1" (y≈360; ≈365 at war): **War** (≈698), **Ceasefire** (≈740), **Peace** (≈785), **Alliance** (≈827), **Gift 100 ₡** (≈879), **Contract** (≈931). Then one row per city-state ("Free City o…", War, "Can be captured"). "Our wars"; "Proposals to us" with **Accept** (≈909, 538) and **Decline** (≈964, 538) when one waits. |
-| Division card supply bar | division panel; with one city in the list: name button (≈50, 191), health bar (y≈204), **supply bar** (y≈211), state line (y≈224), stance buttons Hold / Advance / Screen (≈50 / 116 / 184, 241), Reinforce, pencil, bin (y≈260); everything 20 px lower with two cities in the list | A thin second bar: blue = supplied (50+), amber = low, empty = out of supply. The state line: "Idle", "Moving", "Boarding a train", "On a troop train (N)", followed by " · low supply N" in amber or " · OUT OF SUPPLY" in red. |
-| Depot rail panel, troop train | x 765–1012, from y 183 | "Rails: Depot N", platform, kits ("Kits: locomotive 2, wagon 0, construction 0 \| rails 0, coal 100 \| troop wagons 1", two lines), the line (one or two lines), **Deploy freight train** (≈821, 307), **Deploy troop train** right under it (≈818, 329; one row lower when the line has a detail line), the hint, Rail lines. |
+| Diplomacy panel | centred, x 263–1017, y≈237–565 | Title and × (≈998, 250); "Victory: … · Our score: N"; **War goal** drop-down (≈392, 299). Table: Nation, State, Their opinion (bar and number), Trade ₡, War, Actions. Row "AI 1" (y≈360): **War** (≈736), **Ceasefire** (≈778), **Peace** (≈822), **Alliance** (≈865), **Gift 100 ₡** (≈912), **Contract** (≈968). Then one row per city-state ("Free City of X", War, "Can be captured"). "Our wars"; "Proposals to us" with **Accept** (≈918, 538) and **Decline** (≈972, 538) when one waits. |
+| Division card supply bar | division panel; with one city in the list: name button (≈50, 191), health bar (y≈204), **supply bar** (y≈211), state line (y≈224), stance buttons Hold / Advance / Screen (≈50 / 116 / 184, 241), Reinforce, pencil, bin (y≈260); everything 20 px lower with two cities in the list | A thin second bar: blue = supplied (50+), amber = low, empty = out of supply. The state line: "Idle", "Moving", "Boarding a train", "On a troop train (N)", "No troop train" (amber, for 10 s after a refused embark), followed by " · low supply N" in amber or " · OUT OF SUPPLY" in red. |
+| Depot rail panel, troop train | x 765–1012, from y 183 | "Rails: Depot N", platform, kits ("Kits: locomotive 2, wagon 0, construction 0 \| rails 0, coal 100 \| troop wagons 1", two lines), the line and its detail line, **Deploy freight train** (≈821, 307), **Deploy troop train** right under it (≈818, 329). A button is greyed while its train cannot be deployed; a yellow line under the buttons says why ("Freight train: no train kits in the depot network", "Troop train: the platform is occupied"; "Cannot deploy a train: …" when both share the reason). Then the hint, Rail lines. |
 | Train panel, troop train | x 1026–1273, y 183–392 | "Troop train N", HP and coal, Route, state, "Troops: N units, S / C supply", trips, the line, **Resume** (≈1058, 343), **Disband** (≈1110, 343). |
 | Units page, Disband bin | selection panel title line, right end (≈378, 714) | A red bin, Nation mode only. First click: chat "Disband N unit(s)? Press again within 3 seconds." and the bin turns yellow; a second click within 3 s disbands. |
 | Minimap | x 1106–1271, y 9–174 | Regional (default in Nation mode): about 1,000 tiles around the camera. N: the whole world. Dashed circles mark the chokes (passes and fords), coloured circles the capitals; city, city-state and port names are tiny labels. A left click moves the camera there. |
@@ -181,12 +185,14 @@ Every site is a suggestion: any bare ground nearby works (no water, no grey rock
 | Their opinion; Our wars; Proposals to us; Accept; Decline; Can be captured | Их мнение; Наши войны; Предложения нам; Принять; Отклонить; Можно захватить |
 | War on AI 1. Our goal: capture …; AI 1 proposes peace: accept below or in F4 | Война с ИИ 1, цель: захват города …; ИИ 1 предлагает мир: примите ниже или в F4 |
 | The war with AI 1 is over: white peace | Война с ИИ 1 окончена: белый мир |
-| Supply Test / Division 1; Boarding a train; On a troop train | Дивизия 1; Посадка в поезд; В войсковом поезде |
+| Supply Test / Division 1; Boarding a train; On a troop train; No troop train | Дивизия 1; Посадка в поезд; В войсковом поезде; Нет войскового поезда |
 | Idle · low supply 30; Idle · OUT OF SUPPLY | Ожидает · мало снабжения 30; Ожидает · НЕТ СНАБЖЕНИЯ |
 | Kits: … \| troop wagons 2 | Комплекты: … \| войсковых вагонов 2 |
 | rts-supply: 1 division(s) of rts-player set to 0 SP; rts-goto: city-state at (x, y) (N tiles); rts-diplomacy: proposal #N peace rts-ai-1 -> rts-player | the same (console replies are not translated) |
 | N unit(s) out of supply take no attack order: … | Без снабжения (N): приказ атаковать не принят, … |
 | Deploy troop train; Troop train N; Troops: N units, S / C supply | Собрать войсковой поезд; Войсковой поезд N; Войска: N ед., снабжение S / C |
+| Freight train: …; Troop train: …; Cannot deploy a train: …; no train kits in the depot network; the platform is occupied | Грузовой поезд: …; Войсковой поезд: …; Нельзя собрать поезд: …; в сети депо нет комплектов поезда; платформа занята |
+| No troop train to board: … | Нет войскового поезда для посадки: … |
 | Subdued; Capture by You: N %; City captured: X; X subdued: drive the attackers off | Подавлен; Захват (Вы): N %; Город захвачен: X; X подавлен: отгоните врага |
 | Under attack (N s ago); Under attack: AI 1 captures it, N %; Jump | Под атакой (N с назад); Под атакой: ИИ 1 захватывает, N %; К атаке |
 | Minimap: the whole world (N: region); Minimap: the region around the camera (N: whole world) | Миникарта: весь мир (N — регион); Миникарта: регион вокруг камеры (N — весь мир) |
@@ -333,14 +339,15 @@ if your units shoot your own or enemy rails during an attack-move, report it.
     - *Input:* press F4. Take a screenshot.
     - *Expect:* "Diplomacy" in the middle: "Victory: Conquest · Time limit: unlimited · Our score: N"; **War goal**
       "Capture the nearest city"; the row **AI 1** in red: State "Peace", a yellow opinion bar "+0", Trade 0, and the
-      buttons War, Ceasefire, Peace, Alliance, Gift 100 ₡, Contract; four or five rows "Free City o…" in State "War" with
+      buttons War, Ceasefire, Peace, Alliance, Gift 100 ₡, Contract; four or five rows "Free City of X" in State "War" with
       "Can be captured"; "Our wars: We are at war with no nation."; "Proposals to us: No proposal waits for an answer."
     - *Pass/Fail:* PASS if the AI row and the city-state rows show. Report whether the city-state names are cut off
       ("Free City o…").
     - *Log check (lead):* `hud: hotkey rts-diplomacy \(F4\) player=1`, `diplomacygui: opened by player 1`
 
 13. **Declare war.**
-    - *Input:* click **War** in the AI 1 row (≈698, 360). Take a screenshot. Press F4 to close.
+    - *Input:* click **War** in the AI 1 row (≈736, 360), the first of the six action buttons. Take a screenshot. Press
+      F4 to close.
     - *Expect:* the AI 1 row: State "War" in red, the opinion drops (about −30) with a red bar, the War column "Score +0,
       weariness 0%"; "Our wars: AI 1 (we declared), 00:mm: capture …". A red alert "<Region>: War on AI 1. Our goal:
       capture <city>".
@@ -399,14 +406,16 @@ if your units shoot your own or enemy rails during an attack-move, report it.
       (992, 400). Press Q. Wait 20 s. Click the left depot. Take a screenshot.
     - *Expect:* the CC's robots build both depots; a 40-tile platform appears next to each (usually 8 tiles below).
       The left depot's rail panel "Rails: Depot 1", "Platform: 40 tiles, 2 stops", "Kits: locomotive 4, wagon 0,
-      construction 1 | rails 300, coal C | troop wagons 2", "No line. …", **Deploy freight train** and **Deploy troop
-      train** (enabled).
+      construction 1 | rails 300, coal C | troop wagons 2", "No line. …", **Deploy troop train** enabled, **Deploy
+      freight train** greyed with the yellow line "Freight train: no train kits in the depot network" under the buttons
+      (a freight train needs cargo wagon kits, which this protocol does not give).
     - *Pass/Fail:* PASS if both depots stand with platforms. If "Rail depot: no room for a platform" appears, place it
       10 tiles further out (Recovery).
     - *Log check (lead):* `rails: depot #[0-9]+ \(.*\) of rts-player at .*: platform`
 
 19. **Lay the line.**
-    - *Input:* with Depot 1 selected, right-click Depot 2 (992, 400). Watch the rail panel for up to 90 s.
+    - *Input:* the rail panel covers Depot 2: close it with its × (≈992, 199); Depot 1 stays selected. Right-click
+      Depot 2 (992, 400). Click Depot 1 (288, 400) to see the rail panel again and watch it for up to 90 s.
     - *Expect:* "Depot 1 → Depot 2: building, …" in yellow, a construction train lays the track, then "**open**" in
       green and the alert "Rail line open".
     - *Log check (lead):* `order lay-rail depot=#[0-9]+ -> #[0-9]+`, `rails: line #[0-9]+ of rts-player open`
@@ -415,11 +424,14 @@ if your units shoot your own or enemy rails during an attack-move, report it.
     - *Input:* click Depot 1 (288, 400). Click **Deploy troop train** (≈818, 329; the button under Deploy freight train).
       Click one of the new train's carriages on Depot 1's platform. Take a screenshot. Right-click Depot 1 (pickup),
       then hold Shift and right-click Depot 2 (drop-off).
-    - *Expect:* a train of locomotive, two troop wagons, locomotive on the platform. Train panel: "**Troop train N**",
+    - *Expect:* a train of locomotive, two troop wagons, locomotive on the platform, at its right end (where the line
+      joins). Walkers standing on the platform track step off it as the train appears. Train panel: "**Troop train N**",
       "HP 1000/1000, coal …", "**Troops: 0 units, 0 / 32 supply**", Resume, **Disband**. After the right clicks: "Route:
       Depot 1 → Depot 2".
-    - *Pass/Fail:* PASS if the troop train and "Troops: 0 units" show.
-    - *Log check (lead):* `rails: depot #[0-9]+ \(rts-player\) deployed troop train [0-9]+`,
+    - *Pass/Fail:* PASS if the troop train and "Troops: 0 units" show. If the button is greyed, report the yellow line
+      under it (FAIL); if a click gives "Cannot deploy a train: …" in the chat, report that text (FAIL).
+    - *Log check (lead):* `rails: depot #[0-9]+ \(rts-player\) deployed troop train [0-9]+` (when walkers stood on the
+      track also `rails: depot #[0-9]+: [0-9]+ own unit\(s\) stepped off the platform track`),
       `rails: train [0-9]+ \(rts-player\) route depot #[0-9]+ -> depot #[0-9]+`
 
 21. **Embark, ride, disembark.**
@@ -432,7 +444,9 @@ if your units shoot your own or enemy rails during an attack-move, report it.
       boarding. At Depot 2 the walkers reappear beside the track within a few seconds with the same health, the card
       reads "Idle", and the train goes back to Depot 1.
     - *Pass/Fail:* PASS if the walkers get out at Depot 2. Report how many rode (32 supply fit; 36 walkers leave 4 at
-      Depot 1, which is fine).
+      Depot 1, which is fine). If the card reads "**No troop train**" in amber instead (with a yellow flying text "No
+      troop train to board: …"), no troop train stands at Depot 1, none can be deployed and none comes: the walkers
+      stay where they are; report FAIL with that text.
     - *Log check (lead):* `order embark depot=#[0-9]+ n=[0-9]+ divisions=1 player=1`,
       `war: [0-9]+ unit\(s\) of division #[0-9]+ .* boarded troop train`, `war: troop train [0-9]+ leaves depot`,
       `war: troop train [0-9]+: [0-9]+ unit\(s\) disembarked at`
@@ -484,12 +498,14 @@ if your units shoot your own or enemy rails during an attack-move, report it.
 
 25. **The AI offers peace; accept it from the alert.**
     - *Input:* open the console, type `/rts-diplomacy propose rts-ai-1 rts-player peace`, press Enter. Take a screenshot.
-      Click **Accept** in the small frame under the alert lines (≈744, 153). Press F4, take a screenshot, press F4.
+      Click **Accept** in the row "AI 1 proposes a white peace" of the small frame under the alert lines (≈744, 153; the
+      second row, ≈744, 173, when an AI ceasefire offer waits above it). Press F4, take a screenshot, press F4.
     - *Expect:* the reply "rts-diplomacy: proposal #N peace rts-ai-1 -> rts-player"; a yellow alert "<Region>: AI 1
       proposes peace: accept below or in F4" and, under the alert lines, a frame
       "AI 1 proposes a white peace (120 s)" with **Accept** and **Decline** (the same proposal is in F4 under "Proposals to
-      us"). After Accept: the frame goes, a green alert "<Region>: The war with AI 1 is over: white peace", and F4 shows
-      AI 1 in State "Peace".
+      us"); the seconds in the frame count down. After Accept: the peace row goes (a waiting ceasefire offer goes too
+      within a second), a green alert "<Region>: The war with AI 1 is over: white peace", and F4 shows AI 1 in State
+      "Peace".
     - *Pass/Fail:* PASS if Accept ends the war.
     - *Log check (lead):* `diplomacy: proposal #[0-9]+ peace rts-ai-1 -> rts-player`,
       `diplomacygui: player 1 accept proposal #[0-9]+: true`, `war: #[0-9]+ rts-player / rts-ai-1 ended .* treaty \{kind = "white"\}`
@@ -527,15 +543,18 @@ if your units shoot your own or enemy rails during an attack-move, report it.
     - *Log check (lead):* `disband: armed player=1 units=3`, `disband: done player=1 units=3`
 
 29. **The info box under the minimap (place a ghost, press Q, watch 60 s).**
-    - *Input:* open the console, type `/rts-give rts-lab 1`, press Enter. Click empty ground. Click **Production**
-      (≈1131, 712), then **Lab** (≈1128, 740). Left-click the map at (832, 304). Press Q. Move the mouse to empty
-      ground ≈(300, 600) and do not touch anything for 60 s; take a screenshot at 10 s, 30 s and 60 s.
+    - *Input:* press SPACE. Open the console, type `/rts-give rts-lab 1`, press Enter. Click empty ground at
+      ≈(1000, 250). Click **Production** (≈1131, 712), then **Lab** (≈1128, 740). Left-click the map at (832, 304).
+      Press Q. Click empty ground at ≈(1000, 250) again (nothing is placed there in this protocol) and leave the mouse
+      there; do not touch anything for 60 s; take a screenshot at 10 s, 30 s and 60 s.
     - *Expect:* a lab ghost, then the CC's robots build the lab within about 15 s. At no time does a vanilla info box
       (a dark box with the entity's name, health and description) stay below the minimap at the top right (x≈1106–1271,
-      y≈180–400). A box that appears while the mouse is over the lab and goes when it leaves is fine.
+      y≈180–400) after Q. While the lab ghost is still on the cursor (before Q) the box of the lab may show there: that
+      is the building in hand, and it goes with Q. A box that appears while the mouse is over the lab and goes when it
+      leaves is fine.
     - *Pass/Fail:* PASS if no box stays under the minimap for 60 s. FAIL with the screenshot if one stays.
     - *Log check (lead):* `build ghost rts-lab player=1 at`, `cursor clear \(Q\) player=1`,
-      `camera: cleared the hover selection` (any number of times is fine)
+      `camera: hover pulse player=1 \(tool back: ` right after the Q line
 
 30. **Delete disbands too.**
     - *Input:* press SPACE. Click one walker of the division (it selects the whole division; the panel reads "Walker
@@ -550,8 +569,12 @@ if your units shoot your own or enemy rails during an attack-move, report it.
 31. **End the session.**
     - *Input:* open the console, type `RTS_QA_END` (no slash) and press Enter. If the window does not close within 10 s,
       press Ctrl+Shift+E (or Cmd+Shift+E).
-    - *Expect:* the typed line appears in the chat, and a few seconds later the game window closes.
-    - *Pass/Fail:* PASS if the window closes.
+    - *Expect:* the typed line appears in the chat, and within about 5 s the game window closes: the lead's launch script
+      stops the client when the log shows the marker. Other agents use this machine too, and their Factorio windows open
+      at the same place with the same title: a loading screen or a new match at 00:00 that appears after the QA match
+      went is not this session. Do not send it any input; take one screenshot and stop.
+    - *Pass/Fail:* PASS if the line appears in the chat and the QA match is gone within about 10 s (the window closed,
+      or another session's window took its place). FAIL if the QA match is still there after Ctrl+Shift+E.
     - *Log check (lead):* `RTS_QA_END by player=1 at tick [0-9]+ \(console chat\)`
 
 **The AI meanwhile (lead).** Informational; the autotests measure these:
@@ -570,8 +593,10 @@ if your units shoot your own or enemy rails during an attack-move, report it.
   out on open ground.
 - **The line waits** ("no train kits", "no rails" or "out of coal" after the detail line): the depot is not in the CC's
   network; demolish it and place it closer (within 30 tiles) to the CC, or type `/rts-give coal 50`.
-- **Deploy troop train stays greyed:** the depot's network lacks 2 locomotive kits or a troop wagon kit; repeat the
-  `/rts-give` lines of step 17 and check that the depot's hub panel reads "Network #K, 2 hubs" (it shares the CC's).
+- **Deploy troop train stays greyed:** read the yellow line under the buttons. "no train kits in the depot network":
+  the network lacks 2 locomotive kits or a troop wagon kit; repeat the `/rts-give` lines of step 17 and check that the
+  depot's hub panel reads "Network #K, 2 hubs" (it shares the CC's). "the platform is occupied": a train stands on the
+  platform; click it and press **Disband** in the train panel. "out of coal": type `/rts-give coal 50`.
 - **`/rts-goto city-state` says "no city-state found"**: every city-state was taken already (the AI takes them from
   minute 20 at the earliest); type `/rts-goto ai` for the nearest AI town instead and capture that one (you are at war).
 - **The walkers do not attack the city-state** (step 23): select them again with Ctrl+A, press F and right-click the

@@ -216,7 +216,8 @@ local function offer_text(P)
   return {"rts.diplomacy-offer-" .. P.kind, diplomacy.label(P.from)}
 end
 
-local function fill_offers(flow, me, limit)
+-- `lefts` (optional) collects {label, id} of the countdown labels (Phase 5 M2 QA round 1: they tick in place).
+local function fill_offers(flow, me, limit, lefts)
   flow.clear()
   local list = diplomacy.pending_for(me)
   for i, P in ipairs(list) do
@@ -227,7 +228,11 @@ local function fill_offers(flow, me, limit)
     l.style.single_line = false
     l.style.maximal_width = (limit and OFFERS_WIDTH or WIDTH) - 200
     local left = P.expires and (P.expires - game.tick) / 60 or nil
-    if left then r.add({type = "label", caption = {"rts.diplomacy-offer-left", math.max(0, math.floor(left))}}).style.font_color = COLOR.dim end
+    if left then
+      local l2 = r.add({type = "label", caption = {"rts.diplomacy-offer-left", math.max(0, math.floor(left))}})
+      l2.style.font_color = COLOR.dim
+      if lefts then lefts[#lefts + 1] = {label = l2, id = P.id} end
+    end
     local fill = r.add({type = "empty-widget"})
     fill.style.horizontally_stretchable = true
     local suffix = (limit and "o" or "p") .. P.id
@@ -360,17 +365,25 @@ function diplomacygui.update_offers(player)
   key = table.concat(key, ",")
   if #list == 0 then
     if frame then frame.destroy() end
-    g.offer_key = nil
+    g.offer_key, g.offer_left = nil, nil
     return
   end
   if frame and g.offer_key == key then
+    -- Phase 5 M2 QA round 1: the countdown ticks (it read "119 s" for 90 s while the same offer waited)
+    for _, L in ipairs(g.offer_left or {}) do
+      local P = diplomacy.get_proposal(L.id)
+      if L.label.valid and P and P.expires then
+        L.label.caption = {"rts.diplomacy-offer-left", math.max(0, math.floor((P.expires - game.tick) / 60))}
+      end
+    end
     return
   end
   if frame then frame.destroy() end
   frame = player.gui.screen.add({type = "frame", name = OFFERS, direction = "vertical", style = "rts_hud_frame"})
   frame.style.width = OFFERS_WIDTH
   local flow = frame.add({type = "flow", direction = "vertical"})
-  fill_offers(flow, player.force.name, OFFERS_SHOWN)
+  g.offer_left = {}
+  fill_offers(flow, player.force.name, OFFERS_SHOWN, g.offer_left)
   place_offers(player, frame)
   g.offer_key = key
   util.log("diplomacygui: offers shown to player %d: %s", player.index, key)

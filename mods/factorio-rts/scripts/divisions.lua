@@ -49,9 +49,10 @@
 -- QA log lines start with "divisions: ".
 -- Phase 5 M2 war (docs/PHASE5-M2.md section 3; scripts/warsupply.lua, scripts/garrison.lua) adds to D: sp (supply
 -- points 0..100) and sp_credit (scripts/warsupply.lua), aboard (members travelling as records in a troop wagon: the
--- division stays while it has some) and embark = {depot, tick} (members board a troop train at that depot)
--- (scripts/garrison.lua). Hooks: divisions.ORDER_HOOKS[kind] = fn(id, target, opts) -> ok for the extra order kinds
--- "embark" and "garrison"; divisions.order_lock = fn(D, kind) -> reason refuses attack orders (out of supply).
+-- division stays while it has some), embark = {depot, tick} (members board a troop train at that depot) and no_train =
+-- {depot, why, tick} (Phase 5 M2 QA round 1: a refused embark, shown on the card) (scripts/garrison.lua). Hooks:
+-- divisions.ORDER_HOOKS[kind] = fn(id, target, opts) -> ok for the extra order kinds "embark" and "garrison";
+-- divisions.order_lock = fn(D, kind) -> reason refuses attack orders (out of supply).
 local util = require("scripts.util")
 local events = require("scripts.events")
 local units = require("scripts.units")
@@ -542,6 +543,7 @@ function divisions.order(id, kind, target, opts)
     return false
   end
   D.embark = nil -- Phase 5 M2 war: any order cancels boarding (the embark hook sets it again after its move)
+  D.no_train = nil -- Phase 5 M2 QA round 1: and the card's "No troop train"
   local pos = target and pos_of(target) or nil
   D.detached, D.joining, D.settling = {}, {}, {}
   local m = meta()
