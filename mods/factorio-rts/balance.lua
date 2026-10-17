@@ -1196,5 +1196,64 @@ balance.buildings["rts-aa-turret"] = {kind = "aa-turret", cost = balance.nation.
                                       time = balance.nation.air.aa_turret.time,
                                       health = balance.nation.air.aa_turret.health, range = balance.nation.air.aa_turret.range,
                                       unlock = "rts-aviation"}
+-- Phase 5 M3 war2 (docs/PHASE5-M3.md D5, D6, section 3 "fronts.lua / belts.lua / trainswar.lua";
+-- docs/qa/phase5-war2-notes.md): fronts per war, the hold_line order, fort belts, artillery and armoured trains.
+-- Nation mode only. Pure data.
+balance.nation.fronts = {
+  segment_min = 128, segment_max = 192, -- tiles of border per segment (a shorter border stays one segment)
+  min_cells = 4,             -- border pieces shorter than this many cells (8 tiles each) are no front
+  refresh = 1800,            -- ticks between recomputations (with the territory: every 30 s)
+  rows_per_tick = 24,        -- territory rows scanned per tick by the refresh job
+  cell_budget = 600,         -- ... and at most about this many owned cells visited per tick
+  match_radius = 96,         -- a new segment keeps the id and holder of an old one whose middle is this close
+  near_radius = 160,         -- tiles around a segment's middle where enemy strength counts
+  value_radius = 400,        -- own cities this close to the middle count as "value behind", falling off to 0
+  depot_radius = 200,        -- own depots and hubs this close count too
+  value = {tier = 10, per_residents = 10, capital = 20, depot = 8}, -- value of a city: tier x 10 + residents / 10 (+20)
+  strength_unit = 16,        -- threat = value x (1 + enemy supply near / strength_unit)
+  hold = {behind = 4,        -- hold_line slots stand this many tiles behind the chord, inside own land
+          far = 96,          -- a division farther than this from the chord marches to it as a group first
+          pick = 64,         -- H with divisions selected: the segment whose chord is this close to the cursor
+          maintain = 600,    -- ticks between line checks (members back to their slots)
+          drift = 10,        -- a member farther than this from its slot walks back (no enemy within enemy_clear)
+          enemy_clear = 30},
+}
+balance.nation.belts = {
+  tech = "rts-fortification",            -- Fortification (Age I) unlocks the gate and the fort belt tool
+  wall = "rts-wall", gate = "rts-gate", turret = "rts-turret", aa_turret = "rts-aa-turret", depot = "rts-field-depot",
+  min_points = 2, max_points = 6, max_length = 640, -- tiles of polyline
+  turret_every = 12, turret_behind = 3,  -- a turret every 12 tiles of wall, 3 tiles behind it
+  aa_every = 36, aa_behind = 7, aa_age = 2, -- an AA turret every 36 tiles from Age II (when m3-air's prototype exists)
+  depot_behind = 12,                     -- the field depot behind the middle of the belt
+  build_rate = 4,                        -- belt crew: ghosts built per second, items debited from the city network
+  ghosts_per_tick = 40,                  -- ghosts placed per tick while a plan is laid out
+  magazines = 10,                        -- magazines a new belt turret gets from the same network
+  feed = {period = 600, min = 5, top = 10}, -- the field depot tops up its belt's turrets (magazines) every 10 s
+  priority = {"rts-artillery", "rts-walker-heavy", "rts-heavy-mk2", "rts-armoured-car"}, -- shot first by belt turrets
+}
+balance.nation.trains_war = {
+  tech = "rts-military-railways",        -- Age II: the artillery wagon, rail shells, armoured stock
+  range = 120, min_range = 16,           -- tiles from the artillery wagon to a target building
+  spot_radius = 48, radar_radius = 96,   -- a target is seen with an own entity / an own radar this close to it
+  period = 600,                          -- ticks between shots in stance bombard (1 shell per shot)
+  shell_speed = 0.6, shell_damage = 420, shell_radius = 3.5, -- explosion damage in the radius, hostile forces only
+  shells_keep = 20,                      -- shells a wagon tops up to at a depot of its force
+  health_factor = 3, resist = 40,        -- armoured stock: 3x health, 40 % physical and explosion resistance
+  locomotive_health = 1000, troop_wagon_health = 800, artillery_wagon_health = 1500,
+  artillery_wagon_kit = {cost = {["iron-plate"] = 40, ["steel-plate"] = 20, ["rts-explosives"] = 10}, time = 8},
+  armoured_locomotive_kit = {cost = {["iron-plate"] = 80, ["steel-plate"] = 30, ["electronic-circuit"] = 10}, time = 10},
+  armoured_wagon_kit = {cost = {["iron-plate"] = 40, ["steel-plate"] = 20}, time = 8},
+  rail_shell = {cost = {["rts-explosives"] = 2, ["steel-plate"] = 1}, time = 4},
+  gate = {cost = {["rts-wall"] = 1, ["iron-plate"] = 5, ["electronic-circuit"] = 2}, time = 3, health = 700},
+  techs = {
+    fortification = {count = 15, kit = "rts-science-basic", age = 1},
+    military_railways = {count = 25, kit = "rts-science-industrial", age = 2,
+                         prerequisites = {"rts-railways", "rts-industrialisation"}},
+  },
+  -- target order in stance bombard (lower first), then the nearest
+  target_rank = {turret = 1, ["laser-turret"] = 1, fort = 1, bunker = 1, barracks = 2, hub = 3, cc = 3, factory = 4},
+}
+balance.buildings["rts-gate"] = {kind = "wall", cost = balance.nation.trains_war.gate.cost,
+                                 time = balance.nation.trains_war.gate.time, health = balance.nation.trains_war.gate.health}
 
 return balance

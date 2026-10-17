@@ -19,3 +19,6 @@ require("prototypes.world") -- Phase 5 M1: Nation-mode world tiles (mountain, fo
 require("prototypes.world2") -- Phase 5 M2 world: uranium, rare deposits, Geology, the N key (scripts/world.lua, strategic.lua)
 require("prototypes.trade") -- Phase 5 M2 treasury: trade post (hub subtype at world ports), Commerce I/II, market key M
 require("prototypes.war") -- Phase 5 M2 war: supply crate, field depot, troop wagon, hidden garrison turret (Nation mode)
+-- Phase 5 M3 war2: gate, artillery wagon and rail shells, armoured stock, Fortification and Military railways
+-- (after prototypes.rails and prototypes.war: it clones rts-locomotive and rts-troop-wagon)
+require("prototypes.war3")

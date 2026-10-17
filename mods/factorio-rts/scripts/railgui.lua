@@ -28,6 +28,11 @@ local COLOR = {white = {1, 1, 1}, dim = {0.72, 0.72, 0.72}, yellow = {1, 0.85, 0
                green = {0.5, 1, 0.5}}
 local LINE_COLOR = {surveying = COLOR.yellow, building = COLOR.yellow, open = COLOR.green, cut = COLOR.red,
                     failed = COLOR.red}
+-- Phase 5 M3 war2: artillery trains, stances and armoured stock (scripts/trainswar.lua loads later)
+local function trainswar()
+  local l = package.loaded
+  return l["__" .. script.mod_name .. "__/scripts/trainswar.lua"] or l["scripts.trainswar"]
+end
 
 local function pstate(player_index)
   local p = util.pstorage(player_index)
@@ -107,22 +112,28 @@ local function build_train(player, g, id)
   frame.style.width = WIDTH
   g.frame, g.el = frame, {}
   local rec = rails.train_record(id)
-  g.el.title = header(frame, {rec and rec.kind == "construction" and "rts.railgui-construction-title"
+  g.el.title = header(frame, {"", {rec and rec.kind == "construction" and "rts.railgui-construction-title"
                               or (rec and rec.kind == "troop" and "rts-war.troop-train-title") -- Phase 5 M2 war
-                              or "rts.railgui-train-title", id})
+                              -- Phase 5 M3 war2: the artillery train
+                              or (rec and rec.kind == "artillery" and "rts-war3.artillery-train-title")
+                              or "rts.railgui-train-title", id},
+                              rec and rec.armoured and {"rts-war3.armoured-suffix"} or ""}) -- Phase 5 M3 war2
   g.el.hp = label(frame, "rts_hud_mono_label")
   g.el.route = label(frame)
   g.el.state = label(frame)
   g.el.cargo = label(frame)
   g.el.delivered = label(frame, "rts_hud_dim_label")
   g.el.line = label(frame, "rts_hud_dim_label")
+  local tw = trainswar() -- Phase 5 M3 war2: stance buttons and the gun line of a train with an artillery wagon
+  g.el.war = rec and tw and tw.panel_train(frame, rec, WIDTH) or nil
   local buttons = frame.add({type = "flow", direction = "horizontal", style = "rts_hud_row"})
   g.el.resume = buttons.add({type = "button", name = PREFIX .. "resume", caption = {"rts.railgui-resume"},
     style = "rts_hud_button", tooltip = {"rts.railgui-resume-tooltip"}, tags = {rts_railgui = "resume"}})
   -- Phase 5 M2 war: rolling stock back into kits (rails.disband_train)
   g.el.disband = buttons.add({type = "button", name = PREFIX .. "disband", caption = {"rts-war.train-disband"},
     style = "rts_hud_button", tooltip = {"rts-war.train-disband-tooltip"}, tags = {rts_railgui = "disband"}})
-  label(frame, "rts_hud_dim_label", {"rts.railgui-train-hint"})
+  label(frame, "rts_hud_dim_label", {rec and rec.kind == "artillery" and "rts-war3.artillery-hint" -- Phase 5 M3 war2
+                                     or "rts.railgui-train-hint"})
   place(player, frame, "train")
 end
 
@@ -157,7 +168,8 @@ local function refresh_train(player, g)
     el.line.caption = line_caption(line)
     el.delivered.caption = {"rts.railgui-delivered", rec.trips or 0, items_text(rec.delivered) or "-"}
   end
-  local key = STATE_KEYS[rec.state]
+  local tw = trainswar() -- Phase 5 M3 war2: the artillery train's states
+  local key = STATE_KEYS[rec.state] or (tw and tw.STATE_KEYS[rec.state])
   local state = key and {key} or (rec.state or "-")
   if rec.reason then
     el.state.caption = {"rts.railgui-state-why", state, {"rts.rails-why-" .. rec.reason}}
@@ -171,6 +183,7 @@ local function refresh_train(player, g)
   if rec.kind == "troop" and rails.troop_text then el.cargo.caption = rails.troop_text(rec) or "" end -- Phase 5 M2 war
   el.resume.enabled = (rec.kind == "cargo" or rec.kind == "troop") and rec.pickup ~= nil and rec.dropoff ~= nil
   if el.disband and el.disband.valid then el.disband.enabled = math.abs(train.speed) < 0.001 end -- Phase 5 M2 war
+  if tw then tw.panel_train_update(el, el.war, rec, train) end -- Phase 5 M3 war2
   return true
 end
 
@@ -198,6 +211,8 @@ local function build_depot(player, g, un)
   g.el.deploy_why = label(frame, "rts_hud_label")
   g.el.deploy_why.style.font_color = COLOR.yellow
   g.el.deploy_why.visible = false
+  local tw = trainswar() -- Phase 5 M3 war2: artillery train and armoured stock
+  g.el.war = tw and tw.panel_depot(frame, un, player.index, WIDTH) or nil
   label(frame, "rts_hud_dim_label", {"rts.railgui-depot-hint"})
   label(frame, "rts_hud_heading_label", {"rts.railgui-lines"})
   g.el.lines = frame.add({type = "flow", direction = "vertical"})
@@ -234,8 +249,10 @@ local function refresh_depot(player, g)
   end
   -- Phase 5 M2 QA round 1: a button is enabled only when its train can be deployed now (rails.deploy_check: kits, coal,
   -- a free and whole platform track; own units on it step aside), and the panel says why not
-  local why_cargo = rails.deploy_check(g.id, "cargo")
-  local why_troop = rails.deploy_check(g.id, "troop")
+  local tw0 = trainswar() -- Phase 5 M3 war2: the Armoured checkbox counts the armoured kits
+  local dopts = tw0 and tw0.deploy_opts(player.index) or nil
+  local why_cargo = rails.deploy_check(g.id, "cargo", dopts)
+  local why_troop = rails.deploy_check(g.id, "troop", dopts)
   el.deploy.enabled = why_cargo == nil
   if el.deploy_troop and el.deploy_troop.valid then el.deploy_troop.enabled = why_troop == nil end -- Phase 5 M2 war
   if el.deploy_why and el.deploy_why.valid then
@@ -252,6 +269,8 @@ local function refresh_depot(player, g)
     el.deploy_why.visible = #why_lines > 1
     el.deploy_why.caption = why_lines
   end
+  local tw = trainswar() -- Phase 5 M3 war2
+  if tw and el.war then tw.panel_depot_update(el.war, g.id, player.index) end
   local lines = rails.lines_of(d.force)
   el.lines.clear()
   if #lines == 0 then
@@ -320,7 +339,9 @@ events.on(defines.events.on_gui_click, function(e)
     local ok = train and rails.resume(train)
     util.log("railgui click resume train=%s ok=%s player=%d", tostring(g.id), tostring(ok), e.player_index)
   elseif action == "deploy" or action == "deploy_troop" then -- Phase 5 M2 war: troop trains too
-    local train, why = rails.create_train(element.tags.depot, action == "deploy_troop" and "troop" or "cargo")
+    local tw = trainswar() -- Phase 5 M3 war2: the depot panel's Armoured checkbox
+    local train, why = rails.create_train(element.tags.depot, action == "deploy_troop" and "troop" or "cargo",
+      tw and tw.deploy_opts(e.player_index) or nil)
     util.log("railgui click %s depot=#%s train=%s (%s) player=%d", action, tostring(element.tags.depot),
       tostring(train and train.id), tostring(why), e.player_index)
     if not train and player then player.print({"rts.railgui-deploy-failed", {"rts.rails-why-" .. tostring(why)}}) end

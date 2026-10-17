@@ -50,6 +50,8 @@ local G = W.garrison
 local TW = W.troop_wagon
 garrison.TURRET = "rts-garrison-turret"
 garrison.TWAGON = "rts-troop-wagon"
+-- Phase 5 M3 war2: every wagon name that carries troops (scripts/trainswar.lua adds the armoured troop wagon)
+garrison.TWAGONS = {[garrison.TWAGON] = true}
 garrison.AMMO = "firearm-magazine"
 garrison.POLL = 30               -- boarding, garrison entry and stranded-train checks (ticks)
 garrison.SKIP_KINDS = {hauler = true, commander = true}
@@ -436,7 +438,7 @@ end
 local function troop_wagons(train)
   local list = {}
   for _, w in ipairs(train.cargo_wagons) do
-    if w.name == garrison.TWAGON then list[#list + 1] = w end
+    if garrison.TWAGONS[w.name] then list[#list + 1] = w end -- Phase 5 M3 war2: armoured troop wagons too
   end
   return list
 end
@@ -758,7 +760,7 @@ end
 
 -- A carriage of a recorded train died: a troop wagon kills its manifest.
 rails.on_stock_died = function(rec, entity, cause)
-  if entity.name ~= garrison.TWAGON then return end
+  if not garrison.TWAGONS[entity.name] then return end -- Phase 5 M3 war2: armoured troop wagons too
   local M = manifests()
   local m = M[entity.unit_number]
   if not m then return end

@@ -298,6 +298,10 @@ local function queue_job(T, box, why)
     if not j.started and j.x0 <= box.x1 + 1 and box.x0 <= j.x1 + 1 and j.y0 <= box.y1 + 1 and box.y0 <= j.y1 + 1 then
       j.x0, j.y0 = math.min(j.x0, box.x0), math.min(j.y0, box.y0)
       j.x1, j.y1 = math.max(j.x1, box.x1), math.max(j.y1, box.y1)
+      -- Phase 5 M3 war2: a merged box that grows upwards starts at its new top row (the job had not started; its row
+      -- stayed at the old top, so the rows above were never computed: two cities founded in one tick, the second north
+      -- of the first, left the second without land)
+      j.row = j.y0
       j.why = j.why .. "+" .. why
       return j
     end

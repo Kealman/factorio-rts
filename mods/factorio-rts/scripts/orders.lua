@@ -919,9 +919,19 @@ events.on("rts-rclick", function(e)
   orders.handle_rclick(e.player_index, e.cursor_position, player.selected, holds_tool(player), e.in_gui)
 end)
 
-events.on("rts-attack-move", function(e) orders.arm_attack_move(e.player_index) end)
+-- Phase 5 M3 war2: in Nation mode F with no unit selected is the fort belt tool (scripts/belts.lua) and H with whole
+-- divisions selected and the cursor at an own front is hold_line (scripts/fronts.lua); both act through hud.lua's
+-- P4.KEYS. fn(player_index, cursor_position) -> true when the key is theirs.
+orders.f_claim, orders.h_claim = nil, nil
+events.on("rts-attack-move", function(e)
+  if orders.f_claim and orders.f_claim(e.player_index, e.cursor_position) then return end -- Phase 5 M3 war2
+  orders.arm_attack_move(e.player_index)
+end)
 events.on("rts-stop", function(e) orders.stop(e.player_index) end)
-events.on("rts-hold", function(e) orders.hold(e.player_index) end)
+events.on("rts-hold", function(e)
+  if orders.h_claim and orders.h_claim(e.player_index, e.cursor_position) then return end -- Phase 5 M3 war2
+  orders.hold(e.player_index)
+end)
 
 ---------------------------------------------------------------------------
 -- Completion: only units this module claimed (issuer == "orders"). units.lua's handler runs first and

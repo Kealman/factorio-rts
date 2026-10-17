@@ -85,6 +85,12 @@ local modules = {
   require("scripts.age3"),
   require("scripts.rare"),
   require("scripts.sinks"),
+  -- Phase 5 M3 war2: fronts per war and hold_line (after territory, cities, divisions and wars), fort belts (after
+  -- orders, logistics and cities), artillery and armoured trains (after rails, railgui and garrison: train kinds, the
+  -- troop wagon set, disband hook); hud.lua's P4.KEYS reach them at run time
+  require("scripts.fronts"),
+  require("scripts.belts"),
+  require("scripts.trainswar"),
   require("scripts.debug"),
 }
 

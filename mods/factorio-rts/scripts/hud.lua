@@ -133,7 +133,9 @@ local P4 = {
   -- Phase 5 M2 integration: the Nation page (goal, controls, people, treasury, diplomacy and war, supply, rails and
   -- ages, every hotkey; P4.KEYS are its panel keys)
   HELP_NATION = {"rts.help-nation-1", "rts.help-2", "rts.help-nation-2", "rts.help-nation-3", "rts.help-nation-4",
-                 "rts.help-nation-5", "rts.help-nation-6", "rts.help-nation-keys"},
+                 "rts.help-nation-5", "rts.help-nation-6",
+                 "rts-war3.help-nation-fronts", -- Phase 5 M3 war2: fronts, hold line, fort belts, war trains
+                 "rts.help-nation-keys"},
   DEMOLISH_HEIGHT = 22, -- the building page's Demolish button (header row)
   -- Phase 5 E1: the factory / district Auto button (recipe tag) and the Nation-only Age II build tab (two rows when it
   -- holds more than BUILD_COLUMNS items; the frame grows upwards by BUILD_ROW per extra row)
@@ -160,6 +162,10 @@ for _, name in ipairs({"rts-supply-crate", "rts-supply-crate-ii", "rts-field-dep
 for _, name in ipairs({"rts-airfield", "rts-aa-turret", "rts-scout-plane-kit", "rts-bomber-kit", "rts-interceptor-kit"}) do
   P4.NATION_ONLY[name] = true end
 P4.HELP_NATION[#P4.HELP_NATION + 1] = "rts-air.help-nation-air"
+-- Phase 5 M3 war2: the gate, the artillery wagon, armoured stock and rail shells
+for _, name in ipairs({"rts-gate", "rts-artillery-wagon-kit", "rts-armoured-locomotive-kit", "rts-armoured-wagon-kit",
+                       "rts-rail-shell"}) do
+  P4.NATION_ONLY[name] = true end
 P4.crafter = function(kind) return kind == "factory" or kind == "district" end -- Phase 5 E1: districts are producers
 P4.place_name = require("scripts.world").place_name -- Phase 5 M2 world: region names in alerts (alert_text)
 -- Phase 5 E1: recipes an age locks (research.AGE_LOCKS: Age II goods, buildings, the Armoured car kit) exist in Nation
@@ -179,7 +185,9 @@ P4.FACTORY_TABS = {
 P4.LOGISTICS_PRODUCTS = {["transport-belt"] = true, ["fast-inserter"] = true, ["medium-electric-pole"] = true,
   ["firearm-magazine"] = true, ["rts-hauler-kit"] = true, rail = true, ["rts-locomotive-kit"] = true,
   ["rts-cargo-wagon-kit"] = true, ["rts-construction-wagon-kit"] = true,
-  ["rts-supply-crate"] = true, ["rts-troop-wagon-kit"] = true} -- Phase 5 M2 war
+  ["rts-supply-crate"] = true, ["rts-troop-wagon-kit"] = true, -- Phase 5 M2 war
+  ["rts-artillery-wagon-kit"] = true, ["rts-armoured-locomotive-kit"] = true, ["rts-armoured-wagon-kit"] = true,
+  ["rts-rail-shell"] = true} -- Phase 5 M3 war2
 P4.recipe_tab = function(r)
   if r.category == "rts-science" then return "science" end
   if r.category == "rts-intermediates" or r.category == "rts-age2" then return "intermediates" end
@@ -293,7 +301,8 @@ local BUILD_TABS = {
             "rts-airfield"}}, -- Phase 5 M3 air: Nation only (Aviation)
   {key = "defence", caption = "rts.build-tab-defence", tooltip = "rts.build-tab-defence-tooltip",
    items = {"rts-turret", "rts-laser-turret", "rts-wall", "rts-solar-array", "rts-steam-plant", "rts-accumulator",
-            "rts-radar", "rts-aa-turret"}}, -- Phase 5 M3 air: the AA turret, Nation only (Aviation)
+            "rts-radar", "rts-aa-turret", -- Phase 5 M3 air: the AA turret, Nation only (Aviation)
+            "rts-gate"}}, -- Phase 5 M3 war2: Nation only (Fortification)
   -- Phase 5 E1: Age II buildings, Nation mode only (an icon tab: the three text tabs fill the width in Russian)
   {key = "age2", sprite = "item/rts-science-industrial", tooltip = "rts.build-tab-age2-tooltip", nation = true,
    items = {"rts-pumpjack", "rts-refinery", "rts-chemical-plant", "rts-district-smelting", "rts-district-steel",
@@ -380,6 +389,10 @@ P4.ALERT_STYLE = {
   ["city-captured"] = {icons = {"item/rts-city-charter", "utility/check_mark_green"}, color = "green"},
   ["troop-wagon-lost"] = {icons = {"item/rts-troop-wagon-kit", "utility/danger_icon"}, color = "red",
                           sound = "utility/alert_destroyed"},
+  -- Phase 5 M3 war2 (scripts/belts.lua, scripts/trainswar.lua)
+  ["belt-built"] = {icons = {"item/rts-wall", "utility/check_mark_green"}, color = "green"},
+  ["belt-waiting"] = {icons = {"item/rts-wall", "utility/warning_icon"}, color = "yellow"},
+  ["train-no-shells"] = {icons = {"item/rts-rail-shell", "utility/warning_icon"}, color = "yellow"},
 }
 P4.ALERT_DEFAULT_STYLE = {icons = {"utility/warning_icon"}, color = "white"}
 -- A text that overrides its kind's style: the ruin's previous owner gets kind "ruin-captured" with this text.
@@ -1008,6 +1021,14 @@ local function build_build_menu(screen, h, player_index)
               tooltip = {"rts.build-title-tooltip"}})
   add_filler(header)
   header.add({type = "label", style = "rts_hud_dim_label", caption = {"rts.build-done-hint"}})
+  -- Phase 5 M3 war2: the fort belt tool (F with no unit selected), Nation mode only (the header has room; the tab row
+  -- is full with Russian captions)
+  local belt = header.add({type = "sprite-button", name = PREFIX .. "fort_belt", style = "rts_hud_tab_button",
+    sprite = "item/rts-gate", tooltip = {"rts-war3.belt-button-tooltip"}, tags = {rts_hud = "fort_belt"}})
+  belt.style.width = 24
+  belt.style.padding = 0
+  belt.visible = P4.nation()
+  h.el.fort_belt = belt
   local tabs = frame.add({type = "flow", direction = "horizontal"})
   tabs.style.horizontal_spacing = 2
   h.el.build_tabs = {}
@@ -1834,6 +1855,7 @@ local function update_build_menu(player, h)
   local nation = P4.nation() -- Phase 5 E1: the Age II tab follows the mode
   if h.build_nation ~= nation then
     h.build_nation = nation
+    if h.el.fort_belt and h.el.fort_belt.valid then h.el.fort_belt.visible = nation end -- Phase 5 M3 war2
     for key, button in pairs(h.el.build_tabs or {}) do
       local tab = BUILD_TAB_BY_KEY[key]
       if tab.nation then
@@ -2329,6 +2351,9 @@ local function on_click(e)
     if toggle then toggle(player) end
   elseif action == "help" then
     hud.toggle_help(player, element.name == PREFIX .. "help_close" and "close button" or "? button")
+  elseif action == "fort_belt" then -- Phase 5 M3 war2: the fort belt tool (scripts/belts.lua)
+    local toggle = optional_fn("scripts.belts", {"toggle_tool"})
+    if toggle then toggle(player) end
   elseif action == "demolish" then
     demolish.click(player)
   elseif action == "disband" then -- Phase 5 M2 integration: Disband the selected units (Nation mode)
@@ -2395,6 +2420,9 @@ end)
 events.on(defines.events.on_player_cursor_stack_changed, function(e) hud.refresh(e.player_index) end)
 
 events.on("rts-build-menu", function(e)
+  -- Phase 5 M3 war2: B with an own train selected is its Bombard stance (scripts/trainswar.lua, P4.KEYS below)
+  local claims_b = optional_fn("scripts.trainswar", {"claims_b"})
+  if claims_b and claims_b(e.player_index) then return end
   local pr = prefs(e.player_index)
   pr.build_hidden = not pr.build_hidden
   util.log("hud build menu %s player=%d (B)", pr.build_hidden and "hidden" or "shown", e.player_index)
@@ -2409,13 +2437,18 @@ P4.KEYS = {
   {input = "rts-market", key = "M", module = "scripts.marketgui", fn = "toggle"}, -- Phase 5 M2 treasury
   {input = "rts-minimap-mode", key = "N", module = "scripts.strategic", fn = "toggle_minimap"}, -- Phase 5 M2 world
   {input = "rts-airfield-panel", key = "Y", module = "scripts.airgui", fn = "toggle"}, -- Phase 5 M3 air
+  -- Phase 5 M3 war2: keys that share an input with an older meaning; the module decides (it gets the event too):
+  -- F with no unit selected = fort belt tool, B with a train selected = Bombard, H at a front = hold the line
+  {input = "rts-attack-move", key = "F", module = "scripts.belts", fn = "key_f"},
+  {input = "rts-build-menu", key = "B", module = "scripts.trainswar", fn = "key_b"},
+  {input = "rts-hold", key = "H", module = "scripts.fronts", fn = "key_h"},
 }
 for _, k in ipairs(P4.KEYS) do
   events.on(k.input, function(e)
     local player = game.get_player(e.player_index)
     local fn = player and optional_fn(k.module, {k.fn})
     util.log("hud: hotkey %s (%s) player=%d%s", k.input, k.key, e.player_index, fn and "" or " (module missing)")
-    if fn then fn(player) end
+    if fn then fn(player, e) end -- Phase 5 M3 war2: the event too (cursor position)
   end)
 end
 

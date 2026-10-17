@@ -52,6 +52,13 @@ end
 
 local divisiongui = {}
 
+-- Phase 5 M3 war2: the front row of a selected division's card (Nation mode, while its force has a front)
+local function fronts_mod() return war_mod("fronts") end
+local function front_count(force)
+  local fm = fronts_mod()
+  return fm and fm.segments and #fm.segments(force) or 0
+end
+
 divisiongui.FRAME = "rts_div_panel"
 local PREFIX = "rts_div_"
 local WIDTH = 300              -- GUI units (x player.display_scale on screen); fits the Russian stance captions
@@ -123,7 +130,8 @@ end
 
 local function signature(player, ds, whole, form, bun, g, city)
   local parts = {form and "F" or "-", tostring(bun or "-"), tostring(bun and divisions.barracks_division(bun) or "-"),
-                 tostring(g.rename or "-"), tostring(city or "-")} -- Phase 5 M2 war: the selected city
+                 tostring(g.rename or "-"), tostring(city or "-"), -- Phase 5 M2 war: the selected city
+                 nation_mode() and tostring(front_count(player.force.name) > 0) or "-"} -- Phase 5 M3 war2: fronts
   for _, D in ipairs(ds) do
     parts[#parts + 1] = string.format("%d:%s:%s:%s:%s", D.id, name_sig(D), D.stance, D.reinforce and "r" or "-",
       whole[D.id] and "S" or "-")
@@ -176,6 +184,8 @@ local function order_caption(D)
   if no_train(D) then return {"rts-war.state-no-train"} end -- Phase 5 M2 QA round 1
   local gs = storage.garrison
   if gs and gs.pending and gs.pending[D.id] then return {"rts-war.state-garrisoning"} end
+  -- Phase 5 M3 war2: holding a front segment (scripts/fronts.lua), also once the members stand in their slots
+  if D.order and D.order.kind == "hold_line" then return {"rts-war3.order-hold-line", D.order.segment or "?"} end
   if D.state == "idle" or not D.order then return {"rts-div.state-idle"} end
   if D.state == "holding" then return {"rts-div.order-hold"} end
   return {ORDER_KEYS[D.order.kind] or "rts-div.state-idle"}
@@ -250,7 +260,18 @@ local function build_card(scroll, D, selected, g)
     icon_button(row4, PREFIX .. "disband_" .. id, "utility/trash", {"rts-div.disband"}, {"rts-div.disband-tooltip"},
       {rts_div = "disband", id = id})
   end
-  return {n = n, bar = bar, state = state, sp = sp_bar}
+  local front -- Phase 5 M3 war2: the nearest front segment and Hold line
+  if selected and nation_mode() and front_count(D.force) > 0 then
+    local row5 = card.add({type = "flow", direction = "horizontal", style = "rts_hud_row"})
+    front = row5.add({type = "label", style = "rts_hud_dim_label", caption = ""})
+    front.style.maximal_width = BAR_WIDTH - 100
+    front.style.single_line = false
+    add_filler(row5)
+    row5.add({type = "button", name = PREFIX .. "hold_line_" .. id, style = "rts_hud_button",
+              caption = {"rts-war3.hold-line"}, tooltip = {"rts-war3.hold-line-tooltip"},
+              tags = {rts_div = "hold_line", id = id}})
+  end
+  return {n = n, bar = bar, state = state, sp = sp_bar, front = front}
 end
 
 local function build(player, g, ds, whole, form, bun, city)
@@ -328,6 +349,13 @@ local function update(g, ds)
         c.state.tooltip = {"rts-war.embark-no-train", {"rts.rails-why-" .. tostring(D.no_train.why)}}
       else
         c.state.tooltip = ""
+      end
+      if c.front and c.front.valid then -- Phase 5 M3 war2: the segment Hold line would take
+        local fm = fronts_mod()
+        local seg, dist
+        if fm and D.pos then seg, dist = fm.nearest(D.force, D.pos) end
+        c.front.caption = seg and {"rts-war3.front-nearest", seg.id, seg.threat, math.floor((dist or 0) + 0.5)}
+          or {"rts-war3.front-none"}
       end
       if c.sp and c.sp.valid and ws then -- Phase 5 M2 war
         local sp = ws.sp(D.id)
@@ -441,6 +469,13 @@ events.on(defines.events.on_gui_click, function(e)
     if own_division(player, tags.id) then g.rename = tags.id end
   elseif action == "disband" then
     if own_division(player, tags.id) then divisions.disband(tags.id, "disbanded by player " .. player.index) end
+  elseif action == "hold_line" then -- Phase 5 M3 war2: hold the nearest front segment
+    local fm = fronts_mod()
+    if fm and own_division(player, tags.id) then
+      local ok, why = fm.hold_nearest(tags.id)
+      util.log("divisiongui: player %d hold line division #%d ok=%s (%s)", player.index, tags.id, tostring(ok),
+        tostring(why))
+    end
   elseif action == "sortie" then -- Phase 5 M2 war
     local gm = war_mod("garrison")
     local c = storage.cities and storage.cities[tags.city]

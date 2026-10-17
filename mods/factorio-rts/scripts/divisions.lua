@@ -53,6 +53,10 @@
 -- {depot, why, tick} (Phase 5 M2 QA round 1: a refused embark, shown on the card) (scripts/garrison.lua). Hooks:
 -- divisions.ORDER_HOOKS[kind] = fn(id, target, opts) -> ok for the extra order kinds "embark" and "garrison";
 -- divisions.order_lock = fn(D, kind) -> reason refuses attack orders (out of supply).
+-- Phase 5 M3 war2 (docs/qa/phase5-war2-notes.md): the hold_line order comes through ORDER_HOOKS (scripts/fronts.lua);
+-- state "striking" (a Nation attack whose group stood at its target building for STRIKE_STALL ticks without hurting
+-- it: every member attacks that building on its own, D.strike = {entity, tick}); in Nation mode the hidden power and
+-- pole entities under hubs, depots, City Centers and the CC are indestructible (immune, they held a group's fire).
 local util = require("scripts.util")
 local events = require("scripts.events")
 local units = require("scripts.units")
@@ -92,6 +96,10 @@ local MAX_GROUP_FAILS = 3
 local SETTLE_TICKS = 20 * 60 -- members still walking to their slots this long after the group arrived are stopped
 local STRENGTH_TICKS = 30     -- the cached strength / health / centroid of a division is this fresh at worst
 local REJOIN_TICKS = 300      -- a moving division looks for members that dropped out of its group this often
+-- Phase 5 M3 war2: a group within STRIKE_NEAR tiles of its target building that has not hurt it for STRIKE_STALL ticks
+-- strikes it member by member (m3-air's probe: a walker division hit an enemy depot 7 times and then stood 18 tiles away,
+-- group state attacking_target, for 40+ s); at most STRIKE_MAX ticks, then the attack ends as an arrival
+local STRIKE_NEAR, STRIKE_STALL, STRIKE_MAX = 40, 300, 60 * 60
 
 local CMD, DIS = defines.command, defines.distraction
 local STANCE_OK = {hold = true, advance = true, screen = true}
@@ -609,6 +617,8 @@ function divisions.order(id, kind, target, opts)
   recs, planes = split_air(recs)
   if #recs == 0 and not planes then return false, "planes at an airfield" end
   D.embark = nil -- Phase 5 M2 war: any order cancels boarding (the embark hook sets it again after its move)
+  D.strike = nil -- Phase 5 M3 war2: and a strike
+  local strike -- Phase 5 M3 war2: the building a Nation attack strikes (the stall watchdog in check)
   D.no_train = nil -- Phase 5 M2 QA round 1: and the card's "No troop train"
   local pos = target and pos_of(target) or nil
   D.detached, D.joining, D.settling = {}, {}, {}
@@ -644,6 +654,7 @@ function divisions.order(id, kind, target, opts)
       cmd = bld and {type = CMD.compound, structure_type = defines.compound_command.return_last, commands = {go,
         {type = CMD.attack_area, destination = bld.position, radius = targeting.ATTACK_RADIUS, distraction = DIS.by_enemy},
       }} or go
+      strike = bld -- Phase 5 M3 war2
     else
       -- QA round 1 (protocol step 33): march to the point first (fighting what it meets), then clear the area
       cmd = {type = CMD.compound, structure_type = defines.compound_command.return_last, commands = {
@@ -666,6 +677,7 @@ function divisions.order(id, kind, target, opts)
     if planes then fly(D, kind, pos, planes, #recs == 0) end -- Phase 5 M3 air
   end
   D.order = {kind = kind, target = pos, tick = game.tick, auto = opts and opts.auto or nil}
+  if strike then D.order.strike = strike end -- Phase 5 M3 war2
   D.fails = opts and opts.keep_fails and D.fails or nil
   local st = m.stats
   st.orders[kind] = (st.orders[kind] or 0) + 1
@@ -873,6 +885,51 @@ local function stance_step(D, recs)
   end
 end
 
+-- Phase 5 M3 war2: the striking members' command: an area attack on the building's footprint (attack_area, re-issued
+-- when it ends; the entity attack completes on nearly every tick for spider-units, orders.lua ATTACK_MODE)
+local function strike_cmd(t)
+  local box = t.selection_box
+  local r = math.max(2, math.max(box.right_bottom.x - box.left_top.x, box.right_bottom.y - box.left_top.y) / 2)
+  return {type = CMD.attack_area, destination = t.position, radius = r, distraction = DIS.by_enemy}
+end
+
+-- Phase 5 M3 war2: true when a moving group near its target building has not hurt it for STRIKE_STALL ticks.
+local function strike_stalled(D, g, tick)
+  local o = D.order
+  local t = o and o.strike
+  if not (t and t.valid) then
+    if o then o.strike = nil end
+    return false
+  end
+  local gp, tp = g.position, t.position
+  if (gp.x - tp.x) ^ 2 + (gp.y - tp.y) ^ 2 > STRIKE_NEAR * STRIKE_NEAR then return false end
+  local hp = t.health or 0
+  if not o.strike_tick or hp < (o.strike_hp or hp) - 0.5 then
+    o.strike_tick, o.strike_hp = tick, hp
+    return false
+  end
+  return tick - o.strike_tick >= STRIKE_STALL
+end
+
+-- Phase 5 M3 war2: every member attacks the target building on its own.
+local function begin_strike(D, recs, t)
+  drop_group(D)
+  D.strike = {entity = t, tick = game.tick}
+  D.settling = {}
+  local cmd = strike_cmd(t)
+  for _, rec in ipairs(recs) do
+    orders.cancel_queued(rec.entity)
+    claim(rec, "attack_move", pos_of(t.position))
+    rec.target = t
+    orders.queue_command(rec.entity, cmd)
+  end
+  D.state = "striking"
+  bump("strikes")
+  util.log("divisions: #%d %s: no damage to %s #%d (%s) for %.0f s: %d members strike it", D.id, divisions.label(D),
+    t.name, t.unit_number or 0, t.force.name, STRIKE_STALL / 60, #recs)
+  changed(D, "state")
+end
+
 local function check(D)
   local recs = live_members(D)
   if #recs == 0 then
@@ -893,6 +950,11 @@ local function check(D)
       arrive(D, "group finished")
     else
       D.pos = g.position
+      -- Phase 5 M3 war2: a group that stalls at its target building strikes it member by member
+      if D.order and D.order.strike and strike_stalled(D, g, tick) then
+        begin_strike(D, (split_air(recs)), D.order.strike) -- the ground members (planes fly their own strikes)
+        return
+      end
       if tick - (D.rejoin_tick or D.order.tick) < REJOIN_TICKS then return end
       D.rejoin_tick = tick
       -- members that dropped out of the group (disowned stragglers, a direct command) rejoin it; detached ones do not
@@ -908,6 +970,14 @@ local function check(D)
         end
       end
     end
+  elseif D.state == "striking" then -- Phase 5 M3 war2: until the building is gone (or STRIKE_MAX), then an arrival
+    local t = D.strike and D.strike.entity
+    if not (t and t.valid) or tick - (D.strike and D.strike.tick or 0) >= STRIKE_MAX then
+      local why = (t and t.valid) and "strike timeout" or "target destroyed"
+      D.strike = nil
+      if D.order then D.order.strike = nil end
+      arrive(D, why)
+    end
   elseif D.state == "settling" then
     if next(D.settling) == nil or tick - (D.settle_tick or 0) >= SETTLE_TICKS then
       finish_arrival(D, next(D.settling) and "settle timeout" or "in formation")
@@ -922,7 +992,46 @@ local function check(D)
   end
 end
 
+-- Phase 5 M3 war2: the hidden helpers under hubs (depots, City Centers, trade posts, field depots) and the CC are
+-- immune to every damage type; units that picked one as a target fired at it for ever (m3-air's depot probe). In Nation
+-- mode they are made indestructible, which units never target (scripts/targeting.lua). Hosts are queued when they are
+-- registered and handled on the next pass (their composites are built by later modules' callbacks).
+local HIDDEN_PARTS = {}
+for _, name in ipairs({"rts-core-power", "rts-core-pole", "rts-hub-power", "rts-hub-pole", "rts-city-power",
+                       "rts-city-demand"}) do
+  if prototypes.entity[name] then HIDDEN_PARTS[#HIDDEN_PARTS + 1] = name end
+end
+buildings.on_added(function(un, rec)
+  if (rec.kind == "cc" or rec.kind == "hub") and targeting.nation() then
+    local m = meta()
+    m.hidden_queue = m.hidden_queue or {}
+    m.hidden_queue[#m.hidden_queue + 1] = un
+  end
+end)
+local function harden_hidden_parts()
+  local m = storage.division_meta
+  local q = m and m.hidden_queue
+  if not (q and q[1]) then return end
+  m.hidden_queue = nil
+  local n = 0
+  for _, un in ipairs(q) do
+    local rec = buildings.get(un)
+    if rec then
+      local e = rec.entity
+      for _, part in ipairs(e.surface.find_entities_filtered({position = e.position, radius = 3, name = HIDDEN_PARTS,
+                                                              force = e.force})) do
+        if part.destructible then
+          part.destructible = false
+          n = n + 1
+        end
+      end
+    end
+  end
+  if n > 0 then util.log("divisions: %d hidden helper(s) under %d centre(s) and hub(s) made indestructible", n, #q) end
+end
+
 events.on_nth_tick(CHECK_PERIOD, function(e)
+  harden_hidden_parts() -- Phase 5 M3 war2
   local l = storage.divisions
   if not l or next(l) == nil then return end
   local due = {}
@@ -983,6 +1092,15 @@ events.on(defines.events.on_ai_command_completed, function(e)
       units.stop(rec.entity)
       return
     end
+  end
+  -- Phase 5 M3 war2: striking members (and reinforcements that reached a striking division) attack again while the
+  -- building stands
+  local t = D and D.state == "striking" and D.strike and D.strike.entity
+  if t and t.valid and not (divisions.flying and divisions.flying(rec)) then
+    claim(rec, "attack_move", pos_of(t.position))
+    rec.target = t
+    orders.queue_command(rec.entity, strike_cmd(t))
+    return
   end
   unclaim(rec)
   units.stop(rec.entity)

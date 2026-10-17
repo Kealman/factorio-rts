@@ -610,14 +610,18 @@ local function troop_tick()
       local train = Tr.train
       if train and train.valid and math.abs(train.speed) > 0.1 and D2 and (D2.aboard or 0) == 6
          and train.front_stock.position.x > 1200 then
-        local wagon
+        -- Phase 5 M3 war2: every loaded wagon (the six may board two wagons of the train, as on the M3 copy, where the
+        -- boarding order shifted; one destroyed wagon then leaves the other's manifest and the division)
+        local wagons = {}
         local M0 = storage.rails.manifests or {}
         for _, w in ipairs(train.cargo_wagons) do
-          if M0[w.unit_number] and #M0[w.unit_number].records > 0 then wagon = w end
+          if M0[w.unit_number] and #M0[w.unit_number].records > 0 then wagons[#wagons + 1] = w end
         end
         local alerts0 = #(storage.alerts or {})
         local lost0 = garrison.describe()
-        wagon.die("neutral")
+        for _, w in ipairs(wagons) do
+          if w.valid then w.die("neutral") end
+        end
         local found = false
         for i = alerts0 + 1, #(storage.alerts or {}) do
           if storage.alerts[i].kind == "troop-wagon-lost" then found = true end

@@ -89,6 +89,17 @@ rails.CWAGON_KIT = "rts-construction-wagon-kit"
 rails.TWAGON = "rts-troop-wagon"
 rails.TWAGON_KIT = "rts-troop-wagon-kit"
 rails.troop_dwell, rails.on_stock_died, rails.on_disband, rails.troop_text = nil, nil, nil, nil
+-- Phase 5 M3 war2 (scripts/trainswar.lua, docs/PHASE5-M3.md D6): artillery trains (2 locomotives + 1 artillery wagon)
+-- and armoured stock (create_train opts.armoured: armoured locomotives, armoured troop wagons). rails.KIND_HOOKS[kind] =
+-- {right_click = fn(player_index, position, entities, alt, trec, train, depot_un) -> order, n} for the kinds another
+-- module drives (trainswar.lua: "artillery").
+rails.ARTY = "rts-artillery-wagon"
+rails.ARTY_KIT = "rts-artillery-wagon-kit"
+rails.ALOCO = "rts-armoured-locomotive"
+rails.ALOCO_KIT = "rts-armoured-locomotive-kit"
+rails.AWAGON = "rts-armoured-wagon"
+rails.AWAGON_KIT = "rts-armoured-wagon-kit"
+rails.KIND_HOOKS = {}
 rails.RAIL = "rail"
 rails.SIGNAL = "rail-signal"
 rails.SUPPORT = "rail-support"
@@ -132,6 +143,8 @@ buildings.KIND_BY_NAME[rails.LOCO] = rails.KIND
 buildings.KIND_BY_NAME[rails.WAGON] = rails.KIND
 buildings.KIND_BY_NAME[rails.CWAGON] = rails.KIND
 buildings.KIND_BY_NAME[rails.TWAGON] = rails.KIND -- Phase 5 M2 war
+-- Phase 5 M3 war2: artillery wagons and armoured stock are rolling stock too
+for _, name in ipairs({rails.ARTY, rails.ALOCO, rails.AWAGON}) do buildings.KIND_BY_NAME[name] = rails.KIND end
 -- Ctrl+A and box selection take units only; trains are clicked.
 selection.SELECT_ALL_SKIP[rails.KIND] = true
 -- QA round 1: a click picks rolling stock and depots only inside their (oriented) selection box, not 1 tile around it
@@ -174,9 +187,14 @@ local RAIL_SET = {}
 for _, n in ipairs(RAIL_NAMES) do RAIL_SET[n] = true end
 local STOCK_SET = {[rails.LOCO] = true, [rails.WAGON] = true, [rails.CWAGON] = true,
                    [rails.TWAGON] = true} -- Phase 5 M2 war: troop wagons
+STOCK_SET[rails.ARTY], STOCK_SET[rails.ALOCO], STOCK_SET[rails.AWAGON] = true, true, true -- Phase 5 M3 war2
 -- Phase 5 M2 war: the kit each carriage came from (rails.disband_train)
 local KIT_OF = {[rails.LOCO] = rails.LOCO_KIT, [rails.WAGON] = rails.WAGON_KIT, [rails.CWAGON] = rails.CWAGON_KIT,
                 [rails.TWAGON] = rails.TWAGON_KIT}
+-- Phase 5 M3 war2: the kits of the artillery wagon and the armoured stock
+KIT_OF[rails.ARTY], KIT_OF[rails.ALOCO], KIT_OF[rails.AWAGON] = rails.ARTY_KIT, rails.ALOCO_KIT, rails.AWAGON_KIT
+rails.KITS = {} -- Phase 5 M3 war2: every rolling-stock kit -> the carriage it makes (docs/PHASE5-M3.md section 3)
+for stock, kit in pairs(KIT_OF) do rails.KITS[kit] = stock end
 local FREIGHT = {cargo = true, troop = true} -- Phase 5 M2 war: kinds with a pickup -> drop-off route
 -- Entity types that block a coarse cell (with water and void). Trees, rocks and cliffs are cleared by the builder.
 local BLOCKER_TYPES = {"assembling-machine", "furnace", "mining-drill", "roboport", "container", "logistic-container",
@@ -1288,10 +1306,15 @@ local function wagons_of(train, name)
   return list
 end
 
-local function kit_list(kind, n) -- Phase 5 M2 war: n troop wagons
+local function kit_list(kind, n, armoured) -- Phase 5 M2 war: n troop wagons
   if kind == "construction" then return {{rails.LOCO_KIT, 2}, {rails.CWAGON_KIT, 1}} end
-  if kind == "troop" then return {{rails.LOCO_KIT, 2}, {rails.TWAGON_KIT, n or 1}} end -- Phase 5 M2 war
-  return {{rails.LOCO_KIT, 2}, {rails.WAGON_KIT, CFG.cargo_wagons}}
+  -- Phase 5 M3 war2: armoured locomotives (and armoured troop wagons); the artillery train's one artillery wagon
+  local loco = armoured and rails.ALOCO_KIT or rails.LOCO_KIT
+  if kind == "artillery" then return {{loco, 2}, {rails.ARTY_KIT, 1}} end
+  if kind == "troop" then -- Phase 5 M2 war
+    return {{loco, 2}, {armoured and rails.AWAGON_KIT or rails.TWAGON_KIT, n or 1}}
+  end
+  return {{loco, 2}, {rails.WAGON_KIT, CFG.cargo_wagons}}
 end
 
 --- Kits a train of `kind` needs: {{item, n}, ...}.
@@ -1321,13 +1344,21 @@ local LEGGED = {["spider-unit"] = true, ["spider-vehicle"] = true}
 local STEP_CLEAR = 2  -- tiles between the train's box and the legs of a unit that stepped aside
 local LEG_REACH = 4   -- assumed when the legs cannot be read
 
-local function kits_for(kind, net)
+local function kits_for(kind, net, armoured) -- Phase 5 M3 war2: armoured stock
   local nw = nil
   if kind == "troop" then -- Phase 5 M2 war
-    nw = math.max(1, math.min(net.get_item_count(rails.TWAGON_KIT), balance.nation.war.troop_wagon.max_wagons))
+    nw = math.max(1, math.min(net.get_item_count(armoured and rails.AWAGON_KIT or rails.TWAGON_KIT), -- Phase 5 M3 war2
+      balance.nation.war.troop_wagon.max_wagons))
   end
-  return kit_list(kind, nw)
+  return kit_list(kind, nw, armoured)
 end
+
+-- Phase 5 M3 war2: the kinds create_train knows ("artillery": 2 locomotives + 1 artillery wagon) and its armoured
+-- option (never for a construction train)
+local function train_kind(kind)
+  return (kind == "construction" or kind == "troop" or kind == "artillery") and kind or "cargo"
+end
+local function armoured_of(kind, opts) return opts ~= nil and opts.armoured == true and kind ~= "construction" end
 
 -- Phase 5 M2 integration: a construction train refuels nowhere but from its wagon, so it leaves only with a full
 -- load for both locomotives (2 x fuel_target; an AI crew left with 2 coal and stood at piece 36 for half an hour)
@@ -1335,7 +1366,7 @@ local function min_fuel(kind) return kind == "construction" and 2 * CFG.fuel_tar
 
 -- Carriage names front to back and their slots on the platform: the front locomotive at the end the line joins (or
 -- the second end), facing out; the last locomotive faces the other way.
-local function train_slots(d, kind, kits)
+local function train_slots(d, kind, kits, armoured) -- Phase 5 M3 war2: armoured stock, the artillery wagon
   local R = rstate()
   local p = d.platform
   local line = d.line and R.lines[d.line]
@@ -1344,11 +1375,13 @@ local function train_slots(d, kind, kits)
   local e = p.ends[conn] or p.ends[2]
   local ox, oy = 0, 0
   if e.d == D.east then ox = 1 elseif e.d == D.west then ox = -1 elseif e.d == D.south then oy = 1 else oy = -1 end
-  local names = {rails.LOCO}
+  local loco = armoured and rails.ALOCO or rails.LOCO -- Phase 5 M3 war2: armoured stock, the artillery wagon
+  local names = {loco}
   for _ = 1, kits[2][2] do -- Phase 5 M2 war: troop wagons
-    names[#names + 1] = kind == "construction" and rails.CWAGON or (kind == "troop" and rails.TWAGON or rails.WAGON)
+    names[#names + 1] = kind == "construction" and rails.CWAGON or (kind == "troop" and (armoured and rails.AWAGON
+      or rails.TWAGON) or (kind == "artillery" and rails.ARTY or rails.WAGON))
   end
-  names[#names + 1] = rails.LOCO
+  names[#names + 1] = loco
   local slots = {}
   for i, name in ipairs(names) do
     local back = 4 + (i - 1) * rails.CARRIAGE
@@ -1456,21 +1489,22 @@ end
 
 --- Phase 5 M2 QA round 1: why a train of `kind` cannot be deployed at the depot now, or nil when it can (own units on
 --- the platform track do not count: they step aside). Reasons as rails.create_train's, plus "no-track" (a platform
---- rail is gone) and "enemy-on-track".
-function rails.deploy_check(depot_un, kind)
-  kind = (kind == "construction" or kind == "troop") and kind or "cargo"
+--- rail is gone) and "enemy-on-track". Phase 5 M3 war2: kind "artillery", opts.armoured as create_train's.
+function rails.deploy_check(depot_un, kind, opts)
+  kind = train_kind(kind) -- Phase 5 M3 war2
+  local armoured = armoured_of(kind, opts) -- Phase 5 M3 war2
   local d = rails.depot(depot_un)
   if not d then return "no-depot" end
   if not d.platform then return "no-platform" end
   if not platform_free(d) then return "busy" end
   local net = logistics.hub_network(depot_un)
   if not net then return "no-network" end
-  local kits = kits_for(kind, net)
+  local kits = kits_for(kind, net, armoured)
   for _, k in ipairs(kits) do
     if net.get_item_count(k[1]) < k[2] then return "no-kits" end
   end
   if net.get_item_count(rails.FUEL) < min_fuel(kind) then return "no-fuel" end
-  local slots = train_slots(d, kind, kits)
+  local slots = train_slots(d, kind, kits, armoured)
   if not track_whole(d, slots) then return "no-track" end
   for _, slot in ipairs(slots) do
     local why = slot_problem(d, slot)
@@ -1482,23 +1516,26 @@ end
 --- Spawn a train of `kind` ("cargo" | "construction") on a depot platform from kits in the depot's network.
 --- Returns the LuaTrain, or nil and a reason ("no-depot", "no-platform", "busy", "no-kits", "no-fuel", "no-room",
 --- "no-track", "enemy-on-track"). Own units on the train's stretch of the platform track step off it.
-function rails.create_train(depot_un, kind)
+--- Phase 5 M3 war2: kind "artillery" (2 locomotives + 1 artillery wagon); opts.armoured: armoured locomotives (and
+--- armoured troop wagons for "troop"), never for a construction train.
+function rails.create_train(depot_un, kind, opts)
   -- Phase 5 M2 war: "troop" (2 locomotive kits + as many troop wagon kits as the network holds, at most max_wagons)
-  kind = (kind == "construction" or kind == "troop") and kind or "cargo"
+  kind = train_kind(kind) -- Phase 5 M3 war2
+  local armoured = armoured_of(kind, opts) -- Phase 5 M3 war2
   local d = rails.depot(depot_un)
   if not d then return nil, "no-depot" end
   if not d.platform then return nil, "no-platform" end
   if not platform_free(d) then return nil, "busy" end
   local net = logistics.hub_network(depot_un)
   if not net then return nil, "no-network" end
-  local kits = kits_for(kind, net)
+  local kits = kits_for(kind, net, armoured)
   for _, k in ipairs(kits) do
     if net.get_item_count(k[1]) < k[2] then return nil, "no-kits" end
   end
   -- Phase 5 M1 integration: a train without coal never moves (an AI crew stood on its platform with 0 coal).
   if net.get_item_count(rails.FUEL) < min_fuel(kind) then return nil, "no-fuel" end
   local surface, force_name = d.entity.surface, d.force
-  local slots = train_slots(d, kind, kits)
+  local slots = train_slots(d, kind, kits, armoured)
   if not track_whole(d, slots) then return nil, "no-track" end
   local names = {}
   for i, slot in ipairs(slots) do names[i] = slot.name end
@@ -1554,10 +1591,11 @@ function rails.create_train(depot_un, kind)
   end
   train.manual_mode = true
   local rec = {id = train.id, kind = kind, force = force_name, home = depot_un, loco = made[1], stock = made,
-               state = "idle", created = game.tick, delivered = {}, trips = 0}
+               state = "idle", created = game.tick, delivered = {}, trips = 0,
+               armoured = armoured or nil} -- Phase 5 M3 war2
   rstate().trains[train.id] = rec
-  util.log("rails: depot #%d (%s) deployed %s train %d: %d carriages, %d coal", depot_un, force_name, kind, train.id,
-    #made, fuel)
+  util.log("rails: depot #%d (%s) deployed %s%s train %d: %d carriages, %d coal", depot_un, force_name,
+    armoured and "armoured " or "", kind, train.id, #made, fuel)
   return train
 end
 
@@ -2452,6 +2490,9 @@ function rails.right_click(player_index, position, entities, alt)
     local trec = rails.train_record(rec.entity)
     local train = trec and train_of(trec)
     local target = pick_depot(player_index, force_name, position, entities)
+    -- Phase 5 M3 war2: kinds another module drives (scripts/trainswar.lua: artillery trains go to a depot or a rail)
+    local kh = trec and train and rails.KIND_HOOKS[trec.kind]
+    if kh and kh.right_click then return kh.right_click(player_index, position, entities, alt, trec, train, target) end
     if not (train and FREIGHT[trec.kind] and target) then -- Phase 5 M2 war: troop trains too
       util.log("order train-none train=%s depot=%s player=%d", tostring(trec and trec.id), tostring(target), player_index)
       return "train-none", 0
@@ -3256,7 +3297,7 @@ events.on(defines.events.on_entity_died, function(e)
       local stats = rails.stats(rec.force)
       util.log("rails: %s of train %d (%s, %s) destroyed at %s by %s", name, entity.train.id, rec.force, rec.kind,
         util.pos_str(entity.position), e.cause and e.cause.valid and e.cause.name or "unknown")
-      if name == rails.LOCO then
+      if name == rails.LOCO or name == rails.ALOCO then -- Phase 5 M3 war2: armoured locomotives too
         stats.lost = stats.lost + 1
         alert(rec.force, "train-lost", entity.position, "rts.alert-train-lost")
       end
