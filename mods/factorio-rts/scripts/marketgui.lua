@@ -17,6 +17,14 @@ local treasury = require("scripts.treasury")
 local market = require("scripts.market")
 
 local marketgui = {}
+-- Phase 5 M3 age3: trade partners listed after the nation's ports (the city-states, scripts/sinks.lua sets it):
+-- {extra = fn(force) -> {{key, name}}, contents = fn(force, key) -> {[item] = n}, price = fn(force, key, item,
+-- "buy" | "sell") -> cr | nil, trade = fn(force, key, item, n, buy) -> ok, cr | reason, hint = fn(force, key) -> text};
+-- nil = ports only
+marketgui.partners = nil
+-- Phase 5 M3 age3: extend(player, g, top) adds elements under the port row (the Mercenaries button), extend_refresh(
+-- player, g, port_un) updates them
+marketgui.extend, marketgui.extend_refresh = nil, nil
 
 marketgui.FRAME = "rts_market"
 marketgui.REFRESH = 60
@@ -169,6 +177,7 @@ function marketgui.open(player)
   ps.gui = {frame = frame, balance = balance, tax = tax, stage = stage, flows = flows, cap_bar = cap_bar, cap = cap,
             port_dd = port, port_hint = port_hint, table = tbl, contracts = contracts, imports = imports, rows = {},
             ports = {}}
+  if marketgui.extend then marketgui.extend(player, ps.gui, top) end -- Phase 5 M3 age3
   build_goods(ps.gui)
   frame.auto_center = true
   player.opened = frame
@@ -221,32 +230,53 @@ function marketgui.refresh(player)
   g.cap_bar.value = cap > 0 and math.min(1, used / cap) or 0
   g.cap.caption = {"rts-treasury.market-cap-value", cr(used), cr(cap), market.commerce_level(f)}
   local ports = market.ports(f)
+  local partners = marketgui.partners and marketgui.partners.extra(f) or {} -- Phase 5 M3 age3: city-states
   local key = table.concat(ports, ",")
+  for _, pt in ipairs(partners) do key = key .. ",p" .. tostring(pt.key) end
   if key ~= g.ports_key then
     local names = {}
     for k, un in ipairs(ports) do
       local p = market.port(un)
       names[k] = p and p.name or tostring(un)
     end
+    g.partner_keys = {}
+    for k, pt in ipairs(partners) do
+      names[#names + 1] = pt.name
+      g.partner_keys[k] = pt.key
+    end
     g.port_dd.items = names
     g.ports_key, g.ports = key, ports
+  elseif #partners > 0 then -- names carry the relation and the markup
+    for k, pt in ipairs(partners) do g.port_dd.set_item(#ports + k, pt.name) end
   end
   local sel = 1
   for k, un in ipairs(ports) do
     if un == ps.port then sel = k end
   end
-  ps.port = ports[sel]
-  if #ports > 0 then g.port_dd.selected_index = sel end
-  g.port_hint.caption = #ports == 0 and {"rts-treasury.market-no-port"} or ""
-  local contents = ps.port and market.port_contents(ps.port) or {}
-  local can_buy = ps.port ~= nil and t.stage == 0
+  local partner = nil
+  for k, pk in ipairs(g.partner_keys or {}) do
+    if pk == ps.partner then sel, partner = #ports + k, pk end
+  end
+  if not partner and #ports == 0 and g.partner_keys and g.partner_keys[1] then sel, partner = 1, g.partner_keys[1] end
+  ps.partner = partner
+  ps.port = not partner and ports[sel] or nil
+  if #ports + #(g.partner_keys or {}) > 0 then g.port_dd.selected_index = sel end
+  g.port_hint.caption = partner and marketgui.partners.hint(f, partner)
+    or (#ports == 0 and {"rts-treasury.market-no-port"} or "")
+  local contents = partner and marketgui.partners.contents(f, partner)
+    or (ps.port and market.port_contents(ps.port) or {})
+  local can_buy = (ps.port ~= nil or partner ~= nil) and t.stage == 0
+  if marketgui.extend_refresh then marketgui.extend_refresh(player, g, ps.port) end -- Phase 5 M3 age3
   -- goods
   for _, item in ipairs(market.items()) do
     local el = g.rows[item]
     if el and el.price.valid then
       local price, p0 = market.price(item), market.p0(item)
+      local pbuy = partner and marketgui.partners.price(f, partner, item, "buy") -- Phase 5 M3 age3
+      if partner then price = pbuy or marketgui.partners.price(f, partner, item, "sell") or price end
       el.price.caption = string.format("%.2f", price)
       el.price.style.font_color = price > p0 * 1.05 and GREEN or (price < p0 * 0.95 and RED or WHITE)
+      if partner and not pbuy then el.price.style.font_color = GREY end -- what it pays for a good it does not sell
       local h = market.history(item)
       el.trend.caption = sparkline(h)
       el.trend.tooltip = {"rts-treasury.market-trend-tooltip", string.format("%.2f", p0), string.format("%.2f", h[1] or price),
@@ -261,6 +291,14 @@ function marketgui.refresh(player)
                          cr(qs or 0)}
       el.buy.tooltip = can_buy and {"rts-treasury.market-buy-tooltip", n, "[item=" .. item .. "]", cr(qb or 0)}
         or {ps.port and "rts-treasury.market-buy-blocked" or "rts-treasury.market-no-port"}
+      if partner then -- Phase 5 M3 age3: a city-state sells its region's goods and buys any good
+        local psell = marketgui.partners.price(f, partner, item, "sell")
+        el.sell.enabled = psell ~= nil
+        el.buy.enabled = can_buy and pbuy ~= nil and (contents[item] or 0) > 0
+        el.sell.tooltip = {"rts-age3.market-cs-sell-tooltip", n, "[item=" .. item .. "]", cr((psell or 0) * n)}
+        el.buy.tooltip = pbuy and {"rts-age3.market-cs-buy-tooltip", math.min(n, contents[item] or 0),
+          "[item=" .. item .. "]", cr(pbuy * math.min(n, contents[item] or 0))} or {"rts-age3.market-cs-not-sold"}
+      end
     end
   end
   -- contracts and imports
@@ -300,7 +338,12 @@ events.on(defines.events.on_gui_click, function(e)
     local item = el.tags.item
     local row = ps.gui and ps.gui.rows[item]
     local n = row and tonumber(row.amount.text) or 0
-    if action == "sell" then
+    if ps.partner and marketgui.partners then -- Phase 5 M3 age3: trade with a city-state
+      local ok, r = marketgui.partners.trade(f, ps.partner, item, n, action == "buy")
+      util.log("market: player %d %s %d %s with partner %s: %s %s", player.index, action, n, item,
+        tostring(ps.partner), tostring(ok), tostring(r))
+      if not ok then player.print({"rts-age3.cs-refused", {"rts-age3.reason-" .. tostring(r)}}) end
+    elseif action == "sell" then
       local got, why = market.sell(f, ps.port, item, n)
       util.log("market: player %d sells %d %s: %.1f cr %s", player.index, n, item, got, tostring(why or ""))
       if got <= 0 then player.print({REASON[why] or "rts-treasury.refused-none"}) end
@@ -327,6 +370,10 @@ events.on(defines.events.on_gui_selection_state_changed, function(e)
   elseif el.tags.rts_market == "port" then
     local g = ps.gui
     ps.port = g and g.ports and g.ports[el.selected_index] or ps.port
+    -- Phase 5 M3 age3: an entry after the ports is a city-state
+    local k = g and g.ports and el.selected_index - #g.ports
+    ps.partner = (k and k > 0 and g.partner_keys) and g.partner_keys[k] or nil
+    if ps.partner then ps.port = nil end
   end
   marketgui.refresh(player)
 end)

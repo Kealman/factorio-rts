@@ -689,7 +689,9 @@ balance.nation.diplomacy = {
     -- Phase 5 M2 integration: 45 % of the claimable cells (60 % is about 53 % of a 2048 world, out of reach), or twice
     -- the land of the next coalition with at least 3 % of the claimable cells (a capital and five towns), for 3 minutes
     territory_share = 0.45, territory_lead = 2, territory_lead_min = 0.03, territory_minutes = 3,
-    modes = {"conquest", "territory", "score"}, default_mode = "conquest",
+    -- Phase 5 M3 age3: Conquest+Space (the default: Conquest, or the third stage of the Space Program) and Any (every
+    -- rule: Conquest, Territory, Space, Score at the time limit)
+    modes = {"conquest_space", "conquest", "territory", "score", "any"}, default_mode = "conquest_space",
     time_limits = {60, 90, 120, 0}, default_time_limit = 0, score_default_limit = 60, -- minutes; 0 = unlimited
   },
 }
@@ -819,6 +821,14 @@ balance.nation.market = {
     -- lasts until the balance is deficit_band above the floor or the net above deficit_net; a tax level holds tax_hold
     -- ticks unless a war starts or ends or happiness falls below happy_low
     deficit_band = 300, deficit_net = 10, tax_hold = 2 * 60 * 60,
+    -- Phase 5 M3 age3 (D10; docs/qa/phase5-ai-notes.md section 6 item 3): the deficit mode starts below `enter` while
+    -- the balance falls and ends only at `leave` (no exit on a positive minute any more); a tax level the AI chose holds
+    -- tax_hold unless happiness drops below happy_low (low) or a war starts (high); a nation stays on a war footing
+    -- (high) for war_footing ticks after its last war ended and then until the balance is back at `leave`; a low tax
+    -- holds until happiness is happy_band above happy_low (the first 60-minute 4-nation run without the war footing:
+    -- 3.5 switches per nation-hour, all of them around wars)
+    hysteresis = {enter = 1500, leave = 1500 * 1.4, tax_hold = 10 * 60 * 60, happy_band = 12,
+                  war_footing = 15 * 60 * 60},
     deficit_surplus = 0.5,     -- deficit mode: the capital exports from this share of the surplus thresholds
     happy_low = 40,            -- tax low below this happiness
     -- Phase 5 M2 ai (scripts/ai/governor.lua): a town's export hauler takes its surplus to the port while the town holds
@@ -915,6 +925,204 @@ balance.nation.world = {
   need_bonus = 0.5,                           -- specialty search: ores a nation lacks at home count 1.5x
   minimap = {regional_tiles = 1000},          -- HUD minimap in regional mode (N switches to the whole world)
   zoom = {furthest = 1.1},                    -- strategic zoom: the map view shows this many world widths
+}
+
+
+-- Phase 5 M3 age3 (docs/PHASE5-M3.md D1-D3 and D10, §3 "age3.lua / rare.lua / sinks.lua"; docs/qa/phase5-age3-notes.md):
+-- Age III and the Space Program, the Age III districts, the nuclear plant and automation kits (scripts/age3.lua,
+-- prototypes/age3.lua), rare extractors and their nation-wide bonuses (scripts/rare.lua), money sinks and city-state
+-- trade (scripts/sinks.lua). Pure data, Nation mode only.
+--
+-- recipes[name] = {category, cost, results, time, order, tech?}: Age III recipes. Without `tech` a recipe is enabled for
+--   a force when it reaches Age III (stage 1 of the Space Program); with `tech` when that technology is researched.
+--   Categories: rts-age3 (the factory), rts-chemistry (the Age II chemical plant) and one rts-district-<id> per district.
+-- buildings[name] = {kind, family, cost, time, health, power?, size?, categories?, tech?, age?}: made by the factory
+--   (rts-buildings); Age III unless `tech` names the technology that unlocks it.
+balance.nation = balance.nation or {}
+local A3 = {}
+balance.nation.age3 = A3
+
+-- Research Electrification (Age II, industrial kits) lets a nation in Age II start the Space Program: a 8x8 Launch
+-- complex next to its capital that pulls each stage's goods from the logistic network it stands in (pull_per_second
+-- per good), then counts down build_seconds. Stage 1 done = Age III; stage 3 done = Space victory in the victory modes
+-- listed in `modes` (balance.nation.diplomacy.victory). A destroyed complex loses raze_loss of the running stage's
+-- deliveries; finished stages stay finished.
+A3.tech = "rts-electrification"
+A3.site = {name = "rts-launch-complex", health = 8000, distances = {16, 20, 24, 28}}
+A3.pull_per_second = 10
+A3.period = 60
+A3.raze_loss = 0.5
+A3.stages = {
+  {id = "structure", required = {["steel-plate"] = 200, concrete = 200, ["advanced-circuit"] = 100}, build_seconds = 20},
+  {id = "systems", required = {["processing-unit"] = 40, battery = 100, ["engine-unit"] = 80}, build_seconds = 30},
+  {id = "fuel", required = {["rocket-fuel"] = 40, sulfur = 200, ["light-oil-barrel"] = 50}, build_seconds = 120},
+}
+A3.modes = {conquest_space = true, any = true}
+
+-- Technologies (Nation mode only; scripts/age3.lua registers their effects with scripts/research.lua)
+A3.techs = {
+  {name = "rts-electrification", kit = "rts-science-industrial", count = 40, icon = "electric-energy-distribution-1",
+   age = 2, prerequisites = {"rts-industrialisation"}, effect = {flag = "electrification"}},
+  {name = "rts-chemistry", kit = "rts-science-industrial", count = 30, icon = "battery", age = 3,
+   prerequisites = {"rts-electrification"}, effect = {flag = "chemistry"}},
+  {name = "rts-nuclear-power", kit = "rts-science-industrial", count = 40, icon = "nuclear-power", age = 3,
+   prerequisites = {"rts-electrification", "rts-geology"}, effect = {flag = "nuclear"}},
+}
+
+A3.buildings = {
+  -- Chemistry district: oil into plastic, sulfur, batteries, rocket fuel, light oil in barrels, fuel rods
+  ["rts-district-chemistry"] = {kind = "district", family = "chemistry", size = 5, health = 2800, power = "600kW",
+    cost = {["steel-plate"] = 20, ["iron-plate"] = 60, ["advanced-circuit"] = 10, concrete = 20}, time = 12,
+    categories = {"rts-district-chemistry"}},
+  -- Electronics II: advanced circuits, processing units, automation kits
+  ["rts-district-electronics2"] = {kind = "district", family = "electronics", size = 5, health = 2800, power = "600kW",
+    cost = {["steel-plate"] = 20, ["iron-plate"] = 40, ["advanced-circuit"] = 20, concrete = 20}, time = 12,
+    categories = {"rts-district-electronics2"}},
+  -- Concrete works
+  ["rts-district-concrete"] = {kind = "district", family = "services", size = 5, health = 2800, power = "400kW",
+    cost = {["steel-plate"] = 10, ["iron-plate"] = 60, ["stone-brick"] = 40}, time = 10,
+    categories = {"rts-district-concrete"}},
+  -- Nuclear plant composite: one 5x5 burner generator on fuel rods (uranium), 40 MW; scripts/age3.lua keeps `keep`
+  -- rods in it from the logistic network it stands in. Registry kind "steam-plant" (power figures, upkeep, labor)
+  ["rts-nuclear-plant"] = {kind = "steam-plant", family = "power", size = 5, health = 5000, power = "40MW",
+    cost = {["steel-plate"] = 60, concrete = 80, ["advanced-circuit"] = 30, ["iron-plate"] = 100}, time = 20,
+    tech = "rts-nuclear-power"},
+  -- Rare extractor: a 3x3 drill that mines only rare deposits, one item every rare.item_seconds (no mining
+  -- productivity); its items go into the logistic network it stands in (scripts/rare.lua). Geology unlocks it in any
+  -- age; it may stand on own or neutral land (an outpost)
+  ["rts-rare-extractor"] = {kind = "rare-extractor", family = "extraction", size = 3, health = 900,
+    cost = {["iron-plate"] = 30, ["steel-plate"] = 10, ["electronic-circuit"] = 10}, time = 6, tech = "rts-geology"},
+}
+
+A3.recipes = {
+  -- factory (rts-age3): the automation kit is the vanilla module recipe
+  ["rts-automation-kit"] = {category = "rts-age3", cost = {["advanced-circuit"] = 5, ["electronic-circuit"] = 5},
+                            results = {["rts-automation-kit"] = 1}, time = 15, order = "a"},
+  ["rts-processing-unit"] = {category = "rts-age3", cost = {["electronic-circuit"] = 10, ["advanced-circuit"] = 2,
+                             sulfur = 2}, results = {["processing-unit"] = 1}, time = 10, order = "b"},
+  -- chemical plant (Age II building, Age III recipes)
+  ["rts-battery"] = {category = "rts-chemistry", cost = {["iron-plate"] = 1, ["copper-plate"] = 1, sulfur = 2},
+                     results = {battery = 1}, time = 4, order = "d", tech = "rts-chemistry"},
+  ["rts-rocket-fuel"] = {category = "rts-chemistry", cost = {["rts-petroleum"] = 5, coal = 2},
+                         results = {["rocket-fuel"] = 1}, time = 10, order = "e", tech = "rts-chemistry"},
+  ["rts-light-oil-barrel"] = {category = "rts-chemistry", cost = {["rts-petroleum"] = 3, ["steel-plate"] = 1},
+                              results = {["light-oil-barrel"] = 1}, time = 3, order = "f"},
+  -- Chemistry district
+  ["rts-dch-plastic"] = {category = "rts-district-chemistry", cost = {["rts-crude-oil"] = 3, coal = 1},
+                         results = {["plastic-bar"] = 10, sulfur = 2}, time = 4, order = "a"},
+  ["rts-dch-sulfur"] = {category = "rts-district-chemistry", cost = {["rts-crude-oil"] = 2}, results = {sulfur = 12},
+                        time = 3, order = "b"},
+  ["rts-dch-battery"] = {category = "rts-district-chemistry", cost = {["iron-plate"] = 2, ["copper-plate"] = 2,
+                         ["rts-crude-oil"] = 2}, results = {battery = 4}, time = 6, order = "c", tech = "rts-chemistry"},
+  ["rts-dch-rocket-fuel"] = {category = "rts-district-chemistry", cost = {["rts-crude-oil"] = 6, coal = 2},
+                             results = {["rocket-fuel"] = 2}, time = 10, order = "d", tech = "rts-chemistry"},
+  ["rts-dch-light-oil-barrel"] = {category = "rts-district-chemistry", cost = {["rts-crude-oil"] = 6,
+                                  ["steel-plate"] = 2}, results = {["light-oil-barrel"] = 2}, time = 4, order = "e"},
+  ["rts-dch-fuel-rod"] = {category = "rts-district-chemistry", cost = {["uranium-ore"] = 4, ["steel-plate"] = 1},
+                          results = {["rts-fuel-rod"] = 1}, time = 10, order = "f", tech = "rts-nuclear-power"},
+  -- Electronics II
+  ["rts-de2-advanced-circuit"] = {category = "rts-district-electronics2", cost = {["electronic-circuit"] = 2,
+                                  ["plastic-bar"] = 2, ["copper-plate"] = 1}, results = {["advanced-circuit"] = 3},
+                                  time = 4, order = "a"},
+  ["rts-de2-processing-unit"] = {category = "rts-district-electronics2", cost = {["electronic-circuit"] = 8,
+                                 ["advanced-circuit"] = 2, sulfur = 1}, results = {["processing-unit"] = 2}, time = 10,
+                                 order = "b"},
+  ["rts-de2-automation-kit"] = {category = "rts-district-electronics2", cost = {["advanced-circuit"] = 4,
+                                ["electronic-circuit"] = 4}, results = {["rts-automation-kit"] = 1}, time = 12,
+                                order = "c"},
+  -- Concrete works
+  ["rts-dcw-concrete"] = {category = "rts-district-concrete", cost = {["stone-brick"] = 5, stone = 2},
+                          results = {concrete = 14}, time = 4, order = "a"},
+  ["rts-dcw-concrete-stone"] = {category = "rts-district-concrete", cost = {stone = 10, ["iron-plate"] = 1},
+                                results = {concrete = 10}, time = 5, order = "b"},
+  -- Munitions works: uranium rounds for heavy walkers (balance.nation.rare.uranium_rounds)
+  ["rts-dmu-uranium-rounds"] = {category = "rts-district-munitions", cost = {["uranium-ore"] = 1,
+                                ["firearm-magazine"] = 5, ["steel-plate"] = 1},
+                                results = {["uranium-rounds-magazine"] = 5}, time = 6, order = "c",
+                                tech = "rts-nuclear-power"},
+}
+
+-- Automation kits (deep-economy.md §5.6): a city policy "automate <family>" puts up to per_building kits from the
+-- city's network into every district of that family (slots 2 and 3; slot 1 is the labor slot); each kit cuts the
+-- building's jobs by job_cut (2 kits: x0.49). The policy pass runs every `period` ticks per city (staggered).
+A3.kit = {item = "rts-automation-kit", job_cut = 0.3, per_building = 2, period = 300,
+          families = {"metallurgy", "chemistry", "electronics", "military", "services", "research"}}
+-- Nuclear plant: fuel rods (2.4 GJ: one a minute at 40 MW), `keep` of them in its burner
+A3.nuclear = {fuel = "rts-fuel-rod", fuel_value = "2.4GJ", keep = 2, period = 300}
+
+-- Labor (balance.nation.people): jobs and families of the Age III buildings
+balance.nation.people.jobs.name["rts-nuclear-plant"] = 12
+balance.nation.people.jobs.kind["rare-extractor"] = 4
+for name, b in pairs(A3.buildings) do
+  if b.family then balance.nation.people.families.name[name] = b.family end
+end
+for name, b in pairs(A3.buildings) do balance.buildings[name] = b end
+balance.buildings[A3.site.name] = {kind = "project", health = A3.site.health}
+-- prices of the Age III goods without a cheap recipe path (the rest is derived at match start)
+balance.nation.market.p0.battery = 6
+balance.nation.market.p0["rocket-fuel"] = 30
+
+-- Rare resources (deep-economy.md §3.7, D3; scripts/rare.lua). A rare extractor on a deposit mines one item every
+-- item_seconds into the logistic network it stands in (an extractor without a network keeps up to `buffer` items).
+-- Every check_period ticks the capital's network gives up the rare items that reached it: each arrival keeps the
+-- bonus of its kind for `grace` seconds (a steady trickle keeps it on; it ends at most `grace` after the last item).
+-- Bonuses: recipe productivity (LuaRecipe.productivity_bonus) of every recipe that makes one of `items`, mining
+-- productivity, lab speed and productivity, tax income; applied as deltas against what rare.lua applied before.
+balance.nation.rare = {
+  extractor = "rts-rare-extractor",
+  item_seconds = 10, grace = 90, check_period = 60, pickup_period = 60, buffer = 20,
+  order = {"saltpetre", "quartz", "tungsten", "diamonds", "rare-earths", "gold"},
+  kinds = {
+    saltpetre = {items = {"rts-explosives", "firearm-magazine"}, productivity = 0.25},
+    quartz = {items = {"electronic-circuit", "advanced-circuit", "processing-unit"}, productivity = 0.20},
+    tungsten = {items = {"steel-plate"}, productivity = 0.20},
+    diamonds = {mining = 0.15},
+    ["rare-earths"] = {lab_speed = 0.10, lab_productivity = 0.10},
+    gold = {tax = 0.15},
+  },
+  -- Uranium rounds (D3): while the capital's network can pay per_unit_minute magazines a minute for every heavy walker
+  -- of the nation, the heavies' ammo category deals +damage (checked every check_period ticks; no heavy: one magazine
+  -- in the network is enough)
+  uranium_rounds = {item = "uranium-rounds-magazine", kind = "heavy", category = "rts-heavy", damage = 0.3,
+                    per_unit_minute = 1},
+}
+
+-- Money sinks (D10; scripts/sinks.lua)
+balance.nation.sinks = {
+  -- Rush: the national project pulls `speed` x faster and counts down `speed` x faster; a research runs at `speed` x
+  -- lab speed. Charged every period ticks: project_cr per missing item and second (a countdown: countdown_cr per
+  -- second), research_cr per missing research unit and second. Stops when the treasury refuses the charge.
+  -- (the fixture: stage 2 of the Space Program from stock, rushed, costs about 130 cr; stage 3 about 500)
+  rush = {speed = 2, period = 60, project_cr = 0.01, countdown_cr = 8, research_cr = 0.1},
+  -- Hire garrison: cr_per_point crowns per garrison point at a city (hidden turrets, 1 per 4 points with the units'
+  -- points); hired points decay by decay_per_min a minute (a share every decay_period ticks); at most max_points hired
+  -- per city
+  hire = {cr_per_point = 40, decay_per_min = 1, decay_period = 600, max_points = 32, step = 4},
+  -- Mercenaries at an own trade port: a small division by the port's region kind, `cost` crowns, one per `cooldown`
+  -- seconds per nation; they need free supply like any unit
+  mercenaries = {cost = 600, cooldown = 600, radius = 12,
+    templates = {
+      default = {["rts-walker"] = 6, ["rts-drone"] = 2},
+      highland = {["rts-walker"] = 4, ["rts-walker-heavy"] = 2},
+      mountain = {["rts-walker"] = 4, ["rts-walker-heavy"] = 2},
+      plain = {["rts-walker"] = 4, ["rts-raider"] = 3},
+      desert = {["rts-raider"] = 4, ["rts-drone"] = 2},
+      coast = {["rts-walker"] = 6, ["rts-drone"] = 2},
+      swamp = {["rts-drone"] = 6},
+      forest = {["rts-walker"] = 6, ["rts-drone"] = 2},
+      lakeland = {["rts-walker"] = 5, ["rts-drone"] = 3},
+    }},
+  -- City-state trade: a city-state's City Center is a port for its region's goods (its network stock). A nation buys at
+  -- markup x the market price (markup_best at relation 100) and sells at sell_factor x it (no world-market outlet:
+  -- below the ports' 0.9, and outside the commerce cap only up to cap_per_min per city-state); the goods arrive
+  -- in (or leave) the network of the buyer's city nearest to the city-state after `delay` ticks. Every relation_cr
+  -- crowns traded raise the city-state's relation with the nation by 1 (-100..100); below min_relation it refuses to
+  -- trade. A city-state trades at most cap_per_min crowns a minute (rolling) and restocks restock_share of its starting
+  -- goods every restock_period ticks. Capturing a city-state while at peace with every nation costs capture_penalty
+  -- relation with every other nation.
+  city_state = {markup = 1.3, markup_best = 1.1, sell_factor = 0.7, relation_cr = 100, min_relation = -50,
+                cap_per_min = 400, delay = 30 * 60, restock_period = 5 * 60 * 60, restock_share = 0.25,
+                capture_penalty = -10, capture_relation = -30},
 }
 
 -- Phase 5 M3 air (docs/PHASE5-M3.md D4, section 3 "air.lua"; docs/qa/phase5-air-notes.md): planes, the airfield and the

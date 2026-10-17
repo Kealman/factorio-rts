@@ -11,6 +11,9 @@ local research = require("scripts.research")
 local economy = require("scripts.economy")
 
 local techgui = {}
+-- Phase 5 M3 age3 (scripts/sinks.lua sets these): extend(player, g, current_row) adds the research Rush button,
+-- extend_refresh(player, g) updates it
+techgui.extend, techgui.extend_refresh = nil, nil
 
 techgui.FRAME = "rts_tech_frame"
 techgui.REFRESH = 30
@@ -133,6 +136,7 @@ function techgui.open(player)
 
   gui_state(player).techgui = {frame = frame, rows = rows, current = current, bar = progress, labs = labs,
                                kits = kits}
+  if techgui.extend then techgui.extend(player, gui_state(player).techgui, cur_flow) end -- Phase 5 M3 age3
   player.opened = frame
   techgui.refresh(player)
   util.log("techgui: opened by player %d (%s): %d technologies", player.index, force.name, table_size(rows))
@@ -183,6 +187,7 @@ function techgui.refresh(player)
       row.button.enabled = cancel or status == "available"
     end
   end
+  if techgui.extend_refresh then techgui.extend_refresh(player, g) end -- Phase 5 M3 age3
 end
 
 ---------------------------------------------------------------------------

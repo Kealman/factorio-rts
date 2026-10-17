@@ -299,7 +299,10 @@ local BUILD_TABS = {
    items = {"rts-pumpjack", "rts-refinery", "rts-chemical-plant", "rts-district-smelting", "rts-district-steel",
             "rts-district-circuits", "rts-district-electronics", "rts-district-petrochem", "rts-district-engines",
             "rts-district-munitions", "rts-district-construction", "rts-district-science",
-            "rts-bunker"}},
+            "rts-bunker",
+            -- Phase 5 M3 age3: Geology's rare extractor, the Age III districts and the nuclear plant (a third row)
+            "rts-rare-extractor", "rts-district-chemistry", "rts-district-electronics2", "rts-district-concrete",
+            "rts-nuclear-plant"}},
 }
 local BUILD_TAB_BY_KEY = {}
 for _, tab in ipairs(BUILD_TABS) do BUILD_TAB_BY_KEY[tab.key] = tab end
@@ -1591,9 +1594,10 @@ local function update_other(player, h, un, rec)
   elseif rec.kind == "steam-plant" then
     local fuel = e.get_fuel_inventory and e.get_fuel_inventory()
     local coal = fuel and fuel.get_item_count() or 0
-    el.b_line2.caption = {"rts.steam-fuel", coal}
+    local nuclear = e.name == "rts-nuclear-plant" -- Phase 5 M3 age3: fuel rods from its network
+    el.b_line2.caption = {nuclear and "rts-age3.nuclear-fuel" or "rts.steam-fuel", coal}
     el.b_line2.style.font_color = coal > 0 and COLOR.white or COLOR.red
-    el.b_line3.caption = {"rts.steam-hint"}
+    el.b_line3.caption = {nuclear and "rts-age3.nuclear-hint" or "rts.steam-hint"}
   elseif rec.kind == "accumulator" then
     local size = e.electric_buffer_size or 0
     el.b_line2.caption = {"rts.accumulator-charge", string.format("%.1f", e.energy / 1e6),
@@ -2881,5 +2885,7 @@ do -- dev-only locals stay out of the main chunk (Lua allows 200 locals there)
     util.log("RTS_HUD_DONE player %d", player.index)
   end)
 end
+
+hud.P4 = P4 -- Phase 5 M3 age3: modules add Nation-only items, alert styles and recipe tabs at load time
 
 return hud

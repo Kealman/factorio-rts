@@ -187,7 +187,8 @@ function match.normalize_config(c)
     if out.size == "legacy" then out.size = d.size end
     -- Phase 5 M2 diplomacy (D6): victory mode and time limit in minutes (0 = none); Score needs a limit
     local V = balance.nation.diplomacy.victory
-    local mode_ok = {conquest = true, territory = true, score = true}
+    -- Phase 5 M3 age3: Conquest+Space and Any
+    local mode_ok = {conquest = true, territory = true, score = true, conquest_space = true, any = true}
     out.victory = mode_ok[c.victory] and c.victory or V.default_mode
     local tl = math.floor(tonumber(c.time_limit) or V.default_time_limit)
     local tl_ok = false
@@ -1122,6 +1123,20 @@ function match.finish_by(winners, how, detail)
   finish((winners and winners[1]) or "draw")
   return true
 end
+
+-- Phase 5 M3 age3 (D1): the third stage of a Space Program (scripts/age3.lua) wins a Nation match when the victory
+-- mode allows it (balance.nation.age3.modes: Conquest+Space, Any); the nation's allies share the victory.
+events.on_signal("rts_space_victory", function(d)
+  local m = storage.match
+  if not (m and m.phase == "running" and m.config and m.config.mode == "nation" and d and d.force) then return end
+  if not balance.nation.age3.modes[m.config.victory or ""] then
+    util.log("match: %s completed the Space Program; victory mode %s has no Space victory", d.force,
+      tostring(m.config.victory))
+    return
+  end
+  match.finish_by(d.winners or {d.force}, "space", string.format("%s launched at %.0fs", d.force,
+    match.elapsed_seconds()))
+end)
 
 events.on_nth_tick(60, function(e)
   local m = storage.match

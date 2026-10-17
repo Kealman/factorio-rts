@@ -44,7 +44,8 @@ local ages = {}
 ages.SITE = "rts-project-site"
 ages.PROJECT = "railway-charter"
 ages.PERIOD = 60
-ages.MAX_AGE = 2 -- M1: Age III arrives in M3
+ages.MAX_AGE = 3 -- Phase 5 M3 age3: stage 1 of the Space Program (scripts/age3.lua) brings Age III
+ages.rush_factor = nil -- Phase 5 M3 age3: fn(force_name) -> 1 | speed (scripts/sinks.lua Rush: pull and countdown)
 ages.SITE_DISTANCES = {12, 16, 20}
 
 buildings.KIND_BY_NAME[ages.SITE] = "project"
@@ -331,6 +332,7 @@ local function step_project(force_name, p)
     destroy_render(p)
     return
   end
+  local rush = ages.rush_factor and ages.rush_factor(force_name) or 1 -- Phase 5 M3 age3: sinks.rush
   if p.state == "building" and site and site.valid then
     local net = site.surface.find_logistic_network_by_position(site.position, site.force)
     local rec = buildings.get(site.unit_number)
@@ -338,7 +340,7 @@ local function step_project(force_name, p)
       for item, need in pairs(p.required) do
         local left = need - (p.delivered[item] or 0)
         if left > 0 then
-          local got = net.remove_item({name = item, count = math.min(left, C.pull_per_second * ages.PERIOD / 60)})
+          local got = net.remove_item({name = item, count = math.min(left, C.pull_per_second * ages.PERIOD / 60 * rush)})
           if got > 0 then
             p.delivered[item] = (p.delivered[item] or 0) + got
             if rec and production.on_flow then production.on_flow(rec, item, got, "used") end
@@ -354,6 +356,7 @@ local function step_project(force_name, p)
     end
     update_render(p)
   elseif p.state == "countdown" and site and site.valid then
+    if rush > 1 then p.countdown_until = p.countdown_until - math.floor(ages.PERIOD * (rush - 1)) end -- Phase 5 M3 age3
     update_render(p)
     if game.tick >= p.countdown_until then
       p.state = "done"

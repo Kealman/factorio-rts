@@ -1067,6 +1067,15 @@ end
 
 -- Phase 5 M2 integration: the AI's deficit with hysteresis (see balance.nation.market.ai.deficit_band)
 local function in_deficit(A, t)
+  local H = AI.hysteresis -- Phase 5 M3 age3: enter below `enter` while losing money, leave only at `leave`
+  if H then
+    if A.deficit_flag then
+      if t.balance >= H.leave then A.deficit_flag = nil end
+    elseif t.balance < H.enter and t.net < 0 then
+      A.deficit_flag = true
+    end
+    return A.deficit_flag == true
+  end
   if A.deficit_flag then
     if t.balance >= AI.deficit_floor + (AI.deficit_band or 0) or t.net > (AI.deficit_net or 0) then A.deficit_flag = nil end
   elseif t.balance < AI.deficit_floor and t.net < 0 then
@@ -1075,7 +1084,41 @@ local function in_deficit(A, t)
   return A.deficit_flag == true
 end
 
+-- Phase 5 M3 age3 (D10, docs/qa/phase5-ai-notes.md §6 item 3): tax with a hysteresis band. Low below happy_low until
+-- happiness is happy_band above it; high at war (and on a war footing for war_footing ticks after the last war) or in
+-- deficit, and after either until the balance is back at `leave`; a war start and a happiness drop switch at once,
+-- every other change waits tax_hold after the last one.
+local function ai_taxes_banded(C, A, H)
+  local t = treasury.get(C.force)
+  local cur = treasury.tax_of(C.force)
+  local happy = t.happiness or 70
+  local now_war = at_war(C)
+  if now_war then A.war_until = game.tick + (H.war_footing or 0) end
+  local war = A.war_until ~= nil and game.tick <= A.war_until
+  local deficit = in_deficit(A, t)
+  local level, why, urgent
+  if happy < AI.happy_low or (cur == "low" and happy < AI.happy_low + H.happy_band) then
+    level, why, urgent = "low", string.format("happiness %.0f", happy), happy < AI.happy_low and cur ~= "low"
+  elseif war or deficit then
+    level, why = "high", war and (now_war and "at war" or "war footing")
+      or string.format("balance %.0f, net %.0f/min", t.balance, t.net)
+    urgent = war and not A.tax_war
+  elseif cur == "high" and t.balance < H.leave then
+    level, why = "high", string.format("balance %.0f below %.0f", t.balance, H.leave)
+  else
+    level, why = "normal", "default"
+  end
+  A.tax_war = war or nil
+  if level == cur then return end
+  if not urgent and A.tax_tick and game.tick - A.tax_tick < H.tax_hold then return end
+  A.tax_tick = game.tick
+  A.tax_switches = (A.tax_switches or 0) + 1
+  util.log("market: AI %s sets tax %s (%s; switch %d)", C.force, level, why, A.tax_switches)
+  treasury.set_tax(C.force, level)
+end
+
 local function ai_taxes(C, A)
+  if AI.hysteresis then return ai_taxes_banded(C, A, AI.hysteresis) end -- Phase 5 M3 age3
   local t = treasury.get(C.force)
   local level, why, urgent = "normal", "default", false
   local war = at_war(C)

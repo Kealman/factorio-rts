@@ -74,6 +74,8 @@ local AGE2 = {}
 for name in pairs(balance.nation.economy and balance.nation.economy.buildings or {}) do AGE2[name] = true end
 treasury.AGE2 = AGE2
 
+treasury.tax_bonus = nil -- Phase 5 M3 age3: fn(force_name) -> share added to the tax income (gold, scripts/rare.lua)
+
 local stage_hooks = {}
 --- fn(force_name, stage, old_stage) whenever a nation's debt stage changes. Load time only.
 function treasury.on_stage(fn) stage_hooks[#stage_hooks + 1] = fn end
@@ -150,7 +152,10 @@ function treasury.init()
   storage.treasury = storage.treasury or {}
 end
 
-match.on_teardown(function() storage.treasury = {} end)
+match.on_teardown(function()
+  storage.treasury = {}
+  storage.treasury_census = nil -- Phase 5 M3 age3: the sliced census
+end)
 
 ---------------------------------------------------------------------------
 -- Rolling minute
@@ -394,40 +399,102 @@ local function is_hard_ai(force_name)
   return C ~= nil and C.difficulty == "hard"
 end
 
-local function census(forces)
-  local counts = {}
-  for _, f in ipairs(forces) do
-    counts[f] = {age1 = 0, age2 = 0, paused = 0, locos = 0, rail_tiles = 0, supply = 0, pop = 0, happy_w = 0,
-                 cities = 0}
-  end
+-- Phase 5 M3 age3 (m3-perf's numbers: the census of every building and unit in one tick took up to 8 ms on a 4-nation
+-- 2048 match): buildings and units are counted in CENSUS_SLICES slices (unit_number % slices), one every
+-- STEP / CENSUS_SLICES ticks, into storage.treasury_census.partial; the last slice makes it the `done` census that the
+-- next step uses (counts at most one STEP old). A record's upkeep class is cached on the record (names never change).
+-- The first step of a match counts everything at once.
+treasury.CENSUS_SLICES = 6
+
+local function zero_part()
+  return {age1 = 0, age2 = 0, paused = 0, locos = 0, upkeep = 0, supply = 0}
+end
+
+local function upkeep_class(rec, e)
+  local cls = rec.upkeep_class
+  if cls then return cls end
   local U = TB.upkeep
-  local crafters = U.crafter_kinds
-  for _, rec in pairs(storage.buildings or {}) do
-    local c = counts[rec.force]
-    if c then
+  local name = e.name
+  if rec.kind == "train" then
+    cls = name == treasury.LOCO and "loco" or "none"
+  elseif U.skip_kinds[rec.kind] or U.skip_names[name] then
+    cls = "none"
+  else
+    cls = AGE2[name] and "age2" or "age1"
+    rec.upkeep_crafter = (U.crafter_kinds[rec.kind] and e.type == "assembling-machine") or nil
+  end
+  rec.upkeep_class = cls
+  return cls
+end
+
+-- Count the buildings and units with unit_number % slices == slot (every record when slices is 1) into acc[force].
+local function count_slice(acc, slot, slices)
+  local U = TB.upkeep
+  for un, rec in pairs(storage.buildings or {}) do
+    if un % slices == slot then
       local e = rec.entity
       if e.valid then
-        local kind = rec.kind
-        if kind == "train" then
-          if e.name == treasury.LOCO then c.locos = c.locos + 1 end
-        elseif not U.skip_kinds[kind] and not U.skip_names[e.name] then
-          local cost = AGE2[e.name] and U.age2 or U.age1
-          local paused = e.disabled_by_script or (crafters[kind] and e.type == "assembling-machine" and not e.get_recipe())
-          if paused then
+        local c = acc[rec.force]
+        if not c then
+          c = zero_part()
+          acc[rec.force] = c
+        end
+        local cls = upkeep_class(rec, e)
+        if cls == "loco" then
+          c.locos = c.locos + 1
+        elseif cls ~= "none" then
+          local cost = cls == "age2" and U.age2 or U.age1
+          if e.disabled_by_script or (rec.upkeep_crafter and not e.get_recipe()) then
             cost = cost * U.paused
             c.paused = c.paused + 1
           end
-          if AGE2[e.name] then c.age2 = c.age2 + 1 else c.age1 = c.age1 + 1 end
-          c.upkeep = (c.upkeep or 0) + cost
+          if cls == "age2" then c.age2 = c.age2 + 1 else c.age1 = c.age1 + 1 end
+          c.upkeep = c.upkeep + cost
         end
       end
     end
   end
-  for _, rec in pairs(storage.units or {}) do
-    local c = counts[rec.force]
-    if c and rec.kind ~= "hauler" and rec.kind ~= "commander" and rec.entity.valid then
-      c.supply = c.supply + supply.cost(rec.entity.name)
+  for un, rec in pairs(storage.units or {}) do
+    if un % slices == slot and rec.kind ~= "hauler" and rec.kind ~= "commander" then
+      local e = rec.entity
+      if e.valid then
+        local c = acc[rec.force]
+        if not c then
+          c = zero_part()
+          acc[rec.force] = c
+        end
+        c.supply = c.supply + supply.cost(e.name)
+      end
     end
+  end
+end
+
+local function census_state()
+  local m = storage.match
+  local CS = storage.treasury_census
+  if not CS or CS.match_id ~= (m and m.match_id) then
+    CS = {match_id = m and m.match_id, partial = {}, done = nil}
+    storage.treasury_census = CS
+  end
+  return CS
+end
+
+local function census(forces)
+  local CS = census_state()
+  local parts = CS.done
+  if not parts then
+    parts = {}
+    count_slice(parts, 0, 1)
+  end
+  local counts = {}
+  for _, f in ipairs(forces) do
+    local c = {age1 = 0, age2 = 0, paused = 0, locos = 0, rail_tiles = 0, supply = 0, pop = 0, happy_w = 0, cities = 0,
+               upkeep = 0}
+    local p = parts[f]
+    if p then
+      c.age1, c.age2, c.paused, c.locos, c.upkeep, c.supply = p.age1, p.age2, p.paused, p.locos, p.upkeep, p.supply
+    end
+    counts[f] = c
   end
   local R = storage.rails
   for _, line in pairs(R and R.lines or {}) do
@@ -448,6 +515,16 @@ local function census(forces)
   return counts
 end
 
+events.on_nth_tick(treasury.STEP / treasury.CENSUS_SLICES, function(e)
+  if not treasury.active() then return end
+  if storage.match.phase ~= "running" then return end
+  local CS = census_state()
+  local slices = treasury.CENSUS_SLICES
+  local slot = (e.tick / (treasury.STEP / slices)) % slices
+  count_slice(CS.partial, slot, slices)
+  if slot == slices - 1 then CS.done, CS.partial = CS.partial, {} end
+end)
+
 -- Apply one step (1/6 of a minute) of tax and upkeep to every nation, then interest when due.
 local function step()
   if not treasury.active() then return end
@@ -467,6 +544,7 @@ local function step()
     N.pop, N.happiness, N.counts = c.pop, happy, c
     local tax = c.pop * TB.tax.per_resident * (TB.tax.levels[N.tax] or 1) * happiness_factor(happy)
     if is_hard_ai(f) then tax = tax * (1 + TB.tax.hard_bonus) end
+    if treasury.tax_bonus then tax = tax * (1 + treasury.tax_bonus(f)) end -- Phase 5 M3 age3: gold (scripts/rare.lua)
     local army = math.max(0, c.supply - TB.army.free) * TB.army.per_supply
     local transport = c.locos * TB.transport.locomotive + c.rail_tiles / TB.transport.rail_tiles
     N.rates = {tax = tax, buildings = c.upkeep or 0, army = army, transport = transport}

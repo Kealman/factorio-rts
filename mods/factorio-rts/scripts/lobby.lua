@@ -550,6 +550,7 @@ commands.add_command("rts-match",
       if args[i] == "open" or args[i] == "chokes" then cfg.map = args[i] end
       if args[i] == "nation" then cfg.mode = "nation" end -- Phase 5 M1
       if args[i] == "conquest" or args[i] == "territory" or args[i] == "score" then cfg.victory = args[i] end -- Phase 5 M2 diplomacy
+      if args[i] == "conquest_space" or args[i] == "any" then cfg.victory = args[i] end -- Phase 5 M3 age3
       if string.match(args[i], "^t%d+$") then cfg.time_limit = tonumber(string.sub(args[i], 2)) end -- t60: time limit
       if tonumber(args[i]) and i > 3 then cfg.world_size = tonumber(args[i]) end
     end

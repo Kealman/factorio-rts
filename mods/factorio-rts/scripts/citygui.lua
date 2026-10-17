@@ -31,6 +31,7 @@ local match = require("scripts.match") -- Phase 5 M2 integration: the capturing 
 local CAPTURE_TICKS = require("balance").nation.war.capture.ticks -- Phase 5 M2 integration
 
 local citygui = {}
+citygui.foot_hook, citygui.refresh_hook = nil, nil -- Phase 5 M3 age3: fn(foot, el, c), fn(player, el, c) (sinks.lua)
 
 local FRAME, LIST = "rts_citygui_frame", "rts_citygui_list"
 local PREFIX = "rts_citygui_"
@@ -207,7 +208,8 @@ local function refresh_people(player, g, c)
       end
     end
   end
-  el.p_work.caption = {"rts-people.citygui-work", P.workforce, math.floor(P.employed + 0.5), P.jobs,
+  -- Phase 5 M3 age3: automation kits make the jobs fractional (16 x 0.49)
+  el.p_work.caption = {"rts-people.citygui-work", P.workforce, math.floor(P.employed + 0.5), math.floor(P.jobs + 0.5),
                        math.floor(P.free + 0.5), P.recruits}
   el.p_work.style.font_color = (P.starving or P.unrest) and COLOR.red
     or (P.jobs > P.employed + 0.5 and COLOR.yellow or COLOR.white)
@@ -268,7 +270,10 @@ local function show_staff(player, g)
   local step = lab.staffing(rec.entity)
   local city_id = pop.city_of_building(un)
   local c = city_id and cities.get(city_id)
-  el.text.caption = {"rts-people.staff-line", math.floor(step * 100 + 0.5), string.format("%.1f", step * jobs), jobs,
+  -- Phase 5 M3 age3: the jobs after the building's automation kits
+  if lab.job_factor then jobs = jobs * lab.job_factor(rec.entity) end
+  el.text.caption = {"rts-people.staff-line", math.floor(step * 100 + 0.5), string.format("%.1f", step * jobs),
+                     string.format("%g", math.floor(jobs * 100 + 0.5) / 100),
                      c and cities.display_name(c) or {"rts-people.staff-no-city"},
                      family_name(lab.family(rec.entity.name, rec.kind))}
   el.text.style.font_color = step <= 0 and COLOR.red or (step < 1 and COLOR.yellow or COLOR.white)
@@ -336,6 +341,7 @@ local function build_panel(player, g, c)
   label(add, "rts_hud_dim_label", {"rts.citygui-target-hint"}, WIDTH - 60)
   -- Demolish the City Center (two presses, scripts/demolish.lua); the capital cannot be demolished (greyed)
   local foot = frame.add({type = "flow", direction = "horizontal", style = "rts_hud_row"})
+  if citygui.foot_hook then citygui.foot_hook(foot, el, c) end -- Phase 5 M3 age3: Hire garrison (scripts/sinks.lua)
   foot.add({type = "empty-widget", style = "rts_hud_filler"})
   el.demolish = foot.add({type = "button", name = PREFIX .. "demolish", style = "rts_hud_button",
     caption = {"rts.demolish"}, tags = {rts_citygui = "demolish", city = c.id}})
@@ -402,6 +408,7 @@ local function refresh_panel(player, g)
   for _, id in ipairs(c.networks or {}) do ids[#ids + 1] = "#" .. id end
   el.networks.caption = {"rts.citygui-networks", #ids, #ids > 0 and table.concat(ids, " ") or "-"}
   refresh_people(player, g, c) -- Phase 5 M2 people
+  if citygui.refresh_hook then citygui.refresh_hook(player, el, c) end -- Phase 5 M3 age3
   local b = el.demolish
   if b and b.valid then
     local rec = c.force == player.force.name and buildings.get(c.center) or nil

@@ -27,6 +27,9 @@ local districts = require("scripts.districts")
 local itempicker = require("scripts.itempicker")
 
 local ledgergui = {}
+-- Phase 5 M3 age3 (scripts/age3.lua sets these): project_text_hook(force) -> text | nil, project_hook(player, g) -> true
+-- when it drew the project row, extend(player, g, top, row2) adds elements, extend_refresh(player, g, city) updates them
+ledgergui.project_text_hook, ledgergui.project_hook, ledgergui.extend, ledgergui.extend_refresh = nil, nil, nil, nil
 
 ledgergui.REFRESH = 60
 ledgergui.FRAME = "rts_ledger"
@@ -59,6 +62,9 @@ local function badge_caption(force_name)
 end
 
 local function project_text(force_name)
+  -- Phase 5 M3 age3: the Space Program from Age II on (scripts/age3.lua sets the hook)
+  local hooked = ledgergui.project_text_hook and ledgergui.project_text_hook(force_name)
+  if hooked then return hooked end
   local age = ages.of(force_name)
   local p = ages.project(force_name)
   if age >= 2 then return {"rts.project-state-done"} end
@@ -189,6 +195,7 @@ local function build_rows(player, g, rows)
 end
 
 local function update_project(player, g)
+  if ledgergui.project_hook and ledgergui.project_hook(player, g) then return end -- Phase 5 M3 age3
   local f = player.force.name
   local age = ages.of(f)
   g.age.caption = {"rts.ledger-age", {"rts.age-name-" .. age}}
@@ -239,6 +246,7 @@ function ledgergui.refresh(player)
   end
   if #list > 0 then g.city.selected_index = index end
   update_project(player, g)
+  if ledgergui.extend_refresh then ledgergui.extend_refresh(player, g, ps.city) end -- Phase 5 M3 age3
   if not ps.city then return end
   local rows = districts.ledger(ps.city)
   local keys = {}
@@ -330,6 +338,7 @@ function ledgergui.open(player)
   ps.gui = {frame = frame, city = city, age = age, project = project, bar = pbar, start = start, goods = goods,
             table = tbl, chooser = chooser, amount = amount, footer = footer, rows = {}, items_key = nil,
             city_count = -1}
+  if ledgergui.extend then ledgergui.extend(player, ps.gui, top, row2) end -- Phase 5 M3 age3: Rush, rare, automation
   frame.auto_center = true
   player.opened = frame
   ledgergui.refresh(player)

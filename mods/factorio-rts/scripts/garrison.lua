@@ -208,7 +208,8 @@ local function update_turrets(city_id)
   local c = S().cities[city_id]
   local city = cities.get(city_id)
   if not (c and city and city.entity and city.entity.valid) then return end
-  local want = math.min(G.max_turrets, math.floor((c.points or 0) / G.points_per_turret))
+  -- Phase 5 M3 age3: hired points (sinks.hire_garrison, garrison.add_hired; they decay in fractions) man the turrets
+  local want = math.min(G.max_turrets, math.floor(((c.points or 0) + (c.hired or 0)) / G.points_per_turret + 1e-6))
   local surface = city.entity.surface
   if want > 0 and #c.turrets < G.max_turrets then
     for i, pos in ipairs(ring_positions(city.entity.position, G.max_turrets)) do
@@ -233,6 +234,10 @@ local function update_turrets(city_id)
         local inv = t.get_inventory(defines.inventory.turret_ammo)
         local have = inv and inv.get_item_count(garrison.AMMO) or 0
         if inv and have < G.ammo then inv.insert({name = garrison.AMMO, count = G.ammo - have}) end
+      else
+        -- Phase 5 M3 age3: a disabled turret keeps one magazine, so no "no ammo" icon stands over the city (GUI run)
+        local inv = t.get_inventory(defines.inventory.turret_ammo)
+        if inv and inv.get_item_count(garrison.AMMO) < 1 then inv.insert({name = garrison.AMMO, count = 1}) end
       end
     end
   end
@@ -345,8 +350,26 @@ end
 --- {records = {{name, kind, health, ...}}, points, turrets = enabled hidden turrets} of a city ({} records when none).
 function garrison.of(city_id)
   local c = S().cities[city_id]
-  if not c then return {records = {}, points = 0, turrets = 0} end
-  return {records = c.records, points = c.points or 0, turrets = c.enabled or 0}
+  if not c then return {records = {}, points = 0, turrets = 0, hired = 0} end
+  -- Phase 5 M3 age3: points include the hired ones (`hired`: they cost no supply and decay, scripts/sinks.lua)
+  return {records = c.records, points = (c.points or 0) + (c.hired or 0), turrets = c.enabled or 0, hired = c.hired or 0}
+end
+
+--- Phase 5 M3 age3: add (or, negative, remove) hired garrison points at an own city; returns the hired points now.
+function garrison.add_hired(city_id, delta)
+  local city = cities.get(city_id)
+  if not city then return 0 end
+  local c = city_rec(city_id)
+  if c.force ~= city.force then c.force = city.force end
+  local old = c.hired or 0
+  c.hired = math.max(0, old + delta)
+  if c.hired <= 1e-6 then c.hired = nil end
+  local own = c.points or 0
+  if math.floor((own + old) / G.points_per_turret + 1e-6)
+     ~= math.floor((own + (c.hired or 0)) / G.points_per_turret + 1e-6) then
+    update_turrets(city_id)
+  end
+  return c.hired or 0
 end
 
 --- The garrison leaves the city as one division next to the centre (stance advance). Returns the division id or nil.

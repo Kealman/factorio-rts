@@ -724,7 +724,7 @@ function wars.victory_step()
   -- VB.territory_lead_min of the claimable cells (four nations of ten cities own about 20 % of a 2048 world, so a share
   -- alone is out of reach before the late game; the lead rule lets a conqueror win).
   local M = meta()
-  if c.victory == "territory" then
+  if c.victory == "territory" or c.victory == "any" then -- Phase 5 M3 age3: Any includes Territory
     local territory = loaded("scripts.territory")
     local coals, seen = {}, {}
     for _, x in ipairs(alive) do

@@ -64,6 +64,7 @@ for i = 1, PB.steps - 1 do labor.MODULES[i / PB.steps] = "rts-labor-" .. math.fl
 labor.MODULE_NAMES = {}
 for _, name in pairs(labor.MODULES) do labor.MODULE_NAMES[name] = true end
 labor.NO_WORKERS = {diode = defines.entity_status_diode.red, label = {"rts-people.status-no-workers"}}
+labor.job_factor = nil -- Phase 5 M3 age3: fn(entity) -> share of its jobs (automation kits, scripts/age3.lua)
 
 local FAMILY_SET = {}
 for _, f in ipairs(labor.FAMILIES) do FAMILY_SET[f] = true end
@@ -205,7 +206,8 @@ local function set_module(e, name)
   local cur
   for i = 1, #inv do
     local stack = inv[i]
-    if stack.valid_for_read then
+    -- Phase 5 M3 age3: only labor modules are ours (districts hold automation kits in their other slots)
+    if stack.valid_for_read and labor.MODULE_NAMES[stack.name] then
       if stack.name == name and not cur then cur = true else stack.clear() end
     end
   end
@@ -275,6 +277,8 @@ function labor.step_city(city_id)
         moved[#moved + 1] = un
       else
         local jobs = population.jobs_of(rec.entity.name, rec.kind)
+        -- Phase 5 M3 age3: automation kits cut a building's jobs (scripts/age3.lua sets labor.job_factor)
+        if jobs > 0 and labor.job_factor then jobs = jobs * labor.job_factor(rec.entity) end
         if jobs > 0 then
           local pin = f.pins[un]
           list[#list + 1] = {un = un, rec = rec, jobs = jobs, pin = pin or math.huge,

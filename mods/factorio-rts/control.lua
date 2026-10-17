@@ -79,6 +79,12 @@ local modules = {
   -- (Y, after the HUD: hud.lua's key table calls airgui.toggle)
   require("scripts.air"),
   require("scripts.airgui"),
+  -- Phase 5 M3 age3: Age III and the Space Program, automation kits and the nuclear plant (after ages, districts,
+  -- population, labor, treasury and the ledger: their hooks), rare extractors and bonuses (after age3: its ledger
+  -- lines), money sinks and city-state trade (after market, garrison, diplomacy and the city and market panels)
+  require("scripts.age3"),
+  require("scripts.rare"),
+  require("scripts.sinks"),
   require("scripts.debug"),
 }
 
