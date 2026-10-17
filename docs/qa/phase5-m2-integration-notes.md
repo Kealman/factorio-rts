@@ -8,24 +8,25 @@ seed 777 is line-identical to m1-ready (section 5.1).
 
 ## 1. Verdict
 
-The M2 end-to-end acceptance passes on HEAD 1fa6fcb (m2-ai's final AI on top of this package): four normal AIs, 60
-minutes, 2048 worlds, seeds 701-705, PERF=1, every criterion in every seed:
+The M2 end-to-end acceptance passes on HEAD dc3218e (m2-ai's final AI 1fa6fcb, this package, and the rail and market
+fixes after m2-ai's hand-over; the tree taken from git): four normal AIs, 60 minutes, 2048 worlds, seeds 701-705,
+PERF=1, every criterion in every seed:
 
 | Criterion | Needed | Result |
 |---|---|---|
 | Lua errors | 0 | 0 in every run |
 | UPS at speed 1, last 5 minutes | 60 | 60.0-60.2 s of wall clock per game minute in every seed |
-| Every nation trades | every seed | 5 of 5 (the lowest nation ₡ 4,479-6,614 of volume) |
+| Every nation trades | every seed | 5 of 5 (the lowest nation ₡ 3,286-6,309 of volume) |
 | At least one war declared | 4 of 5 seeds | 5 of 5 (20 wars) |
-| At least one peace signed | 4 of 5 | 5 of 5 (16 treaties: 8 cessions, 3 tributes, 5 white) |
-| At least one city changes hands | 3 of 5 | 5 of 5 (26 captures: 13 between nations, 13 city-states) |
+| At least one peace signed | 4 of 5 | 5 of 5 (14 treaties: 8 cessions, 2 tributes, 4 white) |
+| At least one city changes hands | 3 of 5 | 5 of 5 (22 captures: 14 between nations, 8 city-states) |
 | No nation starving (a city below 50 % rations for more than 3 minutes) | in at most 1 seed | 0 seeds |
-| Save and load at minutes 20 and 40 (4 nations, seed 702) | 0 errors | 0 errors in both halves of both (loaded runs to minute 60 and 61) |
-| M1 acceptance, 1v1 seed 501, 60 minutes | passes | 53/53, 26,492 items by train, 60 UPS |
+| Save and load at minutes 20 and 40 (4 nations, seed 702) | 0 errors | 0 errors in both halves of both (loaded runs to minute 46 and 60) |
+| M1 acceptance, 1v1 seed 501, 60 minutes | passes | 53/53, 26,612 items by train, 60 UPS |
 | Skirmish matrix | unchanged | 0 differing lines against m1-ready (10 scenarios, seed 777) |
-| M2 modules' cost | ≤ 0.5 ms/tick | 0.024-0.038 ms/tick in the last 5 minutes (4 nations) |
+| M2 modules' cost | ≤ 0.5 ms/tick | 0.016-0.049 ms/tick in the last 5 minutes (4 nations) |
 
-Not met: rail lines do not all open before minute 20 (the 1v1 at 20 and 24, the 4-nation AIs at 21-48; section 6).
+Not met: rail lines do not all open before minute 20 (the 1v1 at 20 and 24, the 4-nation AIs at 21-36; section 6).
 The GUI protocol for Codex is `docs/qa/phase5-m2-protocol.md`; Codex has not run it yet.
 
 ## 2. What changed
@@ -97,6 +98,30 @@ cached before `scripts/rails.lua` added its unlocks, so after Railways the depot
 for every force (probe: `research.is_unlocked` true, the force recipe false; the AI pays rails and kits from plates and
 the M1 protocol gave them by console, so nobody noticed). `research.apply` now walks `research.LOCKS` as it is.
 
+**Rail lines and a lost city** (`scripts/rails.lua`; m2-ai's seed 703: the town fell at 25:00 with its line at 107/131,
+and after the town was retaken at 37:28 the line stayed closed). A depot that comes back to the owner of a line it lost
+restores the line ("cut" once it had opened, so repair crews finish it, else "building") when the other end is the
+owner's too. An AI rail program that loses a building is kept (`R.ai_lost`) and taken up again when its far city comes
+back (`rails.ai_revive` on `rts_city_captured`): as the main program when the AI has none, else beside the new one
+(`R.ai_more`, serviced by `rails.ai_step`); its freight train is routed again, and a line that stayed lost (a depot gone)
+is re-planned. A depot that dies takes its line with it ("lost"; seed 703's line stood "building" with 131/131 pieces
+and no path to the depot that died in the fight for the town): the line remembers where the depot stood and its
+platform track, the AI re-binds it to a new depot on that same track, else plans a new line, and first scraps the old
+line's freight trains that stand without a route (half of their kits back into the capital-side depot: one blocked the
+new line's crew, "freight train ahead"). Probe `tools/probes/m2_rails_retake.lua` (1v1, seed 501, the player AI's far
+city flipped to rts-ai-1 and back 60 s later), 5/5 in each of three modes: an open line (lost, then open again at once,
+its freight train routed again), a line still being built (open 2 minutes after the city came back), and the far depot
+destroyed while the city was lost (the stranded freight train scrapped, a new line open 3.7 minutes after the city came
+back, a new freight train on it); every construction train left with 40 coal. Rails autotest 12/12.
+
+**Construction trains leave fuelled.** A construction train refuels only from its wagon, and an AI crew left with 2 coal
+(the old minimum) and stood at piece 36 for half an hour. It now deploys only with 2 × `fuel_target` (40) coal in its
+depot network, and both locomotives take `fuel_target` each.
+
+**AI tax and deficit hysteresis** (`scripts/market.lua`, m2-ai's count: the tax switched 17 and the deficit mode 22 times
+per nation-hour). Deficit starts below the floor with a negative net and lasts until the balance is 300 above the floor
+or the net above +10 per minute; a tax level holds 2 minutes unless a war starts or ends or happiness falls below 40.
+
 ### C. HUD and UX
 
 - **GUI audit** (`tools/probes/m2_docs_gui.lua`, English and Russian clients at 1280×800, screenshots
@@ -108,7 +133,8 @@ the M1 protocol gave them by console, so nobody noticed). `research.apply` now w
   "· OUT OF SUPPLY" on the division card (amber / red: the bar's state was only in its tooltip), troop wagon kits in the
   depot panel's kits line, the labor priorities in two columns with one up button each (nine rows pushed the panel over the ability bar;
   with up and down buttons the Russian names were cut and the right column stuck out of the panel), one
-  city-name counter for every nation and 24 names (every nation's first town was "Ironford").
+  city-name counter for every nation and 24 names (every nation's first town was "Ironford"), and the city list 300
+  wide (Russian names and the attack mark pushed the magnifier out of a 260-wide list).
 - **Hotkeys.** `P4.KEYS` holds the M2 panel keys (M market, F4 diplomacy, N minimap mode); every other key has its own
   handler. F11 in a Nation match (or in the lobby with Mode = Nation) shows a Nation page instead of the Skirmish one:
   the victory rules, controls, people, treasury, diplomacy and war, supply and capture, rails and ages, and every
@@ -125,6 +151,7 @@ the M1 protocol gave them by console, so nobody noticed). `research.apply` now w
 | `tools/probes/m2_acceptance.lua` | EXTRA_LUA for the 4-AI end-to-end runs: the last 5 minutes at speed 1 (UPS lines), and per seed trade volume per nation, wars declared, pairs back to peace, wars ended, cities that changed hands (between nations, city-states), starving cities (below 50 % rations for more than 3 minutes); "[rts] m2 acceptance check trade|war|peace|capture|starving" and a summary with the event list |
 | `tools/probes/m2_integ.lua` | the integration's rules, 10 checks (section 5.2) |
 | `tools/probes/m2_targeting.lua`, `rail_targeting.lua` | the targeting probes above |
+| `tools/probes/m2_rails_retake.lua` | a line whose far city is lost and retaken, three modes (5 checks each) |
 | `tools/matrix-compare.sh` | two matrix runs line by line: every `[rts]` line up to the stop marker, timings, run-time durations and static prototype counts normalised |
 
 ## 3. Shared code touched
@@ -141,6 +168,9 @@ Every file except `scripts/ai/*` (m2-ai's). Hunks are marked `-- Phase 5 M2 inte
 | `scripts/cities.lua` | city-state armour, `cities.under_attack`, shared name counter, 24 names |
 | `scripts/citygui.lua` | under-attack row and Jump, list mark, pinned panel of a lost city, two-column priorities |
 | `scripts/demolish.lua`, `scripts/hud.lua` | Disband; the Nation help page |
+| `scripts/rails.lua` | lines restored when their depot comes back or lost with a dead depot, AI programs taken up again (`rails.ai_revive`), re-bound or re-planned lines, stranded trains scrapped (`rails.disband_train(train, fallback)`), fuelled construction trains |
+| `scripts/market.lua` | the AI's deficit and tax hysteresis |
+| `scripts/world.lua` | a captured city-state's granary |
 | `scripts/wars.lua` | the Territory lead rule |
 | `scripts/debug.lua` | `/rts-supply`, `/rts-goto`, `/rts-diplomacy` |
 | `scripts/lobby.lua`, `scripts/diplomacygui.lua`, `scripts/divisiongui.lua`, `scripts/railgui.lua` | the GUI audit's fixes |
@@ -153,47 +183,49 @@ Every file except `scripts/ai/*` (m2-ai's). Hunks are marked `-- Phase 5 M2 inte
 
 ```sh
 PERF=1 KEEP_TREE=<tree> EXTRA_LUA=tools/probes/m2_acceptance.lua DURATION_MIN=60 SEED=701 SPEED=8 \
-  tools/autotest-run.sh m2acc-t8-701 '{opponents = 3, difficulty = "normal", mode = "nation", world_size = 2048,
+  tools/autotest-run.sh m2acc-t16-701 '{opponents = 3, difficulty = "normal", mode = "nation", world_size = 2048,
   enemy_brain = "ai"}' 10000
 ```
 
-The tree is `mods/factorio-rts` at 1fa6fcb. The fixture switches the game to speed 1 for the last 5 minutes.
+The tree is `mods/factorio-rts` at dc3218e (from `git archive`). The fixture switches the game to speed 1 for the last 5
+minutes.
 
 | Seed | AI autotest | Lowest nation's trade (₡) | Wars / back to peace / ended | Cities changed hands (nations, city-states) | Starving | Speed-1 minutes (s) |
 |---|---|---|---|---|---|---|
-| 701 | 81/82 | 4,846 | 4 / 3 / 3 | 7 (3, 4) | none | 60.0 60.0 60.0 60.1 60.0 |
-| 702 | 81/83 | 6,614 | 4 / 4 / 4 | 4 (2, 2) | none | 60.0 60.0 60.0 60.2 60.0 |
-| 703 | 82/83 | 4,532 | 5 / 4 / 4 | 7 (6, 1) | none | 60.0 60.0 60.0 60.1 60.0 |
-| 704 | 80/83 | 6,179 | 4 / 3 / 3 | 6 (2, 4) | none | 60.0 60.0 60.0 60.2 60.0 |
-| 705 | 79/83 | 4,479 | 3 / 2 / 2 | 2 (0, 2) | none | 60.0 60.0 60.0 60.1 60.0 |
+| 701 | 81/82 | 4,015 | 3 / 2 / 2 | 4 (2, 2) | none | 60.0 60.0 60.0 60.1 60.0 |
+| 702 | 81/83 | 5,810 | 6 / 3 / 3 | 4 (3, 1) | none | 60.0 60.0 60.0 60.2 60.0 |
+| 703 | 83/83 | 4,813 | 4 / 3 / 3 | 7 (6, 1) | none | 60.0 60.0 60.0 60.2 60.0 |
+| 704 | 80/83 | 6,309 | 3 / 3 / 3 | 2 (1, 1) | none | 60.0 60.0 60.0 60.1 60.0 |
+| 705 | 79/83 | 3,286 | 4 / 3 / 3 | 5 (2, 3) | none | 60.0 60.0 60.0 60.1 60.0 |
 
-Seed 703, for example: war at 17:00, the player's town ceded at 25:00 with peace, a new war at once, a city-state taken
-at 32:00, a third war at 35:00 in which the player takes its town back at 37:00. Per nation (Age II, first line open,
-items by train, the treasury's lowest balance):
+Lines lost and taken up again in these runs: four AI programs took up a line after their city came back, and 13 lines
+were lost with a dead depot (section 2.B). Per nation (Age II, first line open, items by train, the treasury's lowest
+balance):
 
 | Seed | rts-player | rts-ai-1 | rts-ai-2 | rts-ai-3 |
 |---|---|---|---|---|
-| 701 | 14:37, 21 min, 0, ₡ 1,405 | 18:37, 31, 3,772, ₡ 1,370 | 16:26, 28, 10,551, ₡ 540 | 14:28, 23, 9,890, ₡ 401 |
-| 702 | 18:30, 25, 4,819, ₡ 437 | 18:24, 29, 10,625, ₡ 586 | 20:07, 48, 0, ₡ 1,148 | 17:15, 21, 13,146, ₡ 662 |
-| 703 | 17:30, no line, 0, ₡ 1,253 | 16:51, 35, 3,063, ₡ 930 | 17:44, 23, 9,639, ₡ 340 | 17:35, 21, 13,779, ₡ 511 |
-| 704 | 21:30, 36, 7,172, ₡ 483 | 19:59, 32, 10,275, ₡ 1,530 | 20:24, 21, 10,335, ₡ 802 | 18:46, 26, 11,856, ₡ 641 |
-| 705 | 17:50, 22, 6,420, ₡ 509 | 21:41, 23, 7,937, ₡ 1,211 | 15:28, 23, 0, ₡ 1,478 | 20:35, 23, 11,854, ₡ 1,156 |
+| 701 | 14:37, 21 min, 0, ₡ 1,353 | 18:37, 31, 6,969, ₡ 1,107 | 16:26, 28, 10,000, ₡ 578 | 14:28, 23, 9,700, ₡ 435 |
+| 702 | 18:30, 25, 4,633, ₡ 368 | 18:24, 27, 8,595, ₡ 503 | 20:07, 27, 8,765, ₡ 821 | 17:15, 21, 13,892, ₡ 651 |
+| 703 | 17:30, 31, 3,334, ₡ 1,275 | 16:51, 34, 3,131, ₡ 577 | 17:44, 23, 5,896, ₡ 386 | 17:35, 21, 13,619, ₡ 534 |
+| 704 | 21:30, 36, 11,239, ₡ 561 | 19:59, 32, 6,893, ₡ 1,160 | 20:24, 21, 10,485, ₡ 663 | 18:46, 26, 11,668, ₡ 578 |
+| 705 | 17:50, 22, 5,340, ₡ 816 | 21:41, 23, 3,357, ₡ 540 | 15:28, 23, 0, ₡ 1,530 | 20:35, 23, 11,648, ₡ 1,230 |
 
-No nation entered a debt stage. The AI autotest's remaining failures are M1-era checks under four nations: Age II
-after 20:00 (`age2_<force>`, 5 nations), `produce` (2), `no_bad_spam`, `kinds_8min`, `techs_6min` and
-`rail_line_rts-player` in 703 (its town was fought over; m2-ai's notes).
+Every one of the 20 nations opened a line; in 703 rts-player's new line opened at 31:00 after its first town fell at
+25:00 (on 1fa6fcb its crew stalled with 2 coal and the line never opened). No nation entered a debt stage. The AI
+autotest's remaining failures are M1-era checks under four nations: Age II after 20:00 (`age2_<force>`, 5 nations),
+`no_bad_spam` (2), `produce`, `kinds_8min`, `techs_6min` (1 each).
 
-**Earlier runs of the same set** (the integration tree with an older AI):
+**Earlier runs of the same set** (the integration tree with an older AI or before the last fixes):
 
-| AI | War | Peace | Capture | Starving seeds | Notes |
+| Tree | War | Peace | Capture | Starving seeds | Notes |
 |---|---|---|---|---|---|
-| wave A (792206e's AI), `m2acc-t3-*` | 4/5 | 4/5 | 4/5 | 5 of 5 | new towns at minute 16-26 eating their 40 start rations with nothing arriving, a capital at minute 18, freshly captured city-states; 704 ended at 39:00 when rts-player lost its only city |
+| wave A AI (792206e's AI), `m2acc-t3-*` | 4/5 | 4/5 | 4/5 | 5 of 5 | new towns at minute 16-26 eating their 40 start rations with nothing arriving, a capital at minute 18, freshly captured city-states; 704 ended at 39:00 when rts-player lost its only city |
 | m2-ai's first pass (c71c4ef), `m2acc-t7-*` | 4/5 | 4/5 | 4/5 | 1 of 5 | 701 stayed at peace |
-| final (1fa6fcb), `m2acc-t8-*` | 5/5 | 5/5 | 5/5 | 0 | the table above |
+| m2-ai's final AI (1fa6fcb), `m2acc-t8-*` | 5/5 | 5/5 | 5/5 | 0 | 20 wars, 26 captures; 703 rts-player never reopened its lost town line |
+| aacfc5d (rail retake, fuelled crews, tax hysteresis), `m2acc-t12-*` | 5/5 | 5/5 | 5/5 | 0 | 15 wars, 17 captures |
+| final (dc3218e, lines lost with a dead depot), `m2acc-t16-*` | 5/5 | 5/5 | 5/5 | 0 | the table above |
 
-The city-state granary (2.A) came from the wave A baseline's starving captured city-states.
-
-### 4.2 M1 acceptance, 1v1 seed 501, 60 minutes (`m2i-t8-501`, `tools/probes/m1_acceptance.lua`)
+### 4.2 M1 acceptance, 1v1 seed 501, 60 minutes (`m2i-t16-501`, `tools/probes/m1_acceptance.lua`)
 
 53/53 checks, 0 Lua errors, both nations alive at 60:00, 60.0 s of wall clock per minute at speed 1 in minutes 56-60.
 
@@ -201,24 +233,24 @@ The city-state granary (2.A) came from the wave A baseline's starving captured c
 |---|---|---|---|
 | Age II | 16:59 | 17:40 | 17:20 / 16:22 |
 | First line open (minute line) | by 20 | by 24 | by 26 / 27 |
-| Items by train | 13,890 | 12,602 | 7,589 / 12,536 |
-| Treasury low | ₡ 603 | ₡ 511 | ₡ 483 / 494 |
+| Items by train | 14,010 | 12,602 | 7,589 / 12,536 |
+| Treasury low | ₡ 544 | ₡ 528 | ₡ 483 / 494 |
 
-26,492 items by train together (goal 20,000; wave A HEAD 20,125).
+26,612 items by train together (goal 20,000; wave A HEAD 20,125).
 
 ### 4.3 Save and load
 
-`SAVE_MINUTE=20` and `SAVE_MINUTE=40 SPEED=8 DURATION_MIN=60 SEED=702 KEEP_TREE=<1fa6fcb tree> tools/saveload-check.sh
-m2i-t8-sl20|40 '{opponents = 3, difficulty = "normal", mode = "nation", world_size = 2048, enemy_brain = "ai"}' 300`:
+`SAVE_MINUTE=20` and `SAVE_MINUTE=40 SPEED=8 DURATION_MIN=60 SEED=702 KEEP_TREE=<dc3218e tree> tools/saveload-check.sh
+m2i-t16-sl20|40 '{opponents = 3, difficulty = "normal", mode = "nation", world_size = 2048, enemy_brain = "ai"}' 300`:
 saved at minute 20 (towns, lines building, the first war) and 40 (wars, captures, contracts, troop and freight trains),
-loaded and run on to minute 60 and 61; 0 errors in both halves of both runs. An earlier tree (m2-ai's WIP, `m2i-sl20|40`)
-gave the same.
+loaded and run on to minute 46 and 60; 0 errors in both halves of both runs. The same on aacfc5d (`m2i-t12-sl*`),
+1fa6fcb (`m2i-t8-sl*`) and an earlier tree (`m2i-sl*`).
 
 ## 5. Checks of this package
 
 ### 5.1 Skirmish unchanged
 
-`SEED=777 tools/autotest-matrix.sh` on wave A HEAD (`m2i-head`) and on the final tree (`m2i-t8`, 1fa6fcb), compared with
+`SEED=777 tools/autotest-matrix.sh` on wave A HEAD (`m2i-head`) and on the final tree (`m2i-t16`, dc3218e; also `m2i-t12` aacfc5d and `m2i-t8` 1fa6fcb), compared with
 `tools/matrix-compare.sh` (and wave A HEAD against the M1 diplomacy agent's m1-ready run `p5m2dipl-base0abb`):
 
 | Scenario | Result (both trees) | `[rts]` lines | Differing |
@@ -236,28 +268,30 @@ gave the same.
 The hard, restart and stress failures are m1-ready's own. The comparison normalises the run-time durations, the count
 of defined technologies (Commerce and Geology are Nation-only) and the hidden garrison gun in the derived turret list.
 
-### 5.2 Fixtures (on the final tree, 1fa6fcb; 0 Lua errors in every run)
+### 5.2 Fixtures (on 1fa6fcb plus this package; m2_integ, m2_rails_retake, the rails autotest and the smoke again after the last rail change; 0 Lua errors)
 
 | Fixture | Result |
 |---|---|
 | `m2_integ.lua` (1v1 Nation 2048, victory Territory, seed 501) | 11/11: upkeep (a house and a farm +0, a factory +0.5), 6 turrets per city-state, a city-state centre loses 50.0 of a 100 hit, a captured city-state's granary (212 rations), rails 1 + 1 → 2 and the Rail works and depot recipes enabled by Railways in Age I, under attack after a hit on a capital barracks, Disband (armed, done, 3 walkers gone, residents +3), `/rts-supply` and `/rts-diplomacy propose`, a stray hit on a rail undone and an explicit attack destroying it, the territory floor (2.5 % vs 1 %: no count) and lead (3.5 % vs 1.5 %: victory after 181 s) |
 | `m2_targeting.lua` | 5/5 (section 2.B) |
+| `m2_rails_retake.lua` (1v1, seed 501) | 5/5 in each of three modes (section 2.B) |
+| `rails_autotest.lua` (M1) | 12/12 |
 | wave A fixtures on the integration tree | war autotest 27/27, diplomacy acceptance 12/12, people 14/14, treasury 12/12, world2 7/7 |
 | Skirmish smoke (seed 9090) | 65/65 before every commit |
 
 ### 5.3 Performance (PERF=1, last 5 minutes at speed 1)
 
 M2 modules (population, labor, treasury, market, diplomacy, wars, warsupply, capture, garrison, strategic, world,
-targeting and their panels) together: 0.024, 0.034, 0.034, 0.038, 0.028 ms/tick in seeds 701-705 (the busiest: warsupply
-0.008-0.016, market up to 0.008, labor 0.005), 0.010 in the 1v1. Every module together: 0.57-1.29 ms/tick, most of it
+targeting and their panels) together: 0.024, 0.024, 0.030, 0.016, 0.049 ms/tick in seeds 701-705 (the busiest: warsupply
+0.002-0.016, capture up to 0.012, labor 0.004), 0.010 in the 1v1. Every module together: 0.88-1.39 ms/tick, most of it
 `production` and the AI.
 
 
 ## 6. Open issues
 
-1. **Rail lines open at minute 20-48, not all before 20.** Cheaper rails and the Rail works in Age I took the 1v1 seed
-   501 from minute 26 / 27 (wave A) to 20 / 24 (player / AI); in the 4-nation runs the first lines opened at 21-48 and
-   one nation of 20 opened none. The AI's rail program pays rails from plates (`rails.ai_step`), so the Rail works
+1. **Rail lines open at minute 20-36, not all before 20.** Cheaper rails and the Rail works in Age I took the 1v1 seed
+   501 from minute 26 / 27 (wave A) to 20 / 24 (player / AI); in the final 4-nation runs the first lines opened at
+   21-36. The AI's rail program pays rails from plates (`rails.ai_step`), so the Rail works
    matters only when the AI builds it; what still sets the date is when the AI founds its town and researches Railways,
    and its steel in Age I.
 2. **Fights near rails still hit buildings.** Rails, signals, rail supports and poles are protected; belts, inserters and
@@ -283,3 +317,10 @@ targeting and their panels) together: 0.024, 0.034, 0.034, 0.038, 0.028 ms/tick 
    panels in English and Russian (screenshots `build/shots-m2d-*`).
 10. **`P4.KEYS` holds only the M2 panel keys** (M, F4, N); the older keys keep their own handlers. The Nation help page
     lists all of them.
+11. **Dead code:** `population.ai_step` and `population.ai_describe` are no longer called (m2-ai's governor took their
+    rules over); kept for now.
+12. **A human player's trains** of a line that comes back are not re-routed (the AI's are): the player routes them
+    again. A player's line whose depot dies is lost (the other depot is free for a new line).
+13. **M2 QA round 1** (`docs/qa/phase5-m2-qa-results.md`, Codex on 80c05d2): 27 PASS, 3 FAIL (step 20 "the train does
+    not fit on the platform", step 29 the vanilla info box, step 31 the window after RTS_QA_END), 1 SKIPPED (21, after
+    20). Not part of this package's fixes.

@@ -26,9 +26,9 @@ for the lead, who greps the log after the run; the tester ignores them. **The te
 reads text that is on the screen or appears after a click; tooltips are not part of any PASS.
 
 **Coordinates.** They were measured on 2026-10-17 from screenshots of an English client in a 1280×800 window
-(`tools/probes/m2_docs_gui.lua` on the tree after commit 1fa6fcb with the four-column Priorities: screenshots in
-`build/shots-m2d-en5/`, map-view window captures in `build/shots-m2d-en5-window/`; the Russian run is
-`build/shots-m2d-ru3/`). The world is generated anew for every run:
+(`tools/probes/m2_docs_gui.lua` on the tree after commit 9263e69 with the wider city list: screenshots in
+`build/shots-m2d-en6/`, map-view window captures in `build/shots-m2d-en6-window/`; the Russian run is
+`build/shots-m2d-ru4/`). The world is generated anew for every run:
 the capital's place, the terrain around it and the direction of the AI differ from run to run, so map positions are
 given relative to your Command Center (CC). Panels that grow with their content (the city panel, the depot panel) give
 the rows in order; when a row is not exactly at its coordinate, find it by its text one or two rows away.
@@ -108,7 +108,9 @@ what comes after it. Type each line exactly, one per console opening.
 
 The M1 rows (`docs/qa/phase5-m1-protocol.md`, "Where things are on the HUD") still hold: strip, age badge, alert
 lines, kill feed, city list, division panel, minimap, selection panel, build menu, ability bar, hub panel, depot rail
-panel, train panel. New and changed in M2:
+panel, train panel. The city list is wider than in M1: x 6–231 (right edge ≈231, the same width as the division panel
+under it), rows at y≈127, 146, 165, the name buttons where they were (left edge x≈15), the magnifier of each row at
+x≈212 (≈217 on a row whose name carries the warning icon of an attack). New and changed in M2:
 
 | Element | Location (game area) | Contents |
 |---|---|---|
