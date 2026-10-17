@@ -144,7 +144,15 @@ local function contracts(C, S, market)
   if cur then
     local live = false
     for _, c in ipairs(market.contracts(C.force)) do
-      if c.id == cur and c.state == "active" then live = true end
+      if c.id == cur and c.state == "active" then
+        live = true
+        -- a seller that missed a delivery will miss the next ones too (every miss costs relation): the buyer ends it
+        if (c.missed or 0) >= 1 and market.cancel_contract then
+          market.cancel_contract(c.id, "missed delivery")
+          live = false
+          util.log("ai %s: nation: contract #%d cancelled after a missed delivery", C.force, c.id)
+        end
+      end
     end
     if live then return end
     S.contract = nil
@@ -179,10 +187,10 @@ local function contracts(C, S, market)
            and game.tick - (S.tried[y .. "/" .. item] or -NA.contract_retry) >= NA.contract_retry then
           -- only a seller that holds the goods at its port or mines them in a town (a delivery it cannot make costs
           -- both sides relation)
+          -- (only goods already at the seller's port: a town that mines the ore rarely ships it there in time, and
+          -- 34 of 50 deliveries were missed in the 60-minute runs)
           local stock = (market.port_contents(port)[item] or 0)
-          local Cy = storage.ai and storage.ai[y]
-          local mines = Cy and Cy.town and Cy.town.ore == item and Cy.town.status == "ok"
-          if stock >= NA.contract_n or mines then
+          if stock >= 2 * NA.contract_n then
             local score = r + (stock >= NA.contract_n and 20 or 0)
             if not best or score > best.score then best = {y = y, item = item, score = score, stock = stock} end
           end

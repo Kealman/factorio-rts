@@ -146,6 +146,14 @@ local function steel_ready(C)
   return (deps.ages and deps.ages.of(C.force) >= 2) or construction.flowing(C, "steel-plate")
 end
 
+-- The rail line is being built and stone runs low: houses (15 stone each) wait (seed 703: the houses took the stone the
+-- rails needed, 1 steel + 1 stone per 2 rails, and a line stood at 143 of 166 pieces for 30 minutes).
+local function rails_need_stone(C)
+  local R = deps.rails
+  local st = R and R.ai_program_state and R.ai_program_state(C.force)
+  return (st == "building" or st == "depots") and construction.have(C, "stone") < (AI.rail_stone or 150)
+end
+
 -- In Age I while Industrialisation is researched or the Railway Charter is built.
 local CHARTER_TECH = balance.nation.economy.charter.tech
 local function age2_road(C)
@@ -393,6 +401,29 @@ local function town_defence(C, S, surface, c)
   return true
 end
 
+-- Storage: a town or captured city whose City Center lost its stockpiles (razed in the fight for it) can store nothing:
+-- the bakery's rations and the supply hauler's load had nowhere to go and a captured city-state stood at 0 % rations
+-- for 8 minutes (seed 703). Its two stockpiles are queued again at the hub offsets (logistics.HUB_STOCKPILES).
+local function town_storage(C, S, surface, c)
+  local e = c.entity
+  if not (e and e.valid) or game.tick < (S.storage_at or 0) then return false end
+  S.storage_at = game.tick + 30 * 60
+  local n = surface.count_entities_filtered({name = "rts-stockpile", position = e.position, radius = 7, force = C.force})
+  if n >= 2 then return false end
+  local L = deps.logistics
+  local queued = false
+  for _, off in ipairs(L and L.HUB_STOCKPILES or {}) do
+    local x, y = e.position.x + off.x, e.position.y + off.y
+    if surface.count_entities_filtered({name = "rts-stockpile", position = {x, y}, radius = 0.6}) == 0 then
+      local key = construction.add(C, {name = "rts-stockpile", x = x, y = y})
+      queue_first(C, key)
+      queued = true
+    end
+  end
+  if queued then util.log("ai %s: governor: city %d has %d stockpiles: rebuilt", C.force, c.id, n) end
+  return queued
+end
+
 -- Food of its own: a farm and a bakery inside the town's logistic area once it has town_farm_pop residents or its
 -- rations run short (the supply hauler alone left towns below half rations for minutes when the capital held only its
 -- keep, during a war, or right after a capture).
@@ -518,7 +549,7 @@ local function houses(C, G, surface, c, P, labor, population, age)
     local _, p = count_keys(C, T.houses)
     total_pending = total_pending + p
   end
-  if total_pending >= AI.max_queued or game.tick < G.house_at then return false end
+  if total_pending >= AI.max_queued or game.tick < G.house_at or rails_need_stone(C) then return false end
   local r = P.needs[RATIONS]
   if not (r and r.met >= PB.hold_at) then return false end
   local housing = population.housing(c.id)
@@ -611,7 +642,9 @@ local function city_pass(C, G, surface, c, capital, list, age)
         set_target(c.id, GOODS, hold and 0 or want)
         set_target(c.id, "stone-brick", AI.brick_target)
       end
-      if AI.house_stock and AI.house_stock > 0 then set_target(c.id, "rts-house", AI.house_stock) end
+      if AI.house_stock and AI.house_stock > 0 then
+        set_target(c.id, "rts-house", rails_need_stone(C) and 0 or AI.house_stock)
+      end
       -- the capital ships food and goods above its own keep when there is another city to feed
       local pol = L and L.policy(c.center)
       if pol and #list > 1 then
@@ -626,6 +659,25 @@ local function city_pass(C, G, surface, c, capital, list, age)
       if pol and turrets > 0 and pol.export_above["firearm-magazine"] ~= data.TURRET_MAGAZINES then
         L.set_policy(c.center, "export_above", "firearm-magazine", data.TURRET_MAGAZINES)
       end
+      -- more stone and copper when they run short: houses, farms, bricks and the rails take stone (the build order
+      -- stops at one stone extractor), goods, circuits and the advanced kits take copper (seed 404: one copper slot at
+      -- 37 plates a minute until minute 18, Industrialisation at 19:02)
+      for _, R in ipairs({{line = "stone", item = "stone", low = AI.stone_low or 100, steel = true},
+                          {line = "copper", item = "copper-plate", low = AI.copper_low or 30}}) do
+        local RL = C.lines and C.lines[R.line]
+        local key = R.line .. "_at"
+        if RL and RL.status == "ok" and (steel_ready(C) or not R.steel) and construction.have(C, R.item) < R.low
+           and game.tick >= (G[key] or 0) and build_order.line_running(C, R.line) and not build_order.line_busy(C, RL) then
+          local drills, slots = build_order.line_drills_built(C, RL), build_order.line_slots_built(C, RL)
+          if drills < #RL.drills then
+            build_order.want_drills(C, RL, drills + 1)
+            if slots < #RL.slots and drills + 1 > 2 * slots then build_order.want_slots(C, RL, slots + 1) end
+            G[key] = game.tick + (AI.stone_gap or 2 * 3600)
+            util.log("ai %s: governor: %s runs short (%d): %s extractor %d of %d", C.force, R.item,
+              construction.have(C, R.item), R.line, drills + 1, #RL.drills)
+          end
+        end
+      end
       queued = food(C, G, surface, c, total, rations_need)
       if not queued and AI.goods_works then
         queued = goods_works(C, G, surface, c, goods_need, stalled and net_count(c, GOODS) < NEEDS[2].keep)
@@ -636,7 +688,8 @@ local function city_pass(C, G, surface, c, capital, list, age)
     -- a town: extraction first, defence, the export route, the goods stall watch
     if labor and start then town_pins(C, S, c, labor, population) end
     if start then town_export(C, S, c) end
-    queued = town_food(C, S, surface, c, P, population) or town_defence(C, S, surface, c)
+    queued = town_storage(C, S, surface, c)
+    queued = town_food(C, S, surface, c, P, population) or town_defence(C, S, surface, c) or queued
     local g = P.needs[GOODS]
     local tier = c.tier or 1
     if tier >= 2 and g and g.met < PB.grow_at and P.pop < PB.tiers[2] * 1.15 then

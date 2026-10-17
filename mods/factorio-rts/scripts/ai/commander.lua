@@ -246,17 +246,23 @@ function commander.start(C)
       local L = C.lines[name]
       return (L and L.status == "ok") and #L.drills or 0
     end
-    -- true when the line has a steel chain slot (N2c / S2c: its smelter pair makes steel)
-    local function has_chain(name)
+    -- the line's steel chain slot (N2c / S2c: its smelter pair makes steel), or nil
+    local function chain_of(name)
       local L = C.lines[name]
       for _, sl in ipairs((L and L.status == "ok") and L.slots or {}) do
-        if string.sub(sl.name, -1) == "c" then return true end
+        if string.sub(sl.name, -1) == "c" then return sl.name end
       end
-      return false
+      return nil
+    end
+    local chain0 -- the first plan's chain slot: another one (S1c on seed 701) made no steel in 60 minutes
+    local function has_chain(name)
+      local c = chain_of(name)
+      return c ~= nil and (chain0 == nil or c == chain0)
     end
     -- Phase 5 M2 ai: no copper line at all (seed 704: "no hub slot reachable for copper"): plan again with copper
     -- first, then iron or stone next; kept when copper gets its slots and iron keeps its slots but one and its steel
     -- chain (without copper that nation made no circuit, no bakery and starved)
+    chain0 = chain_of("iron")
     if nation and slots("copper") == 0 then
       local base = {iron = slots("iron"), chain = has_chain("iron"), stone = slots("stone")}
       local kept = false

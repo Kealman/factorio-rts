@@ -42,6 +42,7 @@ mix.COUNTER_GAIN = 8
 mix.KIND_WAIT = 20 * 60
 mix.KIND_REST = 30 * 60
 mix.CHEAP = {walker = true, drone = true} -- never rest: plates are always short while barracks run
+mix.NATION_KIND_STALL = 3 * 60 * 60 -- Phase 5 M2 ai: Nation mode, a kind without a unit for this long rests
 mix.RESERVE_BOOST = 3 -- raider weight factor while a harassing doctrine's raider reserve is not full
 mix.FIRST_BOOST = 3   -- weight factor of a non-cheap kind the force has no unit of
 mix.YIELD_WORKSHOP = 2 * 60
@@ -300,6 +301,13 @@ function mix.manage_barracks(C)
         local def = mix.KINDS[st.kind]
         local starved = not mix.CHEAP[st.kind] and rec.starved_since
           and tick - math.max(rec.starved_since, st.since or 0) >= mix.KIND_WAIT
+        -- Phase 5 M2 ai (Nation): a kind that made no unit for NATION_KIND_STALL rests too, even when its ingredients
+        -- trickle in (seed 501: an Armoured car kit waited 8 minutes for its engines while "supplied" and "starved"
+        -- alternated, and the barracks made nothing with an army of 16)
+        if not starved and not mix.CHEAP[st.kind] and deps.ages and deps.ages.is_nation()
+           and tick - (st.since or tick) >= mix.NATION_KIND_STALL then
+          starved = true
+        end
         if spawned > (st.spawned or 0) or def.supply > room or not mix.available(C, st.kind) then
           st.kind = nil
         elseif starved then
