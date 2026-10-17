@@ -3038,6 +3038,26 @@ function world.found_city_state(surface, W, si)
   return id
 end
 
+-- Phase 5 M2 integration: a city-state's people neither eat nor grow while it is free; the nation that captures it finds
+-- its granary (balance.nation.world.city_state.food in the City Center's network at the capture), else the captured
+-- city starved at its first needs pass, long before the captor's food line reached it. Given at the capture, not at the
+-- founding: rations spoil in 15 minutes with Space Age.
+events.on_signal("rts_city_captured", function(d)
+  if not (d and d.from == world.NEUTRAL and d.city_id) then return end
+  local cities = loaded("scripts.cities")
+  local c = cities and cities.get(d.city_id)
+  if not (c and c.archetype == "city_state" and c.entity and c.entity.valid) then return end
+  local net = c.entity.logistic_network
+  local put = {}
+  for _, g in ipairs(CS.food or {}) do
+    if prototypes.item[g[1]] and net and net.valid then
+      local n = net.insert({name = g[1], count = g[2]})
+      put[#put + 1] = g[1] .. " " .. n
+    end
+  end
+  util.log("world: city-state city %d captured by %s: granary [%s]", d.city_id, tostring(d.to), table.concat(put, ", "))
+end)
+
 --- City-state records {site, name, label, anchor, position, city_id, center, founded, turrets}.
 function world.city_states() return (storage.world and storage.world.city_states) or {} end
 

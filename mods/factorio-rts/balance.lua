@@ -883,6 +883,10 @@ balance.nation.world = {
     -- turrets: 6 + 1 per 8 minutes, at most 10 (Phase 5 M2 integration: 4 + 1 per 10 minutes fell to 2-3 passing units)
     garrison = 6, garrison_every = 8 * 3600, garrison_max = 10,
     armor = 0.5,                              -- its City Center heals back this share of every hit (2x effective HP)
+    -- Phase 5 M2 integration: its granary, put into its network when a nation captures it (scripts/world.lua; 84
+    -- residents after the capture eat 8-9 rations a minute and, as a town, 3-4 goods: about 20 minutes for the captor's
+    -- food line)
+    food = {{"rts-rations", 180}, {"rts-goods", 40}},
     turret = "rts-turret", ring = 10,         -- around the City Center, fed from its network
     ammo_keep = 200,                          -- magazines kept in its network
     spawn_gap = 300, spacing = 200, port_gap = 150, -- tiles to spawns, other city-states, ports

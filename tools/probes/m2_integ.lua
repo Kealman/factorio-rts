@@ -7,6 +7,7 @@
 --   upkeep_free      a house and a farm add nothing to the building upkeep, a factory adds 1 cr/min
 --   cs_garrison      every city-state starts with 6 garrison turrets
 --   cs_armor         a city-state's City Center loses half of a 100-damage hit
+--   cs_granary       a captured city-state's network gets its granary (rations)
 --   rail_recipe      rts-rail is 1 steel + 1 stone -> 2 rails; the Rail works district is locked before Railways and
 --                    unlocked by it in Age I, together with the depot recipe (research.apply reads research.LOCKS)
 --   under_attack     a hit on a capital building by the rival marks the capital under attack (cities.under_attack)
@@ -34,6 +35,7 @@ local treasury = require("scripts.treasury")
 local population = require("scripts.population")
 local debug_tools = require("scripts.debug")
 local orders = require("scripts.orders")
+local capture = require("scripts.capture")
 
 local F, E = "rts-player", "rts-ai-1"
 local function S()
@@ -125,6 +127,10 @@ step(function(s)
   else
     check("cs_armor", false, "no city-state centre")
   end
+  -- a city-state captured: its granary goes into its network (capture.flip, then the signal)
+  local cs2 = world.city_states()[2]
+  s.cs2 = cs2 and cs2.city_id
+  if s.cs2 then capture.flip(s.cs2, F, "m2 integ fixture") end
   -- rails
   local force = game.forces[F]
   local r = force.recipes["rts-rail"]
@@ -139,6 +145,11 @@ step(function(s)
   return 60
 end)
 step(function(s)
+  local c2 = s.cs2 and cities.get(s.cs2)
+  local net = c2 and c2.entity and c2.entity.valid and c2.entity.logistic_network
+  local rations = net and net.valid and net.get_item_count("rts-rations") or -1
+  check("cs_granary", c2 ~= nil and c2.force == F and rations >= 150, "city-state city %s captured: owner %s, rations in "
+    .. "its network %d (want >= 150)", tostring(s.cs2), c2 and c2.force or "-", rations)
   local force = game.forces[F]
   local works = force.recipes["rts-district-rails"]
   local dra = force.recipes["rts-dra-rail"]
