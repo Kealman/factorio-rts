@@ -32,6 +32,18 @@ local deps = require("scripts.ai.deps")
 local ai = {}
 
 ai.TICK = 10
+-- Phase 5 M3 perf: Nation mode runs each commander in commander.SLICES slices NATION_SLICE_GAP ticks apart, driven every
+-- tick (ai.nation_tick) instead of every ai.TICK; the run start offsets by creation order put every slice of up to six
+-- nations on a tick of its own (4 nations: slices on ticks 0, 5, 10 | 15, 20, 25 | 30, 35, 40 | 45, 50, 55 of each
+-- THINK period; nations 5 and 6 add 7, 12, 17 | 37, 42, 47). NATION_SLICES off (a test copy) restores the Phase 4 runs.
+ai.NATION_OFFSETS = {0, 30, 15, 45, 7, 37}
+ai.NATION_SLICE_GAP = 5
+ai.NATION_SLICES = true
+
+local function nation_match()
+  local m = storage.match
+  return m ~= nil and m.config ~= nil and m.config.mode == "nation"
+end
 
 -- Wall-clock and AI-time profilers for the performance log (ai/autotest.lua). Module-local: profilers are not
 -- game state and are not saved; after a load they are created again.
@@ -46,6 +58,7 @@ end
 
 function ai.init()
   ensure_storage()
+  for _, C in pairs(storage.ai) do layout.tmigrate(C) end -- Phase 5 M3 perf: tile sets (saves from before M3)
   -- The Phase 3 match flow (match.lua with m.ai_forces) starts commanders from lobby.lua when a match starts. Only
   -- the older single-enemy match.lua relied on this to start the rts-enemy commander.
   local m = storage.match
@@ -76,7 +89,14 @@ function ai.init_force(force_name, difficulty)
   -- stagger: commanders of different forces run on different ticks
   local slot = 0
   for _ in pairs(storage.ai) do slot = slot + 1 end
-  C.next_tick = game.tick + 1 + (slot * 20) % commander.THINK
+  if ai.NATION_SLICES and nation_match() then
+    -- Phase 5 M3 perf: in Nation mode a run takes commander.SLICES slices NATION_SLICE_GAP ticks apart; these offsets
+    -- give every slice of up to six nations a tick of its own (ai.NATION_OFFSETS)
+    C.slice_offset = ai.NATION_OFFSETS[slot % #ai.NATION_OFFSETS + 1]
+    C.next_tick = game.tick + 1 + C.slice_offset
+  else
+    C.next_tick = game.tick + 1 + (slot * 20) % commander.THINK
+  end
   storage.ai[force_name] = C
   commander.start(C)
   return C
@@ -134,6 +154,7 @@ end
 function ai.tick(e)
   local list = storage.ai
   if not list or next(list) == nil then return end
+  if ai.NATION_SLICES and nation_match() then return end -- Phase 5 M3 perf: ai.nation_tick runs Nation commanders
   local p = ai.perf()
   for _, C in pairs(list) do
     if e.tick >= C.next_tick then
@@ -147,7 +168,56 @@ function ai.tick(e)
   end
 end
 
+--- Phase 5 M3 perf: the Nation driver (every tick): slice 1 of a commander when it is due, slices 2 and 3
+--- NATION_SLICE_GAP ticks apart after it (commander.run(C, k)).
+function ai.nation_tick(e)
+  local list = storage.ai
+  if not list or next(list) == nil or not (ai.NATION_SLICES and nation_match()) then return end
+  -- once per match: the commanders of a save from before M3 (Phase 4 stagger) get the Nation offsets, by force name
+  local meta = storage.ai_meta
+  local key = storage.match.tick_started or 0
+  if meta and meta.sliced_match ~= key then
+    meta.sliced_match = key
+    local names = {}
+    for f, C in pairs(list) do
+      if not C.slice_offset then names[#names + 1] = f end
+    end
+    table.sort(names)
+    for i, f in ipairs(names) do
+      local C = list[f]
+      C.slice_offset = ai.NATION_OFFSETS[(i - 1) % #ai.NATION_OFFSETS + 1]
+      C.next_tick = e.tick + 1 + C.slice_offset
+    end
+  end
+  local p
+  for _, C in pairs(list) do
+    if C.slice then
+      if e.tick >= C.slice_tick then
+        p = p or ai.perf()
+        p.ai.restart()
+        commander.run(C, C.slice)
+        p.ai.stop()
+        if C.slice < commander.SLICES then
+          C.slice, C.slice_tick = C.slice + 1, e.tick + ai.NATION_SLICE_GAP
+        else
+          C.slice, C.slice_tick = nil, nil
+        end
+      end
+    elseif e.tick >= C.next_tick then
+      C.next_tick = C.next_tick + commander.THINK
+      if C.next_tick <= e.tick then C.next_tick = e.tick + commander.THINK end
+      p = p or ai.perf()
+      p.ai.restart()
+      commander.run(C, 1)
+      p.ai.stop()
+      p.runs = p.runs + 1
+      C.slice, C.slice_tick = 2, e.tick + ai.NATION_SLICE_GAP
+    end
+  end
+end
+
 events.on_nth_tick(ai.TICK, ai.tick)
+events.on(defines.events.on_tick, ai.nation_tick) -- Phase 5 M3 perf
 
 -- Threats: damage to an own building of an AI force.
 events.on(defines.events.on_entity_damaged, function(e)

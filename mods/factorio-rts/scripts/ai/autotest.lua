@@ -83,6 +83,10 @@ autotest.DOCTRINES = {["rts-player"] = "economic", ["rts-ai-1"] = "aggressive"}
 local wall
 
 local function state() return storage.ai_autotest end
+events.on_load(function() -- Phase 5 M3 perf: the forces of a running autotest (read-only use of storage)
+  local s = storage.ai_autotest
+  if s and s.forces then autotest.FORCES = s.forces end
+end)
 
 -- Phase 4 deadlines scale with the commander's pacing (orders_data.TIME_SCALE: easy 1.5, normal 1, hard 0.7), like its
 -- build-order time gates (Wave C): easy researches and expands later by design. A scaled deadline past the end of the
@@ -190,6 +194,10 @@ function autotest.start()
              lines_at = {}, produced_ok = {}, done = false, lab_at = {}, techs_at_deadline = {}, kinds = {},
              kinds_at_deadline = {}, hub_at = {}, delivery_at = {}, cc_lost_at = {}}
   storage.ai_autotest = s
+  -- Phase 5 M3 perf (determinism): the forces live in storage too, so a loaded game (a save/load check, a client
+  -- that joins) keeps testing all of them; autotest.FORCES was module state and fell back to two forces after a load
+  s.forces = {}
+  for i, f in ipairs(autotest.FORCES) do s.forces[i] = f end
   autotest.planner_check()
   local cfg = storage.match and storage.match.config
   local difficulty = autotest.PLAYER_DIFFICULTY or (cfg and cfg.enemy_difficulty) or "normal"

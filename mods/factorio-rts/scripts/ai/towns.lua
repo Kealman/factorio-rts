@@ -173,7 +173,7 @@ local function reserve_depot_site(C, ctx, surface, site)
   if not best then return nil end
   local function res(x0, y0, x1, y1)
     for tx = x0, x1 do
-      for ty = y0, y1 do C.reserved[layout.tkey(tx, ty)] = "town-depot" end
+      for ty = y0, y1 do layout.tset(C.reserved, tx, ty, "town-depot") end -- Phase 5 M3 perf: tile sets
     end
   end
   res(best.p.x - 3, best.p.y - 3, best.p.x + 2, best.p.y + 2)
@@ -294,21 +294,30 @@ towns.COAL_SEARCH = 90      -- coal patches within this many tiles of the CC
 
 -- Phase 5 M2 ai: every coal patch within COAL_SEARCH is tried, nearest first (seed 702: the nearest one's line found no
 -- slot while another patch was free); a failed try leaves no reservation behind.
+-- (Phase 5 M3 perf: reserved, avoid and belt_tiles are tile sets: copied bucket by bucket, layout.tcopy / tassign)
 local PLAN_KEYS = {"reserved", "avoid", "belt_tiles", "claimed"}
 local function plan_snapshot(C)
   local snap = {}
   for _, name in ipairs(PLAN_KEYS) do
-    local t = {}
-    for k, v in pairs(C[name]) do t[k] = v end
-    snap[name] = t
+    if name == "claimed" then
+      local t = {}
+      for k, v in pairs(C[name]) do t[k] = v end
+      snap[name] = t
+    else
+      snap[name] = layout.tcopy(C[name])
+    end
   end
   return snap
 end
 local function plan_restore(C, snap)
   for _, name in ipairs(PLAN_KEYS) do
     local t = C[name]
-    for k in pairs(t) do t[k] = nil end
-    for k, v in pairs(snap[name]) do t[k] = v end
+    if name == "claimed" then
+      for k in pairs(t) do t[k] = nil end
+      for k, v in pairs(snap[name]) do t[k] = v end
+    else
+      layout.tassign(t, snap[name])
+    end
   end
 end
 
@@ -331,12 +340,14 @@ function towns.coal_hub(C, surface)
   -- forget what the failed CC coal line left: its claim on the patch and its reserved tiles
   C.lines.coal = nil
   for k, v in pairs(C.claimed) do if v == "coal" then C.claimed[k] = nil end end
-  for k, v in pairs(C.reserved) do
-    if v == "coal" then
-      C.reserved[k] = nil
-      C.belt_tiles[k] = nil
-      C.avoid[k] = nil
-    end
+  local coal_tiles = {} -- Phase 5 M3 perf: tile sets
+  for k, v in layout.tpairs(C.reserved) do
+    if v == "coal" then coal_tiles[#coal_tiles + 1] = k end
+  end
+  for _, k in ipairs(coal_tiles) do
+    layout.tset_k(C.reserved, k, nil)
+    layout.tset_k(C.belt_tiles, k, nil)
+    layout.tset_k(C.avoid, k, nil)
   end
   for k, e in pairs(C.plan) do if e.line == "coal" and e.status == "planned" then C.plan[k] = nil end end
   -- not next to the army's rally point: idle units standing on the spot kept the hub's revive failing
@@ -398,7 +409,7 @@ end
 local function reserve_tiles(C, name, x, y, owner)
   local tx0, ty0, w, h = layout.footprint(name, x, y)
   for tx = tx0, tx0 + w - 1 do
-    for ty = ty0, ty0 + h - 1 do C.reserved[layout.tkey(tx, ty)] = owner end
+    for ty = ty0, ty0 + h - 1 do layout.tset(C.reserved, tx, ty, owner) end -- Phase 5 M3 perf: tile sets
   end
 end
 
@@ -501,7 +512,7 @@ function towns.coal_pit(C, surface)
                                                    line = "coal-pit"})
             keys[#keys + 1] = construction.add(C, {name = "rts-stockpile", x = sp.sx, y = sp.sy, line = "coal-pit"})
             for _, q in ipairs(chain) do
-              C.reserved[layout.tkey(math.floor(q.x), math.floor(q.y))] = "coal-pit"
+              layout.tset(C.reserved, math.floor(q.x), math.floor(q.y), "coal-pit") -- Phase 5 M3 perf
               keys[#keys + 1] = construction.add(C, {name = layout.POLE, x = q.x, y = q.y, line = "coal-pit"})
             end
             specs[#specs + 1] = {name = layout.DRILL, x = sp.x, y = sp.y}

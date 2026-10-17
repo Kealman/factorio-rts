@@ -65,6 +65,7 @@ local match = require("scripts.match")
 local logistics = require("scripts.logistics")
 local balance = require("balance")
 local deps = require("scripts.ai.deps")
+local sched = require("scripts.sched") -- Phase 5 M3 perf: surveys are scheduler jobs in a Nation match
 local research
 do
   local ok, mod = pcall(require, "scripts.research")
@@ -117,6 +118,13 @@ rails.SURVEY_GHOSTS = 50            -- ghosts placed per tick
 rails.MAX_EXPANSIONS = 160000       -- fine A* gives up after this many (per corridor width)
 rails.MAX_CORRIDOR = 3              -- corridor radius in cells, widened from 1 when the fine search fails
 rails.WEIGHT = 1.3                  -- heuristic weight (weighted A*)
+-- Phase 5 M3 perf: in a Nation match a survey is a scheduler job (scripts/sched.lua kind "rails_survey") that spends
+-- the nation's work units instead of the fixed per-tick counts above (those stay for the rails autotest outside a
+-- match). Units per item, calibrated with PERF=1 so that one unit is about 1 microsecond (docs/qa/phase5-perf-notes.md):
+-- a scored cell (5 area counts and a territory lookup), a coarse A* expansion, a fine A* expansion plus each new piece
+-- placement check, a corridor cell (Dijkstra and flow field), an extracted piece, a placed ghost.
+rails.SURVEY_UNITS = {cell = 25, coarse = 4, fine = 6, check = 12, corridor = 3, extract = 2, ghost = 20}
+rails.SURVEY_SCHED = true
 rails.SUPPORT_SPACING = 10          -- tiles of elevated track between supports (probe P2: <= 12 holds)
 rails.RAMP_SLACK = 2                -- a ramp's elevated end counts as a support this many tiles "used"
 rails.STEP = 30                     -- train state machine and builder period, ticks
@@ -1232,6 +1240,69 @@ local function survey_tick(job)
   if job.phase == "done" or job.phase == "failed" then finish_job(job) end
 end
 
+-- Phase 5 M3 perf: one scheduler step of survey `id` (sjob.state.job) with `units` work units (rails.SURVEY_UNITS).
+local SU = rails.SURVEY_UNITS
+local function survey_sched_step(sjob, units)
+  local R = storage.rails
+  local job = R and R.jobs[sjob.state.job]
+  if not job then return 0, true end
+  local s = game.surfaces[job.surface]
+  if not s or not geometry() then
+    job.phase = "failed"
+    job.reason = "no-surface"
+    finish_job(job)
+    return 1, true
+  end
+  job.ticks = job.ticks + 1
+  -- phases run on in the same step until the units are spent (a phase change or an estimate that undershoots would
+  -- otherwise end the step early, and the scheduler only gives spare units to a job that spent all it was offered)
+  local total = 0
+  for _ = 1, 16 do
+    local left = units - total
+    if left < SU.cell then break end
+    local phase = job.phase
+    local used = 1
+    if phase == "score" then
+      used = max(1, survey_score(job, s, max(1, floor(left / SU.cell))) * SU.cell)
+    elseif phase == "coarse" then
+      used = max(1, survey_coarse(job, max(1, floor(left / SU.coarse))) * SU.coarse)
+    elseif phase == "corridor" then
+      survey_corridor(job)
+      used = max(1, table_size(job.flow or {}) * SU.corridor)
+    elseif phase == "fine" then
+      -- expansions this step from the checks per expansion so far (each expansion tries up to ~16 extensions, most of
+      -- them cached once the search is under way)
+      local per = SU.fine + SU.check * (job.expanded > 0 and job.checks / job.expanded or 4)
+      local c0 = job.checks
+      local n = survey_fine(job, s, max(1, floor(left / per)))
+      used = max(1, n * SU.fine + (job.checks - c0) * SU.check)
+    elseif phase == "extract" then
+      survey_extract(job)
+      local line = R.lines[job.line]
+      used = max(1, (line and line.pieces and #line.pieces or 1) * SU.extract)
+    elseif phase == "ghosts" then
+      used = max(1, survey_ghosts(job, s, max(1, floor(left / SU.ghost))) * SU.ghost)
+    end
+    total = total + used
+    if job.phase == "done" or job.phase == "failed" then
+      finish_job(job)
+      return total, true
+    end
+  end
+  return max(total, units), false
+end
+sched.register("rails_survey", survey_sched_step, function(sjob, status)
+  -- a step that raised leaves the line surveying: fail it so the owner (player panel, AI rail program) moves on
+  -- (a cancel only comes from the match teardown, which clears the rails state itself)
+  local R = storage.rails
+  local job = R and R.jobs[sjob.state.job]
+  if job and status == "failed" then
+    job.phase = "failed"
+    job.reason = job.reason or ("survey " .. status)
+    finish_job(job)
+  end
+end)
+
 --- Plan a line between two own depots. Returns the line id (= survey job id), or nil and a reason.
 function rails.plan_line(force, depot_a, depot_b)
   local force_name = type(force) == "string" and force or force.name
@@ -1263,8 +1334,11 @@ function rails.plan_line(force, depot_a, depot_b)
   for _, e in ipairs(A.platform.ends) do job.starts[#job.starts + 1] = {x = e.x, y = e.y, d = e.d, l = e.l} end
   for _, e in ipairs(B.platform.ends) do job.goals[#job.goals + 1] = {x = e.x, y = e.y, d = (e.d + 8) % 16, l = e.l} end
   R.jobs[id] = job
-  util.log("rails: line #%d of %s: survey %s (#%d) -> %s (#%d), %.0f tiles, bridges %s", id, force_name,
-    util.pos_str(pa), depot_a, util.pos_str(pb), depot_b, util.distance(pa, pb), tostring(job.bridges))
+  -- Phase 5 M3 perf: nil outside a Nation match (and with rails.SURVEY_SCHED off: a test copy's comparison with M2)
+  job.sched = rails.SURVEY_SCHED and sched.submit(force_name, "rails_survey", {job = id}) or nil
+  util.log("rails: line #%d of %s: survey %s (#%d) -> %s (#%d), %.0f tiles, bridges %s%s", id, force_name,
+    util.pos_str(pa), depot_a, util.pos_str(pb), depot_b, util.distance(pa, pb), tostring(job.bridges),
+    job.sched and string.format(", scheduler job %d", job.sched) or "")
   return id
 end
 
@@ -3159,7 +3233,18 @@ events.on(defines.events.on_tick, function()
   local R = storage.rails
   if not (R and next(R.jobs)) then return end
   local prof = R.profile_survey and helpers.create_profiler() or nil
-  local id = sorted_keys(R.jobs)[1] -- one survey at a time, oldest first
+  -- one survey at a time, oldest first (Phase 5 M3 perf: scheduler jobs run in scripts/sched.lua, not here)
+  local id
+  for _, k in ipairs(sorted_keys(R.jobs)) do
+    if not R.jobs[k].sched then
+      id = k
+      break
+    end
+  end
+  if not id then
+    if prof then prof.stop() end
+    return
+  end
   local job = R.jobs[id]
   local phase = job.phase
   survey_tick(job)

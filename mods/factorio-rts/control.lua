@@ -17,6 +17,7 @@ local modules = {
   require("scripts.economy"),
   require("scripts.basetemplate"),
   require("scripts.match"),
+  require("scripts.sched"),    -- Phase 5 M3 perf: the work-unit scheduler (Nation jobs; after match: its teardown)
   require("scripts.ai.init"),  -- Phase 3 AI commanders; after match (ai.init reads storage.match.config)
   require("scripts.supply"),   -- Phase 4 supply cap (production's kit gate, HUD strip)
   require("scripts.research"), -- Phase 4 labs, technologies, kit gate; after ai.init (it re-sets the AI's

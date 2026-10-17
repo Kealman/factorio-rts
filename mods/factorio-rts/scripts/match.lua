@@ -272,8 +272,9 @@ function match.enemy_unit_count(force_name)
   return n
 end
 
---- Enemy units `force_name` sees now: live units of the other match forces standing in a chunk that is visible to
---- the force (LuaForce.is_chunk_visible; fog.lua keeps the chunks around own units and buildings visible). The HUD
+--- Enemy units `force_name` sees now: live units of the other match forces standing in a chunk next to one of the
+--- force's own entities (Phase 5 M3 perf: was LuaForce.is_chunk_visible, chart state that differs between a headless
+--- server and a GUI peer; fog.lua charts the same neighbourhood of own units and buildings). The HUD
 --- shows this instead of the real total while the match runs, so the count does not leak through the fog.
 function match.enemy_units_seen(force_name)
   local force = game.forces[force_name]
@@ -288,7 +289,10 @@ function match.enemy_units_seen(force_name)
         local key = cx * 4096 + cy
         local v = visible[key]
         if v == nil then
-          v = force.is_chunk_visible(surface, {cx, cy})
+          -- Phase 5 M3 perf (determinism): "in sight" = the force has an entity in this chunk or a neighbouring one,
+          -- not the chunk's chart visibility (a headless server charts nothing, a GUI peer does: different HUDs)
+          v = surface.count_entities_filtered({area = {{cx * 32 - 32, cy * 32 - 32}, {cx * 32 + 64, cy * 32 + 64}},
+            force = force, limit = 1}) > 0
           visible[key] = v
         end
         if v then n = n + 1 end

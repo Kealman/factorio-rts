@@ -1255,5 +1255,11 @@ balance.nation.trains_war = {
 }
 balance.buildings["rts-gate"] = {kind = "wall", cost = balance.nation.trains_war.gate.cost,
                                  time = balance.nation.trains_war.gate.time, health = balance.nation.trains_war.gate.health}
+-- Phase 5 M3 perf: the work-unit scheduler (scripts/sched.lua). budget = work units per tick per nation (one unit is
+-- about 1 microsecond of script time on the dev Mac, docs/qa/phase5-perf-notes.md); the difficulty levels of m3-ai
+-- (balance.nation.ai3.difficulty[level]) may scale it with budget_factor (default 1).
+balance.nation.ai3 = balance.nation.ai3 or {}
+balance.nation.ai3.budget = balance.nation.ai3.budget or 400
+balance.nation.ai3.tick_cap = balance.nation.ai3.tick_cap or 2000 -- all nations together, once each had its budget
 
 return balance

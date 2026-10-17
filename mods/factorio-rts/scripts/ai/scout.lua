@@ -31,15 +31,13 @@ scout.WALL_CHECKS = 50  -- enemy wall segments (registered buildings) checked fo
 scout.HAULER_MEMORY = 60 * 60 -- a seen enemy hauler stays a harass target this long
 scout.ENEMY_ARMY_TICKS = 3 * 60 * 60 -- the largest enemy army seen is remembered this long
 
-local function chunk_of(pos)
-  local x, y = util.xy(pos)
-  return {math.floor(x / 32), math.floor(y / 32)}
-end
-
 --- True when commander C sees `pos` now.
+-- Phase 5 M3 perf (determinism): sight only, no chart state. LuaForce.is_chunk_visible is false everywhere on a headless
+-- server (it charts nothing) but true on a GUI peer for a charted force (rts-player, which the autotest's AI also
+-- commands, and the allies of a human force share its chart), so the old shortcut made an AI decision differ between
+-- the server and a client: a desync. Headless runs never took it, so their results are unchanged.
 function scout.sees(C, force, surface, pos)
   if C.cfg.vision == "full" then return true end
-  if force.is_chunk_visible(surface, chunk_of(pos)) then return true end
   return surface.count_entities_filtered({position = pos, radius = scout.SIGHT, force = force, limit = 1}) > 0
 end
 

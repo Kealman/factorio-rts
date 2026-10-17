@@ -295,6 +295,12 @@ local function register_cede()
   end
 end
 register_cede()
+-- Phase 5 M3 perf (determinism): wars.lua loads after this module, so the line above finds no wars module and the hook
+-- waited for the first contest step: after a load (a client joining a game, a save loaded) a treaty that ceded a city
+-- in those first ticks flipped it on the server but not on the joining client. on_init and on_load run once control.lua
+-- has loaded every module, on every peer.
+events.on_init(register_cede)
+events.on_load(register_cede)
 
 events.on_nth_tick(CP.period, function()
   register_cede()

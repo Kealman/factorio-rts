@@ -2496,7 +2496,9 @@ events.on(defines.events.on_entity_damaged, function(e)
 end)
 
 -- Kill feed: every death of an RTS unit (balance.units: walkers, heavies, drones, raiders, artillery, mk2 units,
--- haulers, commanders). seen[force] = the victim or the killer is of that force, or that force sees the chunk.
+-- haulers, commanders). seen[force] = the victim or the killer is of that force, or that force has an entity within
+-- KILL_SIGHT tiles of it (Phase 5 M3 perf: was the chunk's chart visibility).
+local KILL_SIGHT = 40
 events.on(defines.events.on_entity_died, function(e)
   local entity = e.entity
   if not (entity and entity.valid and balance.units[entity.name]) then return end
@@ -2507,12 +2509,14 @@ events.on(defines.events.on_entity_died, function(e)
   local killer = (cause and cause.valid) and cause.name or nil
   local killer_force = e.force and e.force.name or ((cause and cause.valid) and cause.force.name or nil)
   local pos, surface = entity.position, entity.surface
-  local chunk = {x = math.floor(pos.x / 32), y = math.floor(pos.y / 32)}
   local seen = {}
   for _, player in pairs(game.connected_players) do
     local pf = player.force
     if seen[pf.name] == nil then
-      seen[pf.name] = pf.name == f or pf.name == killer_force or pf.is_chunk_visible(surface, chunk)
+      -- Phase 5 M3 perf (determinism): sight, not chart state: a headless server charts nothing, a GUI peer does, so
+      -- is_chunk_visible gave the server and the clients different kill lists (storage) and kill-feed GUIs
+      seen[pf.name] = pf.name == f or pf.name == killer_force
+        or surface.count_entities_filtered({position = pos, radius = KILL_SIGHT, force = pf, limit = 1}) > 0
     end
   end
   local list = hs.kills

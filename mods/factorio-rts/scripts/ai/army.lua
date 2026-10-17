@@ -449,6 +449,21 @@ function army.relief(C, pool, lists)
 end
 
 --- One army pass for commander C.
+-- Phase 5 M3 perf: sort entities by squared distance to `pos`, then unit number, with each distance read once (the
+-- former comparators read two entity positions per comparison: ~2,000 API calls for a pool of 150). Same order.
+local function sort_by_distance(list, pos)
+  local d, un = {}, {}
+  for _, e in ipairs(list) do
+    d[e] = util.distance_sq(e, pos)
+    un[e] = e.unit_number
+  end
+  table.sort(list, function(x, y)
+    local dx, dy = d[x], d[y]
+    if dx ~= dy then return dx < dy end
+    return un[x] < un[y]
+  end)
+end
+
 function army.step(C, surface)
   local a = C.army
   local tick = game.tick
@@ -515,11 +530,7 @@ function army.step(C, surface)
       -- the nearest part of the pool defends; the rest keeps rallying
       local n = army.defenders(C, #pool)
       local tp = t.position
-      table.sort(pool, function(x, y)
-        local dx, dy = util.distance_sq(x, tp), util.distance_sq(y, tp)
-        if dx ~= dy then return dx < dy end
-        return x.unit_number < y.unit_number
-      end)
+      sort_by_distance(pool, tp) -- Phase 5 M3 perf (was table.sort reading both positions in every comparison)
       local sent, rest = {}, {}
       for i, e in ipairs(pool) do
         if i <= n then sent[#sent + 1] = e else rest[#rest + 1] = e end
@@ -587,11 +598,7 @@ function army.step(C, surface)
     else
       local n = math.min(#pool, army.NATION_GUARD_MAX,
         math.max(army.NATION_GUARD_MIN, math.ceil(#pool * army.NATION_GUARD_SHARE)))
-      table.sort(pool, function(x, y)
-        local dx, dy = util.distance_sq(x, home), util.distance_sq(y, home)
-        if dx ~= dy then return dx < dy end
-        return x.unit_number < y.unit_number
-      end)
+      sort_by_distance(pool, home) -- Phase 5 M3 perf
       local rest = {}
       for i, e in ipairs(pool) do
         if i <= n then guard_list[#guard_list + 1] = e else rest[#rest + 1] = e end

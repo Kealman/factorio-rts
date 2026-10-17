@@ -37,6 +37,10 @@ fog.BUILDING_RADIUS = 40    -- tiles around each own building
 fog.UNIT_RADIUS = 24        -- tiles around each own unit (radar_range already covers 3x3 chunks)
 fog.STATS_PERIOD = 60 * 60  -- a "fog:" stats line per minute
 fog.RADIUS_BY_KIND = {}     -- Phase 5 M3 air: [units.lua kind] = tiles charted around such a unit (scout planes)
+-- Phase 5 M3 perf: in Nation mode the stats line's chunk counts (two engine calls per chunk of a 2048-4096 world, for
+-- every match force: 32,000-130,000 calls) are swept over STATS_SWEEP chunks per tick instead of in one tick (a 20-100 ms
+-- hitch once a minute); the line is the same, logged when the sweep ends about a second later.
+fog.STATS_SWEEP = 512
 
 function fog.init()
   storage.fog = storage.fog or {last = {}}
@@ -182,7 +186,54 @@ events.on_nth_tick(fog.PERIOD, function()
   local st = storage.fog
   if st.next_stats and game.tick >= st.next_stats then
     st.next_stats = game.tick + fog.STATS_PERIOD
-    stats_line()
+    if m.config and m.config.mode == "nation" then
+      -- Phase 5 M3 perf: a sweep (below) instead of every count in this tick
+      local c = match.arena_half() / 32
+      local forces = {}
+      for i, f in ipairs(match.forces()) do forces[i] = f end
+      st.sweep = {forces = forces, fi = 1, k = 0, c = c, n = (2 * c) * (2 * c), charted = 0, visible = 0, out = {}}
+    else
+      stats_line()
+    end
+  end
+end)
+
+-- Phase 5 M3 perf: the Nation stats sweep, STATS_SWEEP chunks per tick; logs the stats_line text when done.
+events.on(defines.events.on_tick, function()
+  local st = storage.fog
+  local W = st and st.sweep
+  if not W then return end
+  local surface = match.surface()
+  if not surface then
+    st.sweep = nil
+    return
+  end
+  local budget = fog.STATS_SWEEP
+  while budget > 0 do
+    local f = W.forces[W.fi]
+    if not f then
+      st.sweep = nil
+      util.log("fog: t=%.0fs %s", match.elapsed_seconds(), table.concat(W.out, " | "))
+      return
+    end
+    local force = game.forces[f]
+    local c, side = W.c, 2 * W.c
+    while W.k < W.n and budget > 0 do
+      local cx, cy = math.floor(W.k / side) - c, W.k % side - c
+      if force then
+        if force.is_chunk_charted(surface, {cx, cy}) then W.charted = W.charted + 1 end
+        if force.is_chunk_visible(surface, {cx, cy}) then W.visible = W.visible + 1 end
+      end
+      W.k = W.k + 1
+      budget = budget - 1
+    end
+    if W.k >= W.n then
+      local last = st.last[f]
+      W.out[#W.out + 1] = string.format("%s charted %d visible %d of %d%s", f, W.charted, W.visible, W.n,
+        last and string.format(" (last re-chart %d chunks for %d units, %d buildings)", last.chunks, last.units,
+        last.buildings) or "")
+      W.fi, W.k, W.charted, W.visible = W.fi + 1, 0, 0, 0
+    end
   end
 end)
 

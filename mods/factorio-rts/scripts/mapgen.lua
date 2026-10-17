@@ -982,9 +982,10 @@ function mapgen.miners(surface, p)
   return out
 end
 
-local function check_depletion(surface)
-  for _, p in ipairs(storage.mapgen.patches) do
-    if not p.depleted_tick then
+-- (Phase 5 M3 perf: slice/slices, Nation mode: only the patches i with (i - 1) % slices == slice)
+local function check_depletion(surface, slice, slices)
+  for i, p in ipairs(storage.mapgen.patches) do
+    if not p.depleted_tick and (not slices or (i - 1) % slices == slice) then
       p.remaining = mapgen.remaining(surface, p)
       if p.remaining <= 0 then
         p.depleted_tick = game.tick
@@ -1016,10 +1017,26 @@ local function report()
   if per.middle then util.log("ore remaining middle: %s", table.concat(per.middle, ", ")) end
 end
 
+-- Phase 5 M3 perf: a Nation world records dozens of patches and recounting all of them (find_entities_filtered over
+-- every ore tile) took 3-16 ms in one tick every 10 s; there the check runs in DEPLETION_SLICES slices, one every
+-- DEPLETION_PERIOD / DEPLETION_SLICES ticks, so each patch is still recounted once per DEPLETION_PERIOD.
+mapgen.DEPLETION_SLICES = 10
+local function nation_world()
+  local m = storage.match
+  return m ~= nil and m.config ~= nil and m.config.mode == "nation"
+end
+events.on_nth_tick(mapgen.DEPLETION_PERIOD / mapgen.DEPLETION_SLICES, function(e)
+  if not nation_world() then return end
+  local surface = live_surface()
+  if not surface or storage.match.phase ~= "running" then return end
+  local n = mapgen.DEPLETION_SLICES
+  check_depletion(surface, (e.tick / (mapgen.DEPLETION_PERIOD / n)) % n, n)
+end)
+
 events.on_nth_tick(mapgen.DEPLETION_PERIOD, function(e)
   local surface = live_surface()
   if not surface or storage.match.phase ~= "running" then return end
-  check_depletion(surface)
+  if not nation_world() then check_depletion(surface) end -- Phase 5 M3 perf: Nation slices above
   local s = storage.mapgen
   if s.next_report and e.tick >= s.next_report then
     s.next_report = e.tick + mapgen.REPORT_PERIOD

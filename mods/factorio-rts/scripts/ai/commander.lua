@@ -123,7 +123,7 @@ function commander.new(force_name, difficulty)
   return {
     force = force_name, difficulty = difficulty, doctrine = doc, doctrine_seed = seed, cfg = settings(difficulty, doc),
     started = game.tick, next_tick = game.tick + 1, runs = 0,
-    reserved = {}, avoid = {}, belt_tiles = {}, claimed = {}, lines = {},
+    reserved = {}, avoid = {}, belt_tiles = {}, tiles_v = 2, claimed = {}, lines = {}, -- tiles_v: Phase 5 M3 perf
     plan = {}, queue = {}, pending = {}, need = {}, need_list = {}, next_build = 0,
     steps = {}, known = {}, guesses = {}, expansions = {},
     stats = {ghosts = 0, revived = 0, jobs = 0, bad = 0, seen = 0, attacks = 0, reinforcements = 0, retreats = 0,
@@ -182,6 +182,8 @@ local function planning_snapshot(C)
   for _, name in ipairs(PLAN_TABLES) do snap[name] = deep_copy(C[name] or {}) end
   return snap
 end
+-- (Phase 5 M3 perf: the tile sets' buckets are tables, so a restore copies them: a snapshot is restored more than once)
+local TILE_SET = {reserved = true, avoid = true, belt_tiles = true}
 local function planning_restore(C, snap)
   for _, name in ipairs(PLAN_TABLES) do
     local t = C[name]
@@ -190,7 +192,7 @@ local function planning_restore(C, snap)
       C[name] = t
     end
     for k in pairs(t) do t[k] = nil end
-    for k, v in pairs(snap[name]) do t[k] = v end
+    for k, v in pairs(snap[name]) do t[k] = TILE_SET[name] and deep_copy(v) or v end
   end
 end
 
@@ -351,7 +353,7 @@ function commander.start(C)
     end
     prof.stop()
     log({"", string.format("[rts] ai %s: start lines planned (%d reserved tiles) in ", C.force,
-      table_size(C.reserved)), prof})
+      layout.tcount(C.reserved)), prof})
   end
   util.log("ai %s: commander started, difficulty %s, CC %s facing %+d, rally %s", C.force, C.difficulty,
     util.pos_str(home), C.frame.fx, util.pos_str(C.army.rally))
@@ -682,14 +684,22 @@ commander.PARTS = {"build_order", "construction", "production", "army", "scout",
                    "nation"}
 
 --- One commander run (init.lua schedules it every THINK ticks).
-function commander.run(C)
+-- Phase 5 M3 perf: a run in slices. commander.run(C) runs every part at once (Skirmish, exactly as before);
+-- commander.run(C, k) only slice k of commander.SLICES (Nation mode: ai/init.lua runs slice 1 when the commander is due
+-- and slices 2 and 3 on its next two ai.TICK ticks, so no tick holds a whole run): 1 economy and planning (build order,
+-- construction, hubs, rails, cities, towns, market), 2 research, age-up, barracks and factories, 3 governor, strategist,
+-- army and scouting.
+commander.SLICES = 3
+function commander.run(C, slice)
   local surface = util.surface()
   local tick = game.tick
-  C.runs = C.runs + 1
+  layout.tmigrate(C) -- Phase 5 M3 perf: tile sets of a commander from an older save
+  if slice == nil or slice == 1 then C.runs = C.runs + 1 end
   local m = storage.match
   if m and m.phase == "ended" then return end
+  local s1, s2, s3 = slice == nil or slice == 1, slice == nil or slice == 2, slice == nil or slice == 3
   local cc = buildings.main_cc(C.force)
-  if cc then
+  if cc and s1 then
     local ctx
     local function get_ctx()
       if not ctx then ctx = layout.context(C, surface) end
@@ -714,6 +724,8 @@ function commander.run(C)
       deps.market.ai_step(C)
     end
     stop("construction")
+  end
+  if cc and s2 then
     start("tech")
     if tick >= (C.next_tech or 0) then
       C.next_tech = tick + tech.PERIOD
@@ -729,6 +741,8 @@ function commander.run(C)
     start("production")
     manage_factories(C)
     stop("production")
+  end
+  if cc and s3 then
     start("governor")
     governor.step(C, surface) -- Phase 5 M2 ai: city governors (takes over population.ai_step; Nation mode only)
     stop("governor")
@@ -736,6 +750,7 @@ function commander.run(C)
     nation_ai.step(C, surface) -- Phase 5 M2 ai: the nation strategist (Nation mode only)
     stop("nation")
   end
+  if not s3 then return end
   start("army")
   army.step(C, surface)
   stop("army")

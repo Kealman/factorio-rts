@@ -59,6 +59,28 @@ local function dispatcher(list)
   end
 end
 
+-- Phase 5 M3 perf: test probes only (tools/probes/perf_marks.lua): every call of an on_nth_tick handler whose period is
+-- at least trace_period is timed and logged as "[rts] perf call t<tick> d0 nth<period> <module>: <time>", so a slow
+-- tick can be traced to the periodic handler that ran in it. Like the profiling above it only reaches the log.
+local trace_period = nil
+local trace_lap = nil
+function events.trace_nth(min_period) trace_period = min_period end
+
+local function nth_dispatcher(list, n)
+  local plain = dispatcher(list)
+  return function(event)
+    if not (trace_period and n >= trace_period) then return plain(event) end
+    trace_lap = trace_lap or helpers.create_profiler(true)
+    for i = 1, #list do
+      local lap = trace_lap
+      lap.reset()
+      if profile then timed(list[i], event) else list[i](event) end
+      lap.stop()
+      log({"", string.format("[rts] perf call t%d d0 nth%d %s: ", event.tick, n, labels[list[i]] or "?"), lap})
+    end
+  end
+end
+
 --- Register a handler for a defines.events id or a custom-input name. The handler receives the event table.
 function events.on(event_id, handler)
   assert(event_id ~= nil, "events.on: event id is nil (typo in a defines.events name?)")
@@ -86,7 +108,7 @@ function events.on_nth_tick(n, handler)
   if not list then
     list = {}
     nth_handlers[n] = list
-    script.on_nth_tick(n, dispatcher(list))
+    script.on_nth_tick(n, nth_dispatcher(list, n)) -- Phase 5 M3 perf: nth_dispatcher (trace_nth)
   end
   list[#list + 1] = handler
   labels[handler] = labels[handler] or caller_label()
@@ -120,6 +142,10 @@ function events.enable_profiling()
     profile = {}
   end)
 end
+
+-- Phase 5 M3 perf: true once enable_profiling's first minute has passed (scripts/sched.lua times its jobs then). Only
+-- for logging: nothing may decide game state from it.
+function events.profiling() return profile ~= nil end
 
 -- Phase 5 M1: script signals between modules (docs/PHASE5-M1.md, e.g. "rts_territory_changed"). They are not engine
 -- events: events.emit calls the handlers registered with events.on_signal synchronously, in registration order.

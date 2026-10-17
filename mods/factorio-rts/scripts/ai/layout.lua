@@ -85,6 +85,153 @@ local function opposite_idx(i) return ((i + 1) % 4) + 1 end
 local function tkey(tx, ty) return tx * 4096 + ty end
 layout.tkey = tkey
 
+-- Phase 5 M3 perf: the commander's tile tables C.reserved, C.avoid and C.belt_tiles are chunk-bucketed tile sets,
+-- {[chunk key] = {[tile key] = value}} with 32x32-tile buckets (docs/PHASE5-M3.md D9, war-ai-performance.md 5.8): the
+-- plans of a dozen cities never make one flat per-tile table, a copy or a clear touches only the chunks involved, and
+-- plan_line undoes a failed attempt from a journal of its writes instead of copying the whole table. Read and write
+-- them only through layout.tget / tset (tile coordinates), tget_k / tset_k (tile keys), tpairs, tcount, tcopy,
+-- tassign. A commander from an older save is converted on its next run (layout.tmigrate).
+local TCHUNK = 32
+local function ckey(tx, ty) return math.floor(tx / TCHUNK) * 1024 + math.floor(ty / TCHUNK) end
+layout.ckey = ckey
+
+--- Tile coordinates of a tile key.
+local function tdecode(k)
+  local ty = k % 4096
+  if ty >= 2048 then ty = ty - 4096 end
+  return (k - ty) / 4096, ty
+end
+layout.tdecode = tdecode
+
+-- The write journal of one plan_line attempt (module-local and emptied before plan_line returns, so it never outlives
+-- the tick): {[tile set] = {[tile key] = value before the first write, NONE when absent}}.
+local journal = nil
+local NONE = {}
+
+local function tget(T, tx, ty)
+  local b = T[ckey(tx, ty)]
+  return b and b[tkey(tx, ty)]
+end
+layout.tget = tget
+
+local function tset(T, tx, ty, v)
+  local ck, k = ckey(tx, ty), tkey(tx, ty)
+  local b = T[ck]
+  if not b then
+    if v == nil then return end
+    b = {}
+    T[ck] = b
+  end
+  local jr = journal and journal[T]
+  if jr and jr[k] == nil then
+    local old = b[k]
+    if old == nil then jr[k] = NONE else jr[k] = old end
+  end
+  b[k] = v
+  if v == nil and next(b) == nil then T[ck] = nil end
+end
+layout.tset = tset
+
+function layout.tget_k(T, k)
+  local tx, ty = tdecode(k)
+  return tget(T, tx, ty)
+end
+
+function layout.tset_k(T, k, v)
+  local tx, ty = tdecode(k)
+  tset(T, tx, ty, v)
+end
+
+--- Iterator over (tile key, value) of a tile set (bucket order: never let it decide anything).
+function layout.tpairs(T)
+  local ck, b = next(T)
+  local k
+  return function()
+    while b do
+      local v
+      k, v = next(b, k)
+      if k ~= nil then return k, v end
+      ck, b = next(T, ck)
+      k = nil
+    end
+    return nil
+  end
+end
+
+function layout.tcount(T)
+  local n = 0
+  for _, b in pairs(T) do n = n + table_size(b) end
+  return n
+end
+
+--- A copy of a tile set (new buckets).
+function layout.tcopy(T)
+  local out = {}
+  for ck, b in pairs(T) do
+    local nb = {}
+    for k, v in pairs(b) do nb[k] = v end
+    out[ck] = nb
+  end
+  return out
+end
+
+--- Make tile set T hold exactly what `src` holds (copied buckets; T keeps its identity).
+function layout.tassign(T, src)
+  for ck in pairs(T) do T[ck] = nil end
+  for ck, b in pairs(src) do
+    local nb = {}
+    for k, v in pairs(b) do nb[k] = v end
+    T[ck] = nb
+  end
+end
+
+-- Start recording the writes to tile set T (plan_line); tjournal_undo restores what T held at the start or the last
+-- undo; tjournal_end stops recording.
+local function tjournal_begin(T)
+  journal = journal or {}
+  journal[T] = {}
+end
+local function tjournal_undo(T)
+  local jr = journal and journal[T]
+  if not jr then return end
+  journal[T] = nil
+  for k, old in pairs(jr) do
+    local tx, ty = tdecode(k)
+    if old == NONE then tset(T, tx, ty, nil) else tset(T, tx, ty, old) end
+  end
+  journal[T] = {}
+end
+local function tjournal_end(T)
+  if journal then
+    journal[T] = nil
+    if next(journal) == nil then journal = nil end
+  end
+end
+
+layout.TILE_SETS = {"reserved", "avoid", "belt_tiles"}
+--- Convert a commander's flat tile tables (saves from before Phase 5 M3) to tile sets. Cheap when done (C.tiles_v).
+function layout.tmigrate(C)
+  if C.tiles_v == 2 then return end
+  for _, name in ipairs(layout.TILE_SETS) do
+    local flat = C[name] or {}
+    local T = {}
+    for k, v in pairs(flat) do
+      if type(v) ~= "table" then
+        local tx, ty = tdecode(k)
+        local ck = ckey(tx, ty)
+        local b = T[ck]
+        if not b then
+          b = {}
+          T[ck] = b
+        end
+        b[k] = v
+      end
+    end
+    C[name] = T
+  end
+  C.tiles_v = 2
+end
+
 local function tile_of(x, y) return math.floor(x), math.floor(y) end
 
 --- Frame of a CC: {cx, cy, fx}. fx = +1 when the enemy is towards +x.
@@ -260,7 +407,7 @@ function layout.reserve_hub(C, frame, hub, order)
     if not hub[name] then
       hub[name] = "free"
       for k in pairs(slot_tiles(frame, name)) do
-        if C.reserved[k] == nil then C.reserved[k] = "hub" end
+        if layout.tget_k(C.reserved, k) == nil then layout.tset_k(C.reserved, k, "hub") end -- Phase 5 M3 perf
       end
     end
   end
@@ -272,7 +419,7 @@ function layout.snapshot_hub(C, frame, hub, order)
   local snap = {hub = {}, reserved = {}, ref = hub}
   for k, v in pairs(hub) do snap.hub[k] = v end
   for _, name in ipairs(order) do
-    for k in pairs(slot_tiles(frame, name)) do snap.reserved[k] = C.reserved[k] or false end
+    for k in pairs(slot_tiles(frame, name)) do snap.reserved[k] = layout.tget_k(C.reserved, k) or false end
   end
   return snap
 end
@@ -280,7 +427,7 @@ end
 function layout.restore_hub(C, snap)
   local hub = snap.ref or C.hub
   for k, v in pairs(snap.hub) do hub[k] = v end
-  for k, v in pairs(snap.reserved) do C.reserved[k] = v or nil end
+  for k, v in pairs(snap.reserved) do layout.tset_k(C.reserved, k, v or nil) end
 end
 
 --- Claim a hub slot for a line: its tiles become the line's, slots sharing a tile with it die, and the tiles only
@@ -290,7 +437,7 @@ function layout.claim_slot(C, frame, slot_name, owner, hub, order)
   if hub[slot_name] ~= "free" then return false end
   local mine = slot_tiles(frame, slot_name)
   hub[slot_name] = owner
-  for k in pairs(mine) do C.reserved[k] = owner end
+  for k in pairs(mine) do layout.tset_k(C.reserved, k, owner) end
   for _, other in ipairs(order) do
     if other ~= slot_name and hub[other] == "free" then
       local tiles = slot_tiles(frame, other)
@@ -301,7 +448,7 @@ function layout.claim_slot(C, frame, slot_name, owner, hub, order)
       if shared then
         hub[other] = "dead"
         for k in pairs(tiles) do
-          if C.reserved[k] == "hub" then C.reserved[k] = nil end
+          if layout.tget_k(C.reserved, k) == "hub" then layout.tset_k(C.reserved, k, nil) end
         end
       end
     end
@@ -310,7 +457,7 @@ function layout.claim_slot(C, frame, slot_name, owner, hub, order)
   for _, other in ipairs(order) do
     if hub[other] == "free" then
       for k in pairs(slot_tiles(frame, other)) do
-        if C.reserved[k] == nil then C.reserved[k] = "hub" end
+        if layout.tget_k(C.reserved, k) == nil then layout.tset_k(C.reserved, k, "hub") end
       end
     end
   end
@@ -364,17 +511,30 @@ function layout.context_at(C, surface, frame, radius)
     end
   end
   return {surface = surface, force = C.force, frame = frame, occ = occ, ore = ore, ore_list = list,
-          reserved = C.reserved, avoid = C.avoid}
+          reserved = C.reserved, avoid = C.avoid, half = layout.arena_half()} -- half: Phase 5 M3 perf (free)
 end
 
 local function free(ctx, tx, ty)
+  -- Phase 5 M3 perf: the arena test with the context's arena half (in_arena reads storage.match on every call)
+  local h = ctx.half
+  if h then
+    if tx < -h + 1 or tx >= h - 1 or ty < -h + 1 or ty >= h - 1 then return false end
+  elseif not in_arena(tx, ty) then
+    return false
+  end
   local k = tkey(tx, ty)
-  return in_arena(tx, ty) and not ctx.occ[k] and ctx.reserved[k] == nil and not ctx.avoid[k]
+  if ctx.occ[k] then return false end
+  -- Phase 5 M3 perf: tile sets (layout.tget inlined: this is the A* router's inner test)
+  local ck = ckey(tx, ty)
+  local b = ctx.reserved[ck]
+  if b and b[k] ~= nil then return false end
+  b = ctx.avoid[ck]
+  return not (b and b[k])
 end
 layout.free = free
 
 local function reserve(ctx, tx, ty, owner)
-  ctx.reserved[tkey(tx, ty)] = owner
+  tset(ctx.reserved, tx, ty, owner)
 end
 
 local function reserve_entity(ctx, name, x, y, owner)
@@ -563,6 +723,7 @@ end
 
 ---------------------------------------------------------------------------
 -- A* belt router on tiles: 4-way moves, turn penalty, ore penalty. Belts face the next tile.
+local nation_mode -- Phase 5 M3 perf: defined below layout.route
 ---------------------------------------------------------------------------
 -- Binary min-heap over parallel arrays (f, sequence number for deterministic ties, state).
 local function heap_push(h, f, s)
@@ -609,63 +770,176 @@ end
 --- Route from tile (sx, sy), entered moving in direction index sdir (nil: any first step), to tile (gx, gy). `blocked(tx, ty)` must be
 --- false for every tile on the path except the goal. A search stops after max_expand states (default
 --- ROUTE_MAX_EXPAND): a failed search costs the most. Returns {{tx, ty}, ...} including start and goal, or nil.
+--- Phase 5 M3 perf: the search is layout.route_init + layout.route_step (a resumable state of plain numbers, the same
+--- expansions in the same order), so a planner on the scheduler (scripts/sched.lua) can spread one search over ticks.
 function layout.route(ctx, sx, sy, sdir, gx, gy, blocked, max_expand)
-  local m = layout.ROUTE_MARGIN
-  local bx0, bx1 = math.min(sx, gx) - m, math.max(sx, gx) + m
-  local by0, by1 = math.min(sy, gy) - m, math.max(sy, gy) + m
-  local g, parent, coord = {}, {}, {}
-  local function skey(x, y, d) return tkey(x, y) * 4 + (d - 1) end
-  local h = {n = 0, seq = 0, f = {}, q = {}, s = {}}
-  for d = 1, 4 do
-    if sdir == nil or d == sdir then
-      local s0 = skey(sx, sy, d)
-      g[s0], coord[s0] = 0, {sx, sy, d}
-      heap_push(h, math.abs(gx - sx) + math.abs(gy - sy), s0)
+  local R = layout.route_init(sx, sy, sdir, gx, gy, max_expand)
+  if nation_mode() and not layout.route_step(R, ctx, blocked, layout.POCKET_AFTER) then
+    -- Phase 5 M3 perf (Nation): a search still open after POCKET_AFTER expansions first looks for a closed pocket around
+    -- the goal or the start; one proves that no route exists (the full search would end without one too), so the
+    -- expensive failure (up to ROUTE_MAX_EXPAND states) is skipped. The route found, or its absence, is the same.
+    if layout.pocket_closed(R, blocked, R.gx, R.gy, sx, sy) or layout.pocket_closed(R, blocked, sx, sy, R.gx, R.gy) then
+      R.done = true
+      layout.pockets = layout.pockets + 1
     end
   end
-  local expanded, goal_state = 0, nil
-  local closed = {}
-  while true do
-    local s = heap_pop(h)
-    if not s then break end
+  layout.route_step(R, ctx, blocked, math.huge)
+  ctx.last_expanded = R.expanded
+  return R.path
+end
+
+-- Phase 5 M3 perf: the router as a scheduler job (scripts/sched.lua kind "layout_route", Nation mode) for planners that
+-- run on the scheduler (m3-ai): the job holds the blocked tiles as a set, so no closure is needed across ticks.
+--   local id = layout.submit_route(force, {sx = , sy = , sdir = nil, gx = , gy = , max = nil,
+--                                          blocked = {[layout.tkey(tx, ty)] = true, ...}, ore = {[tile key] = true}})
+--   ... later: local job = sched.get(id); if job and job.status == "done" then local path = job.state.R.path end
+-- The search is layout.route's (the same expansions, ROUTE_UNIT units each); `blocked` must hold every tile the route
+-- may not use inside its box (start/goal box grown by ROUTE_MARGIN); the goal is always passable.
+local sched = require("scripts.sched")
+local function route_job_step(job, units)
+  local st = job.state
+  if not st.R then st.R = layout.route_init(st.sx, st.sy, st.sdir, st.gx, st.gy, st.max) end
+  local bl = st.blocked or {}
+  local before = st.R.expanded
+  local done = layout.route_step(st.R, {ore = st.ore or {}}, function(tx, ty) return bl[tkey(tx, ty)] == true end,
+    math.max(1, math.floor(units / layout.ROUTE_UNIT)))
+  return math.max(1, (st.R.expanded - before) * layout.ROUTE_UNIT), done
+end
+sched.register("layout_route", route_job_step)
+function layout.submit_route(force, args, priority)
+  return sched.submit(force, "layout_route", args, priority)
+end
+
+layout.POCKET_AFTER = 3000 -- Phase 5 M3 perf: expansions before the pocket test (most routes end well before)
+layout.POCKET_CAP = 1500   -- tiles one flood fill of the pocket test visits before it gives up (inconclusive)
+layout.pockets = 0         -- searches the pocket test ended (module-local count, for the log only)
+
+nation_mode = function()
+  local m = storage.match
+  return m ~= nil and m.config ~= nil and m.config.mode == "nation"
+end
+
+--- Phase 5 M3 perf: flood fill from tile (fx, fy) over the tiles a route of search R may use (inside R's box, not
+--- blocked; R's goal always passable). True when it ends below POCKET_CAP tiles without reaching (tx, ty) or a tile next
+--- to it: then no route joins the two tiles. False when it reaches them or is cut off at the cap (inconclusive).
+function layout.pocket_closed(R, blocked, fx, fy, tx, ty)
+  local bx0, bx1, by0, by1, gx, gy = R.bx0, R.bx1, R.by0, R.by1, R.gx, R.gy
+  local seen = {[tkey(fx, fy)] = true}
+  local qx, qy, head = {fx}, {fy}, 1
+  local cap = layout.POCKET_CAP
+  while qx[head] do
+    local x, y = qx[head], qy[head]
+    head = head + 1
+    if math.abs(x - tx) + math.abs(y - ty) <= 1 then return false end
+    if head > cap then return false end
+    for nd = 1, 4 do
+      local nx, ny = x + DX[nd], y + DY[nd]
+      local k = tkey(nx, ny)
+      if not seen[k] and nx >= bx0 and nx <= bx1 and ny >= by0 and ny <= by1
+         and ((nx == gx and ny == gy) or not blocked(nx, ny)) then
+        seen[k] = true
+        qx[#qx + 1], qy[#qy + 1] = nx, ny
+      end
+    end
+  end
+  return true
+end
+
+--- Phase 5 M3 perf: the resumable A* of layout.route. The state is plain data (heap arrays, g and parent maps keyed by
+--- state numbers): storable in a scheduler job. route_step(R, ctx, blocked, n) expands at most n more states and returns
+--- true when the search is over: R.path is the route or nil (R.found false), R.expanded the states expanded so far.
+--- Work units: one expansion is about ROUTE_UNIT units (docs/qa/phase5-perf-notes.md).
+layout.ROUTE_UNIT = 2
+function layout.route_init(sx, sy, sdir, gx, gy, max_expand)
+  local m = layout.ROUTE_MARGIN
+  local h = layout.arena_half()
+  -- the box clipped to the arena (in_arena: -h + 1 <= t < h - 1)
+  local R = {bx0 = math.max(math.min(sx, gx) - m, -h + 1), bx1 = math.min(math.max(sx, gx) + m, h - 2),
+             by0 = math.max(math.min(sy, gy) - m, -h + 1), by1 = math.min(math.max(sy, gy) + m, h - 2),
+             gx = gx, gy = gy, max = max_expand or layout.ROUTE_MAX_EXPAND, g = {}, parent = {}, closed = {},
+             n = 0, seq = 0, f = {}, q = {}, s = {}, expanded = 0, done = false, found = false}
+  for d = 1, 4 do
+    if sdir == nil or d == sdir then
+      local s0 = tkey(sx, sy) * 4 + (d - 1)
+      R.g[s0] = 0
+      heap_push(R, math.abs(gx - sx) + math.abs(gy - sy), s0)
+    end
+  end
+  return R
+end
+
+function layout.route_step(R, ctx, blocked, budget)
+  if R.done then return true end
+  local g, parent, closed, ore = R.g, R.parent, R.closed, ctx.ore
+  local gx, gy, bx0, bx1, by0, by1, max = R.gx, R.gy, R.bx0, R.bx1, R.by0, R.by1, R.max
+  local turn, ore_cost = layout.TURN_COST, layout.ORE_COST
+  local expanded, goal_state = R.expanded, nil
+  local steps, over = 0, false
+  while steps < budget do
+    local s = heap_pop(R)
+    if not s then
+      over = true
+      break
+    end
     if not closed[s] then
       closed[s] = true
-      local c = coord[s]
-      local x, y, d = c[1], c[2], c[3]
+      local d = s % 4 + 1
+      local k = (s - (d - 1)) / 4
+      local y = k % 4096
+      if y >= 2048 then y = y - 4096 end
+      local x = (k - y) / 4096
       if x == gx and y == gy then
         goal_state = s
+        over = true
         break
       end
       expanded = expanded + 1
-      if expanded > (max_expand or layout.ROUTE_MAX_EXPAND) then break end
-      local back = opposite_idx(d)
+      steps = steps + 1
+      if expanded > max then
+        over = true
+        break
+      end
+      local back = ((d + 1) % 4) + 1
+      local gs = g[s]
       for nd = 1, 4 do
         if nd ~= back then
           local nx, ny = x + DX[nd], y + DY[nd]
-          if nx >= bx0 and nx <= bx1 and ny >= by0 and ny <= by1 and in_arena(nx, ny)
+          if nx >= bx0 and nx <= bx1 and ny >= by0 and ny <= by1
              and ((nx == gx and ny == gy) or not blocked(nx, ny)) then
-            local cost = g[s] + 1
-            if nd ~= d then cost = cost + layout.TURN_COST end
-            if ctx.ore[tkey(nx, ny)] then cost = cost + layout.ORE_COST end
-            local ns = skey(nx, ny, nd)
-            if not g[ns] or cost < g[ns] then
-              g[ns], parent[ns], coord[ns] = cost, s, {nx, ny, nd}
-              heap_push(h, cost + math.abs(gx - nx) + math.abs(gy - ny), ns)
+            local nk = nx * 4096 + ny
+            local cost = gs + 1
+            if nd ~= d then cost = cost + turn end
+            if ore[nk] then cost = cost + ore_cost end
+            local ns = nk * 4 + (nd - 1)
+            local old = g[ns]
+            if not old or cost < old then
+              g[ns], parent[ns] = cost, s
+              heap_push(R, cost + math.abs(gx - nx) + math.abs(gy - ny), ns)
             end
           end
         end
       end
     end
   end
-  ctx.last_expanded = expanded
-  if not goal_state then return nil end
-  local path, s = {}, goal_state
-  while s do
-    local c = coord[s]
-    table.insert(path, 1, {c[1], c[2]})
-    s = parent[s]
+  R.expanded = expanded
+  if not over then return false end
+  R.done = true
+  if goal_state then
+    local rev, s = {}, goal_state
+    while s do
+      local k = (s - s % 4) / 4
+      local y = k % 4096
+      if y >= 2048 then y = y - 4096 end
+      rev[#rev + 1] = {(k - y) / 4096, y}
+      s = parent[s]
+    end
+    local path = {}
+    for i = #rev, 1, -1 do path[#path + 1] = rev[i] end
+    R.path, R.found = path, true
   end
-  return path
+  -- the search maps are not needed any more (a stored job keeps only the result)
+  R.g, R.parent, R.closed, R.f, R.q, R.s = nil, nil, nil, nil, nil, nil
+  return true
 end
 
 ---------------------------------------------------------------------------
@@ -769,28 +1043,62 @@ layout.SATELLITE_TRIES = 8
 layout.SATELLITE_EXPAND = 6000 -- satellite links are short; a capped search keeps a failed candidate cheap
 function layout.plan_satellite(ctx, from, blocked, owner, first)
   local f = ctx.frame
-  local cands = {}
   local H = layout.SATELLITE_HALF
+  -- Phase 5 M3 perf: the candidates in the order of the former sort by (d, sx, sy, axis), without building and sorting
+  -- all 1,800 of them: buckets by d, each filled in (sx, sy, "h" before "v") order. A satellite's feed tiles are
+  -- (sx, sy -+ 6) on axis "v" and (sx -+ 6, sy) on axis "h" (layout.satellite_slots), so d needs no slot tables.
+  local fx, fy = from[1], from[2]
+  local buckets, ds = {}, {}
   for ox = -H, H - 1 do
     for oy = -H, H - 1 do
       local sx, sy = math.floor(f.cx) + ox, math.floor(f.cy) + oy
-      for _, axis in ipairs({"v", "h"}) do
-        local stock, slots = layout.satellite_slots(sx, sy, axis)
-        local d1 = math.abs(slots[1].ftx - from[1]) + math.abs(slots[1].fty - from[2])
-        local d2 = math.abs(slots[2].ftx - from[1]) + math.abs(slots[2].fty - from[2])
-        if d2 < d1 then slots = {slots[2], slots[1]} end
-        cands[#cands + 1] = {stock = stock, slots = slots, d = math.min(d1, d2), sx = sx, sy = sy, axis = axis}
+      for axis = 0, 1 do -- 0 = "h", 1 = "v"
+        local d1, d2
+        if axis == 1 then
+          d1 = math.abs(sx - fx) + math.abs(sy - 6 - fy)
+          d2 = math.abs(sx - fx) + math.abs(sy + 6 - fy)
+        else
+          d1 = math.abs(sx - 6 - fx) + math.abs(sy - fy)
+          d2 = math.abs(sx + 6 - fx) + math.abs(sy - fy)
+        end
+        local d = math.min(d1, d2)
+        local b = buckets[d]
+        if not b then
+          b = {}
+          buckets[d] = b
+          ds[#ds + 1] = d
+        end
+        b[#b + 1] = sx
+        b[#b + 1] = sy
+        b[#b + 1] = axis
       end
     end
   end
-  table.sort(cands, function(a, b)
-    if a.d ~= b.d then return a.d < b.d end
-    if a.sx ~= b.sx then return a.sx < b.sx end
-    if a.sy ~= b.sy then return a.sy < b.sy end
-    return a.axis < b.axis
-  end)
+  table.sort(ds)
   local tries = 0
-  for _, c in ipairs(cands) do
+  local done = false
+  for _, d in ipairs(ds) do
+    local b = buckets[d]
+    for i = 1, #b, 3 do
+      local sx, sy, axis = b[i], b[i + 1], b[i + 2] == 1 and "v" or "h"
+      local stock, slots = layout.satellite_slots(sx, sy, axis)
+      local d1 = math.abs(slots[1].ftx - fx) + math.abs(slots[1].fty - fy)
+      local d2 = math.abs(slots[2].ftx - fx) + math.abs(slots[2].fty - fy)
+      if d2 < d1 then slots = {slots[2], slots[1]} end
+      local c = {stock = stock, slots = slots}
+      local result
+      result, done, tries = layout.try_satellite(ctx, c, from, blocked, owner, first, tries)
+      if result then return result end
+      if done then return nil end
+    end
+  end
+  return nil
+end
+
+-- Phase 5 M3 perf: one candidate of layout.plan_satellite (the former loop body). Returns the satellite or nil, whether
+-- the search is over (SATELLITE_TRIES reached) and the tries so far.
+function layout.try_satellite(ctx, c, from, blocked, owner, first, tries)
+  do
     local tiles = satellite_tiles(ctx, c.stock, c.slots, blocked)
     if tiles then
       tries = tries + 1
@@ -808,13 +1116,13 @@ function layout.plan_satellite(ctx, from, blocked, owner, first)
         end, layout.SATELLITE_EXPAND)
       end
       if link1 and link2 then
-        return {stock = c.stock, slots = c.slots, links = {link1, link2}}
+        return {stock = c.stock, slots = c.slots, links = {link1, link2}}, true, tries
       end
-      for _, t in ipairs(tiles) do ctx.reserved[tkey(t[1], t[2])] = nil end
-      if tries >= layout.SATELLITE_TRIES then break end
+      for _, t in ipairs(tiles) do tset(ctx.reserved, t[1], t[2], nil) end
+      if tries >= layout.SATELLITE_TRIES then return nil, true, tries end
     end
   end
-  return nil
+  return nil, false, tries
 end
 
 ---------------------------------------------------------------------------
@@ -828,7 +1136,7 @@ local function end_direction(ctx, path, belt_tiles)
   local candidates = {d, (d % 4) + 1, ((d + 2) % 4) + 1}
   for _, cd in ipairs(candidates) do
     local fx, fy = last[1] + DX[cd], last[2] + DY[cd]
-    if not belt_tiles[tkey(fx, fy)] then return cd, fx, fy end
+    if not tget(belt_tiles, fx, fy) then return cd, fx, fy end
   end
   return d, last[1] + DX[d], last[2] + DY[d]
 end
@@ -870,7 +1178,7 @@ function layout.plan_line(C, ctx, line_name, spec, hostile, sink)
   local belt_tiles = C.belt_tiles
   for _, t in ipairs(spine.tiles) do
     reserve(ctx, t[1], t[2], line_name)
-    belt_tiles[tkey(t[1], t[2])] = true
+    tset(belt_tiles, t[1], t[2], true)
   end
   for _, d in ipairs(spine.drills) do
     reserve_entity(ctx, layout.DRILL, d.x, d.y, line_name)
@@ -905,7 +1213,7 @@ function layout.plan_line(C, ctx, line_name, spec, hostile, sink)
       local t = route[i]
       path[#path + 1] = {t[1], t[2], seg = seg}
       reserve(ctx, t[1], t[2], line_name)
-      belt_tiles[tkey(t[1], t[2])] = true
+      tset(belt_tiles, t[1], t[2], true)
       blocked_extra[tkey(t[1], t[2])] = true
     end
   end
@@ -996,14 +1304,14 @@ function layout.plan_line(C, ctx, line_name, spec, hostile, sink)
     return slots, feeds, links
   end
 
-  local base_hub, base_reserved = {}, {}
+  local base_hub = {}
   for k, v in pairs(shub) do base_hub[k] = v end
-  for k, v in pairs(C.reserved) do base_reserved[k] = v end
+  -- Phase 5 M3 perf: a failed attempt is undone from the journal of C.reserved's writes (was: a copy of all of it)
+  tjournal_begin(C.reserved)
   local function restore()
     for k in pairs(shub) do shub[k] = nil end
     for k, v in pairs(base_hub) do shub[k] = v end
-    for k in pairs(C.reserved) do C.reserved[k] = nil end
-    for k, v in pairs(base_reserved) do C.reserved[k] = v end
+    tjournal_undo(C.reserved)
     for k in pairs(blocked_extra) do blocked_extra[k] = nil end
   end
   local cur_dir = idx_of(spine.along[1], spine.along[2])
@@ -1027,6 +1335,7 @@ function layout.plan_line(C, ctx, line_name, spec, hostile, sink)
     if slots[1].name:sub(1, 1) == "X" then break end
     exclude_first[slots[1].name] = true
   end
+  tjournal_end(C.reserved)
   -- belt directions: each tile faces the next one; the end tile goes straight unless that feeds another belt
   for i, t in ipairs(path) do
     local d
@@ -1036,7 +1345,7 @@ function layout.plan_line(C, ctx, line_name, spec, hostile, sink)
     else
       local fx, fy
       d, fx, fy = end_direction(ctx, path, belt_tiles)
-      C.avoid[tkey(fx, fy)] = true -- nothing may ever put a belt in front of this line's end
+      tset(C.avoid, fx, fy, true) -- nothing may ever put a belt in front of this line's end
     end
     plan.belts[#plan.belts + 1] = {x = t[1] + 0.5, y = t[2] + 0.5, dir = DEFINES[d], seg = t.seg}
   end
@@ -1083,10 +1392,51 @@ end
 -- Power for a powered building at pos (w x h) outside the core supply: covered by a planned pole's 7x7 supply area,
 -- or by a new pole on a margin tile that is within wire reach of the CC centre or a planned pole. Returns ok and the
 -- new pole position (nil when an existing pole covers it).
-local function ring_power(C, frame, pos, w, h, tx0, ty0, poles)
-  local sup = 3.5
+-- Phase 5 M3 perf: poles bucketed by 8x8-tile cells ({[cell key] = {pole, ...}}): the tests below only look at the poles
+-- of the cells around a spot instead of every planned pole (a base plans a few hundred; find_spot asked ring_power for
+-- up to 400 candidates, each scanning every pole for each of its ~30 margin tiles: 250 ms). Both tests only ask
+-- whether some pole qualifies, so the answer is the same.
+local POLE_CELL = 8
+local function pole_index(poles)
+  local idx = {}
   for _, p in ipairs(poles) do
-    if math.abs(p.x - pos.x) < sup + w / 2 and math.abs(p.y - pos.y) < sup + h / 2 then return true, nil end
+    local k = math.floor(p.x / POLE_CELL) * 65536 + math.floor(p.y / POLE_CELL)
+    local list = idx[k]
+    if not list then
+      list = {}
+      idx[k] = list
+    end
+    list[#list + 1] = p
+  end
+  return idx
+end
+-- true when test(p) holds for a pole within `reach` tiles (per axis) of (x, y)
+local function any_pole_near(idx, x, y, reach, test)
+  local cx0, cx1 = math.floor((x - reach) / POLE_CELL), math.floor((x + reach) / POLE_CELL)
+  local cy0, cy1 = math.floor((y - reach) / POLE_CELL), math.floor((y + reach) / POLE_CELL)
+  for cx = cx0, cx1 do
+    for cy = cy0, cy1 do
+      local list = idx[cx * 65536 + cy]
+      if list then
+        for _, p in ipairs(list) do
+          if test(p) then return true end
+        end
+      end
+    end
+  end
+  return false
+end
+
+local function ring_power(C, frame, pos, w, h, tx0, ty0, poles, pidx)
+  local sup = 3.5
+  if pidx then
+    if any_pole_near(pidx, pos.x, pos.y, sup + math.max(w, h) / 2 + 1, function(p)
+      return math.abs(p.x - pos.x) < sup + w / 2 and math.abs(p.y - pos.y) < sup + h / 2
+    end) then return true, nil end
+  else
+    for _, p in ipairs(poles) do
+      if math.abs(p.x - pos.x) < sup + w / 2 and math.abs(p.y - pos.y) < sup + h / 2 then return true, nil end
+    end
   end
   local cc = {x = frame.cx, y = frame.cy}
   for tx = tx0 - 1, tx0 + w do
@@ -1095,9 +1445,17 @@ local function ring_power(C, frame, pos, w, h, tx0, ty0, poles)
       if not inside then
         local q = {x = tx + 0.5, y = ty + 0.5}
         local linked = util.distance(q, cc) <= layout.CC_WIRE
-        for _, p in ipairs(poles) do
-          if linked then break end
-          if util.distance(q, p) <= layout.CC_WIRE then linked = true end
+        if not linked and pidx then
+          linked = any_pole_near(pidx, q.x, q.y, layout.CC_WIRE + 1, function(p)
+            return util.distance(q, p) <= layout.CC_WIRE
+          end)
+        elseif not linked then
+          for _, p in ipairs(poles) do
+            if util.distance(q, p) <= layout.CC_WIRE then
+              linked = true
+              break
+            end
+          end
         end
         if linked then return true, q end
       end
@@ -1105,6 +1463,69 @@ local function ring_power(C, frame, pos, w, h, tx0, ty0, poles)
   end
   return false, nil
 end
+
+-- Phase 5 M3 perf: when the first candidates of a spot search fail the surface checks, one area scan marks the tiles of
+-- every non-ignored entity and every resource near the search (bounding boxes as in layout.context_at); a candidate
+-- with a marked tile in its count area would fail count_entities_filtered anyway and is skipped without the engine
+-- calls. Only certain failures are skipped, so the spot found is the same. SPOT_SCAN_AFTER = engine-checked failures
+-- before the scan.
+layout.SPOT_SCAN_AFTER = 6
+local function scan_blockers(surface, area)
+  local occ, ore = {}, {}
+  local function mark(set, e)
+    local bb = e.bounding_box
+    local x0, y0 = math.floor(bb.left_top.x + 0.01), math.floor(bb.left_top.y + 0.01)
+    local x1, y1 = math.ceil(bb.right_bottom.x - 0.01) - 1, math.ceil(bb.right_bottom.y - 0.01) - 1
+    for tx = x0, x1 do
+      for ty = y0, y1 do set[tkey(tx, ty)] = true end
+    end
+  end
+  for _, e in pairs(surface.find_entities_filtered({area = area, type = IGNORE_TYPES, invert = true})) do mark(occ, e) end
+  for _, e in pairs(surface.find_entities_filtered({area = area, type = "resource"})) do mark(ore, e) end
+  return occ, ore
+end
+local function any_marked(set, tx0, ty0, tx1, ty1)
+  for tx = tx0, tx1 do
+    for ty = ty0, ty1 do
+      if set[tkey(tx, ty)] then return true end
+    end
+  end
+  return false
+end
+
+layout.GRID_AFTER = 24 -- Phase 5 M3 perf: candidates tested tile by tile before a search builds its summed-area table
+-- Phase 5 M3 perf: a summed-area table of "bad" tiles over [x0, x1] x [y0, y1] (inclusive tile coordinates): grid_any
+-- then answers "is any tile of this rectangle bad?" in four lookups, where the spot and site searches tested every tile
+-- of every candidate (tens of thousands of lookups). bad(tx, ty) is the searches' own per-tile test, so the answers
+-- are the same. grid_any returns nil for a rectangle not inside the grid (the caller tests tile by tile then).
+local function bad_grid(x0, y0, x1, y1, bad)
+  local w = x1 - x0 + 1
+  local S = {}
+  for j = 0, y1 - y0 + 1 do S[j * (w + 1)] = 0 end
+  for i = 0, w do S[i] = 0 end
+  for ty = y0, y1 do
+    local j = ty - y0 + 1
+    local row, prow = j * (w + 1), (j - 1) * (w + 1)
+    local acc = 0
+    for tx = x0, x1 do
+      local i = tx - x0 + 1
+      if bad(tx, ty) then acc = acc + 1 end
+      S[row + i] = S[prow + i] + acc
+    end
+  end
+  return {x0 = x0, y0 = y0, x1 = x1, y1 = y1, w = w + 1, S = S}
+end
+local function grid_any(G, tx0, ty0, tx1, ty1)
+  if tx0 < G.x0 or ty0 < G.y0 or tx1 > G.x1 or ty1 > G.y1 then return nil end
+  local S, w = G.S, G.w
+  local a, b = tx0 - G.x0, tx1 - G.x0 + 1
+  local c, d = ty0 - G.y0, ty1 - G.y0 + 1
+  return S[d * w + b] - S[c * w + b] - S[d * w + a] + S[c * w + a] > 0
+end
+
+-- Phase 5 M3 perf: the sorted candidate offsets of layout.find_spot per name and anchor (static: prototype sizes and
+-- PREFER), built once per load.
+local spot_cands = {}
 
 --- A free position for `name` near the CC (anchor "cc") or towards the enemy (anchor "front"): every footprint tile
 --- and a one-tile margin free of entities, ghosts, reserved tiles and ore, and can_place_entity true.
@@ -1131,57 +1552,96 @@ function layout.find_spot(C, surface, name, anchor)
   end
   local ox_off = (w % 2 == 1) and 0.5 or 0
   local oy_off = (h % 2 == 1) and 0.5 or 0
-  local poles
-  for _, pass in ipairs(passes) do
-    local cands = {}
-    for ox = math.ceil(pass.lo_x), math.floor(pass.hi_x) do
-      for oy = -math.floor(pass.half_y), math.floor(pass.half_y) do
-        local fx, fy = ox + ox_off, oy + oy_off
-        local inner = math.abs(fx) <= layout.POWER_HALF and math.abs(fy) <= layout.POWER_HALF
-        if math.abs(fx) + w / 2 <= pass.hi_x + 1.5 and math.abs(fy) + h / 2 <= pass.half_y + 1.5
-           and not (pass.ring and inner) then
-          local d1 = (fx - pref[1]) ^ 2 + (fy - pref[2]) ^ 2
-          local d2 = (fx - pref[1]) ^ 2 + (fy + pref[2]) ^ 2
-          cands[#cands + 1] = {fx, fy, math.min(d1, d2)}
+  local poles, pidx -- pidx: Phase 5 M3 perf (pole_index)
+  local ckey_ = name .. "|" .. tostring(anchor)
+  local cached = spot_cands[ckey_]
+  if not cached then
+    cached = {}
+    spot_cands[ckey_] = cached
+  end
+  local rejected, occ, ore = 0, nil, nil -- Phase 5 M3 perf: scan_blockers after SPOT_SCAN_AFTER failures
+  -- Phase 5 M3 perf: after GRID_AFTER candidates, the reserved, avoided and off-arena tiles of the whole search area in
+  -- one summed-area table
+  local G, looked = nil, 0
+  for pi, pass in ipairs(passes) do
+    local cands = cached[pi]
+    if not cands then
+      cands = {}
+      for ox = math.ceil(pass.lo_x), math.floor(pass.hi_x) do
+        for oy = -math.floor(pass.half_y), math.floor(pass.half_y) do
+          local fx, fy = ox + ox_off, oy + oy_off
+          local inner = math.abs(fx) <= layout.POWER_HALF and math.abs(fy) <= layout.POWER_HALF
+          if math.abs(fx) + w / 2 <= pass.hi_x + 1.5 and math.abs(fy) + h / 2 <= pass.half_y + 1.5
+             and not (pass.ring and inner) then
+            local d1 = (fx - pref[1]) ^ 2 + (fy - pref[2]) ^ 2
+            local d2 = (fx - pref[1]) ^ 2 + (fy + pref[2]) ^ 2
+            cands[#cands + 1] = {fx, fy, math.min(d1, d2)}
+          end
         end
       end
+      table.sort(cands, function(a, b)
+        if a[3] ~= b[3] then return a[3] < b[3] end
+        if a[2] ~= b[2] then return a[2] < b[2] end
+        return a[1] < b[1]
+      end)
+      cached[pi] = cands
     end
-    table.sort(cands, function(a, b)
-      if a[3] ~= b[3] then return a[3] < b[3] end
-      if a[2] ~= b[2] then return a[2] < b[2] end
-      return a[1] < b[1]
-    end)
     local tested = 0
     for _, c in ipairs(cands) do
       local pos = layout.world(frame, c[1], c[2])
-      local tx0, ty0 = layout.footprint(name, pos.x, pos.y)
+      -- (layout.footprint without its prototype lookup: w and h are this prototype's)
+      local tx0, ty0 = math.floor(pos.x - w / 2 + 0.001), math.floor(pos.y - h / 2 + 0.001)
       local ok = true
-      for tx = tx0 - 1, tx0 + w do
-        for ty = ty0 - 1, ty0 + h do
-          local k = tkey(tx, ty)
-          if C.reserved[k] ~= nil or C.avoid[k] or not in_arena(tx, ty) then ok = false break end
+      looked = looked + 1
+      if not G and looked > layout.GRID_AFTER then
+        local GR = layout.LOGISTIC_HALF + math.max(w, h) + 3
+        local fcx, fcy = math.floor(frame.cx), math.floor(frame.cy)
+        G = bad_grid(fcx - GR, fcy - GR, fcx + GR, fcy + GR, function(tx, ty)
+          return tget(C.reserved, tx, ty) ~= nil or tget(C.avoid, tx, ty) or not in_arena(tx, ty)
+        end)
+      end
+      local any = G and grid_any(G, tx0 - 1, ty0 - 1, tx0 + w, ty0 + h)
+      if any ~= nil then
+        ok = not any
+      else
+        for tx = tx0 - 1, tx0 + w do
+          for ty = ty0 - 1, ty0 + h do
+            if tget(C.reserved, tx, ty) ~= nil or tget(C.avoid, tx, ty) or not in_arena(tx, ty) then ok = false break end
+          end
+          if not ok then break end
         end
-        if not ok then break end
       end
       if ok then
         tested = tested + 1
         local area = {{tx0 - 1, ty0 - 1}, {tx0 + w + 1, ty0 + h + 1}}
         local pole
-        if surface.count_entities_filtered({area = area, type = IGNORE_TYPES, invert = true}) == 0
+        if rejected >= layout.SPOT_SCAN_AFTER and not occ then
+          local R = layout.LOGISTIC_HALF + math.max(w, h) + 3
+          occ, ore = scan_blockers(surface, {{frame.cx - R, frame.cy - R}, {frame.cx + R, frame.cy + R}})
+        end
+        if occ and (any_marked(occ, tx0 - 1, ty0 - 1, tx0 + w, ty0 + h)
+                    or any_marked(ore, tx0, ty0, tx0 + w - 1, ty0 + h - 1)) then
+          ok = false -- Phase 5 M3 perf: the counts below would not be 0
+        elseif surface.count_entities_filtered({area = area, type = IGNORE_TYPES, invert = true}) == 0
            and surface.count_entities_filtered({area = {{tx0, ty0}, {tx0 + w, ty0 + h}}, type = "resource"}) == 0
            and surface.can_place_entity({name = name, position = pos, force = C.force,
                                          build_check_type = defines.build_check_type.manual}) then
           if powered and pass.ring and not core_powered(frame, name, pos.x, pos.y) then
-            poles = poles or planned_poles(C)
-            ok, pole = ring_power(C, frame, pos, w, h, tx0, ty0, poles)
+            if not poles then
+              poles = planned_poles(C)
+              pidx = pole_index(poles) -- Phase 5 M3 perf
+            end
+            ok, pole = ring_power(C, frame, pos, w, h, tx0, ty0, poles, pidx)
           end
           if ok then
             for tx = tx0, tx0 + w - 1 do
-              for ty = ty0, ty0 + h - 1 do C.reserved[tkey(tx, ty)] = "building" end
+              for ty = ty0, ty0 + h - 1 do tset(C.reserved, tx, ty, "building") end
             end
-            if pole then C.reserved[tkey(math.floor(pole.x), math.floor(pole.y))] = "building" end
+            if pole then tset(C.reserved, math.floor(pole.x), math.floor(pole.y), "building") end
             return pos, pole
           end
+        else
+          rejected = rejected + 1
         end
         if tested > 400 then break end
       end
@@ -1263,7 +1723,27 @@ function layout.hub_site(C, ctx, patch, home, min_home, keep_away, min_apart, ma
     return a[2] < b[2]
   end)
   local S, P = layout.HUB_SITE, layout.HUB_SOLAR
+  -- Phase 5 M3 perf: after GRID_AFTER candidates, the site and solar boxes of the first HUB_SITE_TRIES candidates are
+  -- tested on a summed-area table
+  local G, looked = nil, 0
+  local function build_grid()
+    local gx0, gy0, gx1, gy1
+    for i, c in ipairs(cands) do
+      if i > layout.HUB_SITE_TRIES then break end
+      local ax0, ay0 = math.min(c[1] + S[1], c[1] + P[1]), math.min(c[2] + layout.HUB_SINK_DY + S[3], c[2] + P[3])
+      local ax1, ay1 = math.max(c[1] + S[2], c[1] + P[2]) - 1, math.max(c[2] + layout.HUB_SINK_DY + S[4], c[2] + P[4]) - 1
+      gx0, gy0 = math.min(gx0 or ax0, ax0), math.min(gy0 or ay0, ay0)
+      gx1, gy1 = math.max(gx1 or ax1, ax1), math.max(gy1 or ay1, ay1)
+    end
+    if gx0 then
+      G = bad_grid(gx0, gy0, gx1, gy1, function(tx, ty) return not free(ctx, tx, ty) or ctx.ore[tkey(tx, ty)] ~= nil end)
+    end
+  end
   local function box_free(tx0, tx1, ty0, ty1)
+    looked = looked + 1
+    if not G and looked > 2 * layout.GRID_AFTER then build_grid() end
+    local any = G and grid_any(G, tx0, ty0, tx1 - 1, ty1 - 1)
+    if any ~= nil then return not any end
     for tx = tx0, tx1 - 1 do
       for ty = ty0, ty1 - 1 do
         local k = tkey(tx, ty)
@@ -1287,10 +1767,10 @@ end
 --- Reserve the hub body and its two stockpile tiles (logistics.lua places the stockpiles when the hub is built).
 function layout.reserve_hub_body(C, hx, hy, owner)
   for tx = hx - 2, hx + 1 do
-    for ty = hy - 2, hy + 1 do C.reserved[tkey(tx, ty)] = owner end
+    for ty = hy - 2, hy + 1 do tset(C.reserved, tx, ty, owner) end
   end
-  C.reserved[tkey(hx - 4, hy)] = owner
-  C.reserved[tkey(hx + 3, hy)] = owner
+  tset(C.reserved, hx - 4, hy, owner)
+  tset(C.reserved, hx + 3, hy, owner)
 end
 
 --- A free spot for `name` whose footprint lies inside world tiles [x0, x1) x [y0, y1), nearest to `pref` first:
@@ -1310,25 +1790,47 @@ function layout.find_spot_in(C, surface, name, x0, y0, x1, y1, pref)
     if a[3] ~= b[3] then return a[3] < b[3] end
     return a[4] < b[4]
   end)
+  local rejected, occ, ore = 0, nil, nil -- Phase 5 M3 perf: scan_blockers after SPOT_SCAN_AFTER failures
+  local G, looked = nil, 0 -- Phase 5 M3 perf: summed-area table after GRID_AFTER candidates
   for _, c in ipairs(cands) do
     local pos, tx0, ty0 = c[1], c[3], c[4]
     local ok = true
-    for tx = tx0, tx0 + w - 1 do
-      for ty = ty0, ty0 + h - 1 do
-        local k = tkey(tx, ty)
-        if C.reserved[k] ~= nil or C.avoid[k] or not in_arena(tx, ty) then ok = false break end
-      end
-      if not ok then break end
+    looked = looked + 1
+    if not G and looked > layout.GRID_AFTER and x1 > x0 and y1 > y0 then
+      G = bad_grid(x0, y0, x1 - 1, y1 - 1, function(tx, ty)
+        return tget(C.reserved, tx, ty) ~= nil or tget(C.avoid, tx, ty) or not in_arena(tx, ty)
+      end)
     end
-    if ok and surface.count_entities_filtered({area = {{tx0, ty0}, {tx0 + w, ty0 + h}}, type = IGNORE_TYPES,
-                                               invert = true}) == 0
-       and surface.count_entities_filtered({area = {{tx0, ty0}, {tx0 + w, ty0 + h}}, type = "resource"}) == 0
-       and surface.can_place_entity({name = name, position = pos, force = C.force,
-                                     build_check_type = defines.build_check_type.manual}) then
+    local any = G and grid_any(G, tx0, ty0, tx0 + w - 1, ty0 + h - 1)
+    if any ~= nil then
+      ok = not any
+    else
       for tx = tx0, tx0 + w - 1 do
-        for ty = ty0, ty0 + h - 1 do C.reserved[tkey(tx, ty)] = "building" end
+        for ty = ty0, ty0 + h - 1 do
+          if tget(C.reserved, tx, ty) ~= nil or tget(C.avoid, tx, ty) or not in_arena(tx, ty) then ok = false break end
+        end
+        if not ok then break end
       end
-      return pos
+    end
+    if ok and rejected >= layout.SPOT_SCAN_AFTER and not occ then
+      occ, ore = scan_blockers(surface, {{x0 - 1, y0 - 1}, {x1 + 1, y1 + 1}})
+    end
+    if ok and occ and (any_marked(occ, tx0, ty0, tx0 + w - 1, ty0 + h - 1)
+                       or any_marked(ore, tx0, ty0, tx0 + w - 1, ty0 + h - 1)) then
+      ok = false -- Phase 5 M3 perf: the counts below would not be 0
+    end
+    if ok then
+      if surface.count_entities_filtered({area = {{tx0, ty0}, {tx0 + w, ty0 + h}}, type = IGNORE_TYPES,
+                                          invert = true}) == 0
+         and surface.count_entities_filtered({area = {{tx0, ty0}, {tx0 + w, ty0 + h}}, type = "resource"}) == 0
+         and surface.can_place_entity({name = name, position = pos, force = C.force,
+                                       build_check_type = defines.build_check_type.manual}) then
+        for tx = tx0, tx0 + w - 1 do
+          for ty = ty0, ty0 + h - 1 do tset(C.reserved, tx, ty, "building") end
+        end
+        return pos
+      end
+      rejected = rejected + 1
     end
   end
   return nil
@@ -1399,11 +1901,10 @@ function layout.ascii(C, surface, x0, y0, x1, y1)
     local tx, ty = tile_of(e.position.x, e.position.y)
     put(tx, ty, ORE_GLYPH[e.name] or "o")
   end
-  for k, owner in pairs(C.reserved) do
+  for k, owner in layout.tpairs(C.reserved) do
     if owner == "hub" then
-      local ty = k % 4096
-      if ty >= 2048 then ty = ty - 4096 end
-      put((k - ty) / 4096, ty, "#")
+      local tx, ty = tdecode(k)
+      put(tx, ty, "#")
     end
   end
   for _, e in pairs(surface.find_entities_filtered({area = {{x0, y0}, {x1, y1}}, force = C.force,

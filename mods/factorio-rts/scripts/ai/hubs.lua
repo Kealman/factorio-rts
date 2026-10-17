@@ -52,21 +52,19 @@ local function other_forces(C)
   return list
 end
 
+-- (Phase 5 M3 perf: reserved, avoid and belt_tiles are tile sets: layout.tcopy / tassign)
 local function snapshot(C)
-  local s = {reserved = {}, avoid = {}, belt_tiles = {}, claimed = {}}
-  for k, v in pairs(C.reserved) do s.reserved[k] = v end
-  for k, v in pairs(C.avoid) do s.avoid[k] = v end
-  for k, v in pairs(C.belt_tiles) do s.belt_tiles[k] = v end
+  local s = {reserved = layout.tcopy(C.reserved), avoid = layout.tcopy(C.avoid), belt_tiles = layout.tcopy(C.belt_tiles),
+             claimed = {}}
   for k, v in pairs(C.claimed) do s.claimed[k] = v end
   return s
 end
 
 local function restore(C, s)
-  for _, name in ipairs({"reserved", "avoid", "belt_tiles", "claimed"}) do
-    local t = C[name]
-    for k in pairs(t) do t[k] = nil end
-    for k, v in pairs(s[name]) do t[k] = v end
-  end
+  for _, name in ipairs({"reserved", "avoid", "belt_tiles"}) do layout.tassign(C[name], s[name]) end
+  local t = C.claimed
+  for k in pairs(t) do t[k] = nil end
+  for k, v in pairs(s.claimed) do t[k] = v end
 end
 
 -- Candidate patches for an expansion of commander C, best first: {p, d}.
@@ -151,8 +149,8 @@ function hubs.plan(C, surface, step)
         layout.reserve_hub_body(C, site.x, site.y, X.line)
         -- haulers stop just south of the hub (logistics.approach_point): keep that column free of solar arrays
         for ty = site.y + 2, site.y + 7 do
-          C.reserved[layout.tkey(site.x - 1, ty)] = "approach"
-          C.reserved[layout.tkey(site.x, ty)] = "approach"
+          layout.tset(C.reserved, site.x - 1, ty, "approach") -- Phase 5 M3 perf: tile sets
+          layout.tset(C.reserved, site.x, ty, "approach")
         end
         local slot_states = {}
         layout.reserve_hub(C, frame, slot_states, layout.HUB_SINK_ORDER)
