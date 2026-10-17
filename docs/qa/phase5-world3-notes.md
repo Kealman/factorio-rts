@@ -298,6 +298,9 @@ minimap showing the surveyed chart). In the GUI client the core took 3.1 s with 
 | 4096 x 6 probe (`fin-w3-huge`, seed 40967, AIs, PERF) | **21/21**; core 486 chunks in 2.78 s (three other servers running); fill 381 s at 60.0 UPS; every feature placed 32 s in |
 | 3072 x 4 with Survey (`fin-w3-3072s`) | **21/21** (10 M2 world checks); core 324 chunks in 1.84 s; fill 214 s at 60.0 UPS |
 | 2048 identity vs the M2 tree (`git archive 497cb1c`), 3 seeds x 2/3/4 nations | 117/117 on both; plans identical (18 lines), sites, tile and entity counts identical in 9 of 9 worlds |
+| the same, 20 seeds x 4 nations (`fin-w3-ident20`) | 260/260 on both; plans identical (40 lines), sites, tile and entity counts identical in 20 of 20 worlds |
+| M1 acceptance, seed 501, 60 min at speed 6 (`fin-w3-m1acc`) | **53/53, 0 errors**; 22,999 items by train; game minutes 56-60 at speed 1: 59.998-60.134 s of wall clock (60 UPS) |
+| the same on 56bb1a7 without this package (`fin-ref-m1acc`, `git archive 56bb1a7`) | 53/53, 22,999 items; the 54 check lines identical to `fin-w3-m1acc` (the M2 tree's 26,612 items differ through perf, air, age3 and war2, not the world) |
 | air autotest (`air_autotest.lua`, seed 501, speed 4) | **14/14** |
 | Age III fixture (`age3_fixture.lua`, speed 4) | **35/35** |
 | war2 autotest (`war2_autotest.lua`, seed 501) | **22/22** |
