@@ -36,6 +36,7 @@ fog.NATION_START_RADIUS = 160 -- Phase 5 M1: in Nation mode the capital's start 
 fog.BUILDING_RADIUS = 40    -- tiles around each own building
 fog.UNIT_RADIUS = 24        -- tiles around each own unit (radar_range already covers 3x3 chunks)
 fog.STATS_PERIOD = 60 * 60  -- a "fog:" stats line per minute
+fog.RADIUS_BY_KIND = {}     -- Phase 5 M3 air: [units.lua kind] = tiles charted around such a unit (scout planes)
 
 function fog.init()
   storage.fog = storage.fog or {last = {}}
@@ -106,7 +107,7 @@ function fog.update_force(force_name)
   local set, nu, nb = {}, 0, 0
   for _, rec in units.for_force(force_name) do
     if rec.entity.surface.index == surface.index then
-      add_square(set, rec.entity.position, fog.UNIT_RADIUS, half)
+      add_square(set, rec.entity.position, fog.RADIUS_BY_KIND[rec.kind] or fog.UNIT_RADIUS, half) -- Phase 5 M3 air
       nu = nu + 1
     end
   end

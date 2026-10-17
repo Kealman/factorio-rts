@@ -74,6 +74,11 @@ local modules = {
   require("scripts.diplomacy"),
   require("scripts.wars"),
   require("scripts.diplomacygui"),
+  -- Phase 5 M3 air: plane supply, return, crash, airfields, patrols, the AA turret feed (after production, research,
+  -- treasury: it wraps their kit gate; after divisions, orders, warsupply and fog: their hooks) and the airfield panel
+  -- (Y, after the HUD: hud.lua's key table calls airgui.toggle)
+  require("scripts.air"),
+  require("scripts.airgui"),
   require("scripts.debug"),
 }
 

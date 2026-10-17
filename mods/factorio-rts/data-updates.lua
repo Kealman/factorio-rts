@@ -16,3 +16,6 @@ require("prototypes.districts")
 -- Phase 5 M2 people (docs/qa/phase5-people-notes.md): houses, the food chain, goods, hidden labor modules and the labor
 -- slot on every staffed machine (after the districts: they get the slot too).
 require("prototypes.people")
+-- Phase 5 M3 air (docs/qa/phase5-air-notes.md): planes, the airfield, the AA turret, Aviation and Air Force, and the
+-- air / structure masks of every RTS turret and building (last: it edits the prototypes defined before it).
+require("prototypes.air")

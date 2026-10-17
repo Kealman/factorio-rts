@@ -71,6 +71,13 @@ divisions.KINDS = {move = true, attack_move = true, attack = true, retreat = tru
 divisions.SKIP_KINDS = {hauler = true, commander = true} -- never members: logistics and the hero have their own drivers
 divisions.ORDER_HOOKS = {} -- Phase 5 M2 war: [kind] = fn(id, target, opts) -> ok ("embark", "garrison")
 divisions.order_lock = nil -- Phase 5 M2 war: fn(D, kind) -> reason when an attack order is refused, else nil
+-- Phase 5 M3 air (scripts/air.lua): planes fly to their formation slots by direct commands and never join the unit
+-- group (divisions.flying(rec) -> true for a plane); planes returning to or rearming at an airfield sit division orders
+-- out (divisions.held(rec)); a plane attack on a point with an enemy building strikes that building
+-- (divisions.air_strike(surface, position, force) -> entity | nil)
+divisions.flying = nil
+divisions.held = nil
+divisions.air_strike = nil
 
 local CHECK_PERIOD = 15      -- controller tick
 local CHECK_EVERY = 60       -- each division is looked at this often
@@ -217,7 +224,8 @@ end
 local function eligible(rec, force)
   if not (rec and rec.entity.valid and rec.force == force) then return false end
   if divisions.SKIP_KINDS[rec.kind] then return false end
-  if rec.order ~= units.IDLE and rec.issuer ~= orders.ISSUER and rec.issuer ~= divisions.ISSUER then return false end
+  if rec.order ~= units.IDLE and rec.issuer ~= orders.ISSUER and rec.issuer ~= divisions.ISSUER
+     and not (units.yields and units.yields(rec)) then return false end -- Phase 5 M3 air: patrolling planes yield
   return rec.entity.commandable ~= nil
 end
 
@@ -281,6 +289,61 @@ local function make_group(D, recs, at)
   meta().by_group[g.unique_id] = D.id
   if old and old.valid then old.destroy() end
   return g
+end
+
+-- Phase 5 M3 air: the members a division order commands: ground members (the unit group) and planes (direct
+-- commands, nil when none); planes held at an airfield are left out.
+local function split_air(recs)
+  if not divisions.flying then return recs, nil end
+  local ground, planes = {}, nil
+  for _, rec in ipairs(recs) do
+    if not (divisions.held and divisions.held(rec)) then
+      if divisions.flying(rec) then
+        planes = planes or {}
+        planes[#planes + 1] = rec
+      else
+        ground[#ground + 1] = rec
+      end
+    end
+  end
+  return ground, planes
+end
+
+-- Live members a division order or an arrival commands (Phase 5 M3 air: without planes held at an airfield).
+local function movers(D)
+  local recs = live_members(D)
+  if not divisions.held then return recs end
+  local out = {}
+  for _, rec in ipairs(recs) do
+    if not divisions.held(rec) then out[#out + 1] = rec end
+  end
+  return out
+end
+
+-- Phase 5 M3 air: planes of a move / attack / retreat fly straight to formation slots around the target (an attack
+-- with an enemy building at the point strikes it). With ground members they are detached from the group's rejoin
+-- pass and simply stop at their slots; an all-plane division settles: it is done when every plane arrived, or
+-- SETTLE_TICKS after the slowest one's flight time.
+local function fly(D, kind, pos, planes, alone)
+  local attack = kind == "attack_move" or kind == "attack"
+  local surface = planes[1].entity.surface
+  local bld = attack and targeting.nation() and divisions.air_strike and divisions.air_strike(surface, pos, D.force)
+  local slots = orders.formation(planes, pos)
+  local flight = 0
+  for i, rec in ipairs(planes) do
+    local e = rec.entity
+    local un = e.unit_number
+    orders.cancel_queued(e)
+    claim(rec, attack and "attack_move" or "move", slots[i])
+    if alone then D.settling[un] = true else D.detached[un] = true end
+    local speed = e.speed or 0
+    if speed > 0.01 then flight = math.max(flight, util.distance(e.position, slots[i]) / speed) end
+    local cmd = {type = CMD.go_to_location, destination = slots[i], radius = 1,
+                 distraction = attack and DIS.by_enemy or DIS.none}
+    if bld and bld.valid then cmd = {type = CMD.attack, target = bld, distraction = DIS.by_enemy} end
+    orders.queue_command(e, cmd)
+  end
+  if alone then D.state, D.settle_tick = "settling", game.tick + math.ceil(flight) end
 end
 
 ---------------------------------------------------------------------------
@@ -419,7 +482,7 @@ function divisions.add_units(id, items, why)
       n = n + 1
       local e = rec.entity
       orders.cancel_queued(e)
-      if moving then
+      if moving and not (divisions.flying and divisions.flying(rec)) then -- Phase 5 M3 air: planes fly to it
         claim(rec, D.order.kind == "retreat" and "move" or (D.order.kind == "attack" and "attack_move" or D.order.kind),
           D.order.target)
         g.add_member(e)
@@ -542,6 +605,9 @@ function divisions.order(id, kind, target, opts)
     divisions.disband(id, "no members left")
     return false
   end
+  local planes -- Phase 5 M3 air: planes fly on their own; held ones (at an airfield) sit the order out
+  recs, planes = split_air(recs)
+  if #recs == 0 and not planes then return false, "planes at an airfield" end
   D.embark = nil -- Phase 5 M2 war: any order cancels boarding (the embark hook sets it again after its move)
   D.no_train = nil -- Phase 5 M2 QA round 1: and the card's "No troop train"
   local pos = target and pos_of(target) or nil
@@ -549,6 +615,7 @@ function divisions.order(id, kind, target, opts)
   local m = meta()
   if kind == "hold" or kind == "stop" then
     drop_group(D)
+    for _, rec in ipairs(planes or {}) do recs[#recs + 1] = rec end -- Phase 5 M3 air
     for _, rec in ipairs(recs) do
       orders.cancel_queued(rec.entity)
       if kind == "hold" then
@@ -589,17 +656,23 @@ function divisions.order(id, kind, target, opts)
       orders.cancel_queued(rec.entity)
       claim(rec, rec_order, pos)
     end
-    local g = make_group(D, recs, centroid(recs))
-    orders.queue_command(g, cmd, {start_moving = true})
-    D.state = "moving"
+    if #recs > 0 then -- Phase 5 M3 air: an all-plane division has no group
+      local g = make_group(D, recs, centroid(recs))
+      orders.queue_command(g, cmd, {start_moving = true})
+      D.state = "moving"
+    else
+      drop_group(D)
+    end
+    if planes then fly(D, kind, pos, planes, #recs == 0) end -- Phase 5 M3 air
   end
   D.order = {kind = kind, target = pos, tick = game.tick, auto = opts and opts.auto or nil}
   D.fails = opts and opts.keep_fails and D.fails or nil
   local st = m.stats
   st.orders[kind] = (st.orders[kind] or 0) + 1
-  util.log("divisions: #%d %s order %s%s n=%d%s%s", id, divisions.label(D), kind,
+  util.log("divisions: #%d %s order %s%s n=%d%s%s%s", id, divisions.label(D), kind,
     pos and (" -> " .. util.pos_str(pos)) or "", #recs, D.group_id and (" group #" .. D.group_id) or "",
-    opts and opts.auto and (" (" .. opts.auto .. ")") or "")
+    opts and opts.auto and (" (" .. opts.auto .. ")") or "",
+    planes and kind ~= "hold" and kind ~= "stop" and string.format(" planes=%d", #planes) or "") -- Phase 5 M3 air
   changed(D, "order")
   return true
 end
@@ -734,7 +807,7 @@ local function arrive(D, why)
     end
   end
   if order and order.target and (attack or order.kind == "move" or order.kind == "retreat") then
-    local recs = live_members(D)
+    local recs = movers(D) -- Phase 5 M3 air: not the planes held at an airfield
     if #recs > 0 then
       drop_group(D) -- the members get their slot commands right away
       local slots = orders.formation(recs, order.target)
@@ -899,7 +972,8 @@ events.on(defines.events.on_ai_command_completed, function(e)
   if D and D.joining[e.unit_number] then
     -- a reinforcement reached its division
     D.joining[e.unit_number] = nil
-    if D.state == "moving" and D.group and D.group.valid and D.order then
+    if D.state == "moving" and D.group and D.group.valid and D.order
+       and not (divisions.flying and divisions.flying(rec)) then -- Phase 5 M3 air: planes stay out of the group
       local kind = D.order.kind
       claim(rec, kind == "retreat" and "move" or (kind == "attack" and "attack_move" or kind), D.order.target)
       D.group.add_member(rec.entity)

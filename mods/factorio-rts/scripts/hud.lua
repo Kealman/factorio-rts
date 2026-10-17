@@ -156,6 +156,10 @@ for _, name in ipairs({"rts-house", "rts-apartment", "rts-farm", "rts-bakery", "
 -- Phase 5 M2 war: supply crates (both recipes), the field depot, the troop wagon kit
 for _, name in ipairs({"rts-supply-crate", "rts-supply-crate-ii", "rts-field-depot", "rts-troop-wagon-kit"}) do
   P4.NATION_ONLY[name] = true end
+-- Phase 5 M3 air: the airfield, the AA turret and the plane kits (Aviation, Air Force); the Nation help page's air line
+for _, name in ipairs({"rts-airfield", "rts-aa-turret", "rts-scout-plane-kit", "rts-bomber-kit", "rts-interceptor-kit"}) do
+  P4.NATION_ONLY[name] = true end
+P4.HELP_NATION[#P4.HELP_NATION + 1] = "rts-air.help-nation-air"
 P4.crafter = function(kind) return kind == "factory" or kind == "district" end -- Phase 5 E1: districts are producers
 P4.place_name = require("scripts.world").place_name -- Phase 5 M2 world: region names in alerts (alert_text)
 -- Phase 5 E1: recipes an age locks (research.AGE_LOCKS: Age II goods, buildings, the Armoured car kit) exist in Nation
@@ -221,10 +225,17 @@ local PREFIX = "rts_hud_"          -- every clickable HUD element's name starts 
 local KIND_KEYS = {walker = "rts.kind-walker", heavy = "rts.kind-heavy", drone = "rts.kind-drone",
                    raider = "rts.kind-raider", artillery = "rts.kind-artillery", hauler = "rts.kind-hauler",
                    commander = "rts.kind-commander"}
+KIND_KEYS["scout-plane"] = "rts-air.kind-scout-plane" -- Phase 5 M3 air (the counter wheel of card tooltips)
+KIND_KEYS["bomber"] = "rts-air.kind-bomber"
+KIND_KEYS["interceptor"] = "rts-air.kind-interceptor"
 local KIND_RANK = {commander = 0, walker = 1, heavy = 2, drone = 3, raider = 4, artillery = 5, hauler = 6}
 local ORDER_KEYS = {idle = "rts.order-idle", move = "rts.order-move", attack = "rts.order-attack",
                     attack_move = "rts.order-attack-move", hold = "rts.order-hold", haul = "rts.order-haul",
                     commander = "rts.order-commander"}
+-- Phase 5 M3 air: the planes' own orders (scripts/air.lua)
+ORDER_KEYS.patrol = "rts-air.order-patrol"
+ORDER_KEYS["return"] = "rts-air.order-return"
+ORDER_KEYS.rearm = "rts-air.order-rearm"
 
 -- Phase 4 unit data from balance.lua: kit recipe -> unit for the barracks kits (the hauler kit is the factory's,
 -- made_by = "factory"), and the mk2 kits, which research never enables (Armor I deploys mk2 units from tier-1 kits),
@@ -278,10 +289,11 @@ local BUILD_TABS = {
   {key = "production", caption = "rts.build-tab-production", tooltip = "rts.build-tab-production-tooltip",
    items = {"rts-barracks", "rts-factory", "rts-lab", "rts-city-charter", "rts-fort", -- Phase 5 M1: Nation only
             "rts-house", "rts-apartment", "rts-farm", "rts-bakery", "rts-fishing-hut", -- Phase 5 M2 people: Nation only
-            "rts-field-depot"}}, -- Phase 5 M2 war: Nation only
+            "rts-field-depot", -- Phase 5 M2 war: Nation only
+            "rts-airfield"}}, -- Phase 5 M3 air: Nation only (Aviation)
   {key = "defence", caption = "rts.build-tab-defence", tooltip = "rts.build-tab-defence-tooltip",
    items = {"rts-turret", "rts-laser-turret", "rts-wall", "rts-solar-array", "rts-steam-plant", "rts-accumulator",
-            "rts-radar"}},
+            "rts-radar", "rts-aa-turret"}}, -- Phase 5 M3 air: the AA turret, Nation only (Aviation)
   -- Phase 5 E1: Age II buildings, Nation mode only (an icon tab: the three text tabs fill the width in Russian)
   {key = "age2", sprite = "item/rts-science-industrial", tooltip = "rts.build-tab-age2-tooltip", nation = true,
    items = {"rts-pumpjack", "rts-refinery", "rts-chemical-plant", "rts-district-smelting", "rts-district-steel",
@@ -1445,6 +1457,8 @@ local function block_text(un)
            {"rts-people.barracks-blocked-recruits-tooltip", unit, b.need or 1}
   elseif b.reason == "unpaid" then -- Phase 5 M2 treasury: wages unpaid (debt stage 2 or 3)
     return {"rts-treasury.barracks-unpaid", unit}, {"rts-treasury.barracks-unpaid-tooltip", unit}
+  elseif b.reason == "airfield" then -- Phase 5 M3 air: a plane kit needs an airfield in the barracks' city
+    return {"rts-air.barracks-no-airfield", unit}, {"rts-air.barracks-no-airfield-tooltip", unit}
   end
   return {"rts.barracks-blocked-other", tostring(b.reason)}, ""
 end
@@ -1603,6 +1617,9 @@ local function update_other(player, h, un, rec)
   elseif rec.kind == "hub" then
     el.b_line2.caption = {"rts.hub-line", supply.HUB_CAP}
     el.b_line3.caption = {"rts.hub-hint"}
+  elseif rec.kind == "airfield" or rec.kind == "aa-turret" then -- Phase 5 M3 air: scripts/airgui.lua fills the lines
+    local fn = optional_fn("scripts.airgui", {"building_lines"})
+    if fn then fn(el, rec) end
   else
     el.b_line2.caption = ""
   end
@@ -2387,6 +2404,7 @@ P4.KEYS = {
   {input = "rts-diplomacy", key = "F4", module = "scripts.diplomacygui", fn = "toggle"}, -- Phase 5 M2 diplomacy
   {input = "rts-market", key = "M", module = "scripts.marketgui", fn = "toggle"}, -- Phase 5 M2 treasury
   {input = "rts-minimap-mode", key = "N", module = "scripts.strategic", fn = "toggle_minimap"}, -- Phase 5 M2 world
+  {input = "rts-airfield-panel", key = "Y", module = "scripts.airgui", fn = "toggle"}, -- Phase 5 M3 air
 }
 for _, k in ipairs(P4.KEYS) do
   events.on(k.input, function(e)

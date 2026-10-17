@@ -93,6 +93,9 @@ production.kit_gate = nil
 production.recruit_gate = nil
 -- Phase 5 M2 people (scripts/labor.lua): fn(entity) -> staffing step 0..1 (production.status, districts.staffing_factor)
 production.staffing = nil
+-- Phase 5 M3 air (scripts/air.lua): fn(barracks_record, spawn def) -> MapPosition where the unit appears instead of the
+-- barracks exit (a plane at its city's airfield), or nil
+production.exit_of = nil
 
 local spawned_callbacks = {}
 
@@ -428,7 +431,7 @@ end
 
 local function spawn_from_kit(rec, kit, def)
   local e = rec.entity
-  local exit = buildings.default_exit(rec)
+  local exit = production.exit_of and production.exit_of(rec, def) or buildings.default_exit(rec) -- Phase 5 M3 air
   local unit = units.spawn(def.unit, exit, rec.force, def.kind, e.surface)
   if not unit then return nil end
   local stats = production.stats(rec.force)

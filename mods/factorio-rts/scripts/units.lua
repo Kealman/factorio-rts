@@ -33,6 +33,10 @@ for name, def in pairs(require("balance").units) do KIND_BY_NAME[name] = def.kin
 
 local removed_callbacks = {}
 
+-- Phase 5 M3 air (scripts/air.lua): fn(rec) -> true when the module that claimed a unit lets a player order or a
+-- division take it over (a patrolling plane); nil = no claim yields.
+units.yields = nil
+
 --- Register fn(unit_number, record) called when a unit leaves the registry (death or destruction).
 --- Call at load time only (module top level). selection.lua uses this to drop dead units.
 function units.on_removed(fn)

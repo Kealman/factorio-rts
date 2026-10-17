@@ -55,6 +55,11 @@ warsupply.CHECK_PERIOD = 15      -- controller tick (divisions due in this tick 
 warsupply.LOOSE_PERIOD = 60      -- loose units' states are recomputed this often
 warsupply.RECIPE_PERIOD = 600    -- recipe switches per force
 local DEPOT_KINDS = {cc = true, hub = true}
+-- Phase 5 M3 air (scripts/air.lua): fn(entity) -> true for a unit with its own supply (a plane). Its hits never make
+-- its division engaged, the out-of-supply wear skips it, no attack order is refused to it, and a division of such units
+-- neither uses nor refills supply points.
+warsupply.exempt = nil
+local function exempt(entity) return warsupply.exempt ~= nil and warsupply.exempt(entity) end
 local UNIT_TYPES = {"unit", "spider-unit"}
 
 buildings.KIND_BY_NAME[warsupply.FIELD_DEPOT] = "hub"
@@ -307,6 +312,17 @@ end
 function warsupply.step_division(D, dt)
   local n = divisions.strength(D)
   if n == 0 or not D.pos then return 0 end
+  if warsupply.exempt then -- Phase 5 M3 air: an all-plane division neither uses nor refills supply points
+    local own = false
+    for un in pairs(D.units) do
+      local rec = storage.units and storage.units[un]
+      if rec and rec.entity.valid and not exempt(rec.entity) then
+        own = true
+        break
+      end
+    end
+    if not own then return 0 end
+  end
   local tick = game.tick
   local minutes = dt / 3600
   local use = W.use
@@ -522,7 +538,7 @@ function warsupply.attrition_pass()
     local D = l[id]
     if D then
       for _, rec in ipairs(divisions.live_members(D)) do
-        if rec.kind ~= "commander" then
+        if rec.kind ~= "commander" and not exempt(rec.entity) then -- Phase 5 M3 air: planes have their own supply
           wear(rec.entity, D.force)
           n = n + 1
         end
@@ -537,7 +553,7 @@ function warsupply.attrition_pass()
   table.sort(list)
   for _, un in ipairs(list) do
     local rec = units.get(un)
-    if rec and rec.kind ~= "commander" then
+    if rec and rec.kind ~= "commander" and not exempt(rec.entity) then -- Phase 5 M3 air
       wear(rec.entity, rec.force)
       n = n + 1
     end
@@ -561,7 +577,7 @@ events.on(defines.events.on_entity_damaged, function(e)
   if not (ent and ent.valid) then return end
   local member = m.member
   local tick = game.tick
-  local un = ent.unit_number
+  local un = not exempt(ent) and ent.unit_number or nil -- Phase 5 M3 air: a hit plane engages nothing, keeps its heal
   local id = un and member[un]
   local l = storage.divisions
   if id then
@@ -569,7 +585,7 @@ events.on(defines.events.on_entity_damaged, function(e)
     if D then D.engaged_tick = tick end
   end
   local cause = e.cause
-  if cause and cause.valid then
+  if cause and cause.valid and not exempt(cause) then -- Phase 5 M3 air: a plane's hit does not engage its division
     local cun = cause.unit_number
     local cid = cun and member[cun]
     if cid then
@@ -612,6 +628,7 @@ end
 
 orders.unit_lock = function(entity)
   if not nation() then return nil end
+  if exempt(entity) then return nil end -- Phase 5 M3 air: planes have their own supply
   if warsupply.unit_state(entity) == "out" then
     local st = stats(entity.force.name)
     st.refused = st.refused + 1

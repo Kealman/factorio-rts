@@ -69,6 +69,7 @@ local STANCE_TIPS = {hold = {"rts-div.stance-hold-tooltip"}, advance = {"rts-div
 local ORDER_KEYS = {move = "rts-div.order-move", attack_move = "rts-div.order-attack-move",
                     attack = "rts-div.order-attack", retreat = "rts-div.order-retreat", hold = "rts-div.order-hold",
                     stop = "rts-div.state-idle"}
+ORDER_KEYS.patrol = "rts-air.order-patrol" -- Phase 5 M3 air: planes on patrol (scripts/air.lua air.order_patrol)
 
 local function px(units_, s) return math.floor(units_ * s + 0.5) end
 

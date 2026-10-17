@@ -917,4 +917,76 @@ balance.nation.world = {
   zoom = {furthest = 1.1},                    -- strategic zoom: the map view shows this many world widths
 }
 
+-- Phase 5 M3 air (docs/PHASE5-M3.md D4, section 3 "air.lua"; docs/qa/phase5-air-notes.md): planes, the airfield and the
+-- anti-air turret. Nation mode only (nation_only units: Skirmish never gets a plane, a kit or an AA turret). Planes are
+-- `unit`s with an empty collision mask (they fly over water, cliffs and walls) drawn on the air-object layer; they carry
+-- the "air" trigger target type (prototypes/categories.lua makes one per balance.target_types entry): the AA turret
+-- targets only it, gun, laser, bunker, fort and garrison turrets ignore it (prototypes/air.lua). Every RTS building
+-- carries "structure", which the bomber's x2 bonus uses. Speeds are relative to the walker (11.5 tiles/s); `vision`
+-- is the tiles fog.lua charts around the plane (scout: its reveal).
+balance.target_types.air = "rts-air"
+balance.target_types.structure = "rts-structure"
+balance.units["rts-scout-plane"] = {
+  kind = "scout-plane", tier = 1, role = "air-scout", supply = 1, nation_only = true, air = true,
+  kit = "rts-scout-plane-kit", cost = {["engine-unit"] = 1, ["electronic-circuit"] = 4, ["iron-plate"] = 10}, time = 6,
+  unlock = "rts-aviation",
+  health = 150, speed = 2.4, size = 0.5, range = 0, vision = 64,
+  resist = {physical = 60}, tags = {"air"},
+  strong = {}, weak = {"interceptor"},
+}
+balance.units["rts-bomber"] = {
+  kind = "bomber", tier = 1, role = "air-bomber", supply = 3, nation_only = true, air = true,
+  kit = "rts-bomber-kit", cost = {["engine-unit"] = 2, ["steel-plate"] = 6, ["rts-explosives"] = 8,
+                                  ["electronic-circuit"] = 4}, time = 10,
+  unlock = "rts-air-force",
+  health = 600, speed = 1.2, size = 0.9, range = 6, cooldown = 90, damage = 180, damage_type = "explosion",
+  splash = 2, splash_damage = 30, bonus = {structure = 2},
+  resist = {physical = 60}, tags = {"air"},
+  ammo_category = "rts-bomber",
+  strong = {"building", "turret", "wall"}, weak = {"interceptor"},
+}
+balance.units["rts-interceptor"] = {
+  kind = "interceptor", tier = 1, role = "air-superiority", supply = 2, nation_only = true, air = true,
+  kit = "rts-interceptor-kit", cost = {["engine-unit"] = 2, ["steel-plate"] = 4, ["advanced-circuit"] = 2}, time = 8,
+  unlock = "rts-air-force",
+  health = 300, speed = 2.0, size = 0.7, range = 16, cooldown = 10, damage = 10, damage_type = "physical",
+  bonus = {air = 3},
+  resist = {physical = 60}, tags = {"air"},
+  ammo_category = "rts-interceptor",
+  strong = {"scout-plane", "bomber"}, weak = {}, -- the AA turret (not a unit kind) is its counter
+}
+balance.nation.air = {
+  planes = {"rts-scout-plane", "rts-bomber", "rts-interceptor"},
+  -- Plane supply (fuel and ammunition), 0..max: -drain per second in flight farther than range tiles from every own
+  -- airfield, +refill per second within it; at return_at the plane flies home on its own, at 0 it crashes (dies, alert).
+  -- A plane far from home turns back earlier, at what the flight home needs x bingo_factor + bingo_margin (a slow bomber
+  -- 200 tiles out needs 20 supply for the trip alone)
+  supply = {max = 100, drain = 1, refill = 10, range = 24, return_at = 20, bingo_factor = 1.25, bingo_margin = 5},
+  period = 60,                  -- ticks between supply steps (all planes in one pass)
+  return_radius = 6,            -- a returning plane's go_to radius around its airfield
+  crash_keep = 5 * 60 * 60,     -- ticks a crashed plane's record answers air.state(un) = "crashed"
+  patrol = {radius = 40, points = 6}, -- default patrol circle and its waypoints
+  -- Airfield: 6x6, one per city (the city whose land it stands on); a plane kit needs one in the barracks' city and the
+  -- plane appears there
+  airfield = {kind = "airfield", cost = {["steel-plate"] = 20, concrete = 40, ["electronic-circuit"] = 10}, time = 12,
+              health = 2500, size = 6, unlock = "rts-aviation"},
+  -- Anti-air turret: magazines from the network it stands in (fed like turrets, scripts/air.lua), only planes
+  aa_turret = {kind = "aa-turret", cost = {["iron-plate"] = 30, ["steel-plate"] = 10, ["electronic-circuit"] = 5},
+               time = 8, health = 1000, range = 30, cooldown = 6, damage_modifier = 6, unlock = "rts-aviation",
+               feed_min = 5, feed = 10, feed_period = 120},
+  techs = {
+    {name = "rts-aviation", kit = "rts-science-industrial", count = 30, age = 2, icon = "defender",
+     unlock = {"rts-scout-plane", "rts-scout-plane-kit", "rts-airfield", "rts-aa-turret"}},
+    {name = "rts-air-force", kit = "rts-science-industrial", count = 50, age = 3, icon = "destroyer",
+     prerequisites = {"rts-aviation"}, unlock = {"rts-bomber", "rts-bomber-kit", "rts-interceptor", "rts-interceptor-kit"}},
+  },
+}
+balance.buildings["rts-airfield"] = {kind = "airfield", cost = balance.nation.air.airfield.cost,
+                                     time = balance.nation.air.airfield.time, health = balance.nation.air.airfield.health,
+                                     unlock = "rts-aviation"}
+balance.buildings["rts-aa-turret"] = {kind = "aa-turret", cost = balance.nation.air.aa_turret.cost,
+                                      time = balance.nation.air.aa_turret.time,
+                                      health = balance.nation.air.aa_turret.health, range = balance.nation.air.aa_turret.range,
+                                      unlock = "rts-aviation"}
+
 return balance

@@ -396,7 +396,10 @@ local function resolve(who, kind, target)
   for _, entity in pairs(list) do
     if entity.valid and entity.unit_number then
       local rec = units.get(entity.unit_number)
-      if rec and (rec.order == units.IDLE or rec.issuer == orders.ISSUER) then out[#out + 1] = rec end
+      if rec and (rec.order == units.IDLE or rec.issuer == orders.ISSUER
+                  or (units.yields and units.yields(rec))) then -- Phase 5 M3 air: a patrolling plane takes the order
+        out[#out + 1] = rec
+      end
     end
   end
   return out, n_div, surface
