@@ -1309,8 +1309,11 @@ function rails.create_train(depot_un, kind)
   for _, k in ipairs(kits) do
     if net.get_item_count(k[1]) < k[2] then return nil, "no-kits" end
   end
-  -- Phase 5 M1 integration: a train without coal never moves (an AI crew stood on its platform with 0 coal)
-  if net.get_item_count(rails.FUEL) < 2 then return nil, "no-fuel" end
+  -- Phase 5 M1 integration: a train without coal never moves (an AI crew stood on its platform with 0 coal).
+  -- Phase 5 M2 integration: a construction train refuels nowhere but from its wagon, so it leaves only with a full
+  -- load for both locomotives (2 x fuel_target; an AI crew left with 2 coal and stood at piece 36 for half an hour)
+  local min_fuel = kind == "construction" and 2 * CFG.fuel_target or 2
+  if net.get_item_count(rails.FUEL) < min_fuel then return nil, "no-fuel" end
   local surface, force_name = d.entity.surface, d.force
   local p = d.platform
   -- the front locomotive at the end the line joins (or the second end), facing out
@@ -1350,11 +1353,12 @@ function rails.create_train(depot_un, kind)
     if color then ent.color = color end
     buildings.register(ent)
   end
-  -- starter fuel from the network
+  -- starter fuel from the network (Phase 5 M2 integration: a construction train's locomotives leave full)
   local fuel = 0
+  local load = kind == "construction" and CFG.fuel_target or CFG.starter_fuel
   for _, ent in ipairs({made[1], made[#made]}) do
     local inv = ent.get_fuel_inventory()
-    if inv then fuel = fuel + logistics.transfer(net, inv, rails.FUEL, CFG.starter_fuel) end
+    if inv then fuel = fuel + logistics.transfer(net, inv, rails.FUEL, load) end
   end
   train.manual_mode = true
   local rec = {id = train.id, kind = kind, force = force_name, home = depot_un, loco = made[1], stock = made,
@@ -2348,6 +2352,21 @@ buildings.on_force_changed(function(un, rec, old)
       util.log("rails: line #%d of %s lost: depot #%d now belongs to %s", line.id, line.force, un, rec.force)
     end
     d.line = nil
+    -- Phase 5 M2 integration: the depot is back with the owner of a line it lost (its city retaken): the line is
+    -- restored when its other end is the owner's too, as "cut" (repair crews) once it had opened, else "building"
+    for _, id in ipairs(sorted_keys(R.lines)) do
+      local ln = R.lines[id]
+      if ln.state == "lost" and ln.force == rec.force and (ln.a == un or ln.b == un) then
+        local other = R.depots[ln.a == un and ln.b or ln.a]
+        if other and other.entity.valid and other.force == rec.force and not other.line then
+          ln.state = ln.opened and "cut" or "building"
+          ln.wait = nil
+          d.line, other.line = id, id
+          util.log("rails: line #%d of %s restored (%s): depot #%d is back", id, rec.force, ln.state, un)
+          break
+        end
+      end
+    end
     for _, id in ipairs(sorted_keys(R.trains)) do
       local trec = R.trains[id]
       if trec.force == old and (trec.pickup == un or trec.dropoff == un or trec.home == un) then
@@ -2361,11 +2380,65 @@ buildings.on_force_changed(function(un, rec, old)
       end
     end
   end
+  -- Phase 5 M2 integration: a program that lost a building is kept in R.ai_lost and taken up again when its far city
+  -- comes back (rails.ai_revive, the rts_city_captured signal); the AI plans a new line meanwhile
+  local function lose(P)
+    R.ai_lost = R.ai_lost or {}
+    R.ai_lost[old] = R.ai_lost[old] or {}
+    table.insert(R.ai_lost[old], {anchor = P.anchor, far = P.far, depot_a = P.depot_a, depot_b = P.depot_b,
+                                  line = P.line, far_site = P.far_site})
+  end
+  local function uses(P) return P.anchor == un or P.far == un or P.depot_a == un or P.depot_b == un end
   local A = R.ai and R.ai[old]
-  if A and (A.anchor == un or A.far == un or A.depot_a == un or A.depot_b == un) then
+  if A and uses(A) then
     R.ai[old] = nil
+    lose(A)
     util.log("rails: AI %s lost #%d of its rail program: it plans a new line", old, un)
   end
+  local more = R.ai_more and R.ai_more[old]
+  for i = #(more or {}), 1, -1 do
+    if uses(more[i]) then
+      lose(table.remove(more, i))
+      util.log("rails: AI %s lost #%d of a second rail program", old, un)
+    end
+  end
+end)
+
+--- Phase 5 M2 integration: a city came back to a force (rts_city_captured): a rail program it lost with that city as
+--- its far end is taken up again (its restored line, or a new depot and line), as the main program when the force has
+--- none, else beside it (R.ai_more, serviced by rails.ai_step).
+function rails.ai_revive(force_name, center_un)
+  local R = storage.rails
+  local lost = R and R.ai_lost and R.ai_lost[force_name]
+  if not (lost and center_un) then return false end
+  for i, P in ipairs(lost) do
+    if P.far == center_un then
+      table.remove(lost, i)
+      P.state, P.next, P.why, P.policies = "idle", nil, nil, nil
+      R.ai = R.ai or {}
+      local where
+      if not R.ai[force_name] then
+        R.ai[force_name] = P
+        where = "main"
+      else
+        R.ai_more = R.ai_more or {}
+        R.ai_more[force_name] = R.ai_more[force_name] or {}
+        table.insert(R.ai_more[force_name], P)
+        where = "second"
+      end
+      util.log("rails: AI %s takes up its line to #%d again (%s program, line #%s)", force_name, center_un, where,
+        tostring(P.line))
+      return true
+    end
+  end
+  return false
+end
+
+events.on_signal("rts_city_captured", function(d)
+  if not (d and d.to and d.city_id and rails.nation()) then return end
+  local cities = loaded("scripts.cities")
+  local city = type(cities) == "table" and cities.get and cities.get(d.city_id)
+  if city and city.center then rails.ai_revive(d.to, city.center) end
 end)
 
 ---------------------------------------------------------------------------
@@ -2640,7 +2713,9 @@ end
 --- One step of the AI rail program for a force. A = {anchor = capital hub/CC un, far = far hub un, ...}.
 function rails.ai_program(force_name, A)
   local R = rstate()
-  if not (buildings.get(A.anchor) and buildings.get(A.far)) then
+  local anchor_rec, far_rec = buildings.get(A.anchor), buildings.get(A.far)
+  -- Phase 5 M2 integration: both ends must be the force's own (a far city may change hands)
+  if not (anchor_rec and far_rec and anchor_rec.force == force_name and far_rec.force == force_name) then
     A.state = "idle"
     return
   end
@@ -2651,6 +2726,10 @@ function rails.ai_program(force_name, A)
     return
   end
   local line = A.line and R.lines[A.line]
+  -- Phase 5 M2 integration: a program taken up again whose line stayed lost (a depot gone) plans a new one
+  if line and line.state == "lost" then
+    A.line, line = nil, nil
+  end
   if not line or line.state == "failed" then
     if line and line.state == "failed" then
       if game.tick < (A.retry or 0) then return end
@@ -2688,6 +2767,16 @@ function rails.ai_program(force_name, A)
     local have
     for _, rec in pairs(R.trains) do
       if rec.kind == "cargo" and rec.force == force_name and rec.ai_line == A.line then have = rec end
+    end
+    -- Phase 5 M2 integration: the freight train of a line taken up again stood "depot-lost" without a route
+    if have and not (have.pickup and have.dropoff) then
+      local train = train_of(have)
+      if train and train.valid then
+        rails.set_route(train, db, da)
+        util.log("rails: AI %s routes freight train %d on line #%d again", force_name, train.id, A.line)
+      else
+        have = nil
+      end
     end
     if not have then
       if ai_kits(db, A.anchor, "cargo", A) then
@@ -2745,6 +2834,19 @@ function rails.ai_step(C)
   local A = ai_state(C.force)
   if game.tick < (A.next or 0) then return end
   A.next = game.tick + rails.AI_PERIOD
+  -- Phase 5 M2 integration: second programs (lines taken up again after a city came back) run beside the main one
+  local R0 = storage.rails
+  local more = R0.ai_more and R0.ai_more[C.force]
+  local used_far = {}
+  for i = #(more or {}), 1, -1 do
+    local P = more[i]
+    if buildings.get(P.anchor) and buildings.get(P.far) then
+      used_far[P.far] = true
+      rails.ai_program(C.force, P)
+    else
+      table.remove(more, i)
+    end
+  end
   if not (A.anchor and buildings.get(A.anchor) and A.far and buildings.get(A.far)) then
     local cc, cc_un = buildings.main_cc(C.force)
     local cities = loaded("scripts.cities")
@@ -2764,7 +2866,7 @@ function rails.ai_step(C)
     end
     local best_rank
     for un, rec in buildings.for_force(C.force) do
-      if (rec.kind == "hub" or rec.kind == "cc") and un ~= cc_un and not rails.depot(un)
+      if (rec.kind == "hub" or rec.kind == "cc") and un ~= cc_un and not rails.depot(un) and not used_far[un]
          and rec.entity.name ~= "rts-trade-post" -- Phase 5 M2 treasury: a captured port is no city to connect
          and rec.entity.surface == cc.entity.surface then
         local r, d = rank(un, rec)
@@ -2958,6 +3060,7 @@ match.on_teardown(function()
     end
   end
   R.depots, R.lines, R.jobs, R.trains, R.dwelling, R.index, R.stops, R.stats, R.ai = {}, {}, {}, {}, {}, {}, {}, {}, {}
+  R.ai_more, R.ai_lost = nil, nil -- Phase 5 M2 integration
   R.depot_index = {}
   R.test_nation, R.test_bridges, R.test_forces = nil, nil, nil
   bind()

@@ -815,6 +815,10 @@ balance.nation.market = {
     spend_share = 0.25,        -- share of the balance one purchase may cost
     keep_minutes = 10,         -- a raised Command Center keep for an import is restored after this long
     deficit_floor = 1500,      -- below this balance with a negative net: tax high, no imports, deficit mode
+    -- Phase 5 M2 integration: hysteresis (the tax switched 17 and the deficit mode 22 times per nation-hour): deficit
+    -- lasts until the balance is deficit_band above the floor or the net above deficit_net; a tax level holds tax_hold
+    -- ticks unless a war starts or ends or happiness falls below happy_low
+    deficit_band = 300, deficit_net = 10, tax_hold = 2 * 60 * 60,
     deficit_surplus = 0.5,     -- deficit mode: the capital exports from this share of the surplus thresholds
     happy_low = 40,            -- tax low below this happiness
     -- Phase 5 M2 ai (scripts/ai/governor.lua): a town's export hauler takes its surplus to the port while the town holds

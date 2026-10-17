@@ -34,7 +34,7 @@ local citygui = {}
 local FRAME, LIST = "rts_citygui_frame", "rts_citygui_list"
 local PREFIX = "rts_citygui_"
 local WIDTH = 300
-local LIST_WIDTH = 260
+local LIST_WIDTH = 300   -- Phase 5 M2 integration: 260 cut Russian names and pushed the magnifier out with the attack mark
 local MARGIN = 8
 local TOP = 8 + 228 + 8        -- as the hub panel: below the HUD minimap
 local HUB_WIDTH = 340          -- hubgui.lua WIDTH: the city panel sits left of it
@@ -466,7 +466,7 @@ local function build_list(player, g, list)
     local row = frame.add({type = "flow", direction = "horizontal", style = "rts_hud_row"})
     local jump = row.add({type = "button", name = PREFIX .. "jump_" .. c.id, caption = cities.display_name(c),
       style = "rts_hud_button", tooltip = {"rts.citygui-jump-tooltip"}, tags = {rts_citygui = "jump", city = c.id}})
-    jump.style.maximal_width = 130
+    jump.style.maximal_width = 170 -- Phase 5 M2 integration: room for the attack mark (LIST_WIDTH 300)
     jump.style.height = 24
     jump.style.padding = {0, 4}
     local info = row.add({type = "label", style = "rts_hud_mono_label", caption = ""})

@@ -1065,17 +1065,33 @@ local function at_war(C)
   return false
 end
 
+-- Phase 5 M2 integration: the AI's deficit with hysteresis (see balance.nation.market.ai.deficit_band)
+local function in_deficit(A, t)
+  if A.deficit_flag then
+    if t.balance >= AI.deficit_floor + (AI.deficit_band or 0) or t.net > (AI.deficit_net or 0) then A.deficit_flag = nil end
+  elseif t.balance < AI.deficit_floor and t.net < 0 then
+    A.deficit_flag = true
+  end
+  return A.deficit_flag == true
+end
+
 local function ai_taxes(C, A)
   local t = treasury.get(C.force)
-  local level, why = "normal", "default"
+  local level, why, urgent = "normal", "default", false
+  local war = at_war(C)
   if (t.happiness or 70) < AI.happy_low then
-    level, why = "low", string.format("happiness %.0f", t.happiness)
-  elseif at_war(C) then
+    level, why, urgent = "low", string.format("happiness %.0f", t.happiness), true
+  elseif war then
     level, why = "high", "at war"
-  elseif t.balance < AI.deficit_floor and t.net < 0 then
+  elseif in_deficit(A, t) then
     level, why = "high", string.format("balance %.0f, net %.0f/min", t.balance, t.net)
   end
+  -- Phase 5 M2 integration: a level holds tax_hold unless a war starts or ends or happiness is low
+  if war ~= (A.tax_war == true) then urgent = true end
+  A.tax_war = war or nil
   if level ~= treasury.tax_of(C.force) then
+    if not urgent and A.tax_tick and game.tick - A.tax_tick < (AI.tax_hold or 0) then return end
+    A.tax_tick = game.tick
     util.log("market: AI %s sets tax %s (%s)", C.force, level, why)
     treasury.set_tax(C.force, level)
   end
@@ -1226,7 +1242,7 @@ local function ai_route(C, A, S, port_un)
   end
   -- in deficit (balance below deficit_floor and losing money) the capital exports from lower thresholds
   local t = treasury.get(f)
-  local deficit = t.balance < AI.deficit_floor and t.net < 0
+  local deficit = in_deficit(A, t) -- Phase 5 M2 integration: with hysteresis
   if deficit ~= (A.deficit_mode == true) then
     A.deficit_mode = deficit
     local share = deficit and AI.deficit_surplus or 1
