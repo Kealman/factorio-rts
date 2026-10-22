@@ -52,6 +52,7 @@ local planner = {}
 local PB = balance.nation.ai3.planner
 local CENTER = "rts-city-center"
 local STEEL_WORKS = "rts-district-steel"
+local SMELTING_WORKS = "rts-district-smelting"
 local PUMPJACK = "rts-pumpjack"
 local RARE_EXTRACTOR = balance.nation.rare and balance.nation.rare.extractor or "rts-rare-extractor"
 local ELECTRIFICATION = balance.nation.age3 and balance.nation.age3.tech or "rts-electrification"
@@ -1087,6 +1088,10 @@ function planner.districts(C)
         if name == STEEL_WORKS then out[#out + 1] = name end
       end
     end
+    -- (QA fix: the Smelting works next, when a town's ore comes to the capital: behind the Age III road's districts it
+    -- found no spot, the town's ore filled the capital's keep and its freight train stood idle from minute 38, M1 seed
+    -- 501)
+    if C.town and C.town.ore then out[#out + 1] = SMELTING_WORKS end
     for _, name in ipairs(PB.oil_districts) do
       if P.linked_at or name ~= STEEL_WORKS then out[#out + 1] = name end
     end

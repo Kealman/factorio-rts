@@ -63,7 +63,12 @@ mix.AGE1_ARMY = require("balance").nation.economy.ai.age1_army
 -- Phase 5 M1 integration: the Nation-mode army floor (balance.nation.economy.ai.min_army)
 mix.NATION_MIN_ARMY = require("balance").nation.economy.ai.min_army or 0
 mix.THREAT_TICKS = 5 * 60
-mix.HEARTBEAT = 4 * 60 * 60 -- Phase 5 M3 ai (Nation): see mix.available
+mix.HEARTBEAT = 3 * 60 * 60 -- Phase 5 M3 ai (Nation): see mix.available (QA fix: was 4 minutes)
+-- Phase 5 M3 ai (QA fix, Nation): after HEARTBEAT without a new unit the barracks stop yielding to the economy and the
+-- first one makes the first of these kinds it can (a drone takes iron only: production.lua lets a consumer short of a
+-- single item reserve it) until a unit comes out. The economic AI's barracks chose heavies and cars short of iron and
+-- steel together, which reserve nothing, and made 0-1 kits a minute for 8 minutes (M1 seed 501, produce_rts-player)
+mix.BEAT_KINDS = {"drone", "walker"}
 
 -- Barracks kinds from balance.lua: tier-1 units with a barracks kit (mk2 come from research, haulers from the
 -- factory). {[kind] = {unit, kit, supply, cost, counters}}
@@ -280,6 +285,9 @@ function mix.manage_barracks(C)
      and win.used < mix.YIELD_SHARE * mix.YIELD_WINDOW and tick - (C.last_spawn_tick or 0) < mix.YIELD_SPAWN_GAP then
     yield = mix.economy_hungry(C)
   end
+  local beat = deps.ages and deps.ages.is_nation() and mix.HEARTBEAT
+    and tick - (C.last_spawn_tick or C.started or 0) >= mix.HEARTBEAT
+  if beat then yield = false end
   if yield then
     if not C.yielding then C.stats.yields = (C.stats.yields or 0) + 1 end
     win.used = win.used + (C.yielding and (tick - C.yielding) or 0)
@@ -352,6 +360,18 @@ function mix.manage_barracks(C)
           util.log("ai %s: barracks #%d starved on %s kits for %ds, %s rests", C.force, un, st.kind,
             mix.KIND_WAIT / 60, st.kind)
           st.kind = nil
+        end
+      end
+      if beat and i == 1 and not (st.kind and mix.CHEAP[st.kind]) then
+        for _, kind in ipairs(mix.BEAT_KINDS) do
+          local def = mix.KINDS[kind]
+          if def and def.supply <= room and mix.available(C, kind) then
+            if st.kind ~= kind then
+              util.log("ai %s: barracks #%d: no unit for %ds, makes %s kits", C.force, un, mix.HEARTBEAT / 60, kind)
+            end
+            st.kind, st.spawned, st.since = kind, spawned, tick
+            break
+          end
         end
       end
       if not st.kind then

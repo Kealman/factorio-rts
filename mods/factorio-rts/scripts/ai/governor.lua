@@ -226,6 +226,22 @@ local function capital_labor(C, G, labor)
   for un, rec in buildings.for_force(C.force, "lab") do labs[#labs + 1] = {un, rec} end
   table.sort(labs, function(a, b) return a[1] < b[1] end)
   for i = 1, math.min(AI.pin_labs, #labs) do want[labs[i][1]] = labs[i][2] end
+  -- Phase 5 M3 ai (QA fix): the first pin_barracks barracks too while they stand without workers and the nation has
+  -- made no unit for pin_barracks_after. The army comes 9th of 11 in the Age II priorities: with more jobs than workers
+  -- both barracks of the aggressive AI stood disabled for 12 minutes (M1 seed 501). (Pinned for good, or whenever the
+  -- barracks were idle for want of iron, the pin took workers from the Age I economy and the rail line's depots came
+  -- 4-8 minutes later.)
+  if AI.pin_barracks and game.tick - (C.last_spawn_tick or C.started or 0) >= (AI.pin_barracks_after or 0) then
+    local bar = {}
+    for un, rec in buildings.for_force(C.force, "barracks") do bar[#bar + 1] = {un, rec} end
+    table.sort(bar, function(a, b) return a[1] < b[1] end)
+    for i = 1, math.min(AI.pin_barracks, #bar) do
+      local e = bar[i][2].entity
+      if G.pins[bar[i][1]] or (e and e.valid and e.status == defines.entity_status.disabled_by_script) then
+        want[bar[i][1]] = bar[i][2]
+      end
+    end
+  end
   for un in pairs(G.pins) do
     if not want[un] then
       local rec = buildings.get(un)

@@ -597,6 +597,9 @@ balance.nation.people = {
     -- Phase 5 M3 ai (wave B.2): then a ring this wide (still inside the City Center's 16-tile logistic area); the planner
     -- founds a city only with a farm spot within it
     town_area_far = 15,
+    -- (QA fix) the capital's first barracks gets workers whatever the labor priorities while it stands without them and
+    -- the nation has made no unit for pin_barracks_after ticks (ai/governor.lua)
+    pin_barracks = 1, pin_barracks_after = 3 * 60 * 60,
     -- (wave B.2) copper cable the capital keeps for its fixed goods works (2 per 2 goods)
     goods_cable = 40,
     -- while the AI's rail line is built, houses wait below this much stone (its rails take 1 stone per 2)

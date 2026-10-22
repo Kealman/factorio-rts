@@ -25,7 +25,7 @@ runs exactly as before.
 | Every nation's 3 cities linked by rail by 35:00 | **not met: 12/20** (target 16) |
 | Air patrols fly | met: 5/5 seeds (batch M; 4/5 in batch K) |
 | No AI tick over 3 ms | **not met**: 16 commander runs of 21,612 over 3 ms on the committed tree (seed 802, 30 min), worst 8.5 ms. That worst is the town-site search, gone with TOWN_PENDING_OK; the 25.8 ms ore scan is gone (section 4.7) |
-| M1 seed 501 | 52/53: train_items, because the player's town line never opened (m3-integ's rails.lua work in progress) |
+| M1 seed 501 | 52/53 on 5a06781; 53/53 on 705a33a with the held QA fix (section 4.8) |
 | M2 seeds 701-705 | trade, war, peace and capture 5/5; starving 4/5 (701: towns at war) |
 
 Skirmish is byte-identical; smoke 65/65.
@@ -576,6 +576,70 @@ commanders 0.143 ms per tick for all four nations (0.036 per nation), worst minu
 
 The arena-wide ore scan is gone. The raiders' patch fallback ran: 6 raids went for ore patches, and scout.step's worst
 call was 2.1 ms.
+
+### 4.8 QA fix round: M1 seed 501 on 705a33a (build/m3ai-tools/m1-fix.patch)
+
+On m3-integ's 705a33a (their rails fixes, escrow, tax cap, async town site), M1 seed 501 was 51/53, with 0 errors and no
+blocked line. Both failures were AI economy:
+- **produce_rts-player.** From minute 13 to 29 the economic AI's barracks chose heavies and cars, which were short of
+  iron and steel together. A consumer short of two items reserves nothing (production.lua), so it made 0-1 kits a
+  minute.
+- **train_items 17,433.** Wave B.2's second Steel works took the capital's last district spot from the Smelting works.
+  Nothing consumed the town's ore, so the capital's 3,000-ore keep filled, and the player's freight train stood empty
+  from minute 38 (4,000 items in 6 trips).
+- **produce_rts-ai-1** came up under a first fix: both barracks stood `disabled_by_script` by labor for 12 minutes. In
+  the Age II priorities the army comes 9th of 11, and there were more jobs than workers.
+
+The fix (Nation only):
+- **Barracks heartbeat.** After 3 minutes without a unit (mix.HEARTBEAT 4 → 3 minutes) the barracks stop yielding, and
+  the first one makes drones until a unit comes out. A drone takes iron only, so production can reserve it.
+- **Barracks pin.** The capital's first barracks is pinned for workers while it stands labor-disabled and no unit came
+  for 3 minutes. A permanent pin took Age I workers and delayed the line's depots by 8 minutes.
+- **Smelting works.** It joins the planner's districts right after the second Steel works when a town ships ore.
+
+| Check | 705a33a | with the fix |
+|---|---|---|
+| M1 seed 501 | 51/53 (produce_rts-player, train_items 17,433) | 53/53 (train_items 20,273) |
+| Skirmish | - | byte-identical (4,518 lines, 0 differing); smoke 65/65 |
+| 801-805: linked by 35:00 | 15/20 | 11/20 |
+| air patrols / belts / Age III by 40:00 / phased ops / errors | 5/5, 5/5, 0/5, 20/20, 0 | 4/5, 5/5, 0/5, 20/20, 0 |
+
+- **Linking.** 11/20 is inside the 8-15 range my 801-805 batches gave on close trees; 705a33a's 15/20 is the top of
+  that range.
+- **train_items is fragile.** Five close variants gave 16,963-20,375:
+  - the Smelting works only after the line opens: 51/53;
+  - the heartbeat only outside the rail and district saving: 52/53;
+  - the second Steel works back after linking: 52/53, and linking 11/20.
+
+### 4.9 Hard's economic plan: one attempt, not adopted
+
+Hard (`goods_chain`) gives the goods works' inputs works of their own, fixed on their recipe:
+- one copper-cable works per 6 goods works beyond the first, and one brick works per 2;
+- one goods works per 10 goods a minute of need, at most 5 (was 12 and 4).
+
+The reason: at 40-50 minutes the capitals held 3,000-4,600 iron and 2,200 stone, while goods stood at 0 % and happiness
+at 62.
+
+Seeds 901-905, each played with the levels swapped:
+
+| Seed | 5a06781 base: difh / difn | 705a33a + M1 fix: difh / difn |
+|---|---|---|
+| 901 | hard +23 / normal +160 | hard +241 / hard +64 |
+| 902 | hard +351 / hard +104 | normal +107 / hard +415 |
+| 903 | hard +142 / normal +383 | normal +32 / hard +295 |
+| 904 | hard +109 / normal +111 | normal +69 / hard +236 |
+| 905 | hard +17 / hard +51 | normal +149 / normal +507 |
+| hard wins | 7/10 | **5/10** |
+
+On the tree it would ship with, hard wins 5 of 10, so by the lead's rule the plan is not adopted. The cause is the
+side, not the level:
+- On 5a06781 the rts-ai-1 side won 8 of 10 (as hard 5 of 5); on 705a33a + the fix the player side won 8 of 10 (as
+  hard 4 of 5).
+- With the city-state race fixed, land was equal in 8 of 10 matches there, and population decided by margins of 32-507.
+- Which side's economy pulls ahead in a seed swings with any change of the tree, and that swing is larger than what the
+  goods chain adds.
+- Without resource bonuses, a measurable hard needs an economic edge larger than this side swing, or the measurement
+  needs more seeds than 5 played both ways.
 
 ## 5. Regressions
 
