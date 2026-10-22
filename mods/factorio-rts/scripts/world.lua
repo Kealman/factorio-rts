@@ -2737,7 +2737,10 @@ local function place_feature(surface, W, f)
     local n, amount = 0, 0
     for _, w in ipairs(f.wells) do
       local pos
-      for _, off in ipairs({{0, 0}, {3, 0}, {-3, 0}, {0, 3}, {0, -3}, {4, 4}, {-4, -4}, {4, -4}, {-4, 4}}) do
+      -- Phase 5 M3 integration: a second ring of offsets (a 4096 world whose chunks came in another order put a well's
+      -- nine spots on water; the first nine tries are unchanged, so worlds that placed every well stay the same)
+      for _, off in ipairs({{0, 0}, {3, 0}, {-3, 0}, {0, 3}, {0, -3}, {4, 4}, {-4, -4}, {4, -4}, {-4, 4},
+                            {7, 0}, {-7, 0}, {0, 7}, {0, -7}, {7, 7}, {-7, -7}, {7, -7}, {-7, 7}}) do
         local p = {x = w.x + off[1], y = w.y + off[2]}
         local ok = true
         for dx = -1, 1 do

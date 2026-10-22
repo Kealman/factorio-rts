@@ -135,7 +135,54 @@ TBD
 
 ## 5. Checks of this package
 
-TBD
+### 5.1 Skirmish unchanged
+
+`KEEP_TREE=<tree> SEED=777 build/m3i-tools/matrix-batched.sh <tag>` (the ten scenarios of `tools/autotest-matrix.sh`,
+four at a time) on `m2-ready` (497cb1c, `m3i-m2ready`) and on the integration HEADs, compared with
+`tools/matrix-compare.sh` (it now also drops the Nation-only plane ammo categories and the AA turret from the static
+research line, as it did for the garrison gun):
+
+| Scenario | m2-ready | HEAD 4de0bc6 (`m3i-h4de0`) | `[rts]` lines | Differing |
+|---|---|---|---|---|
+| 1v1-easy-medium | 23/23 | 23/23 | 1,211 | 0 |
+| 1v1-hard-medium | 20/23 | 20/23 | 4,037 | 0 |
+| 1v1-normal-medium | 23/23 | 23/23 | 3,240 | 0 |
+| 1v1-normal-small-nosa | 23/23 | 23/23 | 3,294 | 0 |
+| 1v1-normal-small-restart | 22/23 | 22/23 | 4,450 | 0 |
+| 1v2-normal-medium | 31/31 | 31/31 | 4,491 | 0 |
+| 1v3-normal-small | 39/39 | 39/39 | 5,024 | 0 |
+| 1v3-normal-small-stress | 34/38 | 34/38 | 3,333 | 0 |
+| legacy-units, legacy-units-nosa | 65/65, 65/65 | 65/65, 65/65 | 468, 469 | 0 |
+
+The hard, restart and stress failures are m2-ready's own (as in the M2 integration).
+
+### 5.2 Fixtures
+
+| Fixture | Result |
+|---|---|
+| `m3_integ.lua` (collateral lanes A-D, wall crossing, human flag), 1v1 Nation seed 501 | 6/6 (collateral hits undone 12; lanes A and B lose nothing; an explicit attack and a division strike destroy their factory, the belts beside the strike survive) |
+| `m3_reroute.lua` (seed 501, 45 min) | 2/2 |
+| `m2_targeting.lua` | 5/5 |
+| `m2_integ.lua` | 11/11 (the census wait) |
+| `war_autotest.lua` (M2) | 27/27 |
+| `war2_autotest.lua` (fronts on the scheduler) | 22/22 |
+| `air_autotest.lua` | 14/14 |
+| `age3_fixture.lua` | 35/35 (the research rush charge rule) |
+| Skirmish smoke | 65/65 before every commit |
+
+### 5.3 LAN and heavy mode
+
+`KEEP_TREE=<HEAD 1851531> SEED=701 tools/lan-check.sh m3i-lan1 10 5`: a headless 4-nation server, GUI client 1 from
+tick 1,716, client 2 at minute 5 by hand-over (one Steam account: the server refuses the same player name twice); 0
+desync lines on the server and both clients, 34 and 24 checksum lines equal to the server's, no Lua error (the clients'
+"Steam API could not be initialized" is the environment). The joining player made rts-player a human nation
+(`diplomacy: rts-player is played by a human from tick 1716`), the same on every peer.
+
+`KEEP_TREE=<HEAD 1851531> SEED=701 tools/heavy-mode.sh m3i-heavy1 10`: the 4-nation match saved 60 s after its start
+(tick 3,600) and loaded in the GUI client with `--heavy` (save, load and compare every tick) for 10 minutes of wall
+clock: ticks 3,600-4,200+, 0 desync lines, no desync report, no Lua error. Heavy mode runs about one tick a second on a
+2048 world, so 10 minutes of wall clock are 10 s of game; the headless save/load equivalence (section 4) covers whole
+minutes.
 
 ## 6. Performance
 
