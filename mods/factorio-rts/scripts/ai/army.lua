@@ -285,7 +285,8 @@ function army.on_damage(C, entity, cause, damage)
     local T = nation_mode() and deps.territory
     local id = T and T.city_at and T.city_at(entity.position)
     local city = id and storage.cities and storage.cities[id]
-    if city and city.force == C.force and not city.capital then
+    -- Phase 5 M3 ai: a rail depot is relieved on the capital's land too (a raid razed a capital depot in M1 seed 501)
+    if city and city.force == C.force and (not city.capital or entity.name == "rts-depot") then
       a.town_threat = a.town_threat or {}
       local tt = a.town_threat[id]
       if not tt then
@@ -391,6 +392,30 @@ end
 
 raids.bind({form = form, order_attack = order_attack, send_home = send_home, hp_of = hp_of, disband = disband})
 
+--- Phase 5 M3 ai: send group `gid` of commander C home (ai/council.lua timeouts, ai/controller.lua force ratio); `how`
+--- "return" (default) or "retreat" (no new attack for REGROUP_TICKS). Returns true when the group was on its way out.
+function army.recall(C, gid, why, how)
+  local a = C.army
+  local G = a and a.groups[gid]
+  if not (G and (G.state == "attack" or G.state == "defend" or G.state == "harass")) then return false end
+  local list = entities_of(G)
+  if #list == 0 then return false end
+  send_home(C, G, list, how == "retreat" and "retreat" or "return")
+  if how == "retreat" then
+    a.hold_until = game.tick + army.REGROUP_TICKS
+    C.stats.retreats = C.stats.retreats + 1
+  end
+  util.log("ai %s: group #%d recalled (%s)", C.force, gid, tostring(why))
+  return true
+end
+-- Phase 5 M3 ai hooks (ai/council.lua sets them; nil in Skirmish): launch_ok(C, target) -> false holds a new offensive
+-- (the difficulty's concurrent operations); field_target(C, from) -> a target {position, kind = "division", force} of a
+-- known hostile division in the field, preferred over buildings.
+army.launch_ok = nil
+army.field_target = nil
+-- Phase 5 M3 ai: plane kinds stay out of the Nation army pool (ai/council.lua flies them)
+army.NATION_SKIP = {["scout-plane"] = true, bomber = true, interceptor = true}
+
 local function threat_fresh(C, home)
   local t = C.army.threat
   return t ~= nil and game.tick - t.tick <= army.THREAT_TICKS and home ~= nil
@@ -491,8 +516,12 @@ function army.step(C, surface)
 
   -- the pool: own units in no group (haulers and the commander never)
   local pool, far = {}, {}
+  -- Phase 5 M3 ai (Nation): units holding a front line (C.army.held, ai/council.lua) and planes stay out of the pool
+  local held = a.held
+  local skip2 = nation_mode() and army.NATION_SKIP or nil
   for un, rec in units.for_force(C.force) do
-    if not a.member[un] and not army.POOL_SKIP[rec.kind] and rec.issuer ~= "market" then -- Phase 5 M2 treasury: envoys
+    if not a.member[un] and not army.POOL_SKIP[rec.kind] and rec.issuer ~= "market" -- Phase 5 M2 treasury: envoys
+       and not (held and held[un]) and not (skip2 and skip2[rec.kind]) then
       pool[#pool + 1] = rec.entity
       if rec.order == units.IDLE and util.distance(rec.entity, a.rally) > army.RALLY_RADIUS
          and tick - (a.sent[un] or -army.RALLY_RESEND_TICKS) >= army.RALLY_RESEND_TICKS then
@@ -611,6 +640,8 @@ function army.step(C, surface)
   end
   if a.min and #pool > 0 and tick >= (a.hold_until or 0) and tick >= C.started + (C.cfg.first_attack or 0) then
     local launch = strength >= need and (finishing or tick - a.last_attack >= (C.cfg.attack_interval or 0))
+    -- Phase 5 M3 ai: the council's limit on concurrent offensives (the difficulty's ops)
+    if launch and not finishing and army.launch_ok and not army.launch_ok(C) then launch = false end
     local reinforce = attacking and strength >= math.max(3, need / 2)
     if launch or reinforce then
       local target = scout.best_target(C, surface, a.rally)
@@ -629,6 +660,11 @@ function army.step(C, surface)
           end
         end
         if ct then target = ct end
+        -- Phase 5 M3 ai: no city to take: a known hostile division in the field before buildings (capture, do not raze)
+        if not ct and army.field_target then
+          local ft = army.field_target(C, home or a.rally)
+          if ft then target = ft end
+        end
         if launch and pool_sp(pool) < WAR.low then
           if not a.low_logged then
             a.low_logged = true
@@ -708,7 +744,9 @@ function army.step(C, surface)
           elseif ws and city_still_hostile(C, G.target) then
             target = G.target -- Phase 5 M2 war: a city target holds until it is captured
           else
-            target = scout.best_target(C, surface, centroid)
+            -- Phase 5 M3 ai: a hostile division in the field near the group before its buildings
+            target = army.field_target and nation_mode() and army.field_target(C, centroid) or nil
+            target = target or scout.best_target(C, surface, centroid)
           end
           if not target then
             send_home(C, G, list, "return")

@@ -190,7 +190,12 @@ function ai.nation_tick(e)
     end
   end
   local p
-  for _, C in pairs(list) do
+  -- Phase 5 M3 ai (determinism, m3-perf's audit): commanders in force-name order (two may share a tick from the 7th on)
+  local names = {}
+  for f in pairs(list) do names[#names + 1] = f end
+  table.sort(names)
+  for _, f in ipairs(names) do
+    local C = list[f]
     if C.slice then
       if e.tick >= C.slice_tick then
         p = p or ai.perf()

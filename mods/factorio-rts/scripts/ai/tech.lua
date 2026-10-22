@@ -37,11 +37,21 @@ local function info(name)
 end
 
 -- The force can make the technology's kit: basic always; advanced needs steel and copper coming in.
+-- Phase 5 M3 ai (Nation): an industrial kit also when its parts (engine, advanced circuit, sulfur) are at hand: the
+-- planner makes them make targets and the market AI buys what the nation cannot make (ai/planner.lua)
+tech.INDUSTRIAL_PARTS = {"engine-unit", "advanced-circuit", "sulfur"}
 local function producible(C, name)
   local t = info(name)
   if not t then return false end
   -- Phase 5 E1: industrial kits come from the factory or a science campus only when their Age II parts exist
-  if t.kit == INDUSTRIAL then return construction.have(C, INDUSTRIAL) > 0 end
+  if t.kit == INDUSTRIAL then
+    if construction.have(C, INDUSTRIAL) > 0 then return true end
+    if not (deps.planner and deps.ages and deps.ages.is_nation()) then return false end
+    for _, item in ipairs(tech.INDUSTRIAL_PARTS) do
+      if construction.have(C, item) <= 0 and not construction.flowing(C, item) then return false end
+    end
+    return true
+  end
   if t.kit ~= ADVANCED then return true end
   local function ok(item) return construction.have(C, item) > 0 or construction.flowing(C, item) end
   return ok("steel-plate") and ok("copper-plate")
@@ -67,6 +77,11 @@ function tech.next(C)
         if try(name) then return name end
       end
     end
+    -- Phase 5 M3 ai: what the planner (Electrification in Age II, Geology) and the council (Fortification at war,
+    -- Aviation, Air Force) want, in that order
+    for _, name in ipairs(tech.wants(C)) do
+      if try(name) then return name end
+    end
   end
   for _, name in ipairs(doctrine.get(C.doctrine).research) do
     if try(name) then return name end
@@ -75,6 +90,16 @@ function tech.next(C)
     if try(t.name) then return t.name end
   end
   return nil
+end
+
+--- Phase 5 M3 ai (Nation): the technologies the planner and the council want first, in that order.
+function tech.wants(C)
+  local out = {}
+  for _, src in ipairs({deps.planner, deps.council}) do
+    local list = src and src.research_want and src.research_want(C)
+    for _, name in ipairs(list or {}) do out[#out + 1] = name end
+  end
+  return out
 end
 
 local function is_supply(name)
@@ -120,6 +145,26 @@ function tech.step(C)
         if research.queue(C.force, name) then
           research.cancel(C.force, cur.name)
           util.log("ai %s: research %s first (supply capped), %s put back", C.force, name, cur.name)
+          cur = force.current_research
+        end
+        break
+      end
+    end
+  end
+  -- Phase 5 M3 ai (Nation): a wanted technology (tech.wants) takes the labs from a running one the AI does not want
+  -- as much (its progress is kept): Electrification waited behind the doctrine's Age I list until minute 37
+  if cur and not C.capped and deps.ages and deps.ages.is_nation() then
+    local wants = tech.wants(C)
+    local rank = #wants + 1
+    for i, name in ipairs(wants) do
+      if name == cur.name then rank = i end
+    end
+    for i = 1, rank - 1 do
+      local name = wants[i]
+      if research.status(C.force, name) == "available" and producible(C, name) then
+        if research.queue(C.force, name) then
+          research.cancel(C.force, cur.name)
+          util.log("ai %s: research %s first (wanted), %s put back", C.force, name, cur.name)
           cur = force.current_research
         end
         break

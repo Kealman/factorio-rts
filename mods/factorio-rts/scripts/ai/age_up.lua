@@ -58,8 +58,8 @@ local function plan_entity(C, key)
 end
 
 local function queue_building(C, surface, name)
-  local pos, pole = layout.find_spot(C, surface, name, "cc")
-  if not pos then return nil end
+  local pos, pole, wait = layout.find_spot(C, surface, name, "cc")
+  if not pos then return nil, wait end -- (wait: Phase 5 M3 ai (perf), a planning job looks for the spot)
   if pole then construction.queue(C, construction.add(C, {name = layout.POLE, x = pole.x, y = pole.y})) end
   local key = construction.add(C, {name = name, x = pos.x, y = pos.y})
   construction.queue(C, key)
@@ -174,6 +174,12 @@ function age_up.step(C, surface)
         for item, n in pairs(age_up.BUNKER_TARGETS) do want[item] = math.max(want[item] or 0, n) end
       end
     end
+    -- Phase 5 M3 ai: the planner's targets (the industrial kit's parts in Age II, the Space Program stage's goods, plastic
+    -- and sulfur once crude oil comes in); the larger number wins
+    local P = deps.planner and deps.planner.targets and deps.planner.targets(C)
+    for item, n in pairs(P or {}) do want[item] = math.max(want[item] or 0, n) end
+    local K = deps.council and deps.council.targets and deps.council.targets(C) -- the airfield's concrete
+    for item, n in pairs(K or {}) do want[item] = math.max(want[item] or 0, n) end
     if N.saving then want = {} end
     -- Phase 5 M2 ai: the bakery first (ai/governor.lua), the copper line's own parts first (ai/build_order.lua)
     if (C.gov and C.gov.food_emergency) or C.boot then want = {} end
@@ -206,10 +212,12 @@ function age_up.step(C, surface)
 
   -- 3. the Railway Charter
   if age < 2 and ages.can_start(C.force) then
-    local pos = layout.find_spot(C, surface, ages.SITE, "cc")
-    local p, why = ages.start_project(C.force, pos)
-    util.log("ai %s: age-up: Railway Charter %s at %s (t=%ds)", C.force, p and "started" or ("refused: " .. tostring(why)),
-      util.pos_str(pos), secs)
+    local pos, _, wait = layout.find_spot(C, surface, ages.SITE, "cc")
+    if not wait then -- Phase 5 M3 ai (perf): a planning job looks for the site: a later pass starts the project
+      local p, why = ages.start_project(C.force, pos)
+      util.log("ai %s: age-up: Railway Charter %s at %s (t=%ds)", C.force, p and "started" or ("refused: " .. tostring(why)),
+        util.pos_str(pos), secs)
+    end
   end
 
   -- 6. The warehouse (Phase 5 M1 integration): with a mining town, WAREHOUSE stockpiles in the capital's network
@@ -225,8 +233,12 @@ function age_up.step(C, surface)
     end
     if #N.warehouse < age_up.WAREHOUSE and districts_built >= age_up.WAREHOUSE_AFTER
        and game.tick >= (N.warehouse_retry or 0) then
-      local key = queue_building(C, surface, "rts-stockpile")
-      if key then N.warehouse[#N.warehouse + 1] = key else N.warehouse_retry = game.tick + age_up.DISTRICT_RETRY end
+      local key, wait = queue_building(C, surface, "rts-stockpile")
+      if key then
+        N.warehouse[#N.warehouse + 1] = key
+      elseif not wait then -- (Phase 5 M3 ai (perf): a planning job looks for the spot: no retry delay)
+        N.warehouse_retry = game.tick + age_up.DISTRICT_RETRY
+      end
     end
     if not N.warehouse_ready and built >= math.ceil(age_up.WAREHOUSE * 2 / 3) then
       N.warehouse_ready = true
@@ -256,8 +268,8 @@ function age_up.step(C, surface)
     end
     N.bunker_due = smelting and built < age_up.BUNKERS or nil
     if N.bunker_due and not pending and #N.bunkers < age_up.BUNKERS + 2 and game.tick >= (N.bunker_retry or 0) then
-      local pos, pole = layout.find_spot(C, surface, "rts-bunker", "front")
-      if not pos then N.bunker_retry = game.tick + age_up.DISTRICT_RETRY end -- Phase 5 M2 ai: no search every 5 s
+      local pos, pole, wait = layout.find_spot(C, surface, "rts-bunker", "front") -- (wait: Phase 5 M3 ai perf)
+      if not pos and not wait then N.bunker_retry = game.tick + age_up.DISTRICT_RETRY end -- Phase 5 M2 ai: no search every 5 s
       if pos then
         if pole then construction.queue(C, construction.add(C, {name = layout.POLE, x = pole.x, y = pole.y})) end
         local key = construction.add(C, {name = "rts-bunker", x = pos.x, y = pos.y})
@@ -279,6 +291,23 @@ function age_up.step(C, surface)
       for i = N.district_seen + 1, #list do N.district_todo[#N.district_todo + 1] = list[i] end
       N.district_seen = #list
     end
+    -- Phase 5 M3 ai: the planner's districts (the oil chain once crude comes in, the Age III districts), each once
+    N.planner_districts = N.planner_districts or {}
+    local seen = {}
+    for _, name in ipairs(deps.planner and deps.planner.districts and deps.planner.districts(C) or {}) do
+      seen[name] = (seen[name] or 0) + 1
+      local k = name .. "#" .. seen[name]
+      if not N.planner_districts[k] then
+        N.planner_districts[k] = true
+        -- right after the first district (the Steel works): the Age III road's districts come before the town's
+        -- Smelting works and the Rail works (8 minutes later at the list's end)
+        N.planner_insert = math.max(N.planner_insert or 0, (#N.districts == 0) and 2 or 1)
+        local at = math.min(N.planner_insert, #N.district_todo + 1)
+        table.insert(N.district_todo, at, name)
+        N.planner_insert = at + 1
+        util.log("ai %s: age-up: %s added to the district list at %d (planner)", C.force, name, at)
+      end
+    end
     -- the Rail works first while the rail line still waits for rails (2 rails per steel instead of 1)
     if rail_state == "building" or rail_state == "depots" then
       for i, n in ipairs(N.district_todo) do
@@ -298,12 +327,12 @@ function age_up.step(C, surface)
       if not frec[n] or frec[n].enabled then idx, name = i, n break end
     end
     if name and game.tick >= (N.district_at or 0) then
-      local key = queue_building(C, surface, name)
+      local key, wait = queue_building(C, surface, name)
       if key then
         table.remove(N.district_todo, idx)
         N.districts[#N.districts + 1] = key
         N.district_at = game.tick + A.district_gap * 60
-      else
+      elseif not wait then -- (Phase 5 M3 ai (perf): a planning job looks for the spot: no retry delay)
         N.district_at = game.tick + age_up.DISTRICT_RETRY
       end
     end

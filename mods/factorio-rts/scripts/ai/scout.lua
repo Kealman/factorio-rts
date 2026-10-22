@@ -194,14 +194,34 @@ function scout.harass_target(C, surface, from, max_dist)
   for _, k in pairs(C.known) do
     if k.kind == "turret" or k.kind == "laser-turret" then turrets[#turrets + 1] = k.position end
   end
-  for un in pairs(C.enemy_haulers or {}) do
+  -- Phase 5 M3 ai (determinism, m3-perf's audit): ties under the strict < above go to the first one considered, so in
+  -- Nation mode the candidates come in unit-number order (Skirmish keeps the tables' order: byte-identical results)
+  local function keys_of(t)
+    local m = storage.match
+    if not (m and m.config and m.config.mode == "nation") then return nil end
+    local out = {}
+    for k in pairs(t) do out[#out + 1] = k end
+    table.sort(out)
+    return out
+  end
+  local function each(t)
+    local ks = keys_of(t)
+    if not ks then return pairs(t) end
+    local i = 0
+    return function()
+      i = i + 1
+      local k = ks[i]
+      if k ~= nil then return k, t[k] end
+    end
+  end
+  for un in each(C.enemy_haulers or {}) do
     local rec = storage.units[un]
     if rec and rec.entity.valid and diplomacy.hostile(C.force, rec.force) -- Phase 5 M2 diplomacy: a peace since
        and not near_any(rec.entity.position, turrets, scout.HARASS_SAFE) then
       consider(rec.entity.position, 0, "hauler", rec.entity)
     end
   end
-  for un, k in pairs(C.known) do
+  for un, k in each(C.known) do
     local rec = storage.buildings[un]
     if rec and rec.entity.valid and diplomacy.hostile(C.force, k.force) -- Phase 5 M2 diplomacy
        and not near_any(k.position, turrets, scout.HARASS_SAFE) then

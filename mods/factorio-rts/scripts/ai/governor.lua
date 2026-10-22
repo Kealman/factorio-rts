@@ -107,7 +107,8 @@ local function queue_near(C, surface, name, c, pref, radii, front)
   local population, territory = mod("population"), deps.territory
   local cx, cy = math.floor(c.position.x), math.floor(c.position.y)
   for _, r in ipairs(radii) do
-    local pos = layout.find_spot_in(C, surface, name, cx - r, cy - r, cx + r, cy + r, pref)
+    local pos, _, wait = layout.find_spot_in(C, surface, name, cx - r, cy - r, cx + r, cy + r, pref)
+    if wait then return nil end -- Phase 5 M3 ai (perf): a planning job looks (this ring is asked again next pass)
     if pos then
       local own = (not population) or population.city_at(pos) == c.id
       if own and (not territory or territory.can_build(C.force, name, pos)) then
@@ -459,7 +460,11 @@ end
 
 -- Extraction first in a mining town: its extractors and smelters are pinned (staffed before anything else there).
 local function town_pins(C, S, c, labor, population)
-  for un in pairs(population.members(c.id)) do
+  -- Phase 5 M3 ai (determinism, m3-perf's audit): by unit number, not in the set's insertion order
+  local members = {}
+  for un in pairs(population.members(c.id)) do members[#members + 1] = un end
+  table.sort(members)
+  for _, un in ipairs(members) do
     local rec = buildings.get(un)
     if rec and (rec.kind == "extractor" or rec.kind == "smelter") and not S.pins[un] then
       labor.pin(rec.entity, true)
@@ -663,7 +668,7 @@ local function city_pass(C, G, surface, c, capital, list, age)
       -- stops at one stone extractor), goods, circuits and the advanced kits take copper (seed 404: one copper slot at
       -- 37 plates a minute until minute 18, Industrialisation at 19:02)
       for _, R in ipairs({{line = "stone", item = "stone", low = AI.stone_low or 100, steel = true},
-                          {line = "copper", item = "copper-plate", low = AI.copper_low or 30}}) do
+                          {line = "copper", item = "copper-plate", low = AI.copper_low}}) do -- Phase 5 M3 ai: a balance key
         local RL = C.lines and C.lines[R.line]
         local key = R.line .. "_at"
         if RL and RL.status == "ok" and (steel_ready(C) or not R.steel) and construction.have(C, R.item) < R.low

@@ -23,6 +23,7 @@ local layout = require("scripts.ai.layout")
 local construction = require("scripts.ai.construction")
 local build_order = require("scripts.ai.build_order")
 local deps = require("scripts.ai.deps")
+local planjob = require("scripts.ai.planjob") -- Phase 5 M3 ai (perf): the hub planning as a resumable planner
 
 local hubs = {}
 
@@ -52,23 +53,29 @@ local function other_forces(C)
   return list
 end
 
--- (Phase 5 M3 perf: reserved, avoid and belt_tiles are tile sets: layout.tcopy / tassign)
-local function snapshot(C)
-  local s = {reserved = layout.tcopy(C.reserved), avoid = layout.tcopy(C.avoid), belt_tiles = layout.tcopy(C.belt_tiles),
-             claimed = {}}
-  for k, v in pairs(C.claimed) do s.claimed[k] = v end
-  return s
+-- Phase 5 M3 ai (perf): a hub attempt is undone from journals of its writes to the tile sets (layout.jopen: they span
+-- the steps of a planning job; was a copy of all three sets, layout.tcopy / tassign) and a copy of C.claimed.
+local function attempt_begin(S, C)
+  for _, name in ipairs(layout.TILE_SETS) do layout.jopen(S, name) end
+  local claimed = {}
+  for k, v in pairs(C.claimed) do claimed[k] = v end
+  return claimed
 end
 
-local function restore(C, s)
-  for _, name in ipairs({"reserved", "avoid", "belt_tiles"}) do layout.tassign(C[name], s[name]) end
-  local t = C.claimed
-  for k in pairs(t) do t[k] = nil end
-  for k, v in pairs(s.claimed) do t[k] = v end
+local function attempt_end(S, C, claimed, undo)
+  for _, name in ipairs(layout.TILE_SETS) do
+    if undo then layout.jundo(S, name) end
+    layout.jclose(S, name)
+  end
+  if undo then
+    local t = C.claimed
+    for k in pairs(t) do t[k] = nil end
+    for k, v in pairs(claimed) do t[k] = v end
+  end
 end
 
--- Candidate patches for an expansion of commander C, best first: {p, d}.
-local function candidates(C, surface, step)
+-- Candidate patches for an expansion of commander C, best first: {p, d}, from the resource patches around the CC.
+local function candidates(C, patches, step)
   local meta = storage.ai_meta
   local home = {x = C.frame.cx, y = C.frame.cy}
   local hostile = {}
@@ -82,7 +89,7 @@ local function candidates(C, surface, step)
     if rec.force ~= C.force then hostile[#hostile + 1] = rec.position end
   end
   local cands = {}
-  for _, p in ipairs(layout.resource_patches(surface, home, hubs.MAX_PATCH)) do
+  for _, p in ipairs(patches) do
     local c = {x = p.cx, y = p.cy}
     local d = util.distance(c, home)
     local claim = meta.patch_claims[p.id]
@@ -107,122 +114,224 @@ local function candidates(C, surface, step)
 end
 
 --- Plan expansion step.id of commander C (see the header). Returns X (status "ok" or "unavailable").
+--- Phase 5 M3 ai (perf): the planner "hub_plan" (ai/planjob.lua) run to the end; hubs.plan_async plans it as a
+--- scheduler job in Nation mode (kind ai_hub_plan).
 function hubs.plan(C, surface, step)
-  C.expansions = C.expansions or {}
-  local meta = storage.ai_meta
-  meta.patch_claims = meta.patch_claims or {}
-  local X = {id = step.id, ore = step.ore, status = "unavailable", line = "hub" .. step.id, reason = "no patch"}
-  C.expansions[step.id] = X
-  local home = {x = C.frame.cx, y = C.frame.cy}
-  local keep_away = {}
-  for _, rec in buildings.all("hub") do keep_away[#keep_away + 1] = rec.position end
-  for _, other in pairs(C.expansions) do
-    if other.pos then keep_away[#keep_away + 1] = other.pos end
-  end
-  local others = other_forces(C)
-  local prof = helpers.create_profiler()
-  local tried = 0
-  for _, cand in ipairs(candidates(C, surface, step)) do
-    if tried >= hubs.MAX_TRIES then break end
-    tried = tried + 1
+  return planjob.sync(C, hubs.plan_frame(surface, step))
+end
+
+function hubs.plan_frame(surface, step)
+  return {fn = "hub_plan", surface = surface, step = step}
+end
+
+-- the log line's slot names
+local function slot_names(L)
+  local n = {}
+  for i, s in ipairs(L.slots) do n[i] = s.name end
+  return table.concat(n, " ")
+end
+
+planjob.define("hub_plan", {
+  start = function(S, F)
+    local C, step = S.C, F.step
+    C.expansions = C.expansions or {}
+    local meta = storage.ai_meta
+    meta.patch_claims = meta.patch_claims or {}
+    local X = {id = step.id, ore = step.ore, status = "unavailable", line = "hub" .. step.id, reason = "no patch"}
+    C.expansions[step.id] = X
+    F.X = X
+    F.home = {x = C.frame.cx, y = C.frame.cy}
+    local keep_away = {}
+    for _, rec in buildings.all("hub") do keep_away[#keep_away + 1] = rec.position end
+    for _, other in pairs(C.expansions) do
+      if other.pos then keep_away[#keep_away + 1] = other.pos end
+    end
+    F.keep_away = keep_away
+    F.others = other_forces(C)
+    if S.sync then F.prof = helpers.create_profiler() end -- (a job logs its ticks instead: a profiler is no state)
+    F.tried = 0
+    planjob.call(S, F, "cands", layout.resource_patches_frame(F.surface, F.home, hubs.MAX_PATCH))
+    return 20
+  end,
+  cands = function(S, F)
+    F.cands = candidates(S.C, F.r1, F.step)
+    F.ci = 0
+    F.pc = "cand"
+    return 10 + #F.r1 * 5
+  end,
+  cand = function(S, F)
+    local C, X = S.C, F.X
+    F.ci = F.ci + 1
+    local cand = F.cands[F.ci]
+    if not cand or F.tried >= hubs.MAX_TRIES then
+      F.pc = "unavailable"
+      return 1
+    end
+    F.tried = F.tried + 1
     local p = cand.p
     local x0, y0, x1, y1 = layout.patch_box(p)
-    local taken = #others > 0 and surface.count_entities_filtered({area = {{x0 - 8, y0 - 8}, {x1 + 9, y1 + 9}},
-      force = others, type = hubs.BUILDING_TYPES, limit = 1}) > 0
+    local taken = #F.others > 0 and F.surface.count_entities_filtered({area = {{x0 - 8, y0 - 8}, {x1 + 9, y1 + 9}},
+      force = F.others, type = hubs.BUILDING_TYPES, limit = 1}) > 0
     if taken then
-      util.log("ai %s: hub %d: patch %s is taken by another force", C.force, step.id, p.id)
+      util.log("ai %s: hub %d: patch %s is taken by another force", C.force, F.step.id, p.id)
       X.reason = "patches taken"
-    else
-      local ctx = layout.context_at(C, surface, {cx = math.floor(p.cx), cy = math.floor(p.cy), fx = 1},
-        hubs.CONTEXT_RADIUS)
-      local cp
-      for _, q in ipairs(layout.patches(ctx)) do
-        if q.id == p.id then cp = q break end
-      end
-      local site = cp and layout.hub_site(C, ctx, cp, home, hubs.MIN_HOME, keep_away, hubs.MIN_APART)
-      if not site then
-        util.log("ai %s: hub %d: no hub site next to %s", C.force, step.id, p.id)
-        X.reason = "no hub site"
-      else
-        local snap = snapshot(C)
-        local frame = layout.hub_frame(site.x, site.y)
-        layout.reserve_hub_body(C, site.x, site.y, X.line)
-        -- haulers stop just south of the hub (logistics.approach_point): keep that column free of solar arrays
-        for ty = site.y + 2, site.y + 7 do
-          layout.tset(C.reserved, site.x - 1, ty, "approach") -- Phase 5 M3 perf: tile sets
-          layout.tset(C.reserved, site.x, ty, "approach")
-        end
-        local slot_states = {}
-        layout.reserve_hub(C, frame, slot_states, layout.HUB_SINK_ORDER)
-        local solar_pos = {}
-        local P = layout.HUB_SOLAR
-        for i = 1, step.plan_solar or step.solar or 0 do
-          local pos = layout.find_spot_in(C, surface, "rts-solar-array", site.x + P[1], site.y + P[3], site.x + P[2],
-            site.y + P[4], {x = site.x + (i % 2 == 1 and -5 or 5), y = site.y + 5})
-          if pos then solar_pos[#solar_pos + 1] = pos end
-        end
-        local slots = {}
-        for i = 1, step.plan_slots or step.slots or 2 do slots[i] = "smelter" end
-        local sink = {frame = frame, hub = slot_states, order = layout.HUB_SINK_ORDER, target = {x = site.x, y = site.y},
-                      wire = layout.HUB_WIRE, satellites = false}
-        local L = build_order.plan_line(C, ctx, X.line, {ore = p.name, patch_id = p.id, slots = slots}, sink)
-        if L.status == "ok" and L.chained then
-          X.status, X.reason, X.patch_id, X.ore, X.plate = "ok", nil, p.id, p.name, hubs.PLATE[p.name]
-          X.pos, X.frame, X.hub, X.haulers = site, frame, slot_states, step.haulers or 1
-          meta.patch_claims[p.id] = C.force
-          -- the stockpile spots must be free of units when the hub is revived: logistics.lua moves a blocked
-          -- stockpile up to 4 tiles, and the west one (the side the army and the patrol come from) kept moving
-          local clear = {}
-          for _, off in ipairs(deps.logistics and deps.logistics.HUB_STOCKPILES or {}) do
-            local x, y = site.x + off.x, site.y + off.y
-            clear[#clear + 1] = {{x - 0.7, y - 0.7}, {x + 0.7, y + 0.7}}
-          end
-          X.hub_key = construction.add(C, {name = "rts-hub", x = site.x, y = site.y, line = X.line, clear = clear})
-          X.solar = {}
-          local specs = {}
-          for _, pos in ipairs(solar_pos) do
-            X.solar[#X.solar + 1] = construction.add(C, {name = "rts-solar-array", x = pos.x, y = pos.y, line = X.line})
-            specs[#specs + 1] = {name = "rts-solar-array", x = pos.x, y = pos.y}
-          end
-          for _, s in ipairs(L.slots) do
-            for _, key in ipairs(s.keys) do
-              local e = C.plan[key]
-              specs[#specs + 1] = {name = e.name, x = e.x, y = e.y}
-            end
-          end
-          local poles = {}
-          for _, key in pairs(L.gap_poles) do poles[#poles + 1] = {x = C.plan[key].x, y = C.plan[key].y} end
-          for _, key in ipairs(L.chain) do poles[#poles + 1] = {x = C.plan[key].x, y = C.plan[key].y} end
-          X.poles = {}
-          for _, q in ipairs(layout.cover_power(C, ctx, site, specs, poles, X.line)) do
-            X.poles[#X.poles + 1] = construction.add(C, {name = layout.POLE, x = q.x, y = q.y, line = X.line})
-          end
-          prof.stop()
-          log({"", string.format("[rts] ai %s: hub %d planned at %s next to %s (%d ore tiles, %.0f tiles from the CC): "
-            .. "%d drill spots, slots [%s], %d solar, %d extra poles, %d hauler(s) wanted; planned in ", C.force,
-            step.id, util.pos_str(site), p.id, p.count, cand.d, #L.drills, (function()
-              local n = {}
-              for i, s in ipairs(L.slots) do n[i] = s.name end
-              return table.concat(n, " ")
-            end)(), #X.solar, #X.poles, X.haulers), prof})
-          return X
-        end
-        util.log("ai %s: hub %d: line into a hub at %s next to %s failed: %s", C.force, step.id, util.pos_str(site),
-          p.id, L.status == "ok" and "pole chain does not reach the hub" or tostring(L.reason))
-        X.reason = "line failed"
-        C.lines[X.line] = nil
-        -- drop the plan entries the failed line added, then the reservations
-        for key, e in pairs(C.plan) do
-          if e.line == X.line and e.status == "planned" then C.plan[key] = nil end
-        end
-        restore(C, snap)
-      end
+      return 30
     end
+    planjob.call(S, F, "ctx", layout.context_frame(F.surface, {cx = math.floor(p.cx), cy = math.floor(p.cy), fx = 1},
+      hubs.CONTEXT_RADIUS))
+    return 30
+  end,
+  ctx = function(S, F)
+    local p = F.cands[F.ci].p
+    F.ctx = F.r1
+    local cp
+    for _, q in ipairs(layout.patches(F.ctx)) do
+      if q.id == p.id then cp = q break end
+    end
+    if not cp then
+      F.r1 = nil
+      F.pc = "site"
+      return 5
+    end
+    planjob.call(S, F, "site", layout.hub_site_frame(F.ctx, cp, F.home, hubs.MIN_HOME, F.keep_away, hubs.MIN_APART))
+    return 5
+  end,
+  site = function(S, F)
+    local C, X, step = S.C, F.X, F.step
+    local p = F.cands[F.ci].p
+    local site = F.r1
+    if not site then
+      util.log("ai %s: hub %d: no hub site next to %s", C.force, step.id, p.id)
+      X.reason = "no hub site"
+      F.pc = "cand"
+      return 1
+    end
+    F.site = site
+    F.claimed = attempt_begin(S, C)
+    local frame = layout.hub_frame(site.x, site.y)
+    F.frame = frame
+    layout.reserve_hub_body(C, site.x, site.y, X.line)
+    -- haulers stop just south of the hub (logistics.approach_point): keep that column free of solar arrays
+    for ty = site.y + 2, site.y + 7 do
+      layout.tset(C.reserved, site.x - 1, ty, "approach") -- Phase 5 M3 perf: tile sets
+      layout.tset(C.reserved, site.x, ty, "approach")
+    end
+    local slot_states = {}
+    F.slot_states = slot_states
+    layout.reserve_hub(C, frame, slot_states, layout.HUB_SINK_ORDER)
+    local solar_pos = {}
+    local P = layout.HUB_SOLAR
+    for i = 1, step.plan_solar or step.solar or 0 do
+      local pos = layout.find_spot_in(C, F.surface, "rts-solar-array", site.x + P[1], site.y + P[3], site.x + P[2],
+        site.y + P[4], {x = site.x + (i % 2 == 1 and -5 or 5), y = site.y + 5})
+      if pos then solar_pos[#solar_pos + 1] = pos end
+    end
+    F.solar_pos = solar_pos
+    local slots = {}
+    for i = 1, step.plan_slots or step.slots or 2 do slots[i] = "smelter" end
+    local sink = {frame = frame, hub = slot_states, order = layout.HUB_SINK_ORDER, target = {x = site.x, y = site.y},
+                  wire = layout.HUB_WIRE, satellites = false}
+    planjob.call(S, F, "line", build_order.line_frame(F.ctx, X.line, {ore = p.name, patch_id = p.id, slots = slots},
+      sink))
+    return 400 + 150 * #solar_pos
+  end,
+  line = function(S, F)
+    local C, X, step, site = S.C, F.X, F.step, F.site
+    local cand = F.cands[F.ci]
+    local p = cand.p
+    local L = F.r1
+    if L.status == "ok" and L.chained then
+      attempt_end(S, C, F.claimed, false)
+      local meta = storage.ai_meta
+      X.status, X.reason, X.patch_id, X.ore, X.plate = "ok", nil, p.id, p.name, hubs.PLATE[p.name]
+      X.pos, X.frame, X.hub, X.haulers = site, F.frame, F.slot_states, step.haulers or 1
+      meta.patch_claims[p.id] = C.force
+      -- the stockpile spots must be free of units when the hub is revived: logistics.lua moves a blocked
+      -- stockpile up to 4 tiles, and the west one (the side the army and the patrol come from) kept moving
+      local clear = {}
+      for _, off in ipairs(deps.logistics and deps.logistics.HUB_STOCKPILES or {}) do
+        local x, y = site.x + off.x, site.y + off.y
+        clear[#clear + 1] = {{x - 0.7, y - 0.7}, {x + 0.7, y + 0.7}}
+      end
+      X.hub_key = construction.add(C, {name = "rts-hub", x = site.x, y = site.y, line = X.line, clear = clear})
+      X.solar = {}
+      local specs = {}
+      for _, pos in ipairs(F.solar_pos) do
+        X.solar[#X.solar + 1] = construction.add(C, {name = "rts-solar-array", x = pos.x, y = pos.y, line = X.line})
+        specs[#specs + 1] = {name = "rts-solar-array", x = pos.x, y = pos.y}
+      end
+      for _, s in ipairs(L.slots) do
+        for _, key in ipairs(s.keys) do
+          local e = C.plan[key]
+          specs[#specs + 1] = {name = e.name, x = e.x, y = e.y}
+        end
+      end
+      local poles = {}
+      for _, key in pairs(L.gap_poles) do poles[#poles + 1] = {x = C.plan[key].x, y = C.plan[key].y} end
+      for _, key in ipairs(L.chain) do poles[#poles + 1] = {x = C.plan[key].x, y = C.plan[key].y} end
+      X.poles = {}
+      for _, q in ipairs(layout.cover_power(C, F.ctx, site, specs, poles, X.line)) do
+        X.poles[#X.poles + 1] = construction.add(C, {name = layout.POLE, x = q.x, y = q.y, line = X.line})
+      end
+      local head = string.format("[rts] ai %s: hub %d planned at %s next to %s (%d ore tiles, %.0f tiles from the CC): "
+        .. "%d drill spots, slots [%s], %d solar, %d extra poles, %d hauler(s) wanted; planned in ", C.force,
+        step.id, util.pos_str(site), p.id, p.count, cand.d, #L.drills, slot_names(L), #X.solar, #X.poles, X.haulers)
+      if F.prof then
+        F.prof.stop()
+        log({"", head, F.prof})
+      else
+        log(head .. string.format("%d ticks (planning job)", game.tick - (F.since or game.tick)))
+      end
+      planjob.ret(S, X)
+      return 100 + 20 * #specs
+    end
+    util.log("ai %s: hub %d: line into a hub at %s next to %s failed: %s", C.force, step.id, util.pos_str(site),
+      p.id, L.status == "ok" and "pole chain does not reach the hub" or tostring(L.reason))
+    X.reason = "line failed"
+    C.lines[X.line] = nil
+    -- drop the plan entries the failed line added, then the reservations
+    for key, e in pairs(C.plan) do
+      if e.line == X.line and e.status == "planned" then C.plan[key] = nil end
+    end
+    attempt_end(S, C, F.claimed, true)
+    F.claimed, F.site = nil, nil
+    F.pc = "cand"
+    return 100 + table_size(C.plan) * 0.3
+  end,
+  unavailable = function(S, F)
+    local X = F.X
+    local head = string.format("[rts] ai %s: hub %d unavailable (%s) after %d patch(es) in ", S.C.force, F.step.id,
+      X.reason, F.tried)
+    if F.prof then
+      F.prof.stop()
+      log({"", head, F.prof})
+    else
+      log(head .. string.format("%d ticks (planning job)", game.tick - (F.since or game.tick)))
+    end
+    planjob.ret(S, X)
+    return 5
+  end,
+}, function(S, C, status)
+  -- Nation mode: the result of a job is handed to the step as if hubs.plan had just returned it (hubs execute)
+  local X = S.r1
+  if not X then
+    local F = S.stack[1] -- (a job that did not finish: its root frame names the step)
+    X = F and F.step and C.expansions and C.expansions[F.step.id]
   end
-  prof.stop()
-  log({"", string.format("[rts] ai %s: hub %d unavailable (%s) after %d patch(es) in ", C.force, step.id,
-    X.reason, tried), prof})
-  return X
+  if X then
+    X.fresh = true
+    if status ~= "done" then X.status, X.reason = "unavailable", "planning job " .. status end
+  end
+end)
+
+--- Phase 5 M3 ai (perf): expansion step.id planned as a scheduler job in Nation mode (C.planning.hub = step.id): true
+--- when a job was submitted (its result is C.expansions[step.id] with X.fresh once it ended); false when the caller
+--- plans now (hubs.plan).
+function hubs.plan_async(C, surface, step)
+  if not planjob.async(C) then return false end
+  local frame = hubs.plan_frame(surface, step)
+  frame.since = game.tick
+  return planjob.submit(C, "ai_hub_plan", frame, {hub = step.id}) ~= nil
 end
 
 ---------------------------------------------------------------------------
@@ -247,6 +356,8 @@ end
 
 local function in_progress(C, step)
   local X = expansion(C, step)
+  local P = C.planning -- Phase 5 M3 ai (perf): its planning job runs
+  if P and P.hub == step.id and planjob.busy(C) then return true end
   return X ~= nil and X.status == "ok" and build_order.line_busy(C, {name = X.line})
 end
 
@@ -265,8 +376,13 @@ end
 
 local function execute(C, step, st, surface)
   local X = expansion(C, step)
-  if not X or (X.status ~= "ok" and (st.hub_tries or 0) < hubs.PLAN_TRIES) then
+  if X and X.fresh then
+    X.fresh = nil -- Phase 5 M3 ai (perf): a planning job's result, as if hubs.plan had just returned it
+  elseif not X or (X.status ~= "ok" and (st.hub_tries or 0) < hubs.PLAN_TRIES) then
+    -- Phase 5 M3 ai (perf): Nation mode plans on the scheduler (one planning job per commander at a time)
+    if planjob.async(C) and planjob.busy(C) then return 0 end
     st.hub_tries = (st.hub_tries or 0) + 1
+    if hubs.plan_async(C, surface, step) then return 0 end
     X = hubs.plan(C, surface, step)
   end
   if X.status ~= "ok" then

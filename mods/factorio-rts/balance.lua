@@ -598,6 +598,8 @@ balance.nation.people = {
     rail_stone = 150,
     -- below stone_low stone (once the steel flows) one more stone extractor of the start line, at most every stone_gap
     stone_low = 100, stone_gap = 2 * 60 * 60,
+    -- Phase 5 M3 ai: and one more copper extractor (and slot) below copper_low copper plates (was a code default)
+    copper_low = 30,
     -- from start_after, houses while the housing is below the city's jobs / workforce share + job_margin residents
     -- (the margin keeps recruits for the army; houses beyond it only fed goods demand)
     job_margin = 80, house_radius = {24, 40, 56},
@@ -716,10 +718,12 @@ balance.nation.diplomacy.ai = {
   -- opportunity_reach tiles of the capital with at most `defenders` defence points (units, garrison, 4 per gun turret
   -- within opportunity_turret_radius), relation below r and power ratio above `ratio`, an idle army of `pool`; from
   -- opportunity_from, checked every opportunity_period, at most one per opportunity_gap. nil = off.
+  -- (Phase 5 M3 ai: `strong` = above that power ratio the relation limit and the defence points rise to its r and
+  -- defenders: economic and turtle nations go for a rival's town too when they far outclass it)
   opportunity = {
     aggressive = {r = 0, ratio = 0.8, defenders = 8, pool = 12},
-    economic = {r = -25, ratio = 1.2, defenders = 4, pool = 16},
-    turtle = {r = -30, ratio = 1.3, defenders = 4, pool = 20},
+    economic = {r = -25, ratio = 1.2, defenders = 4, pool = 16, strong = {ratio = 1.5, r = 0, defenders = 12}},
+    turtle = {r = -30, ratio = 1.3, defenders = 4, pool = 20, strong = {ratio = 1.6, r = -10, defenders = 12}},
   },
   opportunity_nations = 3,
   opportunity_from = 20 * 60 * 60, opportunity_period = 60 * 60, opportunity_gap = 20 * 60 * 60,
@@ -810,6 +814,9 @@ balance.nation.market = {
     hauler_after = 12 * 60 * 60, -- the port route asks for its own hauler kit from then on (earlier only when the AI
                                -- wants haulers for its hubs anyway)
     port_keep = 400,           -- the port asks the hauler for this much of every surplus good
+    -- Phase 5 M3 ai: goods the market AI never buys for a ledger shortfall (the nation makes them; a plate target of
+    -- ai/age_up.lua only keeps the Smelting works on the town's ore)
+    no_buy = {["iron-plate"] = true, ["copper-plate"] = true, ["iron-ore"] = true, ["copper-ore"] = true},
     coal_keep = 60,            -- coal the port keeps for the haulers' return trips (never sold)
     buy_after = 3 * 60 * 60,   -- a shortfall the AI cannot fill within this long is bought
     buy_horizon = 3,           -- minutes: a shortfall short > made per minute x horizon cannot be filled in time
@@ -1261,6 +1268,106 @@ balance.buildings["rts-gate"] = {kind = "wall", cost = balance.nation.trains_war
 balance.nation.ai3 = balance.nation.ai3 or {}
 balance.nation.ai3.budget = balance.nation.ai3.budget or 400
 balance.nation.ai3.tick_cap = balance.nation.ai3.tick_cap or 2000 -- all nations together, once each had its budget
+
+-- Phase 5 M3 ai (docs/PHASE5-M3.md D7, §3 "ai/planner.lua, council.lua, controller.lua, intel.lua, difficulty.lua";
+-- study docs/research/scale/war-ai-performance.md §4; notes docs/qa/phase5-ai3-notes.md): the full nation AI. Pure data,
+-- Nation mode only (the Skirmish AI never reads it). budget and tick_cap above are m3-perf's (scripts/sched.lua).
+do
+  local AI3 = balance.nation.ai3
+  -- Difficulty without cheats (§4.7). Every level sees honestly and pays what a player pays; the levels differ in skill:
+  -- how fresh intelligence must be before the council acts on it (intel_age, ticks), offensive operations at once (ops),
+  -- city-site candidates the planner scores (sites), the A* state cap of its planners (astar), build pace (ticks per
+  -- construction job, build_period, and buildings in flight), micro (off | basic | full: retreat by force ratio,
+  -- resupply, focus), orders per minute per division (opm), the scheduler budget factor, how early the planner founds
+  -- its cities (expand: x on the city times) and how many it founds (cities), how often the council thinks (council,
+  -- ticks) and when the first offensive may start (first_attack, x on the doctrine's).
+  AI3.difficulty = {
+    easy = {intel_age = 60 * 60, ops = 1, sites = 8, astar = 20000, build_period = 360, in_flight = 2, micro = "off",
+            opm = 2, budget_factor = 0.75, expand = 1.3, cities = 3, council = 240, first_attack = 1.5},
+    normal = {intel_age = 30 * 60, ops = 2, sites = 16, astar = 40000, build_period = 180, in_flight = 3,
+              micro = "basic", opm = 6, budget_factor = 1, expand = 1, cities = 4, council = 120, first_attack = 1},
+    hard = {intel_age = 10 * 60, ops = 4, sites = 32, astar = 60000, build_period = 120, in_flight = 4, micro = "full",
+            opm = 12, budget_factor = 1.5, expand = 0.8, cities = 4, council = 60, first_attack = 0.8},
+  }
+  -- Intelligence (ai/intel.lua): every difficulty intel_age ticks per nation, what any own entity sees within `sight` tiles (an own
+  -- scout plane within `plane_sight`): rival and city-state cities, divisions, depots, planes and unit clusters (cells of
+  -- `cell` tiles). Divisions, clusters and planes not seen for `forget` ticks are dropped; cities and depots stay until
+  -- their spot is seen empty.
+  AI3.intel = {sight = 30, plane_sight = 64, cell = 64, forget = 10 * 60 * 60, cluster_checks = 40}
+  -- Economic planner (ai/planner.lua), every `period` ticks per nation (staggered).
+  --   Sites: candidates (world city sites, oil fields, rare deposits, region ore patches, chokes) scored as a scheduler
+  --   job (units per candidate) every `rescore` ticks: need-weighted ore within ore_radius (amount capped at ore_cap),
+  --   oil and rare value, choke value (fortress), minus rail cost (tiles from the nearest own city x rail_terrain for
+  --   water and mountain cells on the way), exposure (rival capitals and land within exposure_radius) and overlap with
+  --   any city closer than min_city. Roles: oil (an oil field), rare, fortress (a choke between us and a rival),
+  --   mining (ore), trade (a port nearby).
+  --   Cities: the second city is ai/towns.lua's mining town; the third from third_at seconds (or Industrialisation
+  --   researched), the fourth from fourth_at (or Age II), more every more_gap until the difficulty's `cities` (at most
+  --   balance.nation.cities.limit, capital included); the times x the difficulty's expand, x territory_expand when the
+  --   lobby's victory mode includes Territory.
+  --   Trunk: a minimum spanning tree over own cities rooted at the capital (edge cost = tiles x rival-land factor); one
+  --   rails.ai_program per edge not served by rails.lua's own program, at most `lines` building at once.
+  AI3.planner = {
+    period = 300, rescore = 3 * 60 * 60, units = {candidate = 40, check = 8},
+    third_at = 9 * 60, fourth_at = 18 * 60, more_gap = 7 * 60, territory_expand = 0.7, city_tries = 6,
+    min_capital = 180, max_capital = 700, min_city = 150, ore_radius = 70, ore_cap = 60000,
+    exposure_radius = 700, rail_terrain = 2.5,
+    weights = {ore = 1.0, oil = 1.6, rare = 0.8, choke = 0.5, port = 0.4, rail = 1.0, exposure = 0.8, need = 1.0},
+    role_order = {"oil", "mining", "rare", "fortress", "trade"},
+    oil = {reach = 14, pumpjacks = 3, export = {"rts-crude-oil", "plastic-bar", "sulfur"}, keep_crude = 400},
+    trunk = {period = 600, lines = 2, rival_factor = 3},
+    -- the oil chain at the capital once crude comes in (Age II): districts appended to the age-up list
+    oil_districts = {"rts-district-electronics", "rts-district-petrochem", "rts-district-construction"},
+    -- Age III road: Electrification first in Age II; make targets for the industrial kit's parts and then the running
+    -- Space Program stage's goods (capped at stage_cap per good); purchases of what the nation cannot make in time (the
+    -- market AI's ai_buy covers ledger shortfalls) at most buy_share of the balance above buy_reserve per buy_period
+    research_first = {"rts-electrification"}, kit_targets = {["engine-unit"] = 20, ["advanced-circuit"] = 20, sulfur = 20},
+    stage_cap = 200, buy_reserve = 1200, buy_share = 0.35, buy_period = 60 * 60, buy_max = 100,
+    -- a port farther than port_reach tiles from the capital is not used for purchases (a hauler takes minutes each way);
+    -- city-states first. Every non-capital city exports export_goods (they reach the capital by haulers and trains)
+    port_reach = 450,
+    export_goods = {"plastic-bar", "sulfur", "advanced-circuit", "engine-unit", "concrete", "rts-crude-oil",
+                    "processing-unit", "battery", "rocket-fuel", "light-oil-barrel"},
+    -- rush the running project (the Railway Charter, a Space Program stage) or a wanted research (Electrification) when
+    -- the balance is above rush_at and a project's goods are mostly there (rush_share)
+    rush_at = 2200, rush_share = 0.6,
+    -- Geology and rare extractors: deposits inside own land within reach of a city network
+    rare = {from_age = 2, reach = 15, max = 3},
+    -- automation (Age III): families automated once the capital holds kits_at automation kits
+    automate = {families = {"metallurgy", "electronics", "chemistry"}, kits_at = 4},
+  }
+  -- War council (ai/council.lua), every difficulty `council` ticks per nation.
+  --   Fronts: a segment with at least hold_strength enemy supply near it (fronts.STRENGTH: intel) gets a holding division
+  --   of 1.5 x that strength (hold_min..hold_max units) from the idle army, at most hold_units (1 - reserve) of it on
+  --   lines; a hold is released when its segment is gone or quiet for hold_quiet ticks. A segment above belt_threat for
+  --   belt_after ticks gets a fort belt (belts.plan_front; Fortification first), at most `belts` per nation.
+  --   Operations: kinds capture, siege, relief, raid, bomb; phases with timeouts (ticks); `abort_ratio` force ratio.
+  --   Air: an airfield at the capital from Age II (Aviation first) once a war ran or air_from has passed; scout planes
+  --   (scouts) patrol the most threatened segment (else the capital), interceptors when enemy planes were seen,
+  --   bombers before an offensive (Air Force).
+  --   Money: hire garrison points at a city under attack (hire_points, balance above hire_at), mercenaries when the
+  --   capital is attacked and the idle army is below merc_army (balance above merc_at).
+  AI3.council = {
+    reserve = 0.25, hold_strength = 4, hold_quiet = 5 * 60 * 60, hold_min = 6, hold_max = 16, hold_units = 0.75,
+    belt_threat = 30, belt_after = 3 * 60 * 60, belts = 2,
+    -- without a front (the lands do not touch): a city with hostile strength >= sector_strength known within
+    -- sector_radius for belt_after gets a sector_length belt across the approach
+    sector_strength = 6, sector_radius = 250, sector_length = 64,
+    timeouts = {assemble = 2 * 60 * 60, advance = 8 * 60 * 60, siege = 6 * 60 * 60, capture = 4 * 60 * 60,
+                consolidate = 60 * 60, move = 4 * 60 * 60, engage = 3 * 60 * 60, strike = 3 * 60 * 60,
+                fly = 3 * 60 * 60, ["return"] = 3 * 60 * 60},
+    siege_range = 90, abort_ratio = 1, field_reach = 220,
+    air_from = 25 * 60 * 60, scouts = 2, interceptors = 3, bombers = 3, patrol_radius = 48,
+    artillery_range = 110,
+    hire_at = 2500, hire_points = 8, merc_at = 2500, merc_army = 12,
+  }
+  -- Division controllers (ai/controller.lua): each AI division every `period` ticks (round robin), at most per_tick
+  -- divisions per tick; retreat below the force ratio retreat_ratio (micro basic/full), resupply below `low` supply
+  -- state, planes back below plane_supply.
+  AI3.controller = {period = 60, per_tick = 6, retreat_ratio = 1, enemy_radius = 50, plane_supply = 35}
+  -- Money (ai/nation.lua): contracts for a lacking good from a port holding contract_stock of it (was 2 x n = 200)
+  AI3.money = {contract_stock = 100}
+end
 
 -- Phase 5 M3 world3 (docs/PHASE5-M3.md D8, §3 "worldgen.lua"; docs/qa/phase5-world3-notes.md): huge worlds (3072,
 -- 4096), up to six nations, background generation (scripts/worldgen.lua). Pure data. Counts here only cover what the

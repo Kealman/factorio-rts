@@ -283,14 +283,37 @@ function mix.manage_barracks(C)
   local list = {}
   for un, rec in buildings.for_force(C.force, "barracks") do list[#list + 1] = {un, rec} end
   table.sort(list, function(a, b) return a[1] < b[1] end)
-  for _, pair in ipairs(list) do
+  -- Phase 5 M3 ai (Nation): the council's plane kits go to the first barracks (the capital's: its airfield) while the
+  -- kit's recipe is on and its parts are at hand
+  local plane_kit
+  local aw = deps.council and deps.council.air_want and C.unit_recipe and not capped and deps.council.air_want(C)
+  if aw then
+    local frec = game.forces[C.force].recipes
+    local kits = {}
+    for kit in pairs(aw) do kits[#kits + 1] = kit end
+    table.sort(kits)
+    for _, kit in ipairs(kits) do
+      local r = frec[kit]
+      local ok = r ~= nil and r.enabled
+      for _, ing in ipairs(ok and r.prototype.ingredients or {}) do
+        if construction.have(C, ing.name) < ing.amount and not construction.flowing(C, ing.name) then ok = false end
+      end
+      if ok then
+        plane_kit = kit
+        break
+      end
+    end
+  end
+  for i, pair in ipairs(list) do
     local un, rec = pair[1], pair[2]
     local rally = C.army.rally
     if rally and not (rec.rally and util.distance(rec.rally, rally) < 1) then buildings.set_rally(un, rally) end
     local e = rec.entity
     local cur = recipe_name(e)
     local want
-    if C.unit_recipe and not capped and not yield then
+    if i == 1 and plane_kit then
+      want = plane_kit
+    elseif C.unit_recipe and not capped and not yield then
       local st = C.bk[un]
       if not st then
         st = {}

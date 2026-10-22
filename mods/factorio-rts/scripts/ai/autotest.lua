@@ -48,6 +48,10 @@ local towns = require("scripts.ai.towns") -- Phase 5 M1 integration: the AI's mi
 local diplomacy = require("scripts.diplomacy") -- Phase 5 M2 diplomacy: Nation matches start at peace (attack check)
 local governor = require("scripts.ai.governor") -- Phase 5 M2 ai: minute line and the M2 summary metrics
 local nation_ai = require("scripts.ai.nation")
+-- Phase 5 M3 ai: the full nation AI's minute line, metrics and (opt-in) checks
+local planner = require("scripts.ai.planner")
+local council = require("scripts.ai.council")
+local intel = require("scripts.ai.intel")
 
 local autotest = {}
 
@@ -292,6 +296,124 @@ events.on_signal("rts_city_captured", function(e)
   util.log("ai autotest: m2ai: city %s captured by %s from %s", tostring(e.city_id), tostring(e.to), tostring(e.from))
 end)
 
+---------------------------------------------------------------------------
+-- Phase 5 M3 ai (docs/PHASE5-M3.md §4 "AI (wave B)"): per nation the minute its third city stood, the minute three of its
+-- cities were linked by open rail lines (the capital's component of the graph of own cities joined by open lines),
+-- the minute it reached Age III, operations with phases, air patrols, fort belts built. Logged every minute
+-- ("ai minute N <force> ai3: ...") and in the summary ("ai autotest ai3 summary: ..."); checked only when a test module
+-- sets autotest.AI3_CHECKS (tools/probes/ai3_acceptance.lua), so other packages' autotest counts stay as they were.
+---------------------------------------------------------------------------
+autotest.AI3_CHECKS = false
+autotest.AI3_LINK_DEADLINE = 35 * 60 * 60
+autotest.AI3_AGE3_DEADLINE = 40 * 60 * 60
+
+-- The city of a depot: the own city whose centre is nearest (within 120 tiles).
+local function depot_city(f, un)
+  local d = deps.rails and deps.rails.depot(un)
+  local e = d and d.entity
+  if not (e and e.valid) then return nil end
+  local best, bd
+  for _, c in ipairs(deps.cities.for_force(f)) do
+    local dd = util.distance(c.position, e.position)
+    if dd <= 120 and (not bd or dd < bd) then best, bd = c.id, dd end
+  end
+  return best
+end
+
+--- Cities of force f joined to its capital by open rail lines (the capital included), and all its cities.
+function autotest.linked_cities(f)
+  local own = deps.cities and deps.cities.for_force(f) or {}
+  local nat = storage.nations and storage.nations[f]
+  local cap = nat and nat.capital
+  if not cap then return 0, #own end
+  local adj = {}
+  for _, line in ipairs(deps.rails and deps.rails.lines_of(f) or {}) do
+    if line.state == "open" or (line.state == "cut" and line.opened) then
+      local a, b = depot_city(f, line.a), depot_city(f, line.b)
+      if a and b and a ~= b then
+        adj[a] = adj[a] or {}
+        adj[b] = adj[b] or {}
+        adj[a][#adj[a] + 1] = b
+        adj[b][#adj[b] + 1] = a
+      end
+    end
+  end
+  local seen, queue, n = {[cap] = true}, {cap}, 1
+  local i = 1
+  while queue[i] do
+    for _, o in ipairs(adj[queue[i]] or {}) do
+      if not seen[o] then
+        seen[o] = true
+        n = n + 1
+        queue[#queue + 1] = o
+      end
+    end
+    i = i + 1
+  end
+  return n, #own
+end
+
+local function ai3_minute(s, n)
+  s.ai3 = s.ai3 or {city3 = {}, linked = {}, age3 = {}, space = {}}
+  local A = s.ai3
+  local age = game.tick - s.started
+  for _, f in ipairs(autotest.FORCES) do
+    local C = ai.get(f)
+    local linked, total = autotest.linked_cities(f)
+    if total >= 3 and not A.city3[f] then A.city3[f] = age end
+    if linked >= 3 and not A.linked[f] then A.linked[f] = age end
+    if deps.ages and deps.ages.of(f) >= 3 and not A.age3[f] then A.age3[f] = age end
+    local P = planner.state(f)
+    if P and P.space and P.space.started and not A.space[f] then A.space[f] = P.space.started - s.started end
+    if C then
+      util.log("ai minute %d %s ai3: cities %d, linked %d | %s | %s | %s", n, f, total, linked, planner.describe(f),
+        council.describe(f), intel.describe(f))
+    end
+  end
+end
+
+local function clock_of(t)
+  return t and string.format("%d:%02d", math.floor(t / 3600), math.floor(t / 60) % 60) or "-"
+end
+
+function autotest.ai3_summary(s)
+  local A = s.ai3 or {city3 = {}, linked = {}, age3 = {}, space = {}}
+  local parts = {}
+  local any_patrol, any_belt = 0, 0
+  for _, f in ipairs(autotest.FORCES) do
+    local K = council.state(f)
+    local st = K and K.stats or {}
+    local belts_built = 0
+    local belts_mod = deps.belts or package.loaded["__" .. script.mod_name .. "__/scripts/belts.lua"]
+    for _, plan in ipairs(belts_mod and belts_mod.of and belts_mod.of(f) or {}) do
+      if plan.state == "built" then belts_built = belts_built + 1 end
+    end
+    any_patrol = any_patrol + (st.patrols or 0)
+    any_belt = any_belt + belts_built
+    local linked, total = autotest.linked_cities(f)
+    parts[#parts + 1] = string.format("%s cities %d (3rd %s, 3 linked %s, now %d linked), age3 %s, space %s, ops %d "
+      .. "(phased %d, aborted %d), holds %d, belts %d planned %d built, patrols %d, interceptors %d, bombs %d, "
+      .. "artillery %d, hires %d, mercs %d", f, total, clock_of(A.city3[f]), clock_of(A.linked[f]), linked,
+      clock_of(A.age3[f]), clock_of(A.space[f]), st.ops or 0, st.phased or 0, st.aborted or 0, st.holds or 0,
+      st.belts or 0, belts_built, st.patrols or 0, st.interceptors or 0, st.bombs or 0, st.artillery or 0,
+      st.hires or 0, st.mercs or 0)
+    if autotest.AI3_CHECKS then
+      local ended = storage.match and storage.match.phase == "ended"
+      local due = game.tick - s.started >= autotest.AI3_LINK_DEADLINE
+      check("ai3_cities_" .. f, (A.linked[f] ~= nil and A.linked[f] <= autotest.AI3_LINK_DEADLINE) or not due
+        or ended, "%s: 3 cities linked by rail at %s (third city %s; %d of %d linked now)%s", f, clock_of(A.linked[f]),
+        clock_of(A.city3[f]), linked, total, due and "" or ", not due")
+      check("ai3_ops_" .. f, (st.phased or 0) >= 1, "%s: %d operations with phases (%d started)", f, st.phased or 0,
+        st.ops or 0)
+    end
+  end
+  util.log("ai autotest ai3 summary: %s | patrols %d, belts built %d", table.concat(parts, "; "), any_patrol, any_belt)
+  if autotest.AI3_CHECKS then
+    check("ai3_air_patrols", any_patrol > 0, "%d air patrols ordered in all", any_patrol)
+    check("ai3_belt", any_belt > 0, "%d fort belts built in all", any_belt)
+  end
+end
+
 function autotest.m2_summary(s)
   local M = s.m2 or {starved = {}, captures = 0, capture_list = {}}
   local parts = {}
@@ -393,6 +515,7 @@ local function minute_report(s, n)
     end
   end
   if deps.ages and deps.ages.is_nation() then m2_minute(s) end -- Phase 5 M2 ai
+  if deps.ages and deps.ages.is_nation() then ai3_minute(s, n) end -- Phase 5 M3 ai
   util.log("ai minute %d match: phase=%s winner=%s", n, tostring(m and m.phase), tostring(m and m.winner))
   local p = ai.perf()
   if wall then
@@ -405,10 +528,15 @@ local function minute_report(s, n)
     per_tick.divide(autotest.MINUTE)
     log({"", string.format("[rts] ai perf minute %d: AI time per tick (average over %d ticks) ", n, autotest.MINUTE),
          per_tick})
-    local parts = {""}
-    for _, name in ipairs(commander.PARTS) do
-      parts[#parts + 1] = " | " .. name .. " "
-      parts[#parts + 1] = p.parts[name]
+    -- (Phase 5 M3 ai: in nested groups of at most 8 parts: a localised string takes at most 20 parameters)
+    local parts, group = {""}, nil
+    for i, name in ipairs(commander.PARTS) do
+      if (i - 1) % 8 == 0 then
+        group = {""}
+        parts[#parts + 1] = group
+      end
+      group[#group + 1] = " | " .. name .. " "
+      group[#group + 1] = p.parts[name]
     end
     log({"", string.format("[rts] ai perf minute %d parts", n), parts})
     wall.reset()
@@ -644,6 +772,7 @@ local function finish(s, why)
   if m and m.config and m.config.mode == "nation" then world.autotest_checks(check) end
   if m and m.config and m.config.mode == "nation" then diplomacy.autotest_checks(check) end -- Phase 5 M2 diplomacy
   if m and m.config and m.config.mode == "nation" then autotest.m2_summary(s) end -- Phase 5 M2 ai (metrics only)
+  if m and m.config and m.config.mode == "nation" then autotest.ai3_summary(s) end -- Phase 5 M3 ai
   local last = s.minute
   local producing = autotest.producing(s)
   -- Phase 5 M1 integration: a match where at most one force still has a CC or a barracks is decided even when a beaten

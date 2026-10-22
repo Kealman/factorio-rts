@@ -24,6 +24,7 @@ local data = require("scripts.ai.orders_data")
 local layout = require("scripts.ai.layout")
 local construction = require("scripts.ai.construction")
 local deps = require("scripts.ai.deps")
+local planjob = require("scripts.ai.planjob") -- Phase 5 M3 ai (perf): line planning as a resumable planner
 
 local build_order = {}
 
@@ -50,7 +51,19 @@ end
 
 --- Plan line `name` (orders_data.LINES, or `spec`) for commander C with planning context ctx, into `sink` (default
 --- the CC, see layout.lua). Idempotent.
+--- Phase 5 M3 ai (perf): the planner "bo_line" (ai/planjob.lua) run to the end: line_begin, layout's "plan_line",
+--- line_commit; build_order.plan_line_async plans an expansion line as a scheduler job in Nation mode.
 function build_order.plan_line(C, ctx, name, spec, sink)
+  return planjob.sync(C, build_order.line_frame(ctx, name, spec, sink))
+end
+
+--- A frame of the planner "bo_line". ctx nil: it reads its own context around the CC (on `surface`).
+function build_order.line_frame(ctx, name, spec, sink, surface)
+  return {fn = "bo_line", ctx = ctx, name = name, spec = spec, sink = sink, surface = surface}
+end
+
+-- The line record before layout's planner: the line itself when it exists or has no spec, else nil and the spec.
+local function line_begin(C, name, spec)
   if C.lines[name] then return C.lines[name] end
   spec = spec or data.line_spec(name, deps.ages ~= nil and deps.ages.is_nation()) -- Phase 5 M1: Nation line specs
   local L = {name = name, ore = spec and spec.ore}
@@ -59,7 +72,12 @@ function build_order.plan_line(C, ctx, name, spec, sink)
     L.status, L.reason = "unavailable", "no such line"
     return L
   end
-  local plan, reason = layout.plan_line(C, ctx, name, spec, hostile_positions(C), sink)
+  return L, spec
+end
+
+-- The line record after layout's planner: plan entries for its parts (or the reason it is unavailable).
+local function line_commit(C, L, plan, reason)
+  local name = L.name
   if not plan then
     L.status, L.reason = "unavailable", reason
     util.log("ai %s: line %s unavailable: %s", C.force, name, reason)
@@ -104,6 +122,68 @@ function build_order.plan_line(C, ctx, name, spec, sink)
     util.pos_str({L.patch.cx, L.patch.cy}), nbelts, #L.drills, table_size(L.gap_poles), #L.chain,
     L.chained and "" or " (NOT connected to the CC)", table.concat(slot_names, " "))
   return L
+end
+
+planjob.define("bo_line", {
+  start = function(S, F)
+    if F.ctx then
+      F.pc = "begin"
+      return 1
+    end
+    planjob.call(S, F, "got_ctx", layout.context_frame(F.surface, S.C.frame, layout.PATCH_SEARCH))
+    return 1
+  end,
+  got_ctx = function(S, F)
+    F.ctx = F.r1
+    F.pc = "begin"
+    return 1
+  end,
+  begin = function(S, F)
+    local C = S.C
+    local L, spec = line_begin(C, F.name, F.spec)
+    if not spec then
+      planjob.ret(S, L)
+      return 5
+    end
+    F.L = L
+    planjob.call(S, F, "planned", layout.line_frame(F.ctx, F.name, spec, hostile_positions(C), F.sink))
+    return 10
+  end,
+  planned = function(S, F)
+    local plan = F.r1
+    local L = line_commit(S.C, F.L, plan, F.r2)
+    planjob.ret(S, L)
+    local parts = 0
+    for _, sl in ipairs(plan and plan.slots or {}) do parts = parts + #sl.specs end
+    return 40 + (plan and (6 * #plan.belts + 20 * #plan.drills + 20 * parts) or 0)
+  end,
+}, function(S, C, status)
+  -- an expansion line planned as a job: one that did not finish is unavailable (its step is skipped, nothing retries)
+  local F = S.stack[1] or {}
+  local L = C.lines[F.name or ""]
+  if status ~= "done" and L and not L.status then
+    L.status, L.reason = "unavailable", "planning job " .. status
+  end
+end)
+
+--- Phase 5 M3 ai (perf): line `name` for the build order. In Nation mode with the scheduler on, a line not planned yet
+--- is planned by a job (kind ai_layout_plan, C.planning.line = name): nil now, the line once the job ended (the
+--- commander's economy slice waits meanwhile). Otherwise build_order.plan_line now, with get_ctx()'s context.
+function build_order.plan_line_async(C, get_ctx, name, surface)
+  if C.lines[name] then return C.lines[name] end
+  if planjob.async(C) then
+    if planjob.busy(C) then return nil end
+    if planjob.submit(C, "ai_layout_plan", build_order.line_frame(nil, name, nil, nil, surface), {line = name}) then
+      return nil
+    end
+  end
+  return build_order.plan_line(C, get_ctx(), name)
+end
+
+-- true while a planning job plans line `name`
+local function line_planning(C, name)
+  local P = C.planning
+  return P ~= nil and P.line == name and planjob.busy(C)
 end
 
 local function queue_list(C, list)
@@ -275,11 +355,15 @@ local function in_progress(C, step)
   local ext = build_order.KINDS[step.kind]
   if ext then return ext.in_progress(C, step) end
   if step.kind == "build" then
-    if step.anchor == "cc" or step.anchor == "front" then return (C.pending[step.name] or 0) > 0 end
+    if step.anchor == "cc" or step.anchor == "front" then
+      return (C.pending[step.name] or 0) > 0 or layout.spot_pending(C, step.name) -- (spot_pending: Phase 5 M3 ai perf)
+    end
     local L = line_of(C, step)
+    if not L and line_planning(C, step.anchor) then return true end -- Phase 5 M3 ai (perf): its planning job runs
     return L ~= nil and L.status == "ok" and line_busy(C, L)
   elseif step.kind == "expand" then
     local L = line_of(C, step)
+    if not L and line_planning(C, step.anchor) then return true end -- Phase 5 M3 ai (perf): its planning job runs
     return L ~= nil and L.status == "ok" and line_busy(C, L)
   end
   return false
@@ -295,7 +379,8 @@ local function execute(C, step, st, surface, get_ctx)
       local have = build_order.base_count(C, step.name) + (C.pending[step.name] or 0)
       local placed = 0
       for _ = have + 1, count do
-        local pos, pole = layout.find_spot(C, surface, step.name, step.anchor)
+        local pos, pole, wait = layout.find_spot(C, surface, step.name, step.anchor)
+        if wait then break end -- Phase 5 M3 ai (perf): a planning job looks for the spot (the step is in progress)
         if pole then
           construction.queue(C, construction.add(C, {name = layout.POLE, x = pole.x, y = pole.y}))
           util.log("ai %s: %s goes to %s outside the core supply, with a pole at %s", C.force, step.name,
@@ -312,7 +397,8 @@ local function execute(C, step, st, surface, get_ctx)
       end
       return placed
     end
-    local L = line_of(C, step) or build_order.plan_line(C, get_ctx(), step.anchor)
+    local L = line_of(C, step) or build_order.plan_line_async(C, get_ctx, step.anchor, surface) -- Phase 5 M3 ai (perf)
+    if not L then return 0 end -- (a planning job plans it: in progress)
     if L.status ~= "ok" then
       st.skipped = L.reason
       return 0
@@ -328,7 +414,8 @@ local function execute(C, step, st, surface, get_ctx)
     util.log("ai %s: army attacks once %d units are idle", C.force, step.min)
     return 1
   elseif kind == "expand" then
-    local L = line_of(C, step) or build_order.plan_line(C, get_ctx(), step.anchor)
+    local L = line_of(C, step) or build_order.plan_line_async(C, get_ctx, step.anchor, surface) -- Phase 5 M3 ai (perf)
+    if not L then return 0 end -- (a planning job plans it: in progress)
     if L.status ~= "ok" then
       st.skipped = L.reason
       util.log("ai %s: expansion %s skipped: %s", C.force, step.anchor, tostring(L.reason))
@@ -374,7 +461,8 @@ function build_order.priority(C, surface)
       C.priority_retry = C.priority_retry or {}
       if (C.pending[name] or 0) == 0 and game.tick >= (C.priority_retry[name] or 0) then
         C.priority_retry[name] = game.tick + build_order.RETRY_TICKS
-        local pos, pole = layout.find_spot(C, surface, name, "cc")
+        local pos, pole, wait = layout.find_spot(C, surface, name, "cc")
+        if wait then C.priority_retry[name] = nil end -- Phase 5 M3 ai (perf): a planning job looks: ask again next run
         if pos then
           if pole then construction.queue(C, construction.add(C, {name = layout.POLE, x = pole.x, y = pole.y})) end
           construction.queue(C, construction.add(C, {name = name, x = pos.x, y = pos.y}))

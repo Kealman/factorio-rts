@@ -23,6 +23,7 @@ local build_order = require("scripts.ai.build_order")
 local deps = require("scripts.ai.deps")
 local mapgen = require("scripts.mapgen")
 local production = require("scripts.production")
+local planjob = require("scripts.ai.planjob") -- Phase 5 M3 ai (perf): the planning as resumable planners
 local AI_BALANCE = require("balance").nation.economy.ai
 
 local towns = {}
@@ -75,42 +76,101 @@ end
 
 --- A town site for commander C (capital at `home`): {x, y} next to an iron or copper region patch, or nil. Records
 --- C.town. Called by cities.ai_step instead of its world-site search.
+--- Phase 5 M3 ai (perf): the planner "town_site" (ai/planjob.lua). In Nation mode with the scheduler on it runs as a job
+--- (kind ai_town_plan): the first call returns nil, "pending" (cities.ai_step waits), a call after the job ended its result.
 function towns.pick_site(C, surface, home)
   if not nation() then return nil end
-  local territory = deps.territory
-  -- Phase 5 M2 ai: not next to another force's city (a city-state or a rival town): seed 702's town line ran onto a
-  -- rival's land and 220 of its parts were given up
-  local others = {}
-  for _, c in pairs(storage.cities or {}) do
-    if c.force ~= C.force and c.position then others[#others + 1] = c.position end
+  local R = C.town_pick
+  if R then
+    C.town_pick = nil
+    if R.site then return R.site, R.why end
+    return nil
   end
-  local function near_other(pos)
-    for _, q in ipairs(others) do
-      if util.distance(q, pos) < towns.OTHER_CITY_GAP then return true end
+  -- (Phase 5 M3 ai: only when cities.ai_step understands "pending": it sets cities.TOWN_PENDING_OK; otherwise the search
+  -- runs at once as before)
+  if planjob.async(C) and deps.cities and deps.cities.TOWN_PENDING_OK then
+    if planjob.busy(C) then return nil, "pending" end
+    if planjob.submit(C, "ai_town_plan", towns.site_frame(surface, home), {town = "site"}) then return nil, "pending" end
+  end
+  return planjob.sync(C, towns.site_frame(surface, home))
+end
+
+function towns.site_frame(surface, home)
+  return {fn = "town_site", surface = surface, home = {x = home.x, y = home.y}}
+end
+
+planjob.define("town_site", {
+  start = function(S, F)
+    local C, home = S.C, F.home
+    local territory = deps.territory
+    -- Phase 5 M2 ai: not next to another force's city (a city-state or a rival town): seed 702's town line ran onto a
+    -- rival's land and 220 of its parts were given up
+    local others = {}
+    for _, c in pairs(storage.cities or {}) do
+      if c.force ~= C.force and c.position then others[#others + 1] = c.position end
     end
-    return false
-  end
-  local cands = {}
-  for _, p in ipairs(region_patches()) do
-    local d = util.distance(p.center, home)
-    if d >= towns.TOWN_MIN and d <= towns.TOWN_MAX and not near_other(p.center)
-       and not (territory and territory.owner_at(p.center) and territory.owner_at(p.center) ~= C.force) then
-      cands[#cands + 1] = {p = p, s = d + towns.ORE_PENALTY[p.name]}
+    local function near_other(pos)
+      for _, q in ipairs(others) do
+        if util.distance(q, pos) < towns.OTHER_CITY_GAP then return true end
+      end
+      return false
     end
-  end
-  table.sort(cands, function(a, b)
-    if a.s ~= b.s then return a.s < b.s end
-    return a.p.id < b.p.id
-  end)
-  local half = layout.arena_half()
-  for i, c in ipairs(cands) do
-    if i > towns.CANDIDATES then break end
+    local cands = {}
+    for _, p in ipairs(region_patches()) do
+      local d = util.distance(p.center, home)
+      if d >= towns.TOWN_MIN and d <= towns.TOWN_MAX and not near_other(p.center)
+         and not (territory and territory.owner_at(p.center) and territory.owner_at(p.center) ~= C.force) then
+        cands[#cands + 1] = {p = p, s = d + towns.ORE_PENALTY[p.name]}
+      end
+    end
+    table.sort(cands, function(a, b)
+      if a.s ~= b.s then return a.s < b.s end
+      return a.p.id < b.p.id
+    end)
+    F.cands, F.i = cands, 0
+    F.pc = "cand"
+    return 20 + #cands * 5 + #others * 2
+  end,
+  cand = function(S, F)
+    F.i = F.i + 1
+    local c = F.cands[F.i]
+    if F.i > towns.CANDIDATES or not c then
+      planjob.ret(S, nil)
+      return 1
+    end
     local p = c.p
-    local ctx = layout.context_at(C, surface, {cx = math.floor(p.center.x), cy = math.floor(p.center.y), fx = 1},
-      towns.CONTEXT_RADIUS)
-    local cp = layout_patch(ctx, p)
-    local site = cp and layout.hub_site(C, ctx, cp, home, 0, city_centers(), 96)
-    local ok, why = false, cp and "no site next to the patch" or "patch not generated"
+    -- Phase 5 M3 ai (m3-world3's rule): a patch on ground not generated yet (a 4096 world fills in the background) is
+    -- asked for and skipped this time
+    local wg = package.loaded["__" .. script.mod_name .. "__/scripts/worldgen.lua"] or package.loaded["scripts.worldgen"]
+    if wg and wg.generated and not wg.generated(p.center) then
+      if wg.request_area then
+        wg.request_area(S.C.force, {{p.center.x - 64, p.center.y - 64}, {p.center.x + 64, p.center.y + 64}})
+      end
+      util.log("ai %s: town patch %s rejected: not generated yet (requested)", S.C.force, p.id)
+      return 5
+    end
+    planjob.call(S, F, "ctx", layout.context_frame(F.surface, {cx = math.floor(p.center.x), cy = math.floor(p.center.y),
+                                                               fx = 1}, towns.CONTEXT_RADIUS))
+    return 1
+  end,
+  ctx = function(S, F)
+    local p = F.cands[F.i].p
+    F.ctx = F.r1
+    F.cp = layout_patch(F.ctx, p)
+    if not F.cp then
+      F.r1 = nil
+      F.pc = "site"
+      return 5
+    end
+    planjob.call(S, F, "site", layout.hub_site_frame(F.ctx, F.cp, F.home, 0, city_centers(), 96))
+    return 5
+  end,
+  site = function(S, F)
+    local C, site = S.C, F.r1
+    local p = F.cands[F.i].p
+    local territory = deps.territory
+    local half = layout.arena_half()
+    local ok, why = false, F.cp and "no site next to the patch" or "patch not generated"
     if site then
       local inside = math.abs(site.x) < half - 12 and math.abs(site.y) < half - 12
       local can, reason = true, nil
@@ -118,18 +178,23 @@ function towns.pick_site(C, surface, home)
       ok = inside and can
       why = not inside and "outside the map" or reason
     end
+    F.ctx, F.cp = nil, nil
     if ok then
       layout.reserve_hub_body(C, site.x, site.y, "town")
       C.town = {site = {x = site.x, y = site.y}, ore = p.name, patch = {cx = p.center.x, cy = p.center.y, id = p.id}}
       util.log("ai %s: town site %s next to %s (%s, %.0f tiles from the capital)", C.force, util.pos_str(site), p.id,
-        p.name, util.distance(site, home))
-      return {x = site.x, y = site.y}, "mining town at " .. p.id
+        p.name, util.distance(site, F.home))
+      planjob.ret(S, {x = site.x, y = site.y}, "mining town at " .. p.id)
+      return 30
     end
     util.log("ai %s: town patch %s rejected: %s", C.force, p.id, tostring(why))
-  end
-  return nil
-end
-
+    F.pc = "cand"
+    return 30
+  end,
+}, function(S, C, status)
+  -- Nation mode: the next towns.pick_site call (cities.ai_step) returns the job's result
+  C.town_pick = {site = status == "done" and S.r1 or nil, why = status == "done" and S.r2 or nil}
+end)
 -- The town's city record (the City Center on T.site), or nil.
 local function town_city(C, T)
   local cities = deps.cities
@@ -141,11 +206,11 @@ local function town_city(C, T)
 end
 
 -- A depot site next to the City Center whose logistic area touches it and whose platform fits; reserved.
-local function reserve_depot_site(C, ctx, surface, site)
+-- (Phase 5 M3 ai (perf): one ring distance r per call, so a planning job tries one ring per step)
+local function depot_at(C, ctx, surface, site, r)
   local rails = deps.rails
-  if not (rails and rails.platform_fits) then return nil end
   local best
-  for r = 8, towns.DEPOT_REACH do
+  do
     for _, off in ipairs({{r, 0}, {-r, 0}, {0, r}, {0, -r}, {r, r}, {-r, r}, {r, -r}, {-r, -r}}) do
       local p = {x = site.x + off[1], y = site.y + off[2]}
       if not best then
@@ -168,9 +233,12 @@ local function reserve_depot_site(C, ctx, surface, site)
         end
       end
     end
-    if best then break end
   end
-  if not best then return nil end
+  return best
+end
+
+-- reserve the depot site `best` (depot_at)
+local function depot_reserve(C, best)
   local function res(x0, y0, x1, y1)
     for tx = x0, x1 do
       for ty = y0, y1 do layout.tset(C.reserved, tx, ty, "town-depot") end -- Phase 5 M3 perf: tile sets
@@ -183,50 +251,105 @@ local function reserve_depot_site(C, ctx, surface, site)
 end
 
 -- Plan the town's mining line into the City Center (once).
+-- Phase 5 M3 ai (perf): the planner "town_plan" (ai/planjob.lua), a job in Nation mode (towns.step), else run to the end.
 local function plan(C, surface, T)
-  local ctx = layout.context_at(C, surface, {cx = math.floor(T.patch.cx), cy = math.floor(T.patch.cy), fx = 1},
-    towns.CONTEXT_RADIUS)
-  local cp = layout_patch(ctx, {name = T.ore, center = {x = T.patch.cx, y = T.patch.cy}})
-  if not cp then
-    T.status = "failed"
-    util.log("ai %s: town: the patch at %s is gone", C.force, util.pos_str({T.patch.cx, T.patch.cy}))
-    return
-  end
-  T.depot_site = reserve_depot_site(C, ctx, surface, T.site)
-  if T.depot_site and deps.rails and deps.rails.ai_set_far_site then deps.rails.ai_set_far_site(C.force, T.depot_site) end
-  local frame = layout.hub_frame(T.site.x, T.site.y)
-  local slot_states = {}
-  layout.reserve_hub(C, frame, slot_states, layout.HUB_SINK_ORDER)
-  local sink = {frame = frame, hub = slot_states, order = layout.HUB_SINK_ORDER, target = {x = T.site.x, y = T.site.y},
-                wire = layout.HUB_WIRE, satellites = false}
-  local slots = {}
-  for i, s in ipairs(towns.SLOTS) do slots[i] = s end
-  local L = build_order.plan_line(C, ctx, towns.LINE, {ore = T.ore, patch_id = cp.id, slots = slots}, sink)
-  if L.status ~= "ok" then
-    T.status = "failed"
-    util.log("ai %s: town line failed: %s", C.force, tostring(L.reason))
-    return
-  end
-  local specs, poles = {}, {}
-  for _, s in ipairs(L.slots) do
-    for _, key in ipairs(s.keys) do
-      local e = C.plan[key]
-      specs[#specs + 1] = {name = e.name, x = e.x, y = e.y}
-    end
-  end
-  for _, key in pairs(L.gap_poles) do poles[#poles + 1] = {x = C.plan[key].x, y = C.plan[key].y} end
-  for _, key in ipairs(L.chain) do poles[#poles + 1] = {x = C.plan[key].x, y = C.plan[key].y} end
-  T.poles = {}
-  for _, q in ipairs(layout.cover_power(C, ctx, T.site, specs, poles, towns.LINE)) do
-    T.poles[#T.poles + 1] = construction.add(C, {name = layout.POLE, x = q.x, y = q.y, line = towns.LINE})
-  end
-  T.status = "ok"
-  local names = {}
-  for i, s in ipairs(L.slots) do names[i] = s.name end
-  util.log("ai %s: town line planned on %s: %d drill spots, slots [%s], chained %s, %d extra poles, depot site %s",
-    C.force, cp.id, #L.drills, table.concat(names, " "), tostring(L.chained), #T.poles,
-    T.depot_site and util.pos_str(T.depot_site) or "none")
+  planjob.sync(C, towns.plan_frame(surface))
 end
+
+function towns.plan_frame(surface)
+  return {fn = "town_plan", surface = surface}
+end
+
+planjob.define("town_plan", {
+  start = function(S, F)
+    local T = S.C.town
+    planjob.call(S, F, "ctx", layout.context_frame(F.surface, {cx = math.floor(T.patch.cx), cy = math.floor(T.patch.cy),
+                                                               fx = 1}, towns.CONTEXT_RADIUS))
+    return 1
+  end,
+  ctx = function(S, F)
+    local C = S.C
+    local T = C.town
+    F.ctx = F.r1
+    local cp = layout_patch(F.ctx, {name = T.ore, center = {x = T.patch.cx, y = T.patch.cy}})
+    if not cp then
+      T.status = "failed"
+      util.log("ai %s: town: the patch at %s is gone", C.force, util.pos_str({T.patch.cx, T.patch.cy}))
+      planjob.ret(S)
+      return 5
+    end
+    F.cp = cp
+    local rails = deps.rails
+    F.r = (rails and rails.platform_fits) and 8 or nil
+    F.pc = "depot"
+    return 5
+  end,
+  -- a depot site next to the City Center: one ring distance per call (reserve_depot_site)
+  depot = function(S, F)
+    local C = S.C
+    local T = C.town
+    if F.r and F.r <= towns.DEPOT_REACH then
+      local best = depot_at(C, F.ctx, F.surface, T.site, F.r)
+      F.r = F.r + 1
+      if not best then return 300 end
+      T.depot_site = depot_reserve(C, best)
+    else
+      T.depot_site = nil
+    end
+    F.pc = "line"
+    return 300
+  end,
+  line = function(S, F)
+    local C = S.C
+    local T = C.town
+    if T.depot_site and deps.rails and deps.rails.ai_set_far_site then deps.rails.ai_set_far_site(C.force, T.depot_site) end
+    local frame = layout.hub_frame(T.site.x, T.site.y)
+    local slot_states = {}
+    layout.reserve_hub(C, frame, slot_states, layout.HUB_SINK_ORDER)
+    local sink = {frame = frame, hub = slot_states, order = layout.HUB_SINK_ORDER, target = {x = T.site.x, y = T.site.y},
+                  wire = layout.HUB_WIRE, satellites = false}
+    local slots = {}
+    for i, sl in ipairs(towns.SLOTS) do slots[i] = sl end
+    planjob.call(S, F, "lined", build_order.line_frame(F.ctx, towns.LINE, {ore = T.ore, patch_id = F.cp.id,
+                                                                           slots = slots}, sink))
+    return 300
+  end,
+  lined = function(S, F)
+    local C, L = S.C, F.r1
+    local T = C.town
+    if L.status ~= "ok" then
+      T.status = "failed"
+      util.log("ai %s: town line failed: %s", C.force, tostring(L.reason))
+      planjob.ret(S)
+      return 5
+    end
+    local specs, poles = {}, {}
+    for _, s in ipairs(L.slots) do
+      for _, key in ipairs(s.keys) do
+        local e = C.plan[key]
+        specs[#specs + 1] = {name = e.name, x = e.x, y = e.y}
+      end
+    end
+    for _, key in pairs(L.gap_poles) do poles[#poles + 1] = {x = C.plan[key].x, y = C.plan[key].y} end
+    for _, key in ipairs(L.chain) do poles[#poles + 1] = {x = C.plan[key].x, y = C.plan[key].y} end
+    T.poles = {}
+    for _, q in ipairs(layout.cover_power(C, F.ctx, T.site, specs, poles, towns.LINE)) do
+      T.poles[#T.poles + 1] = construction.add(C, {name = layout.POLE, x = q.x, y = q.y, line = towns.LINE})
+    end
+    T.status = "ok"
+    local names = {}
+    for i, sl in ipairs(L.slots) do names[i] = sl.name end
+    util.log("ai %s: town line planned on %s: %d drill spots, slots [%s], chained %s, %d extra poles, depot site %s",
+      C.force, F.cp.id, #L.drills, table.concat(names, " "), tostring(L.chained), #T.poles,
+      T.depot_site and util.pos_str(T.depot_site) or "none")
+    planjob.ret(S)
+    return 50 + #specs * 20
+  end,
+}, function(S, C, status)
+  -- a town line whose job did not finish is given up (towns.step would plan it again every pass)
+  local T = C.town
+  if T and not T.status and status ~= "done" then T.status = "failed" end
+end)
 
 -- Policies: the town keeps nothing (its plates and ore leave by train), the capital keeps the town's ore.
 local function policies(C, T, city)
@@ -253,7 +376,14 @@ function towns.step(C, surface)
   T.next = game.tick + towns.PERIOD
   local city = town_city(C, T)
   if not city then return end
-  if not T.status then plan(C, surface, T) end
+  if not T.status then
+    -- Phase 5 M3 ai (perf): Nation mode plans the town's line as a scheduler job (the commander's economy waits)
+    if planjob.async(C) then
+      if not planjob.busy(C) then planjob.submit(C, "ai_town_plan", towns.plan_frame(surface), {town = "plan"}) end
+      return
+    end
+    plan(C, surface, T)
+  end
   if T.status ~= "ok" then return end
   policies(C, T, city)
   local L = C.lines[towns.LINE]
@@ -321,9 +451,9 @@ local function plan_restore(C, snap)
   end
 end
 
-function towns.coal_hub(C, surface)
+-- coal patches within COAL_SEARCH of the CC, nearest first
+local function coal_candidates(C, ctx)
   local home = {x = C.frame.cx, y = C.frame.cy}
-  local ctx = layout.context_at(C, surface, C.frame, towns.COAL_SEARCH)
   local cands = {}
   for _, q in ipairs(layout.patches(ctx)) do
     local d = util.distance({q.cx, q.cy}, home)
@@ -333,56 +463,104 @@ function towns.coal_hub(C, surface)
     if a.d ~= b.d then return a.d < b.d end
     return a.q.id < b.q.id
   end)
-  if #cands == 0 then
-    util.log("ai %s: coal hub: no coal patch within %d tiles", C.force, towns.COAL_SEARCH)
-    return false
-  end
-  -- forget what the failed CC coal line left: its claim on the patch and its reserved tiles
-  C.lines.coal = nil
-  for k, v in pairs(C.claimed) do if v == "coal" then C.claimed[k] = nil end end
-  local coal_tiles = {} -- Phase 5 M3 perf: tile sets
-  for k, v in layout.tpairs(C.reserved) do
-    if v == "coal" then coal_tiles[#coal_tiles + 1] = k end
-  end
-  for _, k in ipairs(coal_tiles) do
-    layout.tset_k(C.reserved, k, nil)
-    layout.tset_k(C.belt_tiles, k, nil)
-    layout.tset_k(C.avoid, k, nil)
-  end
-  for k, e in pairs(C.plan) do if e.line == "coal" and e.status == "planned" then C.plan[k] = nil end end
+  return cands
+end
+
+--- Phase 5 M3 ai (perf): the planner "coal_hub" (ai/planjob.lua; a frame of the start planning) run to the end.
+function towns.coal_hub(C, surface)
+  return planjob.sync(C, towns.coal_hub_frame(surface))
+end
+function towns.coal_hub_frame(surface)
+  return {fn = "coal_hub", surface = surface}
+end
+
+planjob.define("coal_hub", {
+  start = function(S, F)
+    planjob.call(S, F, "ctx", layout.context_frame(F.surface, S.C.frame, towns.COAL_SEARCH))
+    return 1
+  end,
+  ctx = function(S, F)
+    local C = S.C
+    F.ctx = F.r1
+    local cands = coal_candidates(C, F.ctx)
+    if #cands == 0 then
+      util.log("ai %s: coal hub: no coal patch within %d tiles", C.force, towns.COAL_SEARCH)
+      planjob.ret(S, false)
+      return 10
+    end
+    F.cands = cands
+    -- forget what the failed CC coal line left: its claim on the patch and its reserved tiles
+    C.lines.coal = nil
+    for k, v in pairs(C.claimed) do if v == "coal" then C.claimed[k] = nil end end
+    local coal_tiles = {} -- Phase 5 M3 perf: tile sets
+    for k, v in layout.tpairs(C.reserved) do
+      if v == "coal" then coal_tiles[#coal_tiles + 1] = k end
+    end
+    for _, k in ipairs(coal_tiles) do
+      layout.tset_k(C.reserved, k, nil)
+      layout.tset_k(C.belt_tiles, k, nil)
+      layout.tset_k(C.avoid, k, nil)
+    end
+    for k, e in pairs(C.plan) do if e.line == "coal" and e.status == "planned" then C.plan[k] = nil end end
+    F.i = 0
+    F.pc = "cand"
+    return 20 + layout.tcount(C.reserved) * 0.3 + table_size(C.plan) * 0.3
+  end,
   -- not next to the army's rally point: idle units standing on the spot kept the hub's revive failing
-  local rally = C.army and C.army.rally
-  for i, cand in ipairs(cands) do
-    if i > 3 then break end
-    local cp = cand.q
-    local site = layout.hub_site(C, ctx, cp, home, 0, rally and {rally} or {}, 24, towns.COAL_HUB_REACH)
+  cand = function(S, F)
+    local C = S.C
+    F.i = F.i + 1
+    local cand = F.cands[F.i]
+    if F.i > 3 or not cand then
+      planjob.ret(S, false)
+      return 1
+    end
+    local rally = C.army and C.army.rally
+    planjob.call(S, F, "site", layout.hub_site_frame(F.ctx, cand.q, {x = C.frame.cx, y = C.frame.cy}, 0,
+      rally and {rally} or {}, 24, towns.COAL_HUB_REACH))
+    return 1
+  end,
+  site = function(S, F)
+    local C = S.C
+    local cp, site = F.cands[F.i].q, F.r1
     if not site then
       util.log("ai %s: coal hub: no hub site next to %s within %d tiles of the CC", C.force, cp.id, towns.COAL_HUB_REACH)
-    else
-      local snap = plan_snapshot(C)
-      layout.reserve_hub_body(C, site.x, site.y, "coal-hub")
-      local frame = layout.hub_frame(site.x, site.y)
-      local slot_states = {}
-      layout.reserve_hub(C, frame, slot_states, layout.HUB_SINK_ORDER)
-      local sink = {frame = frame, hub = slot_states, order = layout.HUB_SINK_ORDER, target = {x = site.x, y = site.y},
-                    wire = layout.HUB_WIRE, satellites = false}
-      local L = build_order.plan_line(C, ctx, "coal", {ore = "coal", patch_id = cp.id, slots = {"direct"}}, sink)
-      if L.status == "ok" then
-        -- the hub goes with the line's first drill (want_drills queues the chain list)
-        L.chain[#L.chain + 1] = construction.add(C, {name = "rts-hub", x = site.x, y = site.y, line = "coal"})
-        C.coal_hub = {x = site.x, y = site.y}
-        util.log("ai %s: coal hub at %s next to %s (%.0f tiles from the CC), slots [%s]", C.force, util.pos_str(site),
-          cp.id, util.distance(site, home), L.slots[1] and L.slots[1].name or "-")
-        return true
-      end
-      util.log("ai %s: coal hub line failed: %s", C.force, tostring(L.reason))
-      C.lines.coal = nil
-      for k, e in pairs(C.plan) do if e.line == "coal" and e.status == "planned" then C.plan[k] = nil end end
-      plan_restore(C, snap)
+      F.pc = "cand"
+      return 1
     end
-  end
-  return false
-end
+    F.site = site
+    F.snap = plan_snapshot(C)
+    layout.reserve_hub_body(C, site.x, site.y, "coal-hub")
+    local frame = layout.hub_frame(site.x, site.y)
+    local slot_states = {}
+    layout.reserve_hub(C, frame, slot_states, layout.HUB_SINK_ORDER)
+    local sink = {frame = frame, hub = slot_states, order = layout.HUB_SINK_ORDER, target = {x = site.x, y = site.y},
+                  wire = layout.HUB_WIRE, satellites = false}
+    planjob.call(S, F, "line", build_order.line_frame(F.ctx, "coal", {ore = "coal", patch_id = cp.id,
+                                                                     slots = {"direct"}}, sink))
+    return 300 + layout.tcount(C.reserved) * 0.5
+  end,
+  line = function(S, F)
+    local C, L, site = S.C, F.r1, F.site
+    local cp = F.cands[F.i].q
+    if L.status == "ok" then
+      -- the hub goes with the line's first drill (want_drills queues the chain list)
+      L.chain[#L.chain + 1] = construction.add(C, {name = "rts-hub", x = site.x, y = site.y, line = "coal"})
+      C.coal_hub = {x = site.x, y = site.y}
+      util.log("ai %s: coal hub at %s next to %s (%.0f tiles from the CC), slots [%s]", C.force, util.pos_str(site),
+        cp.id, util.distance(site, {x = C.frame.cx, y = C.frame.cy}), L.slots[1] and L.slots[1].name or "-")
+      planjob.ret(S, true)
+      return 10
+    end
+    util.log("ai %s: coal hub line failed: %s", C.force, tostring(L.reason))
+    C.lines.coal = nil
+    for k, e in pairs(C.plan) do if e.line == "coal" and e.status == "planned" then C.plan[k] = nil end end
+    plan_restore(C, F.snap)
+    F.snap, F.site = nil, nil
+    F.pc = "cand"
+    return 50 + layout.tcount(C.reserved) * 0.5
+  end,
+})
 
 ---------------------------------------------------------------------------
 -- Phase 5 M2 ai: coal pit, the last resort when neither a coal line nor a coal hub line fits (seed 702: one force in
@@ -445,96 +623,121 @@ local function pole_chain(ctx, site, x, y, taken)
   return nil
 end
 
+--- Phase 5 M3 ai (perf): the planner "coal_pit" (ai/planjob.lua; a frame of the start planning) run to the end.
 function towns.coal_pit(C, surface)
-  local home = {x = C.frame.cx, y = C.frame.cy}
-  local ctx = layout.context_at(C, surface, C.frame, towns.COAL_SEARCH)
-  local cands = {}
-  for _, q in ipairs(layout.patches(ctx)) do
-    local d = util.distance({q.cx, q.cy}, home)
-    if q.name == "coal" and d <= towns.COAL_SEARCH then cands[#cands + 1] = {q = q, d = d} end
-  end
-  table.sort(cands, function(a, b)
-    if a.d ~= b.d then return a.d < b.d end
-    return a.q.id < b.q.id
-  end)
-  local rally = C.army and C.army.rally
-  for i, cand in ipairs(cands) do
-    if i > 3 then break end
-    local cp = cand.q
-    local site = layout.hub_site(C, ctx, cp, home, 0, rally and {rally} or {}, 24, towns.COAL_HUB_REACH)
-    if site then
-      local snap = plan_snapshot(C)
-      layout.reserve_hub_body(C, site.x, site.y, "coal-pit")
-      -- drill spots on the patch: the 5x5 mining area's coal tiles, the drop tile inside the hub's logistic area
-      local spots = {}
-      for _, cell in ipairs(cp.cells) do
-        local x, y = cell[1] + 0.5, cell[2] + 0.5
-        local ore = 0
-        for tx = cell[1] - 2, cell[1] + 2 do
-          for ty = cell[2] - 2, cell[2] + 2 do
-            if cp.tiles[layout.tkey(tx, ty)] then ore = ore + 1 end
-          end
-        end
-        if ore >= 8 then
-          for _, d in ipairs(DIRS) do
-            local sx, sy = x + 2 * d[1], y + 2 * d[2]
-            -- the stockpile inside the hub's logistic area
-            if math.max(math.abs(sx - site.x), math.abs(sy - site.y)) <= towns.PIT_REACH then
-              spots[#spots + 1] = {x = x, y = y, sx = sx, sy = sy, dir = layout.dir_of(d[1], d[2]), ore = ore,
-                                   dist = util.distance({sx, sy}, site)}
-            end
-          end
-        end
-      end
-      table.sort(spots, function(a, b)
-        if a.ore ~= b.ore then return a.ore > b.ore end
-        if a.dist ~= b.dist then return a.dist < b.dist end
-        if a.x ~= b.x then return a.x < b.x end
-        return a.y < b.y
-      end)
-      local keys, specs = {}, {}
-      local n = 0
-      for _, sp in ipairs(spots) do
-        if n >= towns.PIT_DRILLS then break end
-        if tiles_free(ctx, layout.DRILL, sp.x, sp.y) and tiles_free(ctx, "rts-stockpile", sp.sx, sp.sy) then
-          -- the pole chain must not stand on the drill or its stockpile
-          local taken = {}
-          local tx0, ty0, w, h = layout.footprint(layout.DRILL, sp.x, sp.y)
-          for tx = tx0, tx0 + w - 1 do
-            for ty = ty0, ty0 + h - 1 do taken[layout.tkey(tx, ty)] = true end
-          end
-          taken[layout.tkey(math.floor(sp.sx), math.floor(sp.sy))] = true
-          local chain = pole_chain(ctx, site, sp.x, sp.y, taken)
-          if chain then
-            reserve_tiles(C, layout.DRILL, sp.x, sp.y, "coal-pit")
-            reserve_tiles(C, "rts-stockpile", sp.sx, sp.sy, "coal-pit")
-            keys[#keys + 1] = construction.add(C, {name = layout.DRILL, x = sp.x, y = sp.y, dir = sp.dir,
-                                                   line = "coal-pit"})
-            keys[#keys + 1] = construction.add(C, {name = "rts-stockpile", x = sp.sx, y = sp.sy, line = "coal-pit"})
-            for _, q in ipairs(chain) do
-              layout.tset(C.reserved, math.floor(q.x), math.floor(q.y), "coal-pit") -- Phase 5 M3 perf
-              keys[#keys + 1] = construction.add(C, {name = layout.POLE, x = q.x, y = q.y, line = "coal-pit"})
-            end
-            specs[#specs + 1] = {name = layout.DRILL, x = sp.x, y = sp.y}
-            n = n + 1
-          end
-        end
-      end
-      if n > 0 then
-        local hub_key = construction.add(C, {name = "rts-hub", x = site.x, y = site.y, line = "coal-pit"})
-        table.insert(keys, 1, hub_key)
-        C.coal_pit = {x = site.x, y = site.y, keys = keys}
-        C.coal_hub = {x = site.x, y = site.y} -- its policy is the coal hub's (towns.coal_hub_step)
-        util.log("ai %s: coal pit at %s next to %s (%.0f tiles from the CC): %d drills dropping into stockpiles",
-          C.force, util.pos_str(site), cp.id, util.distance(site, home), n)
-        return true
-      end
-      plan_restore(C, snap)
-    end
-  end
-  util.log("ai %s: no coal pit either: the force has no coal of its own", C.force)
-  return false
+  return planjob.sync(C, towns.coal_pit_frame(surface))
 end
+function towns.coal_pit_frame(surface)
+  return {fn = "coal_pit", surface = surface}
+end
+
+planjob.define("coal_pit", {
+  start = function(S, F)
+    planjob.call(S, F, "ctx", layout.context_frame(F.surface, S.C.frame, towns.COAL_SEARCH))
+    return 1
+  end,
+  ctx = function(S, F)
+    F.ctx = F.r1
+    F.cands = coal_candidates(S.C, F.ctx)
+    F.i = 0
+    F.pc = "cand"
+    return 10
+  end,
+  cand = function(S, F)
+    local C = S.C
+    F.i = F.i + 1
+    local cand = F.cands[F.i]
+    if F.i > 3 or not cand then
+      util.log("ai %s: no coal pit either: the force has no coal of its own", C.force)
+      planjob.ret(S, false)
+      return 1
+    end
+    local rally = C.army and C.army.rally
+    planjob.call(S, F, "site", layout.hub_site_frame(F.ctx, cand.q, {x = C.frame.cx, y = C.frame.cy}, 0,
+      rally and {rally} or {}, 24, towns.COAL_HUB_REACH))
+    return 1
+  end,
+  site = function(S, F)
+    local C, ctx, site = S.C, F.ctx, F.r1
+    local cp = F.cands[F.i].q
+    local home = {x = C.frame.cx, y = C.frame.cy}
+    if not site then
+      F.pc = "cand"
+      return 1
+    end
+    local snap = plan_snapshot(C)
+    layout.reserve_hub_body(C, site.x, site.y, "coal-pit")
+    -- drill spots on the patch: the 5x5 mining area's coal tiles, the drop tile inside the hub's logistic area
+    local spots = {}
+    for _, cell in ipairs(cp.cells) do
+      local x, y = cell[1] + 0.5, cell[2] + 0.5
+      local ore = 0
+      for tx = cell[1] - 2, cell[1] + 2 do
+        for ty = cell[2] - 2, cell[2] + 2 do
+          if cp.tiles[layout.tkey(tx, ty)] then ore = ore + 1 end
+        end
+      end
+      if ore >= 8 then
+        for _, d in ipairs(DIRS) do
+          local sx, sy = x + 2 * d[1], y + 2 * d[2]
+          -- the stockpile inside the hub's logistic area
+          if math.max(math.abs(sx - site.x), math.abs(sy - site.y)) <= towns.PIT_REACH then
+            spots[#spots + 1] = {x = x, y = y, sx = sx, sy = sy, dir = layout.dir_of(d[1], d[2]), ore = ore,
+                                 dist = util.distance({sx, sy}, site)}
+          end
+        end
+      end
+    end
+    table.sort(spots, function(a, b)
+      if a.ore ~= b.ore then return a.ore > b.ore end
+      if a.dist ~= b.dist then return a.dist < b.dist end
+      if a.x ~= b.x then return a.x < b.x end
+      return a.y < b.y
+    end)
+    local keys, specs = {}, {}
+    local n = 0
+    for _, sp in ipairs(spots) do
+      if n >= towns.PIT_DRILLS then break end
+      if tiles_free(ctx, layout.DRILL, sp.x, sp.y) and tiles_free(ctx, "rts-stockpile", sp.sx, sp.sy) then
+        -- the pole chain must not stand on the drill or its stockpile
+        local taken = {}
+        local tx0, ty0, w, h = layout.footprint(layout.DRILL, sp.x, sp.y)
+        for tx = tx0, tx0 + w - 1 do
+          for ty = ty0, ty0 + h - 1 do taken[layout.tkey(tx, ty)] = true end
+        end
+        taken[layout.tkey(math.floor(sp.sx), math.floor(sp.sy))] = true
+        local chain = pole_chain(ctx, site, sp.x, sp.y, taken)
+        if chain then
+          reserve_tiles(C, layout.DRILL, sp.x, sp.y, "coal-pit")
+          reserve_tiles(C, "rts-stockpile", sp.sx, sp.sy, "coal-pit")
+          keys[#keys + 1] = construction.add(C, {name = layout.DRILL, x = sp.x, y = sp.y, dir = sp.dir,
+                                                 line = "coal-pit"})
+          keys[#keys + 1] = construction.add(C, {name = "rts-stockpile", x = sp.sx, y = sp.sy, line = "coal-pit"})
+          for _, q in ipairs(chain) do
+            layout.tset(C.reserved, math.floor(q.x), math.floor(q.y), "coal-pit") -- Phase 5 M3 perf
+            keys[#keys + 1] = construction.add(C, {name = layout.POLE, x = q.x, y = q.y, line = "coal-pit"})
+          end
+          specs[#specs + 1] = {name = layout.DRILL, x = sp.x, y = sp.y}
+          n = n + 1
+        end
+      end
+    end
+    local used = 100 + #cp.cells * 30 + #spots * 2 + layout.tcount(C.reserved)
+    if n > 0 then
+      local hub_key = construction.add(C, {name = "rts-hub", x = site.x, y = site.y, line = "coal-pit"})
+      table.insert(keys, 1, hub_key)
+      C.coal_pit = {x = site.x, y = site.y, keys = keys}
+      C.coal_hub = {x = site.x, y = site.y} -- its policy is the coal hub's (towns.coal_hub_step)
+      util.log("ai %s: coal pit at %s next to %s (%.0f tiles from the CC): %d drills dropping into stockpiles",
+        C.force, util.pos_str(site), cp.id, util.distance(site, home), n)
+      planjob.ret(S, true)
+      return used
+    end
+    plan_restore(C, snap)
+    F.pc = "cand"
+    return used
+  end,
+})
 
 --- The coal hub's policy: it keeps nothing (its default plate keeps would pull plates into the joined network).
 function towns.coal_hub_step(C)

@@ -296,10 +296,29 @@ end
 --- Re-queue every built entry whose entity is gone (rebuild what the enemy destroyed). Returns the count.
 function construction.repair(C)
   local n = 0
-  for key, e in pairs(C.plan) do
-    if e.status == "built" and not (e.entity and e.entity.valid) then
+  -- Phase 5 M3 ai (determinism, m3-perf's audit): in Nation mode the keys in sorted order (the queue order must not
+  -- depend on the plan table's insertion history); Skirmish keeps its order (byte-identical results)
+  local m = storage.match
+  local keys
+  if m and m.config and m.config.mode == "nation" then
+    keys = {}
+    for key, e in pairs(C.plan) do
+      if e.status == "built" and not (e.entity and e.entity.valid) then keys[#keys + 1] = key end
+    end
+    table.sort(keys)
+  end
+  if keys then
+    for _, key in ipairs(keys) do
+      local e = C.plan[key]
       e.status, e.entity = "planned", nil
       if construction.queue(C, key) then n = n + 1 end
+    end
+  else
+    for key, e in pairs(C.plan) do
+      if e.status == "built" and not (e.entity and e.entity.valid) then
+        e.status, e.entity = "planned", nil
+        if construction.queue(C, key) then n = n + 1 end
+      end
     end
   end
   if n > 0 then util.log("ai %s: %d destroyed entities queued for rebuilding", C.force, n) end

@@ -35,6 +35,7 @@ local balance = require("balance")
 local nation = {}
 
 local NA = balance.nation.diplomacy.ai
+local AI3_MONEY = balance.nation.ai3 and balance.nation.ai3.money or {} -- Phase 5 M3 ai
 nation.PERIOD = NA.period
 
 local function mod(name)
@@ -93,6 +94,12 @@ local function sell(C, S, market)
   local keep, bought = owed(C, market)
   local MA = market.state and market.state() and market.state().ai and market.state().ai[C.force]
   local imports = MA and MA.imports or {}
+  -- Phase 5 M3 ai: goods the planner bought (ai/planner.lua) wait at the port for the haul home, they are not sold back
+  local N = storage.nations and storage.nations[C.force]
+  local pb = N and N.planner and N.planner.bought or {}
+  for item, t in pairs(pb) do
+    if game.tick - t < NA.contract_keep then bought[item] = true end
+  end
   for _, un in ipairs(ports) do
     local contents = market.port_contents(un)
     local items = {}
@@ -190,7 +197,9 @@ local function contracts(C, S, market)
           -- (only goods already at the seller's port: a town that mines the ore rarely ships it there in time, and
           -- 34 of 50 deliveries were missed in the 60-minute runs)
           local stock = (market.port_contents(port)[item] or 0)
-          if stock >= 2 * NA.contract_n then
+          -- Phase 5 M3 ai: a port holding contract_stock (100) of the good is enough (contracts were rare at 200), the
+          -- delivery size follows the stock (below)
+          if stock >= (AI3_MONEY.contract_stock or 2 * NA.contract_n) then
             local score = r + (stock >= NA.contract_n and 20 or 0)
             if not best or score > best.score then best = {y = y, item = item, score = score, stock = stock} end
           end
@@ -201,11 +210,13 @@ local function contracts(C, S, market)
   if not best then return end
   S.tried[best.y .. "/" .. best.item] = game.tick
   local price = math.floor(market.price(best.item) * NA.contract_price * 1000 + 0.5) / 1000
-  local id, why = diplomacy.propose(C.force, best.y, "contract", {item = best.item, n_per = NA.contract_n,
+  -- Phase 5 M3 ai: deliveries of at most half the seller's stock (rounded down to tens), contract_n at most
+  local n_per = math.max(10, math.min(NA.contract_n, math.floor(best.stock / 20) * 10))
+  local id, why = diplomacy.propose(C.force, best.y, "contract", {item = best.item, n_per = n_per,
     deliveries = NA.contract_deliveries, interval = NA.contract_interval, price = price, seller = best.y,
     buyer = C.force})
   util.log("ai %s: nation: contract for %d x %d %s from %s at %.3f cr proposed (%s; relation %.0f, their port holds %d)",
-    C.force, NA.contract_deliveries, NA.contract_n, best.item, best.y, price, id and ("#" .. id) or tostring(why),
+    C.force, NA.contract_deliveries, n_per, best.item, best.y, price, id and ("#" .. id) or tostring(why),
     diplomacy.relation(C.force, best.y), best.stock)
   if id then S.stats.contracts = S.stats.contracts + 1 end
 end
@@ -291,7 +302,11 @@ function nation.capture_ok(C)
   local ages = deps.ages
   if not (ages and ages.of(C.force) >= 2) then return false end
   local m = storage.match
-  if not (m and m.tick_started) or game.tick - m.tick_started < NA.city_state_from then return false end
+  -- Phase 5 M3 ai: a Territory victory makes land the goal: city-state operations start earlier
+  local from = NA.city_state_from
+  local v = m and m.config and m.config.victory
+  if v == "territory" or v == "any" then from = math.floor(from * (balance.nation.ai3.planner.territory_expand or 1)) end
+  if not (m and m.tick_started) or game.tick - m.tick_started < from then return false end
   if diplomacy.at_war(C.force) then return false end
   local capital = capital_city(C)
   if not capital then return false end
@@ -347,15 +362,22 @@ local function opportunity(C, S)
   if not capital then return end
   local surface = util.surface()
   local best
+  -- Phase 5 M3 ai (docs/qa/phase5-ai-notes.md §6 item 5: only the aggressive AI went to war for a town): a nation far
+  -- stronger than its rival (power ratio above O.strong.ratio) also goes for a better held town at a better relation
+  local S2 = O.strong
   for _, y in ipairs(diplomacy.nations()) do
+    local ratio = diplomacy.ratio(C.force, y)
+    local strong = S2 and ratio > S2.ratio
+    local r_max = strong and math.max(O.r, S2.r) or O.r
+    local def_max = strong and math.max(O.defenders, S2.defenders) or O.defenders
     if y ~= C.force and diplomacy.state(C.force, y) == "peace" and not truce_with(C.force, y)
-       and diplomacy.relation(C.force, y) < O.r and diplomacy.ratio(C.force, y) > O.ratio then
+       and diplomacy.relation(C.force, y) < r_max and ratio > O.ratio then
       for _, c in ipairs(deps.cities.for_force(y)) do
         if not c.capital and c.entity and c.entity.valid then
           local d = util.distance(capital.position, c.position)
           if d <= NA.opportunity_reach then
             local def = town_defence_points(surface, c)
-            if def <= O.defenders and (not best or d < best.d) then best = {y = y, c = c, d = d, def = def} end
+            if def <= def_max and (not best or d < best.d) then best = {y = y, c = c, d = d, def = def} end
           end
         end
       end
