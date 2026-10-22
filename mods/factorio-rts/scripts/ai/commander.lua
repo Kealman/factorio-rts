@@ -799,6 +799,9 @@ local function workshop_starved(C, rec)
     and string.sub(st, 1, 7) == "starved" and game.tick - rec.starved_since >= commander.BUILDER_YIELD
 end
 
+-- (Phase 5 M3 ai perf: the factory pass and its two helpers are called through the module table, so a test copy's
+-- perf marks can time them; nothing else reads these fields)
+commander.manage_builder, commander.manage_workshop = manage_builder, manage_workshop
 local function manage_factories(C)
   local list = {}
   for un, rec in buildings.for_force(C.force, "factory") do
@@ -826,12 +829,12 @@ local function manage_factories(C)
     production.set_recipe(builder.entity, nil)
     C.stats.builder_yields = (C.stats.builder_yields or 0) + 1
   elseif not hungry then
-    manage_builder(C, builder, #list > 1)
+    commander.manage_builder(C, builder, #list > 1)
   end
   local builder_recipe = recipe_name(builder.entity)
   local taken = {}
   for i = 2, #list do
-    manage_workshop(C, list[i][2], builder_recipe, i > 2 and taken or nil)
+    commander.manage_workshop(C, list[i][2], builder_recipe, i > 2 and taken or nil)
     local r = recipe_name(list[i][2].entity)
     if r then taken[r] = true end
   end
@@ -856,6 +859,7 @@ commander.PARTS = {"build_order", "construction", "production", "army", "scout",
 -- construction, hubs, rails, cities, towns, market), 2 research, age-up, barracks and factories, 3 governor, strategist,
 -- army and scouting.
 commander.SLICES = 3
+commander.manage_factories = manage_factories
 function commander.run(C, slice)
   local surface = util.surface()
   local tick = game.tick
@@ -915,7 +919,7 @@ function commander.run(C, slice)
     mix.manage_barracks(C)
     stop("barracks")
     start("production")
-    manage_factories(C)
+    commander.manage_factories(C)
     stop("production")
   end
   if cc and s3 then

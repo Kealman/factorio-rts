@@ -1042,6 +1042,7 @@ function council.step(C, surface)
   end
   K.next = tick + period
   ops_step(C, K)
+  council.cs_plan_step(C, K)
   -- a nation that has run no operation yet by push_after (at peace, Age II) goes for a city-state (army.lua relaxes its
   -- reach and margin while C.army.cs_push is fresh)
   local m2 = storage.match
@@ -1060,6 +1061,62 @@ function council.step(C, surface)
   belts_step(C, K)
   air_step(C, K, surface)
   money_step(C, K)
+end
+
+--- The hard AI's first city-state (difficulty knob cs_plan; Phase 5 M3 ai, wave B.2): from Age II at peace, before any
+--- operation, the council sizes the army for the nearest city-state (cs_ratio x its turret and garrison points, as
+--- army.city_state_target counts them), the barracks favour artillery against its turrets (ai/mix.lua reads C.army.cs_plan), and the push
+--- goes out as soon as the idle army's supply reaches that size, not at push_after.
+function council.cs_plan_step(C, K)
+  local a = C.army
+  if not a then return end
+  local k = difficulty.knobs(C.force)
+  if not k.cs_plan or K.stats.ops > 0 or at_war(C.force) or age_of(C.force) < 2 then
+    a.cs_plan = nil
+    return
+  end
+  local home = deps.cities and deps.cities.get and storage.nations and storage.nations[C.force]
+    and deps.cities.get(storage.nations[C.force].capital)
+  if not (home and home.position) then return end
+  -- (the city-states of the world plan, as army.city_state_target sees them: their turrets and garrison are public; a
+  -- sight-only intel record of a city-state 600 tiles out did not exist yet when the plan should start)
+  local world, garrison = mod("world"), mod("garrison")
+  local WAI = balance.nation.war and balance.nation.war.ai or {}
+  local best, bd, points
+  for _, rec in ipairs(world and world.city_states and world.city_states() or {}) do
+    local c = rec.city_id and storage.cities and storage.cities[rec.city_id]
+    if c and c.archetype == "city_state" and c.force == diplomacy.NEUTRAL and c.entity and c.entity.valid then
+      local d = dist(c.position, home.position)
+      if not bd or d < bd then
+        local pts = 0
+        for _, t in ipairs(rec.turrets or {}) do
+          if t.valid and t.force.name == c.force then pts = pts + (WAI.turret_points or 4) end
+        end
+        local gar = garrison and garrison.of and garrison.of(c.id)
+        best, bd, points = {id = c.id}, d, pts + (gar and gar.points or 0)
+      end
+    end
+  end
+  if not best then
+    a.cs_plan = nil
+    return
+  end
+  -- (the push's margin, as army.city_state_target applies it under a push: min(1.2, cs_ratio); at cs_ratio 1.6 the
+  -- idle pool of 40-49 supply never reached 51 and the plan never fired, batch K)
+  local need = math.min(1.2, k.cs_ratio) * points
+  local first = not (a.cs_plan and a.cs_plan.city == best.id)
+  a.cs_plan = {city = best.id, need = need, points = points}
+  if first then
+    util.log("council: %s sizes its army for city-state city %d (%.0f points, %.0f supply wanted, %.0f tiles)", C.force,
+      best.id, points, need, bd)
+  end
+  if (a.pool_supply or 0) >= need and game.tick - (K.push_at or -1e9) >= 10 * 3600 then
+    K.push_at = game.tick
+    a.cs_push = game.tick
+    a.cs_push_level = (a.cs_push_level or 0) + 1
+    util.log("council: %s army ready for city-state city %d (supply %.0f of %.0f): pushes", C.force, best.id,
+      a.pool_supply or 0, need)
+  end
 end
 
 --- "council: ops 2 [#3 capture siege, #4 relief move], holds 1, belts 1, patrols 3, artillery 0, ...".

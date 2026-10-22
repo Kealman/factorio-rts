@@ -647,6 +647,14 @@ function army.step(C, surface)
       a.pool_strength = strength
     end
   end
+  -- Phase 5 M3 ai (wave B.2): the idle pool's supply (the hard council's city-state plan compares it with the
+  -- city-state's points, as city_state_target does)
+  if nation_mode() then
+    local supply_mod = war_mod("supply")
+    local sp = 0
+    for _, e in ipairs(pool) do sp = sp + (supply_mod and supply_mod.cost(e.name) or 1) end
+    a.pool_supply = sp
+  end
   if a.min and #pool > 0 and tick >= (a.hold_until or 0) and tick >= C.started + (C.cfg.first_attack or 0) then
     local launch = strength >= need and (finishing or tick - a.last_attack >= (C.cfg.attack_interval or 0))
     -- Phase 5 M3 ai: the council's limit on concurrent offensives (the difficulty's ops)

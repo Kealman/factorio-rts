@@ -594,6 +594,11 @@ balance.nation.people = {
     -- a town gets its own farm and bakery from town_farm_pop residents (or when its rations run short), inside its
     -- City Center's logistic area (town_area tiles around it; the turrets go there too)
     town_farm_pop = 60, town_area = 13,
+    -- Phase 5 M3 ai (wave B.2): then a ring this wide (still inside the City Center's 16-tile logistic area); the planner
+    -- founds a city only with a farm spot within it
+    town_area_far = 15,
+    -- (wave B.2) copper cable the capital keeps for its fixed goods works (2 per 2 goods)
+    goods_cable = 40,
     -- while the AI's rail line is built, houses wait below this much stone (its rails take 1 stone per 2)
     rail_stone = 150,
     -- below stone_low stone (once the steel flows) one more stone extractor of the start line, at most every stone_gap
@@ -1298,17 +1303,19 @@ do
   -- the city-state's points), and the goods works the capital's governor plans (goods_per_works: one per that much
   -- goods need a minute, at most goods_works_cap; unset: the people.ai rule of one, a second when a town stalls). Every
   -- AI's capital ran short of goods from tier 3 (0-40 % met, 62-70 % happy, no growth) and the market AI imported them
-  -- at 15-17 cr until the tax hysteresis held a high tax; hard makes them instead.
+  -- at 15-17 cr until the tax hysteresis held a high tax (wave B.2: the goods chain at every level), and hard's first
+  -- city-state plan (cs_plan: the army sized for the nearest city-state, artillery favoured, the push when it is ready;
+  -- ai/council.lua council.cs_plan_step).
   AI3.difficulty = {
     easy = {intel_age = 60 * 60, ops = 1, sites = 8, astar = 20000, build_period = 360, in_flight = 2, micro = "off",
             opm = 2, budget_factor = 0.75, expand = 1.3, cities = 3, council = 240, first_attack = 1.5,
-            cs_from = 1.3, cs_ratio = 1.8},
+            cs_from = 1.3, cs_ratio = 1.8, goods_per_works = 20, goods_works_cap = 2},
     normal = {intel_age = 30 * 60, ops = 2, sites = 16, astar = 40000, build_period = 180, in_flight = 3,
               micro = "basic", opm = 6, budget_factor = 1, expand = 1, cities = 4, council = 120, first_attack = 1,
-              cs_from = 1, cs_ratio = 1.5},
+              cs_from = 1, cs_ratio = 1.5, goods_per_works = 12, goods_works_cap = 4},
     hard = {intel_age = 10 * 60, ops = 4, sites = 32, astar = 60000, build_period = 120, in_flight = 4, micro = "full",
             opm = 12, budget_factor = 1.5, expand = 0.8, cities = 4, council = 60, first_attack = 0.8,
-            cs_from = 0.75, cs_ratio = 1.6, goods_per_works = 12, goods_works_cap = 4},
+            cs_from = 0.75, cs_ratio = 1.6, goods_per_works = 12, goods_works_cap = 4, cs_plan = true},
   }
   -- Intelligence (ai/intel.lua): every difficulty intel_age ticks per nation, what any own entity sees within `sight` tiles (an own
   -- scout plane within `plane_sight`): rival and city-state cities, divisions, depots, planes and unit clusters (cells of
@@ -1330,6 +1337,12 @@ do
   --   rails.ai_program per edge not served by rails.lua's own program, at most `lines` building at once.
   AI3.planner = {
     period = 300, rescore = 3 * 60 * 60, units = {candidate = 40, check = 8},
+    -- (wave B.2: the third city within third_link tiles of an own city when such a site is left, no city but the oil
+    -- town beyond far_city tiles of the capital)
+    third_link = 250, far_city = 450,
+    -- (wave B.2, a minimal plan: in Age III an outpost on the nearest uranium deposit within reach tiles of an own city,
+    -- the capital keeps `keep` ore; one nuclear plant and fuel_rods rods in stock once Nuclear power is researched)
+    uranium = {reach = 260, keep = 40, fuel_rods = 2},
     third_at = 9 * 60, fourth_at = 18 * 60, more_gap = 7 * 60, territory_expand = 0.7, city_tries = 6,
     min_capital = 180, max_capital = 700, min_city = 150, ore_radius = 70, ore_cap = 60000,
     exposure_radius = 700, rail_terrain = 2.5,
@@ -1384,6 +1397,7 @@ do
     belt_threat = 30, belt_after = 3 * 60 * 60, belts = 2,
     -- without a front (the lands do not touch): a city with hostile strength >= sector_strength known within
     -- sector_radius for belt_after gets a sector_length belt across the approach
+    cs_plan_artillery = 3, -- (wave B.2) the artillery weight factor of the barracks while hard's city-state plan runs
     sector_strength = 4, sector_radius = 250, sector_length = 40, sector_after = 2 * 60 * 60, sector_grace = 2 * 60 * 60,
     timeouts = {assemble = 2 * 60 * 60, advance = 8 * 60 * 60, siege = 6 * 60 * 60, capture = 4 * 60 * 60,
                 consolidate = 60 * 60, move = 4 * 60 * 60, engage = 3 * 60 * 60, strike = 3 * 60 * 60,

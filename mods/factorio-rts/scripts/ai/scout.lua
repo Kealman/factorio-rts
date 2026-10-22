@@ -19,6 +19,15 @@ local util = require("scripts.util")
 local buildings = require("scripts.buildings")
 local units = require("scripts.units")
 local data = require("scripts.ai.orders_data")
+-- Phase 5 M3 ai (wave B.2): Nation-only paths (the target cache, the recorded patches)
+local function nation_mode()
+  local m = storage.match
+  return m ~= nil and m.config ~= nil and m.config.mode == "nation"
+end
+local function loaded(name)
+  local l = package.loaded
+  return l["__" .. script.mod_name .. "__/scripts/" .. name .. ".lua"] or l["scripts." .. name]
+end
 local layout = require("scripts.ai.layout")
 local diplomacy = require("scripts.diplomacy") -- Phase 5 M2 diplomacy: every target test asks diplomacy.hostile
 
@@ -168,9 +177,21 @@ function scout.patch_list(C, surface)
   local cache = C.patch_cache
   if cache and game.tick - cache.tick < scout.PATCH_CACHE then return cache.list end
   local list = {}
-  local half = layout.arena_half()
-  for _, p in ipairs(layout.resource_patches(surface, {x = 0, y = 0}, half)) do
-    list[#list + 1] = {cx = p.cx, cy = p.cy, name = p.name, count = p.count, id = p.id}
+  -- Phase 5 M3 ai (wave B.2, perf; Nation only): the world plan's recorded patches (scripts/mapgen.lua
+  -- record_patch), not a scan of the whole arena (25 ms in one tick on a 2048 world, 4-nation bench)
+  local mapgen = nation_mode() and loaded("mapgen") or nil
+  local recs = mapgen and mapgen.patches and mapgen.patches() or nil
+  if recs and #recs > 0 then
+    for _, r in ipairs(recs) do
+      if r.center and (r.remaining or 1) > 0 then
+        list[#list + 1] = {cx = r.center.x, cy = r.center.y, name = r.name, count = r.tiles or 0, id = r.id}
+      end
+    end
+  else
+    local half = layout.arena_half()
+    for _, p in ipairs(layout.resource_patches(surface, {x = 0, y = 0}, half)) do
+      list[#list + 1] = {cx = p.cx, cy = p.cy, name = p.name, count = p.count, id = p.id}
+    end
   end
   C.patch_cache = {tick = game.tick, list = list}
   return list
@@ -318,7 +339,30 @@ end
 --- known or not.
 --- Returns {position, kind, un?} or nil.
 scout.FINISH_ORDER = {"factory", "hub", "stockpile"} -- a factory keeps a side in the match (buildings.is_alive_force)
+-- Phase 5 M3 ai (wave B.2, perf; Nation only): the scan over every known enemy building runs at most every
+-- scout.TARGET_CACHE ticks per commander; in between the last result stands while its building still stands
+-- (army.step asked every run while a group attacked: up to 3.8 ms in a 4-nation bench)
+scout.TARGET_CACHE = 300
+local scan_target
+
 function scout.best_target(C, surface, from)
+  if not nation_mode() then return scan_target(C, surface, from) end
+  local fx, fy = from.x or from[1], from.y or from[2]
+  local T = C.target_cache
+  if T and game.tick - T.tick < scout.TARGET_CACHE and math.abs(T.from.x - fx) < 1 and math.abs(T.from.y - fy) < 1 then
+    local r = T.result
+    if r == nil then return nil end
+    -- (a unit target is scanned again: it moves)
+    if r.kind == "spawn" or (r.kind ~= "unit" and r.un and buildings.get(r.un) ~= nil) then
+      return {position = r.position, kind = r.kind, un = r.un, force = r.force, finishing = r.finishing}
+    end
+  end
+  local r = scan_target(C, surface, from)
+  C.target_cache = {tick = game.tick, from = {x = fx, y = fy}, result = r}
+  return r
+end
+
+scan_target = function(C, surface, from)
   local best, best_score
   local penalty = C.cfg.target_penalty or data.TARGET_PENALTY
   local beaten = scout.beaten_enemy(C)

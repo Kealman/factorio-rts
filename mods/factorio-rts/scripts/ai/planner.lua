@@ -51,10 +51,16 @@ local planner = {}
 
 local PB = balance.nation.ai3.planner
 local CENTER = "rts-city-center"
+local STEEL_WORKS = "rts-district-steel"
 local PUMPJACK = "rts-pumpjack"
 local RARE_EXTRACTOR = balance.nation.rare and balance.nation.rare.extractor or "rts-rare-extractor"
 local ELECTRIFICATION = balance.nation.age3 and balance.nation.age3.tech or "rts-electrification"
 local GEOLOGY = "rts-geology"
+local NUCLEAR_TECH = "rts-nuclear-power"
+local NUCLEAR_PLANT = "rts-nuclear-plant"
+local URANIUM = "uranium-ore"
+local FUEL_ROD = "rts-fuel-rod"
+local uranium_step, nuclear_ready -- the uranium outpost (defined below planner.districts and planner.targets)
 local INDUSTRIALISATION = "rts-industrialisation"
 
 -- The builder factory makes these for the construction queue (orders_data.FACTORY_RECIPE: building = recipe name).
@@ -431,13 +437,33 @@ function planner.next_city(force_name)
       return a.id < b.id
     end)
   end
-  -- still free: no city came within min_city since the scoring
-  for _, s in ipairs(list) do
-    local ok = true
-    for _, c in pairs(storage.cities or {}) do
-      if c.position and dist(c.position, s.position) < PB.min_city then ok = false end
+  -- Phase 5 M3 ai (wave B.2): the third city within third_link tiles of an own city when such a site is left (a short
+  -- trunk edge: three cities linked by rail by 35:00 in 8 of 20 nations with 300-tile edges), and no city but the oil
+  -- town farther than far_city from the capital (a trade city 543 tiles out starved, M2 seed 702)
+  local own = deps.cities and deps.cities.for_force(force_name) or {}
+  local capital = capital_of(force_name)
+  local function link_of(s)
+    local d = math.huge
+    for _, c in ipairs(own) do
+      if c.position then d = math.min(d, dist(c.position, s.position)) end
     end
-    if ok then return s end
+    return d
+  end
+  for pass = 1, 2 do
+    for _, s in ipairs(list) do
+      -- still free: no city came within min_city since the scoring
+      local ok = true
+      for _, c in pairs(storage.cities or {}) do
+        if c.position and dist(c.position, s.position) < PB.min_city then ok = false end
+      end
+      local oil_town = s.kind == "oil" and not P.oil
+      if ok and not oil_town and PB.far_city and capital and capital.position
+         and dist(capital.position, s.position) > PB.far_city then
+        ok = false
+      end
+      if ok and pass == 1 and #own == 2 and PB.third_link and link_of(s) > PB.third_link then ok = false end
+      if ok then return s end
+    end
   end
   return nil
 end
@@ -453,6 +479,23 @@ local function wanted_cities(C)
   if t >= PB.fourth_at * f or (age_of(C.force) >= 2 and t >= PB.third_at * f) then want = 4 end
   local extra = math.floor(math.max(0, t - PB.fourth_at * f) / PB.more_gap)
   return math.min(cap, want + extra)
+end
+
+-- Room for a farm inside the future City Center's logistic area (ai/governor.lua town_food looks within
+-- town_area_far tiles): a site without one starved on its hauler (M2 seeds 701 and 702).
+local FARM = "rts-farm"
+local function farm_room(surface, force_name, pos)
+  local PA = balance.nation.people.ai
+  local r = PA.town_area_far or PA.town_area or 13
+  for dy = -r, r, 3 do
+    for dx = -r, r, 3 do
+      if math.max(math.abs(dx), math.abs(dy)) >= 6 then
+        local p = {x = pos.x + dx + 0.5, y = pos.y + dy + 0.5}
+        if surface.can_place_entity({name = FARM, position = p, force = force_name}) then return true end
+      end
+    end
+  end
+  return false
 end
 
 local function found_step(C, P, surface, own)
@@ -510,6 +553,12 @@ local function found_step(C, P, surface, own)
   if not pos then
     P.tried[s.id] = true
     util.log("planner: %s site %s %s refused (no City Center spot)", C.force, s.id, util.pos_str(s.position))
+    P.retry_at = game.tick + 5 * 60
+    return
+  end
+  if not farm_room(surface, C.force, pos) then
+    P.tried[s.id] = true
+    util.log("planner: %s site %s %s refused (no farm spot near its City Center)", C.force, s.id, util.pos_str(pos))
     P.retry_at = game.tick + 5 * 60
     return
   end
@@ -579,16 +628,33 @@ local function crude_flows(C)
   return construction.have(C, "rts-crude-oil") > 0 or construction.flowing(C, "rts-crude-oil")
 end
 
--- Every own city but the capital exports the goods of the Age III road (bought from a city-state, made from the oil
--- town's crude): auto haulers and the trains bring them to the capital, which keeps the planner's targets of them.
+-- An own city with an open rail line and no supply hauler exports the goods of the Age III road (bought from a
+-- city-state, made from the oil town's crude): the trains bring them to the capital, which keeps the planner's targets
+-- of them. (Phase 5 M3 ai, wave B.2: on every city, a town's ration hauler carried batteries 725 tiles instead and the
+-- town starved, M2 seed 701.)
+local function line_open(C, P, c)
+  local E = P.trunk[c.id]
+  if E and E.opened then return true end
+  local R = storage.rails
+  local main = R and R.ai and R.ai[C.force]
+  return main ~= nil and main.far == c.center and main.state == "open"
+end
+
 local function goods_policies(C, P, own, capital)
   local L = deps.logistics
   if not L then return end
   P.exports = P.exports or {}
   for _, c in ipairs(own) do
-    if c.id ~= capital.id and c.center and P.exports[c.id] ~= c.center then
-      P.exports[c.id] = c.center
-      for _, item in ipairs(PB.export_goods) do L.set_policy(c.center, "export_above", item, 0) end
+    if c.id ~= capital.id and c.center then
+      local hauled = C.gov and C.gov.haulers and C.gov.haulers[c.id] ~= nil
+      local on = line_open(C, P, c) and not hauled
+      if on and P.exports[c.id] ~= c.center then
+        P.exports[c.id] = c.center
+        for _, item in ipairs(PB.export_goods) do L.set_policy(c.center, "export_above", item, 0) end
+      elseif not on and P.exports[c.id] == c.center then
+        P.exports[c.id] = nil
+        for _, item in ipairs(PB.export_goods) do L.set_policy(c.center, "export_above", item, nil) end
+      end
     end
   end
   local want = planner.targets(C) or {}
@@ -797,6 +863,11 @@ function planner.research_want(C)
     for _, name in ipairs(PB.research_first) do out[#out + 1] = name end
   end
   if P and P.want_geology then out[#out + 1] = GEOLOGY end
+  -- (wave B.2: the uranium outpost wants Geology, then Nuclear power)
+  if P and P.uranium and not P.uranium.none then
+    out[#out + 1] = GEOLOGY
+    out[#out + 1] = NUCLEAR_TECH
+  end
   return out
 end
 
@@ -841,6 +912,8 @@ function planner.targets(C)
     if E.A and LIVE[E.A.state] then building = true end
   end
   if building then out.rail = math.max(out.rail or 0, PB.rail_stock) end
+  -- (wave B.2: the nuclear plant's fuel rods, made by the Chemistry works of the outpost's uranium)
+  if nuclear_ready(C, P) then out[FUEL_ROD] = math.max(out[FUEL_ROD] or 0, PB.uranium.fuel_rods or 2) end
   local age3 = mod("age3")
   local missing = age3 and age3.missing and age3.missing(C.force)
   -- (in Age III the later stages wait while the airfield is queued: their engines took every steel plate it needed)
@@ -992,6 +1065,12 @@ function planner.saving_rail(C)
   return false
 end
 
+--- The planner's role of an own city ("oil", "trade", ...; nil for the capital and the towns of ai/towns.lua).
+function planner.role_of(force_name, city_id)
+  local P = P_of(force_name, false)
+  return P and P.roles and P.roles[city_id] or nil
+end
+
 --- Extra districts for the age-up list: the oil chain once crude comes in, the Age III districts in Age III.
 function planner.districts(C)
   local out = {}
@@ -1001,7 +1080,16 @@ function planner.districts(C)
   -- the Petrochemical works the oil town's crude into plastic and sulfur; crude oil comes by haulers before the town's
   -- line opens, and the districts take minutes to build)
   if age_of(C.force) >= 2 then
-    for _, name in ipairs(PB.oil_districts) do out[#out + 1] = name end
+    -- (the second Steel works first while three cities are not linked yet: the lines' rails, depots and kits wait for
+    -- steel)
+    if not P.linked_at then
+      for _, name in ipairs(PB.oil_districts) do
+        if name == STEEL_WORKS then out[#out + 1] = name end
+      end
+    end
+    for _, name in ipairs(PB.oil_districts) do
+      if P.linked_at or name ~= STEEL_WORKS then out[#out + 1] = name end
+    end
     if P.linked_at then
       for _, name in ipairs(PB.linked_districts or {}) do out[#out + 1] = name end
     end
@@ -1013,6 +1101,7 @@ function planner.districts(C)
   end
   if age_of(C.force) >= 3 then
     for _, name in ipairs(planner.AGE3_DISTRICTS) do out[#out + 1] = name end
+    if nuclear_ready(C, P) then out[#out + 1] = NUCLEAR_PLANT end
   end
   return out
 end
@@ -1145,6 +1234,84 @@ local function rare_step(C, P, surface, own)
 end
 
 ---------------------------------------------------------------------------
+-- Uranium and the nuclear plant (Phase 5 M3 ai, wave B.2; a minimal plan): in Age III, the nearest uranium deposit of
+-- the world plan within uranium.reach tiles of an own city gets an outpost once Geology is researched: an rts-hub next
+-- to it (its network and power), one extractor on the ore and a stockpile at the extractor's output; the hub exports
+-- the ore and the capital keeps uranium.keep of it (the auto haulers bring it). With Nuclear power researched and
+-- ore at home, the capital builds one nuclear plant (planner.districts) and the Chemistry works makes its fuel rods
+-- (planner.targets).
+---------------------------------------------------------------------------
+local OUTPOST = {"rts-hub", "rts-extractor", "rts-stockpile"}
+uranium_step = function(C, P, surface, own, capital)
+  local U = PB.uranium
+  if not U or age_of(C.force) < 3 then return end
+  P.uranium = P.uranium or {}
+  local S = P.uranium
+  if S.none then return end
+  if not S.site then
+    local world = mod("world")
+    local best, bd
+    for _, site in ipairs(world and world.sites and world.sites("uranium") or {}) do
+      local owner = deps.territory and deps.territory.owner_at and deps.territory.owner_at(site.position)
+      if not owner or owner == C.force then
+        for _, c in ipairs(own) do
+          local d = dist(c.position, site.position)
+          if d <= U.reach and (not bd or d < bd) then best, bd = site, d end
+        end
+      end
+    end
+    if not best then
+      S.none = true
+      util.log("planner: %s knows no uranium deposit within %d tiles of its cities", C.force, U.reach)
+      return
+    end
+    S.site = {x = best.position.x, y = best.position.y}
+    util.log("planner: %s plans a uranium outpost at %s (%.0f tiles from its nearest city)", C.force,
+      util.pos_str(S.site), bd)
+  end
+  if not has_tech(C.force, GEOLOGY) then return end
+  if not S.keys then
+    local ext = surface.find_non_colliding_position("rts-extractor", S.site, 8, 1, true)
+    local proto = prototypes.entity["rts-extractor"]
+    local v = proto and proto.vector_to_place_result
+    if not (ext and v) then
+      S.none = true
+      util.log("planner: %s finds no extractor spot on the uranium at %s", C.force, util.pos_str(S.site))
+      return
+    end
+    ext = {x = math.floor(ext.x) + 0.5, y = math.floor(ext.y) + 0.5}
+    local drop = {x = math.floor(ext.x + v[1]) + 0.5, y = math.floor(ext.y + v[2]) + 0.5}
+    local hub = surface.find_non_colliding_position("rts-hub", {x = ext.x, y = ext.y + 10}, 12, 1, true)
+    if not hub then
+      S.none = true
+      util.log("planner: %s finds no hub spot next to the uranium at %s", C.force, util.pos_str(S.site))
+      return
+    end
+    S.keys = {construction.add(C, {name = "rts-hub", x = math.floor(hub.x), y = math.floor(hub.y), line = "uranium"}),
+              construction.add(C, {name = "rts-extractor", x = ext.x, y = ext.y, dir = defines.direction.north,
+                                   line = "uranium"}),
+              construction.add(C, {name = "rts-stockpile", x = drop.x, y = drop.y, line = "uranium"})}
+    for _, key in ipairs(S.keys) do construction.queue(C, key) end
+    util.log("planner: %s uranium outpost queued: hub %s, extractor %s, stockpile %s", C.force, util.pos_str(hub),
+      util.pos_str(ext), util.pos_str(drop))
+    return
+  end
+  local hub_e = C.plan[S.keys[1]] and C.plan[S.keys[1]].entity
+  if not S.set and hub_e and hub_e.valid and construction.status(C, S.keys[2]) == "built"
+     and construction.status(C, S.keys[3]) == "built" and deps.logistics and capital.center then
+    deps.logistics.set_policy(hub_e.unit_number, "export_above", URANIUM, 0)
+    deps.logistics.set_policy(capital.center, "keep", URANIUM, U.keep)
+    S.set = game.tick
+    util.log("planner: %s uranium outpost running (hub #%d exports %s)", C.force, hub_e.unit_number, URANIUM)
+  end
+end
+
+--- True once the uranium outpost runs and Nuclear power is researched (planner.districts adds the nuclear plant).
+nuclear_ready = function(C, P)
+  return P.uranium ~= nil and P.uranium.set ~= nil and has_tech(C.force, NUCLEAR_TECH)
+end
+
+---------------------------------------------------------------------------
 -- The pass
 ---------------------------------------------------------------------------
 function planner.step(C, surface)
@@ -1182,6 +1349,7 @@ function planner.step(C, surface)
   rush_step(C, P)
   automate_step(C, P, capital)
   rare_step(C, P, surface, own)
+  uranium_step(C, P, surface, own, capital)
 end
 
 --- "planner: cities 3/4 (oil town 12, 2 pumps), trunk 2 edges (1 open), sites 14, space stage 1".

@@ -34,6 +34,7 @@ local build_order = require("scripts.ai.build_order") -- Phase 5 M2 ai: the copp
 local doctrine = require("scripts.ai.doctrine")
 local scout = require("scripts.ai.scout")
 local deps = require("scripts.ai.deps")
+local AI3_COUNCIL = require("balance").nation.ai3.council -- Phase 5 M3 ai (wave B.2): cs_plan_artillery
 
 local mix = {}
 
@@ -242,6 +243,10 @@ function mix.manage_barracks(C)
   -- 2-3 minutes after Unlock Heavy behind walkers and drones that grab plates in smaller bites
   for kind, w in pairs(weights) do
     if (counts[kind] or 0) == 0 and not mix.CHEAP[kind] then weights[kind] = w * mix.FIRST_BOOST end
+  end
+  -- Phase 5 M3 ai (wave B.2): the hard council's city-state plan wants artillery against the city-state's turrets
+  if C.army and C.army.cs_plan and weights.artillery then
+    weights.artillery = weights.artillery * (AI3_COUNCIL.cs_plan_artillery or 1)
   end
   C.mix_weights = weights
   C.mix_counts = counts

@@ -462,7 +462,10 @@ local function town_food(C, S, surface, c, P, population)
   local need = population.needs(c.id)[RATIONS] or 0
   local stock = net_count(c, RATIONS)
   local short = stock < (AI.town_rations_minutes or 4) * need
-  if P.pop < (AI.town_farm_pop or 60) and not short then return false end
+  -- (Phase 5 M3 ai, wave B.2: a city the planner founded gets its farm at once: it lies hundreds of tiles out and its
+  -- ration hauler is its only food until then)
+  local planned = deps.planner and deps.planner.role_of and deps.planner.role_of(C.force, c.id) ~= nil
+  if P.pop < (AI.town_farm_pop or 60) and not short and not planned then return false end
   if not steel_ready(C) and not short then return false end
   local fx = (C.frame and C.frame.fx) or 1
   local pref = {x = c.position.x - fx * 8, y = c.position.y + 8}
@@ -471,7 +474,8 @@ local function town_food(C, S, surface, c, P, population)
   for _, name in ipairs({"rts-farm", "rts-bakery"}) do
     local have = name == "rts-farm" and fb or bb
     if have == 0 and (not queued or short) then
-      local key = queue_near(C, surface, name, c, pref, {AI.town_area or 13}, true)
+      local key = queue_near(C, surface, name, c, pref, {AI.town_area or 13, AI.town_area_far or AI.town_area or 13},
+        true) -- (Phase 5 M3 ai, wave B.2: a wider ring inside the City Center's logistic area)
       if key then
         if name == "rts-farm" then S.farms[#S.farms + 1] = key else S.bakeries[#S.bakeries + 1] = key end
         queued = true
@@ -679,6 +683,8 @@ local function city_pass(C, G, surface, c, capital, list, age)
         end
         set_target(c.id, GOODS, hold and 0 or want)
         set_target(c.id, "stone-brick", AI.brick_target)
+        -- Phase 5 M3 ai (wave B.2): the goods chain's copper cable for the fixed goods works (C.cfg.goods_per_works)
+        if C.cfg and C.cfg.goods_per_works and AI.goods_cable then set_target(c.id, "copper-cable", AI.goods_cable) end
       end
       if AI.house_stock and AI.house_stock > 0 then
         set_target(c.id, "rts-house", rails_need_stone(C) and 0 or AI.house_stock)

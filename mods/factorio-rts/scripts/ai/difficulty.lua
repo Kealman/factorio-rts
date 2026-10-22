@@ -5,7 +5,7 @@
 --   difficulty.of_level(level) -> the same for a level
 --   difficulty.knobs(force) -> {level, intel_age, ops, caps = {sites, astar}, pace, in_flight, micro, opm,
 --                               budget_factor, expand, cities, council, first_attack, cs_from, cs_ratio,
---                               goods_per_works, goods_works_cap}
+--                               goods_per_works, goods_works_cap, cs_plan}
 --   difficulty.apply(C)        Nation mode: the commander's build pace and first attack from the knobs (called by
 --                              ai/commander.lua after its settings; Skirmish keeps orders_data.DIFFICULTY untouched)
 --   difficulty.micro(force, need) -> true when the level's micro is at least `need` ("basic" | "full")
@@ -56,6 +56,7 @@ function difficulty.of_level(level)
     cs_ratio = d.cs_ratio or 1.5,
     goods_per_works = d.goods_per_works,
     goods_works_cap = d.goods_works_cap,
+    cs_plan = d.cs_plan == true,
   }
 end
 
