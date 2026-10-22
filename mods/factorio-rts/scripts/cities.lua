@@ -50,6 +50,9 @@ cities.LOST_ALERT_PERIOD = 30 * 60 -- "territory lost" at most this often per fo
 cities.LOST_ALERT_MIN = 4          -- cells
 cities.SKIP_KINDS = {wall = true, stockpile = true} -- not counted for the tier-up
 cities.TIER_KEYS = {"rts.city-tier-1", "rts.city-tier-2", "rts.city-tier-3"}
+-- Phase 5 M3 ai: cities.ai_step waits for a "pending" town site search (ai/towns.lua runs it as a planning job only
+-- when this is set; synchronous it cost up to 9 ms in one tick)
+cities.TOWN_PENDING_OK = true
 -- Phase 5 M2 people: "population" when scripts/population.lua decides the tiers (cities.set_tier); M1's buildings +
 -- delivered rule in cities.check then only measures (the panel's land networks)
 cities.tier_rule = nil

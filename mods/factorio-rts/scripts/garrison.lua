@@ -165,6 +165,10 @@ local function sorted_keys(t)
 end
 
 local function owner_of(force)
+  -- Phase 5 M3 integration: "ai" whenever an AI commander decides for the force (an autotest's AI-driven rts-player got
+  -- "player" divisions that its controller ignored); diplomacy loads after this module
+  local dip = package.loaded["scripts.diplomacy"]
+  if dip and dip.is_ai then return dip.is_ai(force) and "ai" or "player" end
   for _, f in ipairs(match.ai_forces()) do
     if f == force then return "ai" end
   end

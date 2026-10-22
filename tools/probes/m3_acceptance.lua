@@ -242,10 +242,15 @@ local function final()
   for f, why in pairs(a.starving) do starving[#starving + 1] = f .. ": " .. why end
   table.sort(starving)
   check("starving", #starving == 0, "%s", #starving == 0 and "no nation starving" or table.concat(starving, "; "))
-  local debt, bankrupt, late = {}, {}, {}
+  local debt, bankrupt, late, taxes = {}, {}, {}, {}
+  local market = mod("market")
   for _, f in ipairs(nations()) do
     nation_line(f)
     local n = NAT(f)
+    local sw = market and storage.market and storage.market.ai and storage.market.ai[f]
+      and storage.market.ai[f].tax_switches or 0
+    taxes.n, taxes.sum = (taxes.n or 0) + 1, (taxes.sum or 0) + sw
+    if sw > 2 then taxes[#taxes + 1] = f .. " " .. sw end
     if n.max_stage >= 1 then debt[#debt + 1] = f .. " " .. n.max_stage end
     if n.credit_hit then bankrupt[#bankrupt + 1] = f .. " " .. n.credit_hit end
     if not n.line_min or n.line_min >= LINE_GOAL_MIN then late[#late + 1] = f .. " " .. (n.line_at or "none") end
@@ -254,6 +259,10 @@ local function final()
     #debt > 0 and table.concat(debt, ", ") or "none")
   check("bankrupt", #bankrupt == 0, "nations at the credit line: %s", #bankrupt > 0 and table.concat(bankrupt, ", ")
     or "none")
+  -- (the contract: <= 2 switches per nation-hour, measured as the M2 and age3 notes did: over all nations of the run)
+  local per = (taxes.sum or 0) / math.max(1, taxes.n or 1) * 60 / math.max(1, game.tick / 3600)
+  check("tax", per <= 2, "%.2f switches per nation-hour; nations with more than 2: %s", per,
+    #taxes > 0 and table.concat(taxes, ", ") or "none")
   check("lines", #late == 0, "first lines at or after minute %d: %s", LINE_GOAL_MIN,
     #late > 0 and table.concat(late, ", ") or "none")
   util.log("m3 acceptance summary: wars %d, peace %d, ended %d, captures %d (%d nation, %d city-state), trade [%s], "

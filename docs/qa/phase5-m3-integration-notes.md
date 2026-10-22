@@ -5,8 +5,6 @@ Date: 2026-10-17. Factorio 2.0.77 (mac-arm64, Steam), Space Age on unless noted.
 `m3-wave-a` = m2-ready + the five M3 wave A snapshots). Package notes: `docs/qa/phase5-{air,age3,war2,perf,world3}-notes.md`;
 the AI of wave B is `m3-ai`'s. Everything below is Nation mode only unless it says otherwise.
 
-(Work in progress: sections are filled as the package goes.)
-
 ## 1. Verdict
 
 TBD
@@ -67,6 +65,15 @@ TBD: the final runs.
 | The rail planner went around fort belts (war2 notes open issue 4) | walls and gates were blockers | Own walls and gates no longer count as blockers of a coarse cell; a straight orthogonal piece whose only obstacles are own walls or gates costs +6 (`rails.WALL_CROSS_COST`), and when its ghost is laid the walls under it become `rts-gate` across the track (health share kept; log `rails: survey #N: K wall(s) at (x, y) turned into gates`) | `scripts/rails.lua` | `m3_integ.lua` wall_cross |
 | A city site on ungenerated ground (world3 notes open issue 4) | `cities.lua` picked candidates without asking whether their chunk exists | A candidate on a chunk that does not exist yet is requested (`worldgen.request_area`) and skipped this time; `ai/towns.lua` got the same proposal through m3-ai | `scripts/cities.lua` | 4096 runs |
 | The M2 fixture's upkeep check failed after m3-age3's sliced census | a new building counts after the next full census, up to 1,200 ticks later | the fixture waits 1,210 ticks | `tools/probes/m2_integ.lua` | 11/11 |
+| An AI re-surveyed the same failing depot pair back to back (seed 702: rts-ai-2's scheduler at 3.44 ms/tick in minutes 55-60) | `rails.ai_program` started a new survey of the same pair right after one failed; the fine phase's units were set for the old A* (one unit per expansion against ~10 µs of real work) | A failed line backs off (`A.retry`: 2, 4, 8, 16 minutes after 1-4 failures in a row, log `rails: AI X line #N failed (k in a row): next survey in S s`), reset when a line opens; `rails.SURVEY_UNITS` recalibrated (fine 10, check 36) | `scripts/rails.lua` | 702 rerun: sched 0.109 ms/tick; smoke, `m3_integ` |
+| A depot built over a line surveyed but not laid yet blocked it for good (m3-ai, M1 seed 501: the planner's depot #3083 put its stop on piece 24 of the player's town line one second after its survey; the crew stood at piece 24 from minute 26 to 60) | depot sites and platform layouts checked only what stood on the ground | AI depot sites and their platforms keep clear (3 tiles) of every piece a line still has to lay (`covers_planned`, any force on the surface, per-line bounding box); a depot placed by hand takes such a platform layout first and any that fits after it, as before | `scripts/rails.lua` | M1 501 (section 4.4) |
+| The AI's tax switched 3 times in an hour for one nation in 4 of ten 4-nation runs (the contract: <= 2 per nation-hour) | high for a deficit or a war, back to normal when the money was in, high again at the next war or deficit (802 rts-player: normal at 25:00 and a war 20 s later) | At most `max_per_hour` (2) switches in any hour; unrest (happiness below happy_low) and debt pass the cap; the acceptance probe checks it (`check tax`) | `scripts/market.lua`, `balance.nation.market.ai.hysteresis.max_per_hour` | 802, 702, 705 reruns (section 4.2) |
+| Wave B.2: a line blocked for good stayed blocked (the lead's item 1) | a crew retried the piece every step; nothing changed the plan | A ghost that does not revive while the rail itself fits the manual check (a hauler or its legs on the tile: 13 of the 40 blockers in all logs) is built outright. A line blocked at piece i for `rails.DETOUR_AFTER` (2 minutes, doubling per attempt) gets a detour: pieces within `DETOUR_SPAN` (6, then 12, then 24) of i on both sides are taken up (laid rails, their signals and supports back to depot A), a survey runs from the end of the last kept piece (depot A's platform when none is kept) to the start of the first kept one after it (depot B's platform), and its path is spliced in; crews go home or look for their frontier again; a failed detour leaves the plan as it was | `scripts/rails.lua` (`start_detour`, `apply_detour`) | `tools/probes/m3_detour.lua` |
+| Wave B.2: an AI's depot kit waited for 40 iron, 10 steel and 10 copper at one check (the aggressive AI's capital held no copper from 13:00 to 20:00; the lead's item 3) | `ai_pay` paid a craft all at once or not at all | AI depot and kit crafts are paid through an escrow per rail program (`A.escrow[recipe]`): what the network spares of each ingredient above `AI_RESERVE` plus `AI_ESCROW_FLOOR` (60 iron, 60 copper, 20 circuits left for the barracks) is held until the bill is complete | `scripts/rails.lua` | M1 501, 801-805 |
+| Wave B.2: the town site search cost up to 9.5 ms in one tick (m3-ai's perf bench; the lead's item 2) | `cities.ai_step` did not declare that it waits for a "pending" search | `cities.TOWN_PENDING_OK = true`: ai/towns.lua runs the search as a planning job | `scripts/cities.lua` | m3-ai's 4-nation perf bench: pick_site gone from the >3 ms ticks |
+| Wave B.2: the player slot sold its captured port's 100 circuits in 6 of 20 runs, rts-ai-1 in 20 of 20 (the lead's slot diagnosis) | `ai_wanted` held a port's goods for the trip home whether or not a hauler served the route, racing the strategist's sale (staggered by slot in force-name order) | goods are held for home only while a hauler serves the port route | `scripts/market.lua` | slot diagnosis |
+| Wave B.2: an AI-driven rts-player's garrison, troop train and mercenary divisions had owner "player" (latent; the AI controller ignores those) | owner from `match.ai_forces()`, which never lists rts-player | owner "ai" whenever `diplomacy.is_ai(force)` | `scripts/garrison.lua`, `scripts/sinks.lua` | war fixture 27/27 |
+| Wave B.2: an economic AI at power ratio 4.58 sued for a ceasefire on 38 % weariness in the middle of its siege (war-paths probe) | weariness alone was enough to offer | an offer on weariness alone only below `balance.nation.diplomacy.weary_ratio` (1.0); a ratio below cf_ratio still offers as before; acceptance unchanged | `scripts/diplomacy.lua`, balance | 801-805 |
 
 ### C. HUD and UX
 
@@ -83,12 +90,12 @@ English coordinates of the Russian layout; screenshots `build/shots-m3i-{en,ru}/
 | The market's Trade at drop-down cut the city-state entries | 280 wide | `scripts/marketgui.lua` |
 | The staffing box after automation read "7.8 of 7.84 workers" | jobs rounded to one decimal | `scripts/citygui.lua` |
 | The Russian goal line on the strip was cut | shorter Russian goal texts (conquest_space, any, territory) | `locale/ru/age3.cfg`, `diplomacy.cfg` |
-| "Mercenaries (Port of X)" cut on the division card | name button 220 (Russian long region names still cut: open issue) | `scripts/divisiongui.lua` |
+| "Mercenaries (Port of X)" cut on the division card | name button 220, and the division is named after the region's proper name ("Mercenaries (Karvis)") | `scripts/divisiongui.lua`, `scripts/sinks.lua` |
 | An artillery train's gun line before its first shot read "last target: none (0 tiles)" | "looking for a target, next shot in N s" | `scripts/trainswar.lua`, `locale/*/war3.cfg` |
 | The depot panel's shared reason "Cannot deploy a train: ..." stood above an enabled Deploy artillery train | "Freight and troop trains: ..." | `scripts/railgui.lua`, `locale/*/rails.cfg` |
 | Russian wording: нации/страны/вольный город/Эпоха II/отряды/комплекты/семья | державы, город-государство, II эпоха, юниты, наборы, семейство (item names unchanged) | `locale/ru/*.cfg` |
 | A fort belt laid across a rare extractor's drop tile stopped it and its bonus ran out | the belt layout leaves the drop tile of every own mining drill near the line free | `scripts/belts.lua` |
-| The "Depot N" chart labels were unreadable at map zoom (world-sized scale 1.6) | screen-sized (`scale_with_zoom`, 1.2), like the engine's station names | `scripts/rails.lua` |
+| The "Depot N" chart labels were unreadable at map zoom (world-sized scale 1.6) | world-sized at scale 8, like the strategic labels (a screen-sized label covered the HUD minimap) | `scripts/rails.lua` |
 
 After this package's later GUI changes (the Ready column, the artillery train's depot position, world-sized depot
 labels, the stage 1 goods) the probe ran again on HEAD 1851531 / 9c60893: English 50/53, Russian 48/53, 0 Lua errors
@@ -142,7 +149,62 @@ integration`; m3-ai's hunks applied here are marked `-- Phase 5 M3 ai`.
 
 ## 4. Acceptance in detail
 
-TBD
+(On HEAD c1c920d = this package + m3-ai's df6736c; rerun on the final HEAD where m3-ai's later commits change the AI.)
+
+### 4.1 Save and load
+
+`SAVE_MINUTE=20|40 SPEED=8 DURATION_MIN=60 SEED=802 KEEP_TREE=<HEAD c1c920d> tools/saveload-check.sh m3i-sl20|40 '<4
+nations, 2048>' 400`: saved at minute 20 (towns, trunk lines building, scheduler jobs in flight) and at minute 40 (wars,
+captures, Space Programs running, fronts, belts), loaded and played on to minute 61: 0 errors in both halves of both runs;
+after the load the scheduler resumed every nation's jobs (`sched: minute 21 ... ended`) and the wars, treaties and
+captures went on.
+
+### 4.2 M3 end-to-end: 4 normal AIs, 60 minutes, 2048, seeds 801-805
+
+```sh
+PERF=1 KEEP_TREE=<tree> EXTRA_LUA=tools/probes/m3_acceptance.lua DURATION_MIN=60 SEED=801 SPEED=8 \
+  tools/autotest-run.sh m3i-acc-801 '{opponents = 3, difficulty = "normal", mode = "nation", world_size = 2048,
+  enemy_brain = "ai"}' 12000
+```
+
+The tree is HEAD c1c920d (801-803 ran on the identical tree `m3i-army12`, 804 and 805 as `m3i-acc6`). Every run: 0 Lua
+errors, 60.0 s of wall clock per game minute at speed 1 in minutes 56-60 (60.2 in the last one, the autotest's end).
+
+| Seed | AI autotest | Lowest trade (₡) | Wars / back to peace | Cities changed hands | Starving | Debt (stage) | At the credit line | Lowest balance | Age III by 40:00 | First lines at or after 25:00 |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 801 | 81/83 | 3,513 | 3 / 2 | 2 | none | none | none | ₡ 500 | none (41:00 first) | 4 of 4 (27:11-53:22) |
+| 802 | 79/83 | 1,976 | 3 / 3 | 3 | none | rts-ai-3 (3) | none | ₡ -364 | 1 (36:59) | 2 |
+| 803 | 82/83 | 5,227 | 10 / 8 | 11 | none | none | none | ₡ 391 | none | 2 |
+| 804 | 81/83 | 3,947 | 7 / 6 | 14 | none | none | none | ₡ 485 | 2 (35:58, 36:54) | 2 |
+| 805 | 81/82 | 3,912 | 5 / 4 | 9 | none | rts-player (3) | none | ₡ -488 | none | 3 |
+
+M2 criteria: every nation trades, wars, peaces and captures in 5 of 5, no starving nation. Money: a nation in a debt
+stage in 2 of 5 seeds, nobody at its credit line. AI side (m3-ai's ai3 summary of the same runs): every nation founds
+3-8 cities; 11 of 20 have three cities linked by rail by 35:00; every nation runs operations with phases (1-38); air
+patrols fly in 9 of 20 nations; a fort belt is built in 6 of 20; Age III by 40:00 in 2 of 5 seeds (the contract wants
+3 of 5; open issue). Costs in the speed-1 minutes: AI 0.39-0.51 ms/tick for four nations (0.10-0.13 per nation), M2
+modules 0.035-0.059, M3 modules 0.052-0.074.
+
+### 4.3 M2 acceptance: seeds 701-705 (the same fixture and match)
+
+| Seed | AI autotest | Lowest trade (₡) | Wars / back to peace | Cities changed hands | Starving | Debt | Speed-1 minutes (s) |
+|---|---|---|---|---|---|---|---|
+| 701 | 80/82 | 3,321 | 4 / 4 | 6 | **rts-ai-1** (its town from 34:00) | none | 60.0 x4, 60.2 |
+| 702 (aaa8061) | 79/83 | 5,418 | 6 / 4 | 6 | **rts-ai-2** (a far "trade" city from 52:00) | none | 60.0 x4, 60.2 |
+| 703 | 81/83 | 4,502 | 6 / 4 | 5 | none | none | 60.0 x4, 60.2 |
+| 704 | 81/83 | 1,774 | 1 / 1 | 3 | none | player (1), rts-ai-3 (3) | 60.0 x4, 60.2 |
+| 705 | 81/83 | 4,407 | 3 / 2 | 4 | none | player (1) | 60.0 x4, 60.2 |
+
+Trade, war, peace and capture pass in 5 of 5; the starving criterion (at most 1 seed) fails with 2 seeds: in 701 the
+town's ration hauler was taken over by the planner's Age III export haul (65 batteries over 725 tiles), in 702 a far
+city without a farm ran dry; both are AI governance (sent to m3-ai). The first 702 run (c1c920d) found the failing-survey
+loop of section 2.B (sched 3.44 ms/tick in minutes 55-60); with aaa8061 the scheduler costs 0.11 ms/tick there.
+
+### 4.4 M1 acceptance (1v1, seed 501, 60 minutes, `m1_acceptance.lua`, SPEED 6)
+
+HEAD 1851531: **53/53**, 0 errors, 23,259 items by train (rts-player 9,340 in 48 trips, rts-ai-1 13,919 in 76 trips;
+goal 20,000; wave A 22,999, M2 26,612), both nations alive, 60 UPS in the speed-1 minutes. On the first integration tree
+(3edd55b with the wave A AI) 53/53 with 22,822 items and no capital depot lost.
 
 ## 5. Checks of this package
 
@@ -221,22 +283,29 @@ average and 0.15 ms at worst, the treasury step 0.79 ms; the 600-tick census it 
 
 ## 7. Open issues
 
-(Draft; finalised with the acceptance.)
-
-1. **First rail lines after 25:00** for about half of the AI nations in the 4-nation runs (25-48 minutes): the AI's
-   rail program pays its locomotive and construction wagon kits from the capital's network, which held 1-54 iron plates
-   for most of the match (seed 804, rts-ai-1: survey done at 19:30, "waits for a construction train: no-kits" until
-   29:30). Railways at 10 kits moved research earlier; the iron allocation is m3-ai's (sent).
-2. **AI armies do not shrink in debt**: army upkeep of 160-280 cr a minute against 200-340 of tax; stage 2 stops the
+1. **First rail lines after 25:00** for about half of the AI nations in the 4-nation runs (9-10 of 16-20, at 25-53
+   minutes): the AI's rail program pays its locomotive and construction wagon kits from the capital's network, which held
+   1-54 iron plates for most of the match (seed 804, rts-ai-1: survey done at 19:30, "waits for a construction train:
+   no-kits" until 29:30). Railways at 10 kits moved research earlier; the iron allocation is m3-ai's (sent).
+2. **Age III by 40:00 in 2 of 5 seeds** (802, 804; the contract wants 3 of 5). Electrification at 25 kits and a lighter
+   stage 1 moved it from 38-48 minutes to 35-49; what is left is the industrial kits' and stage goods' production in
+   the AI's capital (m3-ai's planner).
+3. **Starving cities in the M2 acceptance in 2 of 5 seeds** (701: the town's ration hauler taken over by an Age III
+   export haul; 702: a far trade city without a farm). AI governance (sent to m3-ai). The M3 seeds 801-805 have none.
+4. **AI armies do not shrink in debt**: army upkeep of 160-280 cr a minute against 200-340 of tax; stage 2 stops the
    kits but no unit leaves, so a nation in debt late in the match runs towards its credit line (m3-ai: disband in
-   debt, sent). The treasury rules themselves are unchanged (stage 2 unpaid wages, stage 3 unrest).
-3. **Air, holds, artillery trains unused by the AI** in every run so far (patrols, interceptors, bombers, artillery,
-   holds 0): the balance of air kits, AA, belts, artillery and armoured stock stays at wave A's first guesses until
-   the AI uses them (m3-ai).
-4. **The research Rush can still be started with no industrial kits in stock**; it costs nothing until a lab works.
-5. **Mercenary division names** ("Mercenaries (Port of <Region>)") are cut on the division card in Russian for long
-   region names (GUI audit).
-6. **Air panel counts**: planes idle on the apron count as "Flying" (GUI audit; m3-air's wording).
-7. **Train panel**: a train standing on its own depot's platform reads "No position yet" (GUI audit).
-8. **4096 x 6 start**: planning 2.5-3.2 s and the forced core 2.6-2.9 s are world3's (core <= 3 s holds); the AIs'
-   first layouts are m3-ai's resumable planner now (planjob).
+   debt, sent). Nobody reached the credit line in 10 seeds. The treasury rules themselves are unchanged (stage 2 unpaid
+   wages, stage 3 unrest).
+5. **Air, holds, artillery trains unused by the AI's war** (interceptors, bombers, artillery and holds 0 in every run;
+   patrols fly in 9 of 20 nations, fort belts in 6 of 20): the balance of air kits, AA, belts, artillery and armoured
+   stock stays at wave A's first guesses until the AI uses them in a fight (m3-ai).
+6. **The research Rush can still be started with no industrial kits in stock**; it costs nothing until a lab works.
+7. **4096 x 6 start**: planning 2.5-3.2 s and the forced core 2.6-2.9 s are world3's (core <= 3 s holds; the start
+   blocks for about 5 s in all); the AIs' first layouts are m3-ai's resumable planner now (planjob).
+8. **GUI pass misses** (section 2.C): the Codex run placed 50 of 53 steps in English and 48 in Russian; the misses are
+   site placements on a busy map and two Russian coordinates, not panel defects. The LAN join through the GUI is the
+   lead's separate check.
+
+Fixed in this package from the draft list: mercenary divisions are named after their region ("Mercenaries (Karvis)")
+and fit the card in Russian; the air panel's planes on the apron count as Ready, not Flying; an artillery
+train standing on its depot shows that depot as its position; the AI's failed-survey loop (section 2.B).

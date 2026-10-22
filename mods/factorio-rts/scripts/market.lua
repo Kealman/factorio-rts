@@ -1115,6 +1115,18 @@ local function ai_taxes_banded(C, A, H)
   A.tax_war = war or nil
   if level == cur then return end
   if not urgent and A.tax_tick and game.tick - A.tax_tick < H.tax_hold then return end
+  -- Phase 5 M3 integration: at most max_per_hour switches in any hour (the contract's <= 2 per nation-hour; 4 of ten
+  -- 4-nation runs had a nation at 3: high, back to normal when the money was in, high again at the next war or
+  -- deficit); only unrest (happiness below happy_low) and debt pass the cap
+  if H.max_per_hour then
+    local kept = {}
+    for _, t0 in ipairs(A.tax_ticks or {}) do
+      if game.tick - t0 < 60 * 60 * 60 then kept[#kept + 1] = t0 end
+    end
+    A.tax_ticks = kept
+    if #kept >= H.max_per_hour and not (happy < AI.happy_low or in_debt) then return end
+    kept[#kept + 1] = game.tick
+  end
   A.tax_tick = game.tick
   A.tax_switches = (A.tax_switches or 0) + 1
   util.log("market: AI %s sets tax %s (%s; switch %d)", C.force, level, why, A.tax_switches)
@@ -1415,6 +1427,11 @@ end
 local function ai_wanted(C, A, S, port_un, rows)
   local home = capital_hub(C.force)
   if not (rows and home) then return end
+  -- Phase 5 M3 integration: only while a hauler serves the route (else the goods wait for one at the port and the
+  -- strategist's sale of a captured port's loot came too late: the player slot sold its 100 circuits in 6 of 20 runs,
+  -- rts-ai-1 in 20 of 20, ai/nation.lua staggers the AIs in force-name order)
+  local h = A.hauler and logistics.hauler(A.hauler)
+  if not (h and h.mode == "manual" and h.dropoff == port_un) then return end
   local contents = market.port_contents(port_un)
   for _, row in ipairs(rows) do
     local item = row.item

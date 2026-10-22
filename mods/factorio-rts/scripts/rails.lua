@@ -135,6 +135,9 @@ rails.STEP = 30                     -- train state machine and builder period, t
 rails.TRANSFER_PERIOD = 10          -- depot transfer period, ticks
 rails.CHECK_PERIOD = 60             -- line checks (open, cut, builder dispatch), ticks
 rails.LONG_WAIT = 60 * 60 * 60      -- schedule wait: the script sends trains on, this is only a safety net
+rails.SURVEY_CLEARANCE = 48         -- an AI depot waits while a line within this many tiles is surveyed
+rails.DETOUR_AFTER = 2 * 60 * 60     -- a line blocked this long (doubling per detour) is surveyed again around the piece
+rails.DETOUR_SPAN = {6, 12, 24}       -- pieces replaced on each side of the blocked one, per detour attempt
 rails.MAX_PIECE_FAILS = 20          -- a piece that will not revive this many times blocks the line (alert)
 rails.WAGON_STACKS = 20             -- construction wagon slots
 rails.CARRIAGE = 7                  -- tiles between carriage centres
@@ -536,7 +539,56 @@ end
 
 local function rail_dir(spec) return spec.axis == "x" and D.east or D.north end
 
-local function spec_fits(surface, force_name, spec)
+-- Phase 5 M3 integration: does `area` (grown by `margin`) cover a surveyed piece not laid yet of a line on the surface?
+-- A depot or platform placed there blocks that line for good (M1 seed 501: an AI depot's stop stood on piece 24 of the
+-- player's town line, surveyed a second earlier, which then never revived).
+local function covers_planned(surface_index, area, margin)
+  local x0, y0 = area[1][1] - margin, area[1][2] - margin
+  local x1, y1 = area[2][1] + margin, area[2][2] + margin
+  for _, line in pairs(rstate().lines) do
+    if line.surface == surface_index and line.pieces and line.pieces[1] and (line.missing or 0) > 0 then
+      local bb = line.bbox
+      if not bb then
+        local p1 = line.pieces[1]
+        bb = {p1.x, p1.y, p1.x, p1.y}
+        for _, p in ipairs(line.pieces) do
+          bb[1], bb[2], bb[3], bb[4] = min(bb[1], p.x), min(bb[2], p.y), max(bb[3], p.x), max(bb[4], p.y)
+        end
+        line.bbox = bb
+      end
+      if bb[1] <= x1 and bb[3] >= x0 and bb[2] <= y1 and bb[4] >= y0 then
+        for _, p in ipairs(line.pieces) do
+          if p.x >= x0 and p.x <= x1 and p.y >= y0 and p.y <= y1 and not (p.e and p.e.valid) then return true end
+        end
+      end
+    end
+  end
+  return false
+end
+
+-- Phase 5 M3 integration: is `p` within `width` tiles of the straight way between the depots of a line on the surface
+-- that is being surveyed? Its pieces are not known yet (a depot placed there during the survey stood on the finished
+-- line: M1 seed 501, piece 4 of the player's town line under depot #2941, placed 0.3 s into the survey).
+local function near_survey(surface_index, p, width)
+  for _, line in pairs(rstate().lines) do
+    if line.surface == surface_index and line.state == "surveying" then
+      local A, B = rails.depot(line.a), rails.depot(line.b)
+      if A and B and A.entity.valid and B.entity.valid then
+        local a, b = A.entity.position, B.entity.position
+        local dx, dy = b.x - a.x, b.y - a.y
+        local len2 = dx * dx + dy * dy
+        local t = len2 > 0 and max(0, min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / len2)) or 0
+        local ex, ey = p.x - (a.x + t * dx), p.y - (a.y + t * dy)
+        if ex * ex + ey * ey <= width * width then return true end
+      end
+    end
+  end
+  return false
+end
+
+-- `strict`: the platform must also keep clear of the pieces other lines still have to lay (covers_planned)
+local function spec_fits(surface, force_name, spec, strict)
+  if strict and covers_planned(surface.index, spec.area, 3) then return false end
   for _, r in ipairs(spec.rails) do
     if not surface.can_place_entity({name = "straight-rail", position = {r.x, r.y}, direction = rail_dir(spec),
                                      force = force_name, build_check_type = MANUAL_GHOST, forced = true}) then
@@ -555,10 +607,11 @@ local function spec_fits(surface, force_name, spec)
   return true
 end
 
---- The first platform layout that fits next to a depot position (nil when none does). For depot placement (AI).
+--- The first platform layout that fits next to a depot position (nil when none does). For depot placement (AI): it
+--- keeps clear of the pieces lines still have to lay, as the platform built for that depot then does.
 function rails.platform_fits(surface, force_name, position)
   for _, spec in ipairs(platform_specs(position)) do
-    if spec_fits(surface, force_name, spec) then return spec end
+    if spec_fits(surface, force_name, spec, true) then return spec end
   end
   return nil
 end
@@ -643,11 +696,15 @@ local function setup_depot(un, rec)
   if d.platform then return d end
   local surface = e.surface
   local spec
-  for _, s in ipairs(platform_specs(e.position)) do
-    if spec_fits(surface, rec.force, s) then
-      spec = s
-      break
+  -- (a layout clear of other lines' unlaid pieces first; then any that fits, as before)
+  for _, strict in ipairs({true, false}) do
+    for _, s in ipairs(platform_specs(e.position)) do
+      if spec_fits(surface, rec.force, s, strict) then
+        spec = s
+        break
+      end
     end
+    if spec then break end
   end
   if not spec then
     util.log("rails: depot #%d of %s at %s: no room for a platform", un, rec.force, util.pos_str(e.position))
@@ -1130,6 +1187,70 @@ local function survey_fine(job, s, budget)
   return n
 end
 
+-- Phase 5 M3 integration: a detour survey's path (pieces job.detour.lo + 1 .. hi - 1 of the line replaced by it; see
+-- start_detour) spliced into the line: kept pieces, supports and signals stay, the bill and the piece index follow.
+local function apply_detour(job, line, path, supports, start_k)
+  local old = line.pieces
+  local lo, hi = job.detour.lo, job.detour.hi
+  local idx = index_of(job.surface)
+  for i = lo + 1, hi - 1 do
+    local p = old[i]
+    local key = pkey(p.name, p.x, p.y, p.d)
+    local v = idx[key]
+    if v and floor(v / 100000) == line.id then idx[key] = nil end
+  end
+  local pieces = {}
+  for i = 1, lo do pieces[#pieces + 1] = old[i] end
+  for _, p in ipairs(path) do pieces[#pieces + 1] = p end
+  for i = hi, #old do pieces[#pieces + 1] = old[i] end
+  local shift = #path - (hi - 1 - lo)
+  local sups = {}
+  for _, sp in ipairs(line.supports or {}) do
+    if sp.before <= lo then
+      sups[#sups + 1] = sp
+    elseif sp.before >= hi then
+      sp.before = sp.before + shift
+      sups[#sups + 1] = sp
+    end
+  end
+  for _, sp in ipairs(supports) do
+    sp.before = sp.before + lo
+    sups[#sups + 1] = sp
+  end
+  if lo == 0 then
+    local sx, sy = ndecode(start_k)
+    for i, e in ipairs(job.starts) do
+      if abs(e.x - sx) < 0.1 and abs(e.y - sy) < 0.1 then line.a_end = i end
+    end
+  end
+  if hi > #old then line.b_end = job.goalset[job.found] end
+  local track, length, signals, missing = 0, 0, 0, 0
+  for _, p in ipairs(pieces) do
+    track = track + p.rails
+    length = length + p.len
+    if p.sig then signals = signals + 2 end
+    if not (p.e and p.e.valid) then missing = missing + 1 end
+  end
+  line.pieces = pieces
+  line.bbox = nil
+  line.supports = sups
+  line.bill = {rails = track + #sups * CFG.support_rails + signals * CFG.signal_rails, track = track,
+               pieces = #pieces, supports = #sups, ramps = line.bill and line.bill.ramps or 0, signals = signals}
+  line.rails = line.bill.rails
+  line.length = length
+  line.missing = missing
+  for i, p in ipairs(pieces) do idx[pkey(p.name, p.x, p.y, p.d)] = line.id * 100000 + i end
+  -- a crew still out looks for its frontier again (piece numbers moved; it laid on past the detour, then stood still)
+  for _, rec in pairs(rstate().trains) do
+    if rec.line == line.id then rec.scan, rec.target = nil, nil end
+  end
+  job.phase = "ghosts"
+  job.ghost_i, job.ghost_end = lo + 1, lo + #path
+  util.log("rails: detour survey #%d of line #%d done in %.1f s: %d pieces in place of %d (pieces %d..%d), line now %d "
+    .. "pieces, %d missing; %d fine expansions, %d checks", job.id, line.id, (game.tick - job.started) / 60, #path,
+    hi - 1 - lo, lo + 1, hi - 1, #pieces, missing, job.expanded, job.checks)
+end
+
 -- Phase "extract": the piece list, supports, signals and the bill; the line record gets them.
 local function survey_extract(job)
   local R = rstate()
@@ -1148,12 +1269,14 @@ local function survey_extract(job)
                            gx = px + e.gdx, gy = py + e.gdy, gd = e.gdir})
     k = pk
   end
-  -- which platform ends the route uses
-  local sx, sy = ndecode(k)
-  for i, e in ipairs(job.starts) do
-    if abs(e.x - sx) < 0.1 and abs(e.y - sy) < 0.1 then line.a_end = i end
+  -- which platform ends the route uses (a detour: apply_detour)
+  if not job.detour then
+    local sx, sy = ndecode(k)
+    for i, e in ipairs(job.starts) do
+      if abs(e.x - sx) < 0.1 and abs(e.y - sy) < 0.1 then line.a_end = i end
+    end
+    line.b_end = job.goalset[job.found]
   end
-  line.b_end = job.goalset[job.found]
   -- supports on elevated rail ends (probe P2)
   local supports, since = {}, nil
   local ramps = 0
@@ -1185,12 +1308,14 @@ local function survey_extract(job)
       end
     end
   end
+  if job.detour then return apply_detour(job, line, path, supports, k) end
   local track, length = 0, 0
   for _, p in ipairs(path) do
     track = track + p.rails
     length = length + p.len
   end
   line.pieces = path
+  line.bbox = nil -- covers_planned's box of the pieces
   line.supports = supports
   line.signals = {}
   line.bill = {rails = track + #supports * CFG.support_rails + signals * CFG.signal_rails, track = track,
@@ -1239,7 +1364,8 @@ local function survey_ghosts(job, s, budget)
   local line = R.lines[job.line]
   local n = 0
   local pieces = line.pieces
-  while job.ghost_i <= #pieces and n < budget do
+  local last = job.ghost_end or #pieces -- a detour lays ghosts of its own pieces only
+  while job.ghost_i <= last and n < budget do
     local p = pieces[job.ghost_i]
     job.ghost_i = job.ghost_i + 1
     local gated = gate_walls(s, job.force, p) -- Phase 5 M3 integration
@@ -1248,10 +1374,12 @@ local function survey_ghosts(job, s, budget)
                            force = job.force})
     n = n + 1
   end
-  if job.ghost_i > #pieces then
+  if job.ghost_i > last then
     for _, sp in ipairs(line.supports) do
-      sp.g = s.create_entity({name = "entity-ghost", inner_name = rails.SUPPORT, position = {sp.x, sp.y},
-                              direction = sp.d, force = job.force})
+      if not ((sp.e and sp.e.valid) or (sp.g and sp.g.valid)) then
+        sp.g = s.create_entity({name = "entity-ghost", inner_name = rails.SUPPORT, position = {sp.x, sp.y},
+                                direction = sp.d, force = job.force})
+      end
     end
     job.phase = "done"
   end
@@ -1270,6 +1398,21 @@ local function finish_job(job)
   local line = R.lines[job.line]
   R.jobs[job.id] = nil
   if not line then return end
+  if job.detour then -- Phase 5 M3 integration: the line goes on with the detour, or as planned when none was found
+    line.detours = (line.detours or 0) + 1
+    line.state = job.detour.state or "building"
+    if job.phase == "failed" then
+      local bp = line.pieces[job.detour.blocked]
+      if bp then bp.fails = 0 end -- blocked again -> the next, wider detour after the backoff
+      line.blocked, line.blocked_at = nil, nil
+      util.log("rails: detour survey #%d of line #%d failed (%s) after %.1f s: pieces %d..%d are laid as planned",
+        job.id, line.id, tostring(job.reason), (game.tick - job.started) / 60, job.detour.lo + 1, job.detour.hi - 1)
+    else
+      line.blocked, line.blocked_at = nil, nil
+      line.surveyed = game.tick
+    end
+    return
+  end
   if job.phase == "failed" then
     line.state = "failed"
     line.reason = job.reason
@@ -1409,6 +1552,90 @@ function rails.plan_line(force, depot_a, depot_b)
     util.pos_str(pa), depot_a, util.pos_str(pb), depot_b, util.distance(pa, pb), tostring(job.bridges),
     job.sched and string.format(", scheduler job %d", job.sched) or "")
   return id
+end
+
+-- Phase 5 M3 integration: a line blocked at piece line.blocked for rails.DETOUR_AFTER (doubling per attempt) is surveyed
+-- again around it: pieces within DETOUR_SPAN[attempt] of it on both sides are taken up (laid rails go back to depot A's
+-- network, their signals and supports with them) and a survey runs from the end of the last kept piece (depot A's
+-- platform when none is kept) to the start of the first kept one after it (depot B's platform). The crews go home
+-- meanwhile; a failed detour leaves the plan as it was and the crews lay it again.
+local function start_detour(line)
+  local R = rstate()
+  local i, n = line.blocked, #line.pieces
+  local attempt = (line.detours or 0) + 1
+  local span = rails.DETOUR_SPAN[attempt]
+  local A, B = rails.depot(line.a), rails.depot(line.b)
+  local s = game.surfaces[line.surface]
+  if not (i and span and s and A and B and A.platform and B.platform and A.platform.ends and B.platform.ends) then
+    return false
+  end
+  local lo, hi = max(0, i - span), min(n + 1, i + span)
+  local starts, goals = {}, {}
+  if lo == 0 then
+    for _, e in ipairs(A.platform.ends) do starts[#starts + 1] = {x = e.x, y = e.y, d = e.d, l = e.l} end
+  else
+    local p = line.pieces[lo]
+    starts[1] = {x = p.gx, y = p.gy, d = p.gd, l = p.l}
+  end
+  if hi > n then
+    for _, e in ipairs(B.platform.ends) do goals[#goals + 1] = {x = e.x, y = e.y, d = (e.d + 8) % 16, l = e.l} end
+  else
+    local p = line.pieces[hi]
+    goals[1] = {x = p.sx, y = p.sy, d = p.sd, l = p.sl}
+  end
+  -- take up the pieces in between
+  local refund, taken = 0, 0
+  for k = lo + 1, hi - 1 do
+    local p = line.pieces[k]
+    if p.e and p.e.valid then
+      if p.sig and line.signals then
+        -- its signal pair stands at its far end
+        local keep = {}
+        for _, sig in ipairs(line.signals) do
+          if sig.valid then
+            local dx, dy = sig.position.x - p.gx, sig.position.y - p.gy
+            if dx * dx + dy * dy <= 9 then sig.destroy() else keep[#keep + 1] = sig end
+          end
+        end
+        line.signals = keep
+      end
+      p.e.destroy()
+      refund = refund + p.rails
+      taken = taken + 1
+      line.missing = line.missing + 1
+    end
+    if p.g and p.g.valid then p.g.destroy() end
+    p.e, p.g = nil, nil
+  end
+  for _, sp in ipairs(line.supports or {}) do
+    if sp.before > lo and sp.before < hi then
+      if sp.e and sp.e.valid then
+        sp.e.destroy()
+        refund = refund + CFG.support_rails
+      end
+      if sp.g and sp.g.valid then sp.g.destroy() end
+      sp.e, sp.g = nil, nil
+    end
+  end
+  local net = logistics.hub_network(line.a)
+  if refund > 0 and net then net.insert({name = rails.RAIL, count = refund}) end
+  line.used = max(0, (line.used or 0) - refund)
+  line.returned = (line.returned or 0) + refund
+  local prev = line.state
+  line.state = "surveying"
+  local id = R.next_id
+  R.next_id = id + 1
+  local sa, ga = starts[1], goals[1]
+  local job = {id = id, line = line.id, force = line.force, surface = line.surface, bridges = rails.bridges(line.force),
+               ax = sa.x, ay = sa.y, bx = ga.x, by = ga.y, phase = "score", scan = 0, cost = {}, mul = {}, cliff = {},
+               margin = 64, started = game.tick, ticks = 0, expanded = 0, checks = 0, starts = starts, goals = goals,
+               detour = {lo = lo, hi = hi, blocked = i, state = prev, attempt = attempt}}
+  R.jobs[id] = job
+  job.sched = rails.SURVEY_SCHED and sched.submit(line.force, "rails_survey", {job = id}) or nil
+  util.log("rails: line #%d blocked at piece %d for %.0f s: detour survey #%d over pieces %d..%d (attempt %d, %d laid "
+    .. "pieces taken up, %d rails back)", line.id, i, (game.tick - (line.blocked_at or game.tick)) / 60, id, lo + 1, hi - 1,
+    attempt, taken, refund)
+  return true
 end
 
 ---------------------------------------------------------------------------
@@ -2170,7 +2397,16 @@ local function check_lines()
     local st = line.state
     if (st == "building" or st == "cut") and line.pieces then
       if line.builder and not R.trains[line.builder] then line.builder = nil end
-      if line.missing <= 0 and supports_missing(line) == 0 then
+      local detour_due = st == "building" and line.blocked and line.blocked_at
+        and (line.detours or 0) < #rails.DETOUR_SPAN
+        and game.tick - line.blocked_at >= rails.DETOUR_AFTER * 2 ^ (line.detours or 0)
+      -- the crew goes home first (builder_step): the detour takes up the rails it stands on
+      line.detour_wanted = (detour_due and line.builder) and true or nil
+      if detour_due and line.builder then
+        -- (waiting for the crew)
+      elseif detour_due and start_detour(line) then
+        -- (surveying around the blocked piece)
+      elseif line.missing <= 0 and supports_missing(line) == 0 then
         if line_path_ok(line) then
           open_line(line)
         elseif line_path_ok(line, true) and #(line.signals or {}) > 0 then
@@ -2367,6 +2603,16 @@ local function lay_piece(line, i, rec, s)
       end
     end
   end
+  if not ent and not p.elev and g.valid
+     and s.can_place_entity({name = p.name, position = {p.x, p.y}, direction = p.d, force = line.force,
+                             build_check_type = MANUAL}) then
+    -- Phase 5 M3 integration: a ghost does not revive under a vehicle though the rail itself fits (a city's hauler
+    -- parked on the line: M1 seed 501's line #6 stood at piece 63 for 34 minutes): build the piece outright
+    g.destroy()
+    p.g = nil
+    ent = s.create_entity({name = p.name, position = {p.x, p.y}, direction = p.d, force = line.force, raise_built = true})
+    if not ent then return false, "create" end
+  end
   if not ent then
     if not p.debugged and g.valid then
       p.debugged = true
@@ -2438,8 +2684,8 @@ local function builder_step(rec, train)
     if rec.arrived then despawn(rec, train) end
     return
   end
-  if not (line and line.pieces) then
-    go_home(rec, train, "no line")
+  if not (line and line.pieces) or line.state == "surveying" or line.detour_wanted then
+    go_home(rec, train, line and "detour survey" or "no line")
     return
   end
   local s = train.front_stock.surface
@@ -2488,7 +2734,7 @@ local function builder_step(rec, train)
         return
       end
       if p.fails == rails.MAX_PIECE_FAILS and not line.blocked then
-        line.blocked = i
+        line.blocked, line.blocked_at = i, game.tick
         util.log("rails: line #%d blocked at piece %d %s %s (%s)", line.id, i, p.name, util.pos_str({p.x, p.y}), why)
         alert(line.force, "line-blocked", {x = p.x, y = p.y}, "rts.alert-line-blocked")
       end
@@ -2496,6 +2742,7 @@ local function builder_step(rec, train)
     end
     rec.built = (rec.built or 0) + 1
     rec.last_built = i
+    if line.blocked == i then line.blocked, line.blocked_at = nil, nil end -- it went away
     budget = budget - 1
     i = next_missing(line, rec.dir, i)
     rec.scan = i
@@ -2988,6 +3235,9 @@ end
 -- below the larger AI_RESERVE_EXPANDED for the inputs of an intermediate it pays as plates (circuits for a kit).
 rails.AI_RESERVE = {["iron-plate"] = 40, ["copper-plate"] = 20, ["stone"] = 20}
 rails.AI_RESERVE_EXPANDED = {["iron-plate"] = 150, ["copper-plate"] = 60}
+-- Phase 5 M3 integration: a part payment into the escrow (ai_pay) leaves this much more for the barracks (m3-ai: the
+-- walker and drone kits starve on copper first)
+rails.AI_ESCROW_FLOOR = {["iron-plate"] = 60, ["copper-plate"] = 60, ["electronic-circuit"] = 20}
 
 -- Raw goods to take from `pay` for `count` of `item` (an intermediate it lacks is paid with its inputs, 3 levels deep;
 -- `taken` holds what earlier parts of the same payment already take). Returns false when the network cannot pay.
@@ -3007,14 +3257,44 @@ local function ai_bill(pay, item, count, taken, depth)
 end
 
 -- Pay `n` crafts of a recipe's ingredients from network `pay` and put the products into network `put`. Returns true.
-local function ai_pay(pay, put, recipe_name, n)
+-- Phase 5 M3 integration: with `escrow` (a table kept by the caller) the craft is paid over several calls: what the
+-- network can spare of each ingredient goes into the escrow until the bill is complete (40 iron, 10 steel and 10 copper
+-- at one check starved the aggressive AI's depot kit while its capital held no copper for 7 minutes).
+local function ai_pay(pay, put, recipe_name, n, escrow)
   local proto = prototypes.recipe[recipe_name]
   if not (proto and pay and pay.valid and put and put.valid) then return false end
   local taken = {}
+  local complete, held = true, nil
+  if escrow then
+    held = escrow[recipe_name] or {}
+    escrow[recipe_name] = held
+  end
   for _, ing in ipairs(proto.ingredients) do
-    if not ai_bill(pay, ing.name, ing.amount * n, taken, 0) then return false end
+    local need = ing.amount * n - (held and held[ing.name] or 0)
+    if need > 0 then
+      local try = {}
+      for k, v in pairs(taken) do try[k] = v end
+      if ai_bill(pay, ing.name, need, try, 0) then
+        taken = try
+        if held then held[ing.name] = (held[ing.name] or 0) + need end
+      elseif held then
+        -- what the network spares of it now (no sub-recipes), the rest at a later call
+        local reserve = (rails.AI_RESERVE[ing.name] or 0) + (rails.AI_ESCROW_FLOOR[ing.name] or 0)
+        local have = pay.get_item_count(ing.name) - (taken[ing.name] or 0) - reserve
+        local use = math.min(math.max(0, have), need)
+        if use > 0 then
+          taken[ing.name] = (taken[ing.name] or 0) + use
+          held[ing.name] = (held[ing.name] or 0) + use
+        end
+        complete = false
+      else
+        return false
+      end
+    end
   end
   for item, count in pairs(taken) do pay.remove_item({name = item, count = count}) end
+  if not complete then return false end
+  if escrow then escrow[recipe_name] = nil end
   for _, prod in ipairs(proto.products) do
     if prod.type == "item" then put.insert({name = prod.name, count = (prod.amount or 1) * n}) end
   end
@@ -3034,6 +3314,7 @@ local function find_depot_site(surface, force_name, center, reach, prefer)
   local function fits(p)
     return surface.can_place_entity({name = rails.DEPOT, position = p, force = force_name,
                                      build_check_type = MANUAL_GHOST, forced = true})
+      and not covers_planned(surface.index, {{p.x - 2, p.y - 2}, {p.x + 2, p.y + 2}}, 3)
       and rails.platform_fits(surface, force_name, p) ~= nil
   end
   if prefer and fits(prefer) then return {x = prefer.x, y = prefer.y} end
@@ -3058,7 +3339,12 @@ local function ai_depot(force_name, anchor_un, field, A)
   local net = anchor_net(A.pay or A.anchor)
   if not (anchor and net) then return nil end
   if net.get_item_count(rails.DEPOT) == 0 then
-    if game.tick < (A.next_craft or 0) or not ai_pay(net, net, "rts-depot", 1) then return nil end
+    if game.tick < (A.next_craft or 0) then return nil end
+    A.escrow = A.escrow or {}
+    if not ai_pay(net, net, "rts-depot", 1, A.escrow) then
+      A.next_craft = game.tick + rails.AI_CRAFT_TICKS
+      return nil
+    end
     A.next_craft = game.tick + rails.AI_CRAFT_TICKS
   end
   local surface = anchor.entity.surface
@@ -3070,6 +3356,11 @@ local function ai_depot(force_name, anchor_un, field, A)
   if not pos then
     if A.why ~= "no-site" then util.log("rails: AI %s finds no depot site near #%d", force_name, anchor_un) end
     A.why = "no-site"
+    return nil
+  end
+  -- (and not while a line near the site is being surveyed: a few seconds; covers_planned sees its pieces afterwards)
+  if near_survey(surface.index, pos, rails.SURVEY_CLEARANCE) then
+    A.why = "survey"
     return nil
   end
   clear_area(surface, {{pos.x - 3, pos.y - 3}, {pos.x + 3, pos.y + 3}})
@@ -3096,7 +3387,9 @@ local function ai_kits(depot_un, anchor_un, kind, A)
   for _, k in ipairs(kit_list(kind)) do
     if net.get_item_count(k[1]) < k[2] then
       if game.tick < (A.next_craft or 0) then return false end
-      if ai_pay(anchor_net(anchor_un), net, k[1], 1) then A.next_craft = game.tick + rails.AI_CRAFT_TICKS end
+      A.escrow = A.escrow or {}
+      ai_pay(anchor_net(anchor_un), net, k[1], 1, A.escrow) -- (paid over several calls: the escrow)
+      A.next_craft = game.tick + rails.AI_CRAFT_TICKS
       return false
     end
   end

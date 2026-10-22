@@ -34,7 +34,8 @@
 -- the offers under the alert lines or the F4 panel (diplomacy.answer(id, accept)), and an unanswered proposal expires
 -- after proposal_ttl. AI decisions (diplomacy.ai_step, every 60 s per AI, staggered) follow the doctrine table of
 -- balance.nation.diplomacy.doctrine (rails-trade.md §5.3): declare war when r < war_r and power ratio > war_ratio,
--- offer or accept a ceasefire when ratio < cf_ratio or weariness > cf_weary, offer an alliance when r > ally_r with a
+-- offer or accept a ceasefire when ratio < cf_ratio or weariness > cf_weary (an offer on weariness alone only below
+-- the power ratio weary_ratio: Phase 5 M3 integration), offer an alliance when r > ally_r with a
 -- common enemy, leave no alliance younger than 10 minutes. Easy AIs never declare war. power(x) = supply of live
 -- units + 2 per turret + production value per minute / 500.
 --
@@ -847,7 +848,10 @@ function diplomacy.ai_step(x)
         local weary = W and wars.weariness(W, x) or 0
         local minutes = W and wars.minutes(W) or 0
         local last = D.ai[x] and D.ai[x].offered and D.ai[x].offered[y]
-        if minutes >= B.min_war_minutes and (ratio < T.cf_ratio or weary > T.cf_weary)
+        -- Phase 5 M3 integration: weariness alone only while the power ratio is below weary_ratio (an economic AI at
+        -- 4.58 sued for a ceasefire on 38 % weariness in the middle of its siege)
+        local tired = weary > T.cf_weary and ratio < (B.weary_ratio or math.huge)
+        if minutes >= B.min_war_minutes and (ratio < T.cf_ratio or tired)
            and not pending_between(x, y) and not (last and tick - last < B.offer_cooldown_minutes * MINUTE) then
           local a = row(D.ai, x)
           a.offered = a.offered or {}

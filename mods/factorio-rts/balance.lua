@@ -667,6 +667,7 @@ balance.nation.diplomacy = {
     turtle = {war_r = -60, war_ratio = 1.6, cf_ratio = 0.9, cf_weary = 25, ally_r = 30},
   },
   min_war_minutes = 5,           -- the AI offers no ceasefire before its war is this old
+  weary_ratio = 1.0,             -- Phase 5 M3 integration: weariness alone makes it offer only below this power ratio
   offer_cooldown_minutes = 2,    -- the AI repeats a declined offer to the same nation no sooner than this
   long_war_minutes = 30,         -- a war this old: the AI accepts a white peace unless its war score is above
   long_war_score = 20,           --   this

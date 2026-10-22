@@ -322,10 +322,8 @@ function sinks.mercenaries(force_name, port_un)
       if e then list[#list + 1] = e end
     end
   end
-  local owner = "player"
-  for _, f in ipairs(match.ai_forces()) do
-    if f == force_name then owner = "ai" end
-  end
+  -- Phase 5 M3 integration: "ai" whenever an AI commander decides for the force (an AI-driven rts-player too)
+  local owner = diplomacy.is_ai(force_name) and "ai" or "player"
   -- Phase 5 M3 integration (GUI audit): named after the region's proper name ("Mercenaries (Karvis)"): the port's full
   -- name was cut on the division card in Russian
   local short = region and region.pname and region.pname.loc or port.name
