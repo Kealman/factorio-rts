@@ -621,10 +621,10 @@ the strip time and what was hit. The bomber of step 19 attacks your buildings by
     - *Expect:* your land outlined in blue, the AI town's land in red next to it; between them a thick coloured **front
       line** with the label **"Front 2 · threat N · held by Division 1"**; the capital's name "Capital", the region
       name, your port "Port of X (You)"; the depot's two stop markers (white dots in dark rings) with a label
-      "Depot 1" above the depot, the same size on the screen at every map zoom (like a station name). No raw names
-      like "rts-player depot 601" anywhere on the map.
-    - *Pass/Fail:* PASS if the front line and its label show, "Depot 1" is readable and no raw station name shows.
-      PARTIAL if "Depot 1" is missing or unreadable.
+      "Depot 1" above the depot (map text like the city names: readable when the map is zoomed in on the capital,
+      small when zoomed out). No raw names like "rts-player depot 601" anywhere on the map.
+    - *Pass/Fail:* PASS if the front line and its label show, "Depot 1" is readable at some map zoom and no raw station
+      name shows. PARTIAL if "Depot 1" is missing or unreadable at every zoom.
     - *Log check (lead):* `camera zoom player=1`
 
 27. **The help page in the match.**

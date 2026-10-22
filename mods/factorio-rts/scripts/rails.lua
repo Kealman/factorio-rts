@@ -479,15 +479,16 @@ end
 -- Phase 5 M3 integration (M2 integration open issue 8): the stops keep their unique script names (schedules use them),
 -- but the map shows the owner a localised "Depot N" instead; the engine's station names are hidden in Nation matches
 -- (map view setting show-train-station-names, restored at teardown).
-rails.LABEL_SCALE = 1.2 -- on screen (scale_with_zoom), like the engine's station names (1.6 world-sized was unreadable)
+rails.LABEL_SCALE = 8 -- world-sized like the strategic labels (cities 16, ports 14): 1.6 was unreadable on the map, a
+                      -- screen-sized label (scale_with_zoom) covered the HUD minimap
 local function draw_depot_label(d)
   if d.label and d.label.valid then d.label.destroy() end
   d.label = nil
   local e = d.entity
   if not (e and e.valid) then return end
   d.label = rendering.draw_text({text = {"rts.depot-name", d.index or d.un}, surface = e.surface, target = {entity = e,
-    offset = {0, -2.5}}, color = {r = 0.85, g = 0.85, b = 1, a = 1}, scale = rails.LABEL_SCALE, alignment = "center",
-    vertical_alignment = "middle", render_mode = "chart", forces = {d.force}, scale_with_zoom = true})
+    offset = {0, -6}}, color = {r = 0.85, g = 0.85, b = 1, a = 1}, scale = rails.LABEL_SCALE, alignment = "center",
+    vertical_alignment = "middle", render_mode = "chart", forces = {d.force}})
 end
 
 local function station_names(player, show)
