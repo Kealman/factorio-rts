@@ -124,7 +124,10 @@ rails.WALL_CROSS_COST = 6           -- Phase 5 M3 integration: extra cost of a s
 -- match). Units per item, calibrated with PERF=1 so that one unit is about 1 microsecond (docs/qa/phase5-perf-notes.md):
 -- a scored cell (5 area counts and a territory lookup), a coarse A* expansion, a fine A* expansion plus each new piece
 -- placement check, a corridor cell (Dijkstra and flow field), an extracted piece, a placed ghost.
-rails.SURVEY_UNITS = {cell = 25, coarse = 4, fine = 6, check = 12, corridor = 3, extract = 2, ghost = 20}
+-- Phase 5 M3 integration: fine 10 and check 36 (were 6 and 12): a survey that failed in its fine phase (366,662
+-- expansions, 480,601 placement checks) ran at 3.8 microseconds per unit, 4 ms a tick of scheduler time in a 4-nation
+-- match (seed 702, minutes 55-60)
+rails.SURVEY_UNITS = {cell = 25, coarse = 4, fine = 10, check = 36, corridor = 3, extract = 2, ghost = 20}
 rails.SURVEY_SCHED = true
 rails.SUPPORT_SPACING = 10          -- tiles of elevated track between supports (probe P2: <= 12 holds)
 rails.RAMP_SLACK = 2                -- a ramp's elevated end counts as a support this many tiles "used"
@@ -3174,6 +3177,14 @@ function rails.ai_program(force_name, A)
   end
   if not line or line.state == "failed" then
     if line and line.state == "failed" then
+      -- Phase 5 M3 integration: a failed survey between the same depots fails again: back off 2, 4, 8, 16 minutes
+      -- (the same pair of depots was surveyed every 2 minutes for 30 minutes at 4 ms a tick, seed 702)
+      if not A.failed_line or A.failed_line ~= A.line then
+        A.failed_line, A.fails = A.line, (A.fails or 0) + 1
+        A.retry = game.tick + 60 * 60 * 2 ^ math.min(A.fails, 4)
+        util.log("rails: AI %s line #%d failed (%d in a row): next survey in %d s", force_name, A.line, A.fails,
+          (A.retry - game.tick) / 60)
+      end
       if game.tick < (A.retry or 0) then return end
       R.lines[A.line] = nil
       local d1, d2 = rails.depot(da), rails.depot(db)
@@ -3198,6 +3209,7 @@ function rails.ai_program(force_name, A)
     return
   end
   if line.state == "open" then
+    A.fails, A.failed_line = nil, nil -- Phase 5 M3 integration: the backoff ends with an open line
     A.state = "open"
     if not A.policies then
       for _, item in ipairs({"iron-plate", "copper-plate", "steel-plate"}) do
