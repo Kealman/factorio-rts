@@ -205,12 +205,17 @@ function army.city_state_target(C, surface, from, list)
     return true
   end
   local function clear(c)
-    if not WAR.ai.city_state_clear or level >= 2 then return true end
+    if not WAR.ai.city_state_clear then return true end
+    -- Phase 5 M3 ai (wave B.2): never a city-state a rival is taking (the second army of a race piled onto the rival's
+    -- siege, arrived after the capture and went home); from the second push the clear radius is only the siege's
+    local cap = storage.capture and storage.capture.cities and storage.capture.cities[c.id]
+    if cap and cap.capturing and cap.capturing ~= C.force then return false end
+    local radius = level >= 2 and (WAR.ai.city_state_siege or 100) or WAR.ai.city_state_clear
     for _, r in ipairs(rivals) do
       for _, D in ipairs(divisions.for_force(r.force)) do
         local m = divisions.members(D.id)
         local u = m[1] and units.get(m[1])
-        if u and util.distance(u.entity.position, c.position) <= WAR.ai.city_state_clear then return false end
+        if u and util.distance(u.entity.position, c.position) <= radius then return false end
       end
     end
     return true
@@ -761,6 +766,11 @@ function army.step(C, surface)
           elseif ws and city_still_hostile(C, G.target) then
             target = G.target -- Phase 5 M2 war: a city target holds until it is captured
           else
+            -- Phase 5 M3 ai (wave B.2): another nation took the city-state this group went for: the capture cooldown
+            -- ends, so the next city-state operation need not wait 15 minutes (the loser of a race stayed at 4 cities)
+            local tc = G.target and G.target.city_state and G.target.city and storage.cities
+              and storage.cities[G.target.city]
+            if tc and tc.force ~= C.force and tc.force ~= "rts-neutral" then a.capture_next = 0 end
             -- Phase 5 M3 ai: a hostile division in the field near the group before its buildings
             target = army.field_target and nation_mode() and army.field_target(C, centroid) or nil
             target = target or scout.best_target(C, surface, centroid)

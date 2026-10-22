@@ -902,7 +902,10 @@ balance.nation.war = {
         -- city_state_reach x as far from the capital as from the nearest rival capital, with no rival division within
         -- city_state_clear tiles of it
         town_turrets = 2, town_magazines = 20, relief_share = 0.5, relief_min = 6, relief_window = 20 * 60,
-        city_state_reach = 0.8, city_state_clear = 150},
+        city_state_reach = 0.8, city_state_clear = 150,
+        -- Phase 5 M3 ai (wave B.2): from the second push only a rival division this close keeps an AI off a city-state
+        -- (and never one a rival is capturing)
+        city_state_siege = 100},
 }
 balance.buildings["rts-field-depot"] = {kind = "hub", cost = balance.nation.war.field_depot.cost,
                                         time = balance.nation.war.field_depot.time,
@@ -1408,6 +1411,7 @@ do
     air_from = 25 * 60 * 60, scouts = 2, interceptors = 3, bombers = 3, patrol_radius = 48,
     artillery_range = 110,
     hire_at = 2500, hire_points = 8, merc_at = 2500, merc_army = 12,
+    merc_retire = 8, -- (wave B.2) idle walkers retired when a mercenary hire is refused at the supply cap
   }
   -- Division controllers (ai/controller.lua): each AI division every `period` ticks (round robin), at most per_tick
   -- divisions per tick; retreat below the force ratio retreat_ratio (micro basic/full), resupply below `low` supply

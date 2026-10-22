@@ -135,6 +135,11 @@ end
 ---------------------------------------------------------------------------
 -- Operations
 ---------------------------------------------------------------------------
+-- A front segment's name for the log (fronts.lua names are localised tables: they logged as "table")
+local function seg_name(seg)
+  return type(seg.name) == "string" and seg.name or ("#" .. tostring(seg.id))
+end
+
 local function group_list(G)
   local list = {}
   for un in pairs(G.members) do
@@ -237,7 +242,10 @@ local function ops_step(C, K)
         if t and t.position then
           for _, id in ipairs(sorted_keys(K.ops)) do
             local op = K.ops[id]
-            if not joined and op.kind == kind and op.phase ~= "return" and op.target and op.target.position
+            -- (a capture whose artillery train deployed is a "siege" now; its reinforcements still join it: they
+            -- started a second operation on the same city, wave B.2 war probe)
+            local same = op.kind == kind or (kind == "capture" and op.kind == "siege")
+            if not joined and same and op.phase ~= "return" and op.target and op.target.position
                and dist(op.target.position, t.position) <= 12 and (t.city == nil or t.city == op.target.city) then
               joined = op
             end
@@ -286,6 +294,15 @@ local function ops_step(C, K)
         set_phase(C, op, "return", G.state == "retreat" and "retreat" or "heading home")
       elseif op.kind == "capture" or op.kind == "siege" or op.kind == "raid" then
         local d = (c and tpos) and dist(c, tpos) or math.huge
+        -- (half the group within siege_range counts as there: far mercenaries pooled into it held its centre out of
+        -- range until the city fell, and the siege phase and its artillery train never came, wave B.2 war probe)
+        if tpos and d > CB.siege_range then
+          local near = 0
+          for _, e in ipairs(list) do
+            if e.valid and dist(e.position, tpos) <= CB.siege_range then near = near + 1 end
+          end
+          if #list > 0 and near * 2 >= #list then d = CB.siege_range end
+        end
         if op.phase == "assemble" then
           set_phase(C, op, "advance", string.format("%d units on the way, %.0f tiles", #list, d))
         elseif op.phase == "advance" and d <= CB.siege_range then
@@ -353,6 +370,15 @@ local function ops_step(C, K)
 end
 
 --- Offensive operations under way (capture, siege, raid, bomb) and the difficulty's limit.
+-- True when the nation holds a city captured from the city-states
+local function holds_city_state(force_name)
+  for _, id in ipairs(sorted_keys(storage.cities or {})) do
+    local c = storage.cities[id]
+    if c.force == force_name and c.archetype == "city_state" then return true end
+  end
+  return false
+end
+
 local function offensive_count(K)
   local n = 0
   for _, op in pairs(K.ops) do
@@ -509,7 +535,7 @@ local function holds_step(C, K)
         K.stats.holds = K.stats.holds + 1
         budget = budget - n
         util.log("council: %s division #%d (%d units) holds front segment %d (%s, threat %.0f, enemy strength %.0f)",
-          C.force, id, n, s.id, tostring(s.name), fronts.threat(s), s.strength or 0)
+          C.force, id, n, s.id, seg_name(s), fronts.threat(s), s.strength or 0)
       else
         divisions.disband(id, "hold_line refused: " .. tostring(why))
       end
@@ -552,7 +578,7 @@ local function belts_step(C, K)
     K.belts[best.id] = id
     K.stats.belts = K.stats.belts + 1
     util.log("council: %s plans fort belt #%d on front segment %d (%s, threat %.0f for %.0f s)", C.force, id, best.id,
-      tostring(best.name), bt, (tick - K.threat_since[best.id]) / 60)
+      seg_name(best), bt, (tick - K.threat_since[best.id]) / 60)
   else
     K.belts[best.id] = false
     util.log("council: %s cannot plan a fort belt on segment %d: %s", C.force, best.id, tostring(why))
@@ -677,6 +703,29 @@ end
 ---------------------------------------------------------------------------
 -- Air
 ---------------------------------------------------------------------------
+--- Retire up to n idle walkers of commander C that are in no group, hold and division (lowest unit numbers first): room
+--- under the supply cap. Returns how many went.
+function council.retire_walkers(C, n)
+  local a = C.army or {member = {}}
+  local list = {}
+  for un, rec in units.for_force(C.force) do
+    if rec.kind == "walker" and rec.order == units.IDLE and not a.member[un] and not (a.held and a.held[un])
+       and not divisions.of_unit(un) and rec.entity.valid then
+      list[#list + 1] = un
+    end
+  end
+  table.sort(list)
+  local done = 0
+  for i = 1, math.min(n, #list) do
+    local rec = units.get(list[i])
+    if rec and rec.entity.valid then
+      rec.entity.die()
+      done = done + 1
+    end
+  end
+  return done
+end
+
 local function plane_list(C, kind)
   local out = {}
   for un, rec in units.for_force(C.force) do
@@ -777,24 +826,7 @@ local function air_step(C, K, surface)
   local supply = deps.supply
   if #scouts < CB.scouts and C.capped and supply and game.tick >= (Kair.retire_at or 0) then
     Kair.retire_at = game.tick + 60 * 60
-    local need = CB.scouts - #scouts
-    local a = C.army or {member = {}}
-    local list = {}
-    for un, rec in units.for_force(C.force) do
-      if rec.kind == "walker" and rec.order == units.IDLE and not a.member[un] and not (a.held and a.held[un])
-         and not divisions.of_unit(un) and rec.entity.valid then
-        list[#list + 1] = un
-      end
-    end
-    table.sort(list)
-    local n = 0
-    for i = 1, math.min(need, #list) do
-      local rec = units.get(list[i])
-      if rec and rec.entity.valid then
-        rec.entity.die()
-        n = n + 1
-      end
-    end
+    local n = council.retire_walkers(C, CB.scouts - #scouts)
     if n > 0 then
       util.log("council: %s retires %d idle walker(s) to make room for its scout planes (supply capped)", C.force, n)
     end
@@ -978,7 +1010,15 @@ local function money_step(C, K)
   if capital and attacked[1] == capital.id and (a.pool_size or 0) < CB.merc_army
      and balance_of(C.force) >= CB.merc_at and tick >= (K.merc_next or 0) then
     local market = deps.market
-    local port = market and market.ports(C.force)[1]
+    -- (wave B.2 war probe: the nearest own port within the planner's port_reach of the capital: mercenaries hired at a
+    -- port 790-1,160 tiles out walked into an attack group and held its centre out of siege range)
+    local port, pd
+    local reach = balance.nation.ai3.planner.port_reach or 450
+    for _, un in ipairs(market and market.ports(C.force) or {}) do
+      local p = market.port and market.port(un)
+      local d = p and p.entity and p.entity.valid and dist(p.entity.position, capital.position) or math.huge
+      if d <= reach and (not pd or d < pd) then port, pd = un, d end
+    end
     K.merc_next = tick + 2 * 3600
     if port then
       local id, why = sinks.mercenaries(C.force, port)
@@ -986,6 +1026,11 @@ local function money_step(C, K)
         K.stats.mercs = K.stats.mercs + 1
         util.log("council: %s hires mercenaries (division #%s) at port #%d: the capital is attacked, %d idle units",
           C.force, tostring(id), port, a.pool_size or 0)
+      elseif why == "supply" then
+        -- (at the supply cap the barracks keep it full: idle walkers make room and the hire comes again in 10 s)
+        local n = council.retire_walkers(C, CB.merc_retire or 8)
+        if n > 0 then K.merc_next = tick + 10 * 60 end
+        util.log("council: %s cannot hire mercenaries: supply (%d idle walker(s) retired)", C.force, n)
       elseif why ~= "cooldown" then
         util.log("council: %s cannot hire mercenaries: %s", C.force, tostring(why))
       end
@@ -1043,10 +1088,12 @@ function council.step(C, surface)
   K.next = tick + period
   ops_step(C, K)
   council.cs_plan_step(C, K)
-  -- a nation that has run no operation yet by push_after (at peace, Age II) goes for a city-state (army.lua relaxes its
-  -- reach and margin while C.army.cs_push is fresh)
+  -- a nation that holds no city-state and runs no offensive by push_after (at peace, Age II) goes for a city-state
+  -- (army.lua relaxes its reach and margin while C.army.cs_push is fresh). (Phase 5 M3 ai, wave B.2: was "has run no
+  -- operation yet": the loser of a city-state race never tried again and stayed at 4 cities, 1v1 seeds 902-910.)
   local m2 = storage.match
-  if K.stats.ops == 0 and C.army and age_of(C.force) >= 2 and not at_war(C.force)
+  if not holds_city_state(C.force) and offensive_count(K) == 0 and C.army and age_of(C.force) >= 2
+     and not at_war(C.force)
      and tick - m2.tick_started >= CB.push_after * difficulty.knobs(C.force).cs_from
      and tick - (K.push_at or -1e9) >= 10 * 3600 then
     K.push_at = tick
@@ -1054,7 +1101,7 @@ function council.step(C, surface)
     -- every push reaches further (army.lua: the reach and the clear-of-rivals rule relax with cs_push_level; a
     -- 100-unit army pushed four times and found no city-state on its side of the map in seed 802)
     C.army.cs_push_level = (C.army.cs_push_level or 0) + 1
-    util.log("council: %s has run no operation yet: pushes a city-state operation (idle army %d, push %d)", C.force,
+    util.log("council: %s holds no city-state: pushes a city-state operation (idle army %d, push %d)", C.force,
       C.army.pool_size or 0, C.army.cs_push_level)
   end
   holds_step(C, K)
@@ -1071,7 +1118,7 @@ function council.cs_plan_step(C, K)
   local a = C.army
   if not a then return end
   local k = difficulty.knobs(C.force)
-  if not k.cs_plan or K.stats.ops > 0 or at_war(C.force) or age_of(C.force) < 2 then
+  if not k.cs_plan or holds_city_state(C.force) or offensive_count(K) > 0 or at_war(C.force) or age_of(C.force) < 2 then
     a.cs_plan = nil
     return
   end
