@@ -24,7 +24,7 @@ runs exactly as before.
 | Uranium and nuclear | minimal plan in place: outposts ran in 7 of 13 attempts; no nuclear plant finished by 60:00 |
 | Every nation's 3 cities linked by rail by 35:00 | **not met: 12/20** (target 16) |
 | Air patrols fly | met: 5/5 seeds (batch M; 4/5 in batch K) |
-| No AI tick over 3 ms | **not met**: the town-site search is fixed; 8 commander runs of 14,412 still go over 3 ms (worst 25.8 ms, the arena-wide ore scan, now replaced; not re-benched) |
+| No AI tick over 3 ms | **not met**: 16 commander runs of 21,612 over 3 ms on the committed tree (seed 802, 30 min), worst 8.5 ms. That worst is the town-site search, gone with TOWN_PENDING_OK; the 25.8 ms ore scan is gone (section 4.7) |
 | M1 seed 501 | 52/53: train_items, because the player's town line never opened (m3-integ's rails.lua work in progress) |
 | M2 seeds 701-705 | trade, war, peace and capture 5/5; starving 4/5 (701: towns at war) |
 
@@ -562,6 +562,20 @@ fixes. AI autotest 79/82, 81/83, 79/83, 81/83, 78/83.
 
 **M1 seed 501:** 52/53. train_items fails: the player's town line never opens; m3-integ's rails fixes (a detour around a
 blocked piece, depots kept off planned pieces) are not in this tree, and on their tree train_items passes.
+
+**Re-bench of the committed tree** (cb4c563, without m3-integ's uncommitted TOWN_PENDING_OK; seed 802, 30 minutes, 4
+nations, benchmark mode, `EXTRA_LUA=tools/probes/ai3_marks.lua`, output build/m3ai-pb13-802-out). 0 errors. AI
+commanders 0.143 ms per tick for all four nations (0.036 per nation), worst minute 0.222.
+
+**AI ticks over 3 ms: 16 commander runs of 21,612, worst 8.49 ms.**
+- 3 are the synchronous second-city site search (towns.pick_site, 7.4-8.2 ms). It goes away once
+  cities.TOWN_PENDING_OK is committed.
+- 3 are market.ai_step (m3-integ's, 2.3-3.2 ms within the run).
+- 1 each: army.step 5.5 ms, the factory pass 5.6 ms, planner.step 3.8 ms, the factory pass plus barracks at 3.1-3.3 ms.
+- 3 runs (8.1, 6.6 and 3.9 ms) have no marked part over 0.8 ms (a GC step most likely).
+
+The arena-wide ore scan is gone. The raiders' patch fallback ran: 6 raids went for ore patches, and scout.step's worst
+call was 2.1 ms.
 
 ## 5. Regressions
 
