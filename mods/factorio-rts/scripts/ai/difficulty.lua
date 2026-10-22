@@ -4,7 +4,8 @@
 --
 --   difficulty.of_level(level) -> the same for a level
 --   difficulty.knobs(force) -> {level, intel_age, ops, caps = {sites, astar}, pace, in_flight, micro, opm,
---                               budget_factor, expand, cities, council, first_attack}
+--                               budget_factor, expand, cities, council, first_attack, cs_from, cs_ratio,
+--                               goods_per_works, goods_works_cap}
 --   difficulty.apply(C)        Nation mode: the commander's build pace and first attack from the knobs (called by
 --                              ai/commander.lua after its settings; Skirmish keeps orders_data.DIFFICULTY untouched)
 --   difficulty.micro(force, need) -> true when the level's micro is at least `need` ("basic" | "full")
@@ -53,6 +54,8 @@ function difficulty.of_level(level)
     first_attack = d.first_attack or 1,
     cs_from = d.cs_from or 1,
     cs_ratio = d.cs_ratio or 1.5,
+    goods_per_works = d.goods_per_works,
+    goods_works_cap = d.goods_works_cap,
   }
 end
 
@@ -75,6 +78,7 @@ function difficulty.apply(C)
   local k = difficulty.of_level(C.difficulty)
   cfg.build_period = k.pace
   cfg.max_in_progress = math.max(cfg.max_in_progress or 0, k.in_flight)
+  cfg.goods_per_works, cfg.goods_works_cap = k.goods_per_works, k.goods_works_cap -- ai/governor.lua goods works
   if cfg.first_attack then cfg.first_attack = math.floor(cfg.first_attack * k.first_attack + 0.5) end
   -- capture, do not raze: hubs and rail depots (kind "hub") are last among the buildings an attack group goes for
   -- (an AI razed the player's capital depot in M1 seed 501 and its rail line was lost)

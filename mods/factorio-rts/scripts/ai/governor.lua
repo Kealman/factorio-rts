@@ -291,11 +291,21 @@ end
 local function goods_works(C, G, surface, capital, goods_need, want_more)
   local built, pending
   built, pending, G.goods = count_keys(C, G.goods)
-  for _, key in ipairs(G.goods) do
+  for i, key in ipairs(G.goods) do
     if plan_state(C, key) == "built" then
       local e = C.plan[key].entity
       local rec = e and buildings.get(e.unit_number)
-      if rec and rec.recipe_mode ~= "auto" then production.set_auto(rec, true) end
+      -- Phase 5 M3 ai: a skilled governor's second and further works make goods only (in auto mode they made the
+      -- capital's other targets and its goods stayed at 0 % with three works)
+      if rec and C.cfg and C.cfg.goods_per_works and i > 1 then
+        local r = e.get_recipe()
+        if rec.recipe_mode ~= "fixed" or not r or r.name ~= GOODS then
+          production.set_auto(rec, false)
+          production.set_recipe(e, GOODS)
+        end
+      elseif rec and rec.recipe_mode ~= "auto" then
+        production.set_auto(rec, true)
+      end
     end
   end
   if pending > 0 or not copper_ok(C) then return false end
@@ -304,6 +314,13 @@ local function goods_works(C, G, surface, capital, goods_need, want_more)
   local want = 0
   if goods_need > 0 and (built > 0 or stock < (AI.goods_minutes or 8) * goods_need) then want = 1 end
   if want_more then want = math.min(AI.goods_works_max or 2, built + 1) end
+  -- Phase 5 M3 ai: a skilled governor (balance.nation.ai3.difficulty[level].goods_per_works, set on C.cfg) plans one
+  -- works per that much goods need a minute, up to goods_works_cap (1v1 runs: hard's capital at 0 % goods and 70 %
+  -- happiness stopped growing at 800 residents while the normal AI imported its goods)
+  local per = C.cfg and C.cfg.goods_per_works
+  if per and goods_need > 0 then
+    want = math.max(want, math.min(C.cfg.goods_works_cap or 4, math.ceil(goods_need / per)))
+  end
   if built >= want then return false end
   local pos, pole = layout.find_spot(C, surface, "rts-factory", "cc")
   if not pos then return false end

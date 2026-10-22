@@ -768,6 +768,9 @@ local function trunk_step(C, P, own, capital)
       -- (Age I: the edge's kits and depots wait while the capital holds fewer than age1_circuits circuits: they took
       -- the aggressive AI's raider circuits in the M1 acceptance)
       local hold = age_of(C.force) < 2 and construction.have(C, "electronic-circuit") < (PB.trunk.age1_circuits or 0)
+      -- (and while rails.lua's own line waits for its depots, their plates come first: an edge crafting depots from the
+      -- same capital network kept the aggressive AI's town line at one depot for 53 minutes, M1 seed 501)
+      if main and main.state == "depots" and not (E and E.A.depot_a and E.A.depot_b) then hold = true end
       if E and not hold then
         rails.ai_program(C.force, E.A)
         if E.A.depot_a and E.A.depot_b then edge_policies(C, P, E) end
@@ -789,10 +792,10 @@ end
 function planner.research_want(C)
   if not nation_mode() then return nil end
   local out = {}
+  local P = P_of(C.force, false)
   if age_of(C.force) >= 2 then
     for _, name in ipairs(PB.research_first) do out[#out + 1] = name end
   end
-  local P = P_of(C.force, false)
   if P and P.want_geology then out[#out + 1] = GEOLOGY end
   return out
 end
@@ -975,6 +978,18 @@ local function buy_step(C, P)
       end
     end
   end
+end
+
+--- True while one of the planner's trunk lines waits for its depots or is built and three cities are not linked yet
+--- (ai/age_up.lua: the barracks save for the rails then, like for rails.lua's own line).
+function planner.saving_rail(C)
+  local P = P_of(C.force, false)
+  if not P or P.linked_at then return false end
+  for _, E in pairs(P.trunk) do
+    local st = E.A and E.A.state
+    if st == "depots" or st == "building" then return true end
+  end
+  return false
 end
 
 --- Extra districts for the age-up list: the oil chain once crude comes in, the Age III districts in Age III.

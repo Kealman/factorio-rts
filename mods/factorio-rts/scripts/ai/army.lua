@@ -192,7 +192,10 @@ function army.city_state_target(C, surface, from, list)
   -- Phase 5 M3 ai: the war council pushes a first operation (C.army.cs_push, ai/council.lua): a city-state as far from
   -- us as from a rival is fair then, and a smaller margin over its defence will do
   local push = C.army.cs_push and game.tick - C.army.cs_push < 10 * 60 * 60
-  local reach = WAR.ai.city_state_reach and (push and math.max(WAR.ai.city_state_reach, 1.05) or WAR.ai.city_state_reach)
+  -- (each further push 0.25 more, up to 2; from the second one a rival division near the city-state does not matter)
+  local level = push and (C.army.cs_push_level or 1) or 0
+  local reach = WAR.ai.city_state_reach and (push and math.max(WAR.ai.city_state_reach,
+    math.min(2, 1.05 + 0.25 * (level - 1))) or WAR.ai.city_state_reach)
   local function our_side(c)
     if not (reach and home_pos) then return true end
     local d_own = util.distance(c.position, home_pos)
@@ -202,7 +205,7 @@ function army.city_state_target(C, surface, from, list)
     return true
   end
   local function clear(c)
-    if not WAR.ai.city_state_clear then return true end
+    if not WAR.ai.city_state_clear or level >= 2 then return true end
     for _, r in ipairs(rivals) do
       for _, D in ipairs(divisions.for_force(r.force)) do
         local m = divisions.members(D.id)

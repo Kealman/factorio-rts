@@ -842,9 +842,10 @@ balance.nation.market = {
     -- tax_hold unless happiness drops below happy_low (low) or a war starts (high); a nation stays on a war footing
     -- (high) for war_footing ticks after its last war ended and then until the balance is back at `leave`; a low tax
     -- holds until happiness is happy_band above happy_low (the first 60-minute 4-nation run without the war footing:
-    -- 3.5 switches per nation-hour, all of them around wars)
+    -- 3.5 switches per nation-hour, all of them around wars); Phase 5 M3 integration: at most max_per_hour switches in
+    -- any hour unless happiness is below happy_low or the treasury in debt
     hysteresis = {enter = 1500, leave = 1500 * 1.4, tax_hold = 10 * 60 * 60, happy_band = 12,
-                  war_footing = 15 * 60 * 60},
+                  war_footing = 15 * 60 * 60, max_per_hour = 2},
     deficit_surplus = 0.5,     -- deficit mode: the capital exports from this share of the surplus thresholds
     happy_low = 40,            -- tax low below this happiness
     -- Phase 5 M2 ai (scripts/ai/governor.lua): a town's export hauler takes its surplus to the port while the town holds
@@ -1294,7 +1295,10 @@ do
   -- its cities (expand: x on the city times) and how many it founds (cities), how often the council thinks (council,
   -- ticks), when the first offensive may start (first_attack, x on the doctrine's), and how early and with what margin
   -- over its defence a city-state operation starts (cs_from x balance.nation.diplomacy.ai.city_state_from; cs_ratio x
-  -- the city-state's points).
+  -- the city-state's points), and the goods works the capital's governor plans (goods_per_works: one per that much
+  -- goods need a minute, at most goods_works_cap; unset: the people.ai rule of one, a second when a town stalls). Every
+  -- AI's capital ran short of goods from tier 3 (0-40 % met, 62-70 % happy, no growth) and the market AI imported them
+  -- at 15-17 cr until the tax hysteresis held a high tax; hard makes them instead.
   AI3.difficulty = {
     easy = {intel_age = 60 * 60, ops = 1, sites = 8, astar = 20000, build_period = 360, in_flight = 2, micro = "off",
             opm = 2, budget_factor = 0.75, expand = 1.3, cities = 3, council = 240, first_attack = 1.5,
@@ -1304,7 +1308,7 @@ do
               cs_from = 1, cs_ratio = 1.5},
     hard = {intel_age = 10 * 60, ops = 4, sites = 32, astar = 60000, build_period = 120, in_flight = 4, micro = "full",
             opm = 12, budget_factor = 1.5, expand = 0.8, cities = 4, council = 60, first_attack = 0.8,
-            cs_from = 0.75, cs_ratio = 1.0},
+            cs_from = 0.75, cs_ratio = 1.6, goods_per_works = 12, goods_works_cap = 4},
   }
   -- Intelligence (ai/intel.lua): every difficulty intel_age ticks per nation, what any own entity sees within `sight` tiles (an own
   -- scout plane within `plane_sight`): rival and city-state cities, divisions, depots, planes and unit clusters (cells of
@@ -1334,10 +1338,12 @@ do
     oil = {reach = 14, pumpjacks = 3, export = {"rts-crude-oil", "plastic-bar", "sulfur"}, keep_crude = 400},
     trunk = {period = 600, lines = 3, rival_factor = 3, max_surveys = 2, max_edge = 480, age1_circuits = 40},
     -- the oil chain at the capital once crude comes in (Age II): districts appended to the age-up list
-    oil_districts = {"rts-district-electronics", "rts-district-petrochem", "rts-district-construction"},
-    -- once three cities are linked by rail (the lines' steel comes first): a second Steel works and an Engines works
-    -- (steel is what engines, kits, rails, depots and the Space Program's first stage all wait for)
-    linked_districts = {"rts-district-steel", "rts-district-engines"},
+    -- (and a second Steel works: steel is what engines, kits, rails, depots and the Space Program's first stage all wait
+    -- for; it makes steel of the town's plates)
+    oil_districts = {"rts-district-electronics", "rts-district-petrochem", "rts-district-construction",
+                     "rts-district-steel"},
+    -- once three cities are linked by rail (the lines' steel comes first): an Engines works (it takes steel)
+    linked_districts = {"rts-district-engines"},
     -- Age III road: Electrification first in Age II; make targets for the industrial kit's parts and then the running
     -- Space Program stage's goods (capped at stage_cap per good); purchases of what the nation cannot make in time (the
     -- market AI's ai_buy covers ledger shortfalls) at most buy_share of the balance above buy_reserve per buy_period
@@ -1378,7 +1384,7 @@ do
     belt_threat = 30, belt_after = 3 * 60 * 60, belts = 2,
     -- without a front (the lands do not touch): a city with hostile strength >= sector_strength known within
     -- sector_radius for belt_after gets a sector_length belt across the approach
-    sector_strength = 6, sector_radius = 250, sector_length = 64, sector_after = 2 * 60 * 60, sector_grace = 2 * 60 * 60,
+    sector_strength = 4, sector_radius = 250, sector_length = 40, sector_after = 2 * 60 * 60, sector_grace = 2 * 60 * 60,
     timeouts = {assemble = 2 * 60 * 60, advance = 8 * 60 * 60, siege = 6 * 60 * 60, capture = 4 * 60 * 60,
                 consolidate = 60 * 60, move = 4 * 60 * 60, engage = 3 * 60 * 60, strike = 3 * 60 * 60,
                 fly = 3 * 60 * 60, ["return"] = 3 * 60 * 60},

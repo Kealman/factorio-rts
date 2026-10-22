@@ -547,7 +547,7 @@ local function belts_step(C, K)
     end
   end
   if not best then return council.sector_belt(C, K, belts) end
-  local id, why = belts.plan_front(C.force, best.id, {aa = age_of(C.force) >= 2, depot = true, why = "AI front"})
+  local id, why = belts.plan_front(C.force, best.id, {aa = false, depot = true, why = "AI front"})
   if id then
     K.belts[best.id] = id
     K.stats.belts = K.stats.belts + 1
@@ -559,12 +559,49 @@ local function belts_step(C, K)
   end
 end
 
+-- A nation at war for sector_after with no strength seen near its cities: its own city nearest to what it knows of a
+-- nation it is at war with (a city, else a unit cluster), and that point (raids of 2-4 units never made a sustained
+-- sector_strength: 0-2 belts in five 4-nation seeds).
+local function war_approach(C, K, I)
+  local tick = game.tick
+  K.war_since = K.war_since or tick
+  if tick - K.war_since < CB.sector_after or not I then return nil end
+  local points = {}
+  for _, id in ipairs(sorted_keys(I.cities or {})) do
+    local r = I.cities[id]
+    if r.force ~= diplomacy.NEUTRAL and diplomacy.state(C.force, r.force) == "war" then
+      points[#points + 1] = {x = r.position.x, y = r.position.y}
+    end
+  end
+  if #points == 0 then
+    for _, f in ipairs(sorted_keys(I.clusters or {})) do
+      if f ~= diplomacy.NEUTRAL and diplomacy.state(C.force, f) == "war" then
+        for _, k in ipairs(sorted_keys(I.clusters[f])) do
+          local r = I.clusters[f][k]
+          points[#points + 1] = {x = r.x, y = r.y}
+        end
+      end
+    end
+  end
+  local best, tp, bd
+  for _, c in ipairs(deps.cities.for_force(C.force)) do
+    if not K.belts["c" .. c.id] then
+      for _, p in ipairs(points) do
+        local d = dist(c.position, p)
+        if not bd or d < bd then best, tp, bd = c, p, d end
+      end
+    end
+  end
+  return best, tp, bd
+end
+
 -- Sectors (a nation at war whose land does not touch the enemy's has no front segment): an own city with hostile
 -- strength of at least sector_strength known within sector_radius tiles for belt_after ticks gets a fort belt across
 -- the approach: sector_length tiles long, perpendicular to the way from the city to that strength, inside its land.
+-- Without such a city, the city nearest to the enemy (war_approach) gets it.
 function council.sector_belt(C, K, belts)
   if not at_war(C.force) then
-    K.sector_since = nil
+    K.sector_since, K.war_since = nil, nil
     return
   end
   K.sector_since = K.sector_since or {}
@@ -588,19 +625,27 @@ function council.sector_belt(C, K, belts)
   end
   local planned = 0
   for _, id in pairs(K.belts) do if id then planned = planned + 1 end end
-  if not best or planned >= CB.belts then return end
-  -- the direction of the threat: the strongest known hostile cluster near the city
+  if planned >= CB.belts then return end
   local I = intel.state(C.force)
-  local tp, tn
-  for _, f in ipairs(sorted_keys(I and I.clusters or {})) do
-    if diplomacy.hostile(C.force, f) then
-      for _, k in ipairs(sorted_keys(I.clusters[f])) do
-        local r = I.clusters[f][k]
-        if dist(r, best.position) <= CB.sector_radius and (not tn or r.supply > tn) then tp, tn = r, r.supply end
+  local tp, tn, why_here
+  if best then
+    -- the direction of the threat: the strongest known hostile cluster near the city
+    for _, f in ipairs(sorted_keys(I and I.clusters or {})) do
+      if diplomacy.hostile(C.force, f) then
+        for _, k in ipairs(sorted_keys(I.clusters[f])) do
+          local r = I.clusters[f][k]
+          if dist(r, best.position) <= CB.sector_radius and (not tn or r.supply > tn) then tp, tn = r, r.supply end
+        end
       end
     end
+    if not tp then return end
+    why_here = string.format("hostile strength %.0f near it for %.0f s", bs, (tick - K.sector_since[best.id]) / 60)
+  else
+    local d
+    best, tp, d = war_approach(C, K, I)
+    if not best then return end
+    why_here = string.format("nearest to the enemy, %.0f tiles, at war for %.0f s", d, (tick - K.war_since) / 60)
   end
-  if not tp then return end
   local dx, dy = tp.x - best.position.x, tp.y - best.position.y
   local len = math.max(1, math.sqrt(dx * dx + dy * dy))
   dx, dy = dx / len, dy / len
@@ -614,16 +659,16 @@ function council.sector_belt(C, K, belts)
     local p1, p2 = {x = cx + nx * half, y = cy + ny * half}, {x = cx - nx * half, y = cy - ny * half}
     if territory and territory.owner_at(p1) == C.force and territory.owner_at(p2) == C.force
        and territory.owner_at({x = cx, y = cy}) == C.force then
-      id, why = belts.plan(C.force, {p1, p2}, {aa = age_of(C.force) >= 2, depot = true,
-                                               why = "AI sector of city " .. best.id})
+      -- (no AA turrets, no field depot: every entry must be paid from the city's network, and the AI makes walls and
+      -- turrets only as make targets; a plan with AA turrets waited for ever)
+      id, why = belts.plan(C.force, {p1, p2}, {aa = false, depot = false, why = "AI sector of city " .. best.id})
       if id then break end
     end
   end
   K.belts["c" .. best.id] = id or false
   if id then
     K.stats.belts = K.stats.belts + 1
-    util.log("council: %s plans fort belt #%d across the approach to city %d (hostile strength %.0f near it for %.0f s)",
-      C.force, id, best.id, bs, (tick - K.sector_since[best.id]) / 60)
+    util.log("council: %s plans fort belt #%d across the approach to city %d (%s)", C.force, id, best.id, why_here)
   else
     util.log("council: %s cannot plan a fort belt at city %d: %s", C.force, best.id, tostring(why or "no own line"))
   end
@@ -1005,8 +1050,11 @@ function council.step(C, surface)
      and tick - (K.push_at or -1e9) >= 10 * 3600 then
     K.push_at = tick
     C.army.cs_push = tick
-    util.log("council: %s has run no operation yet: pushes a city-state operation (idle army %d)", C.force,
-      C.army.pool_size or 0)
+    -- every push reaches further (army.lua: the reach and the clear-of-rivals rule relax with cs_push_level; a
+    -- 100-unit army pushed four times and found no city-state on its side of the map in seed 802)
+    C.army.cs_push_level = (C.army.cs_push_level or 0) + 1
+    util.log("council: %s has run no operation yet: pushes a city-state operation (idle army %d, push %d)", C.force,
+      C.army.pool_size or 0, C.army.cs_push_level)
   end
   holds_step(C, K)
   belts_step(C, K)

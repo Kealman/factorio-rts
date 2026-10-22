@@ -125,7 +125,9 @@ function age_up.step(C, surface)
   -- save too (C.nation.saving_rail, ai/mix.lua); make targets go on (the Charter needs them)
   N.saving_rail = nil
   local rail_state = deps.rails and deps.rails.ai_program_state and deps.rails.ai_program_state(C.force)
-  if C.town and (rail_state == "depots" or rail_state == "building") then
+  -- (Phase 5 M3 ai: the planner's trunk lines too, until three cities are linked)
+  local trunk_saving = deps.planner and deps.planner.saving_rail and deps.planner.saving_rail(C)
+  if (C.town and (rail_state == "depots" or rail_state == "building")) or trunk_saving then
     N.rail_save_since = N.rail_save_since or game.tick
     if game.tick - N.rail_save_since <= age_up.SAVE_MAX then
       N.saving_rail, N.saving_tick = true, game.tick
