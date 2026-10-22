@@ -478,10 +478,14 @@ local function rush_research(s, tick)
   if tick - s.t < 3 * 60 + 30 then return end
   local st = sinks.rush_state(F)
   local spent = st and st.spent or 0
+  -- Phase 5 M3 integration: a research rush pays only while a lab works (nothing without one)
+  local _, working = research.lab_counts(F)
   sinks.cancel_rush(F, "fixture")
-  check("rush_research_charge", spent > 0 and math.abs(game.forces[F].laboratory_speed_modifier - s.lab0) < 1e-9,
-    "3.5 s of research rush cost %.2f cr (%.2f per missing unit and second); cancelled: lab speed back %+.2f", spent,
-    SB.rush.research_cr, game.forces[F].laboratory_speed_modifier - s.lab0)
+  check("rush_research_charge", (working > 0) == (spent > 0)
+    and math.abs(game.forces[F].laboratory_speed_modifier - s.lab0) < 1e-9,
+    "3.5 s of research rush with %d working lab(s) cost %.2f cr (%.2f per missing unit and second while a lab works); "
+    .. "cancelled: lab speed back %+.2f", working, spent, SB.rush.research_cr,
+    game.forces[F].laboratory_speed_modifier - s.lab0)
   s.step, s.t = "hire", tick
 end
 

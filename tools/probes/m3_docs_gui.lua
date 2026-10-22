@@ -284,7 +284,7 @@ step(function(player, P)
 end)
 snap("b03-ledger-started")
 step(function(player, P)
-  for _, spec in ipairs({{"steel-plate", 200}, {"concrete", 200}, {"advanced-circuit", 100}}) do
+  for _, spec in ipairs({{"steel-plate", 200}, {"concrete", 150}, {"advanced-circuit", 60}}) do
     dbg.run_command("rts-give", spec[1] .. " " .. spec[2], player.index)
   end
   return 240

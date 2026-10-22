@@ -49,6 +49,7 @@ local units = require("scripts.units")
 local supply = require("scripts.supply")
 local match = require("scripts.match")
 local ages = require("scripts.ages")
+local research = require("scripts.research") -- Phase 5 M3 integration: a research rush pays while a lab works
 local cities = require("scripts.cities")
 local divisions = require("scripts.divisions")
 local garrison = require("scripts.garrison")
@@ -209,17 +210,22 @@ local function rush_step(force_name, st)
   end
   local dt = RUSH.period / 60
   local cost
+  -- Phase 5 M3 integration (age3 notes open issue 6): a rush pays only while it speeds something up: a stage whose
+  -- goods came in during the last two periods (or its countdown), a research while a lab works
   if t.kind == "project" then
     local p = t.project
     if p.state == "countdown" then
       cost = RUSH.countdown_cr * dt
-    else
+    elseif p.pulled_at and game.tick - p.pulled_at <= 2 * RUSH.period + 60 then
       cost = RUSH.project_cr * missing_items(p) * dt
+    else
+      cost = 0
     end
   else
     local force = game.forces[force_name]
     local cur = force.current_research
-    cost = RUSH.research_cr * (1 - force.research_progress) * cur.research_unit_count * dt
+    local _, working = research.lab_counts(force_name)
+    cost = working > 0 and RUSH.research_cr * (1 - force.research_progress) * cur.research_unit_count * dt or 0
   end
   if cost > 0 then
     if treasury.balance(force_name) - cost < 0 or not treasury.charge(force_name, cost, "rush") then

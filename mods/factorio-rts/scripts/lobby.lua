@@ -577,7 +577,8 @@ match.on_force_out(function(force_name)
 end)
 
 commands.add_command("rts-match",
-  "<opponents 1-3 (nation: 1-5)> <easy|normal|hard> <small|medium|large> [chokes|open] [waves] [nation [2048|3072|4096] [survey] [conquest|territory|score] [t60|t90|t120]] - start a new match",
+  "<opponents 1-3 (nation: 1-5)> <easy|normal|hard> <small|medium|large> [chokes|open] [waves] [nation [2048|3072|4096] [survey] [conquest_space|conquest|territory|score|any] [t60|t90|t120]] - start a "
+    .. "new match",
   function(cmd)
     local player = cmd.player_index and game.get_player(cmd.player_index)
     if player and not player.admin then

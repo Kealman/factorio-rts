@@ -1097,8 +1097,12 @@ local function ai_taxes_banded(C, A, H)
   local war = A.war_until ~= nil and game.tick <= A.war_until
   local deficit = in_deficit(A, t)
   local level, why, urgent
+  -- Phase 5 M3 integration (balance pass): in debt an unhappy nation keeps the normal tax; low tax in debt deepened
+  -- it until the credit line (4-nation runs: unrest -25 happiness -> low tax -> a third of the income)
+  local in_debt = treasury.stage(C.force) >= 1
   if happy < AI.happy_low or (cur == "low" and happy < AI.happy_low + H.happy_band) then
-    level, why, urgent = "low", string.format("happiness %.0f", happy), happy < AI.happy_low and cur ~= "low"
+    level, why = in_debt and "normal" or "low", string.format("happiness %.0f%s", happy, in_debt and ", in debt" or "")
+    urgent = happy < AI.happy_low and cur ~= "low" and not in_debt
   elseif war or deficit then
     level, why = "high", war and (now_war and "at war" or "war footing")
       or string.format("balance %.0f, net %.0f/min", t.balance, t.net)

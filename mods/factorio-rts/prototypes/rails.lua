@@ -207,7 +207,8 @@ local techs = {
     localised_name = {"technology-name.rts-railways"},
     localised_description = {"technology-description.rts-railways"},
     icons = {{icon = TECH_ICON .. "railway.png", icon_size = 256}},
-    unit = {count = 15, ingredients = {{"rts-science-basic", 1}}, time = 10},
+    -- Phase 5 M3 integration (balance pass): 10 kits (was 15); first rail lines opened at 20-36 minutes
+    unit = {count = 10, ingredients = {{"rts-science-basic", 1}}, time = 10},
     order = "z[rts]-1-30",
   },
 }

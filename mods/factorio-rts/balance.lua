@@ -766,7 +766,8 @@ balance.nation.treasury = {
   army = {per_supply = 1, free = 0}, -- cr per supply point of military units per minute (haulers excluded)
   transport = {locomotive = 2, rail_tiles = 100}, -- cr per locomotive per minute, 1 cr per this many tiles of line
   interest = {rate = 0.05, period = 5 * 60 * 60}, -- 5 % of the debt every 5 minutes
-  credit = {minutes = 10, min = 500}, -- credit line: 10 minutes of gross income (tax + exports), at least `min`
+  credit = {minutes = 10, min = 500, -- credit line: 10 minutes of gross income (tax + exports), at least `min`
+            decay = 0.99},     -- Phase 5 M3 integration: it falls at most 1 % per step (about 6 % a minute) when income falls
   stages = {unpaid = 60, unrest = 180}, -- seconds below 0 before stage 2 (unpaid wages) and stage 3 (unrest)
   unrest_happiness = -25,      -- stage 3: population.set_mood(force, "debt", -25) (scripts/population.lua)
 }
@@ -960,7 +961,9 @@ A3.pull_per_second = 10
 A3.period = 60
 A3.raze_loss = 0.5
 A3.stages = {
-  {id = "structure", required = {["steel-plate"] = 200, concrete = 200, ["advanced-circuit"] = 100}, build_seconds = 20},
+  -- Phase 5 M3 integration (balance pass): 150 concrete and 60 advanced circuits (was 200 and 100): the AIs took 10-24
+  -- minutes for stage 1, the advanced circuits last (21 of 100 after 9 minutes)
+  {id = "structure", required = {["steel-plate"] = 200, concrete = 150, ["advanced-circuit"] = 60}, build_seconds = 20},
   {id = "systems", required = {["processing-unit"] = 40, battery = 100, ["engine-unit"] = 80}, build_seconds = 30},
   {id = "fuel", required = {["rocket-fuel"] = 40, sulfur = 200, ["light-oil-barrel"] = 50}, build_seconds = 120},
 }
@@ -968,7 +971,8 @@ A3.modes = {conquest_space = true, any = true}
 
 -- Technologies (Nation mode only; scripts/age3.lua registers their effects with scripts/research.lua)
 A3.techs = {
-  {name = "rts-electrification", kit = "rts-science-industrial", count = 40, icon = "electric-energy-distribution-1",
+  -- Phase 5 M3 integration (balance pass): 25 kits (was 40): labs waited for industrial kits 12-30 minutes after Age II
+  {name = "rts-electrification", kit = "rts-science-industrial", count = 25, icon = "electric-energy-distribution-1",
    age = 2, prerequisites = {"rts-industrialisation"}, effect = {flag = "electrification"}},
   {name = "rts-chemistry", kit = "rts-science-industrial", count = 30, icon = "battery", age = 3,
    prerequisites = {"rts-electrification"}, effect = {flag = "chemistry"}},

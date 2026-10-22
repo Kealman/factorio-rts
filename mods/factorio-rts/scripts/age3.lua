@@ -410,6 +410,7 @@ local function step_program(force_name, P)
           local got = net.remove_item({name = item, count = math.min(left, per)})
           if got > 0 then
             P.delivered[item] = (P.delivered[item] or 0) + got
+            P.pulled_at = game.tick -- Phase 5 M3 integration: a rush pays only while goods come in (sinks.lua)
             if rec and production.on_flow then production.on_flow(rec, item, got, "used") end
           end
         end

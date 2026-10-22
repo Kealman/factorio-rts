@@ -553,7 +553,9 @@ local function step()
     end
     local income = window(N)
     local gross = (income.tax or 0) + (income.exports or 0)
-    N.credit = math.max(TB.credit.min, TB.credit.minutes * gross)
+    -- Phase 5 M3 integration (balance pass): the credit line follows a falling income over about ten minutes (decay per
+    -- step), not at once: a nation whose tax fell in unrest hit a credit line that had shrunk with it (4-nation runs)
+    N.credit = math.max(TB.credit.min, TB.credit.minutes * gross, (N.credit or 0) * (TB.credit.decay or 0))
     update_stage(f, N)
   end
 end
