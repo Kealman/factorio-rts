@@ -326,7 +326,10 @@ function sinks.mercenaries(force_name, port_un)
   for _, f in ipairs(match.ai_forces()) do
     if f == force_name then owner = "ai" end
   end
-  local id = #list > 0 and divisions.create(force_name, list, {name = {"rts-age3.mercenary-name", port.name},
+  -- Phase 5 M3 integration (GUI audit): named after the region's proper name ("Mercenaries (Karvis)"): the port's full
+  -- name was cut on the division card in Russian
+  local short = region and region.pname and region.pname.loc or port.name
+  local id = #list > 0 and divisions.create(force_name, list, {name = {"rts-age3.mercenary-name", short},
                                                                stance = "hold"}, {owner = owner}) or nil
   s.merc_ready = game.tick + MERC.cooldown * 60
   s.mercs = (s.mercs or 0) + 1

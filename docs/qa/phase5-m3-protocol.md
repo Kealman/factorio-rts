@@ -163,7 +163,7 @@ The M1 and M2 rows (`docs/qa/phase5-m2-protocol.md`, "Where things are on the HU
 | Building page | x 6–396, y 699–797 | Airfield: "Airfield #N", "Airfield of Capital", "Planes within 24 tiles: N (M rearming)", "Plane kits of this city's barracks take off here. Y: air panel.". AA turret: "Magazines: N", "Shoots only planes; magazines come from its network.". Rare extractor: "Rare extractor #N", "Status: Working". |
 | Division card, front row | division panel; with one city and one division: name button (≈50, 191), bars (y≈204/211), state line (y≈224), Hold / Advance / Screen (≈50 / 116 / 184, 241), Reinforce, pencil, bin (y≈260), **front row** (y≈282) | Only while the division is selected and your nation has a front: "Front 2 · threat 52 · 31 tiles" (the nearest segment, its threat and distance) and **Hold line** (≈194, 282). Holding: the state line reads "Holding the line (front 2)". |
 | Fort belt panel | x 497–782, from y 147, centred under the alerts | Title "Fort belt", × (≈762, 162); the hint "Right-click inside your land to set 2 to 6 points. …"; "Points: 2 of 6 · 16 tiles" (y≈230); "Bill: [field depot] 1 [turret] 1 [wall] 17" (y≈248); AA turrets / Field depot checkboxes (y≈266); **Undo point** (≈535, 286), **Build** (≈710, 286), **Cancel** (≈752, 286); then one line per belt under way "Belt 1: 4 of 19 built · waits for [icon]" with **Stop** (≈755, 308). |
-| Air panel (Y) | x≈899–1255, from y 211, under the world generation line | Title "Air force", × (≈1243, 226). "Airfields: 1", a row "[icon] Capital   N plane(s) within 24 tiles   Show"; "Planes": Plane, Total, Flying, Returning, Rearming, Supply for Scout plane, Bomber, Interceptor; "Selected: 3 plane(s), supply 100-100"; **Patrol** (≈957, 413) and **Return to airfield** (≈1047, 413); the supply hint. After Patrol the button reads "Right-click the patrol point" (orange) and Return moves to ≈(1100, 413) until the right click. |
+| Air panel (Y) | x≈899–1255, from y 211, under the world generation line | Title "Air force", × (≈1243, 226). "Airfields: 1", a row "[icon] Capital   N plane(s) within 24 tiles   Show"; "Planes": Plane, Total, Ready, Returning, Rearming, Supply for Scout plane, Bomber, Interceptor; "Selected: 3 plane(s), supply 100-100"; **Patrol** (≈957, 413) and **Return to airfield** (≈1047, 413); the supply hint. After Patrol the button reads "Right-click the patrol point" (orange) and Return moves to ≈(1100, 413) until the right click. |
 | Depot panel, artillery | x 765–1012, from y 183 (the hub panel opens right of it, x 1019–1270) | As in M2, then "Artillery wagon kits: 1 · armoured locomotive kits: 0 · armoured wagon kits: 0 · rail shells: 40" (y≈383–398), **Deploy artillery train** (≈825, 417), Armoured (≈782, 437), the hint, Rail lines. |
 | Train panel, artillery | x 1026–1273, y 183–375 | "Artillery train N", "HP 1000/1000, coal 20", the position line, the state, "Stance:" **Hold fire** (≈1096, 274) and **Bombard [B]** (≈1162, 274; yellow when on), the gun line "Shells: 19 · next shot in 10 s · last target: City Center (86 tiles)" (y≈294–309), Resume (≈1058, 328), Disband (≈1110, 328), the hint. |
 | Market panel | x 310–970, from y 180 | As in M2 (× ≈951, 195; Tax ≈517, 227); row 3 (y≈265): Commerce bar and **Trade at** drop-down (≈800, 265). With an own port selected: **Mercenaries (₡ 600)** (≈370, 285), then "Mercenaries again in 600 s."; goods rows from y≈351, 22 px apart, Sell (≈770), **Buy** (≈821). The drop-down list opens under it: your port (≈800, 286), then every city-state, "Free City of Mardor (×1.30, +0)" from (≈800, 307), 21 px per entry. With a city-state selected a yellow hint "City-state Free City of Mardor: relation +0, its goods at ×1.30. …" (two lines) replaces the Mercenaries row; goods rows from y≈360; "At port" shows what the city-state sells. |
@@ -498,7 +498,7 @@ the strip time and what was hit. The bomber of step 19 attacks your buildings by
       tiles: 0 (0 rearming)", "Plane kits of this city's barracks take off here. Y: air panel.". Three planes appear in
       a row about 12 tiles below the CC. Y opens the **"Air force"** panel at the right edge under the world line (x
       ≈899–1255, from y 211): "Airfields: 1", "Capital   0 plane(s) within 24 tiles   Show", the table with "Scout plane
-      3 3 0 0 100" (Total, Flying: a plane is always in the air, Returning, Rearming, Supply), Bomber and Interceptor rows
+      3 3 0 0 100" (Total, Ready: neither returning nor rearming, Returning, Rearming, Supply), Bomber and Interceptor rows
       with 0, "Selected: 3 plane(s), supply 100-100", **Patrol** and **Return to
       airfield**, the supply hint. The panel does not cover the minimap or the world line.
     - *Pass/Fail:* PASS if the airfield page and the Y panel show with the three planes.
@@ -511,7 +511,7 @@ the strip time and what was hit. The bomber of step 19 attacks your buildings by
       (≈1243, 226) or Y.
     - *Expect:* after Patrol the button reads **"Right-click the patrol point"** (orange) and a flying text says the
       same; the wider button pushes Return to airfield to ≈(1100, 413) until the right click. After the right click the planes fly a circle around that point; the selection panel reads "Order: Patrol";
-      "Flying 3". After Return they fly to the airfield and stand on or next to it; the panel's airfield row reads "3
+      "Ready 3". After Return they fly to the airfield and stand on or next to it; the panel's airfield row reads "3
       plane(s) within 24 tiles" and the supply column climbs to 100.
     - *Pass/Fail:* PASS if the planes patrol and come back.
     - *Log check (lead):* `air: patrol armed player=1`, `order patrol n=3 dest=`, `air: 3 plane\(s\) of rts-player patrol`,
@@ -583,7 +583,7 @@ the strip time and what was hit. The bomber of step 19 attacks your buildings by
     - *Expect:* "market: capture -> true" and a green alert "<Region>: Port captured: Port of <Region>". The market (x
       310–970): **Trade at** "Port of <Region>", under it **Mercenaries (₡ 600)**. After the click: the treasury drops by
       600, a green alert "<Region>: 7 mercenaries hired (Port of <Region>)" (the count depends on the port's region),
-      the line "Mercenaries again in 600 s." next to the button, and a new card "Mercenaries (Port of <Region>)" in the
+      the line "Mercenaries again in 600 s." next to the button, and a new card "Mercenaries (<name>)" (the port region's proper name) in the
       division panel (the division stands at the port, far away).
     - *Pass/Fail:* PASS if the mercenary division appears.
     - *Log check (lead):* `market: port #[0-9]+ \(.*\) captured by rts-player`,

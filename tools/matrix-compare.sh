@@ -18,7 +18,8 @@ TIMING = re.compile(r"perf|wall clock| ms\b|ms/tick|ms per|took [0-9.]+ ?ms|elap
 # Nation-only prototypes in derived lists
 NORMALISE = [(re.compile(r"Duration: [0-9.]+ ?[a-z]*"), "Duration: T"),
              (re.compile(r"[0-9]+ rts technologies"), "N rts technologies"),
-             (re.compile(r"rts-garrison-turret "), "")]  # M2 war's hidden gun in the derived turret list
+             (re.compile(r"rts-garrison-turret "), ""),  # M2 war's hidden gun in the derived turret list
+             (re.compile(r"rts-(bomber|interceptor|aa-turret) "), "")]  # M3 air's Nation-only planes and AA turret
 def lines(path):
     out = []
     try:

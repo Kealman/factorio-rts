@@ -608,7 +608,10 @@ function trainswar.panel_train_update(gel, el, rec, train)
     elseif rec.position_rail then
       gel.route.caption = {"rts-war3.train-position-rail", floor(rec.position_rail.x), floor(rec.position_rail.y)}
     else
-      gel.route.caption = {"rts-war3.train-position-unset"}
+      -- Phase 5 M3 integration (GUI audit): a new train standing on its depot's platform has a position: that depot
+      local dun = train and train.valid and depot_here(rec, train)
+      gel.route.caption = dun and {"rts-war3.train-position-depot", logistics.hub_name(dun)}
+        or {"rts-war3.train-position-unset"}
     end
   end
   if not (el and el.gun and el.gun.valid) then return end

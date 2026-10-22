@@ -144,4 +144,22 @@ average and 0.15 ms at worst, the treasury step 0.79 ms; the 600-tick census it 
 
 ## 7. Open issues
 
-TBD
+(Draft; finalised with the acceptance.)
+
+1. **First rail lines after 25:00** for about half of the AI nations in the 4-nation runs (25-48 minutes): the AI's
+   rail program pays its locomotive and construction wagon kits from the capital's network, which held 1-54 iron plates
+   for most of the match (seed 804, rts-ai-1: survey done at 19:30, "waits for a construction train: no-kits" until
+   29:30). Railways at 10 kits moved research earlier; the iron allocation is m3-ai's (sent).
+2. **AI armies do not shrink in debt**: army upkeep of 160-280 cr a minute against 200-340 of tax; stage 2 stops the
+   kits but no unit leaves, so a nation in debt late in the match runs towards its credit line (m3-ai: disband in
+   debt, sent). The treasury rules themselves are unchanged (stage 2 unpaid wages, stage 3 unrest).
+3. **Air, holds, artillery trains unused by the AI** in every run so far (patrols, interceptors, bombers, artillery,
+   holds 0): the balance of air kits, AA, belts, artillery and armoured stock stays at wave A's first guesses until
+   the AI uses them (m3-ai).
+4. **The research Rush can still be started with no industrial kits in stock**; it costs nothing until a lab works.
+5. **Mercenary division names** ("Mercenaries (Port of <Region>)") are cut on the division card in Russian for long
+   region names (GUI audit).
+6. **Air panel counts**: planes idle on the apron count as "Flying" (GUI audit; m3-air's wording).
+7. **Train panel**: a train standing on its own depot's platform reads "No position yet" (GUI audit).
+8. **4096 x 6 start**: planning 2.5-3.2 s and the forced core 2.6-2.9 s are world3's (core <= 3 s holds); the AIs'
+   first layouts are m3-ai's resumable planner now (planjob).
