@@ -3,7 +3,7 @@
 -- Owns storage.debug = {autotest = nil|true|false, stage, started, stage_tick, units = {[unit_number] = true},
 --                       dests, hold_pos, moved, attacked, checks = {pass, fail}, next_report, dummy, eco, ...}
 --
--- Autotest: decided once at tick 120. With no connected players (tools/headless-run.sh) it starts a match with
+-- Autotest: decided once at tick 120. In a test copy (AUTOTEST_ENABLED) with no connected players it starts a match with
 -- AUTOTEST_MATCH (or storage.debug.autotest_match) through lobby.start_match. With the default AI brain both sides
 -- are AI commanders (scripts/ai/autotest.lua, every match force). With enemy_brain = "waves" (the legacy map) it
 -- runs the Phase 1/2 autotest in two parts:
@@ -42,6 +42,10 @@ local AUTOTEST_DECIDE_TICK = 120
 -- opponents = 2); storage.debug.autotest_match, when set before tick 120, overrides it. The legacy Phase 1/2
 -- autotest runs with enemy_brain = "waves" (one opponent on the "legacy" 160-tile map with the template enemy).
 local AUTOTEST_MATCH = {opponents = 1, difficulty = "normal", size = "small", enemy_brain = "ai"}
+-- Phase 5 M3 integration (perf notes open issue 9): the headless autotest is opt-in. Before, any dedicated server with
+-- nobody connected at tick 120 started an AI-vs-AI match. Test copies set this line to true (tools/autotest-run.sh and
+-- every tool that writes AUTOTEST_MATCH).
+local AUTOTEST_ENABLED = false
 local AUTOTEST_PLAYER = 0          -- fake player index: selection/orders treat it as an rts-player commander
 local AUTOTEST_WALKERS = 5
 local AUTOTEST_HEAVIES = 1
@@ -1111,7 +1115,7 @@ events.on_nth_tick(60, function(e)
   local d = storage.debug
   if e.tick == CHART_PROBE_TICK then chart_probe() end
   if d.autotest == nil and e.tick >= AUTOTEST_DECIDE_TICK then
-    d.autotest = #game.connected_players == 0
+    d.autotest = AUTOTEST_ENABLED and #game.connected_players == 0
     util.log("autotest: %s (%d connected players at tick %d)", d.autotest and "on" or "off",
       #game.connected_players, e.tick)
     if d.autotest then start_autotest_match() end
@@ -1606,6 +1610,127 @@ local COMMANDS = {
             math.floor(diplomacy.relation(a, b) + 0.5), math.floor(diplomacy.relation(b, a) + 0.5)))
         end
       end
+    end,
+  },
+  -- Phase 5 M3 integration: QA shortcuts of docs/qa/phase5-m3-protocol.md (checked by tools/probes/m3_qa_cmds.lua)
+  ["rts-front"] = {
+    help = "[force] - QA: found a town of the first rival (or <force>) 110-130 tiles from your capital, its land "
+      .. "touching yours, and refresh land and fronts (declare the war in F4 for a front)",
+    run = function(cmd)
+      if not admin_only(cmd) then return end
+      local F = command_force(cmd)
+      local fronts, diplomacy = loaded_module("scripts.fronts"), loaded_module("scripts.diplomacy")
+      local cities, territory = loaded_module("scripts.cities"), loaded_module("scripts.territory")
+      local E = (cmd.parameter or ""):match("^%s*(%S+)")
+      if not E then
+        for _, f in ipairs(match.forces()) do
+          if f ~= F and not E then E = f end
+        end
+      end
+      local nation = storage.nations and storage.nations[F]
+      local cap = nation and nation.capital and cities.get(nation.capital)
+      local surface = match.surface()
+      if not (cap and surface and E and game.forces[E] and E ~= F) then
+        reply(cmd, "rts-front: needs a Nation match with a capital and a rival")
+        return
+      end
+      local home = cap.position
+      local spot, dir, dist
+      for _, d in ipairs({115, 120, 110, 125, 130}) do
+        for _, v in ipairs({{1, 0, "east"}, {-1, 0, "west"}, {0, 1, "south"}, {0, -1, "north"}}) do
+          local p = {x = math.floor(home.x + v[1] * d) + 0.0, y = math.floor(home.y + v[2] * d) + 0.0}
+          if not spot and surface.is_chunk_generated({math.floor(p.x / 32), math.floor(p.y / 32)})
+              and territory.can_build(E, cities.CENTER, p)
+              and surface.can_place_entity({name = cities.CENTER, position = p, force = E,
+                                            build_check_type = defines.build_check_type.manual_ghost, forced = true}) then
+            spot, dir, dist = p, v[3], d
+          end
+        end
+      end
+      if not spot then
+        reply(cmd, "rts-front: no room for a town 110-130 tiles east, west, south or north of your capital")
+        return
+      end
+      for _, e in ipairs(surface.find_entities_filtered({area = {{spot.x - 12, spot.y - 12}, {spot.x + 12, spot.y + 12}},
+                                                        type = {"tree", "simple-entity", "cliff", "fish"}})) do
+        if e.valid then e.destroy({do_cliff_correction = e.type == "cliff"}) end
+      end
+      local id = cities.found(E, spot, {why = "(QA /rts-front)"})
+      territory.flush()
+      if fronts and fronts.flush then fronts.flush() end
+      local at_war = diplomacy and diplomacy.state and diplomacy.state(F, E) == "war"
+      -- the issuing player's camera 24 tiles behind the nearest segment (the front line 24 tiles towards the town), or on
+      -- the town when there is no front yet
+      local player = cmd.player_index and game.get_player(cmd.player_index)
+      if player and camera then
+        local seg = fronts and fronts.nearest and fronts.nearest(F, spot, 400)
+        local at = seg and seg.mid and seg.back and {x = seg.mid.x + seg.back.x * 24, y = seg.mid.y + seg.back.y * 24}
+          or spot
+        camera.jump_to(player, at)
+      end
+      reply(cmd, string.format("rts-front: %s town %s at %s, %d tiles %s of your capital; %s%s", E, tostring(id),
+        util.pos_str(spot), dist, dir, fronts and fronts.describe and fronts.describe(F) or "no fronts",
+        at_war and "" or " (no war: declare it in F4 to see the fronts)"))
+    end,
+  },
+  ["rts-deposit"] = {
+    help = "<kind> - QA: a 6x6 rare deposit (saltpetre, quartz, tungsten, diamonds, rare-earths, gold) on bare ground "
+      .. "14-26 tiles from your capital, inside your logistic network",
+    run = function(cmd)
+      if not admin_only(cmd) then return end
+      local kind = (cmd.parameter or ""):match("^%s*(%S+)") or "saltpetre"
+      local name = "rts-rare-" .. kind
+      if not prototypes.entity[name] then
+        reply(cmd, "rts-deposit: unknown kind " .. kind .. " (saltpetre, quartz, tungsten, diamonds, rare-earths, gold)")
+        return
+      end
+      local F = command_force(cmd)
+      local cc = buildings.main_cc(F)
+      local surface = match.surface()
+      if not (cc and cc.entity and cc.entity.valid and surface) then
+        reply(cmd, "rts-deposit: no Command Center / capital")
+        return
+      end
+      local home = cc.entity.position
+      local function free(c)
+        local area = {{c.x - 3, c.y - 3}, {c.x + 3, c.y + 3}}
+        if surface.count_tiles_filtered({area = area, collision_mask = "water_tile"}) > 0 then return false end
+        for _, e in ipairs(surface.find_entities_filtered({area = area})) do
+          local t = e.type
+          if t ~= "tree" and t ~= "simple-entity" and t ~= "fish" and t ~= "corpse" then return false end
+        end
+        return surface.find_logistic_network_by_position(c, F) ~= nil
+      end
+      local spot, dir, dist
+      local dirs = {{1, -1, "north-east"}, {-1, 1, "south-west"}, {1, 1, "south-east"}, {-1, -1, "north-west"},
+                    {1, 0, "east"}, {0, -1, "north"}, {-1, 0, "west"}, {0, 1, "south"}}
+      for _, d in ipairs({18, 22, 26, 14}) do
+        for _, v in ipairs(dirs) do
+          if not spot then
+            local n = math.sqrt(v[1] * v[1] + v[2] * v[2])
+            local c = {x = math.floor(home.x + v[1] / n * d) + 0.0, y = math.floor(home.y + v[2] / n * d) + 0.0}
+            if free(c) then spot, dir, dist = c, v[3], d end
+          end
+        end
+      end
+      if not spot then
+        reply(cmd, "rts-deposit: no bare 6x6 ground 14-26 tiles from your capital inside its network")
+        return
+      end
+      for _, e in ipairs(surface.find_entities_filtered({area = {{spot.x - 3, spot.y - 3}, {spot.x + 3, spot.y + 3}},
+                                                        type = {"tree", "simple-entity", "fish", "corpse"}})) do
+        if e.valid then e.destroy() end
+      end
+      local n = 0
+      for dx = -3, 2 do
+        for dy = -3, 2 do
+          if surface.create_entity({name = name, position = {spot.x + dx + 0.5, spot.y + dy + 0.5}, amount = 100}) then
+            n = n + 1
+          end
+        end
+      end
+      reply(cmd, string.format("rts-deposit: %s deposit (6x6, %d tiles) at %s, %d tiles %s of your capital: place a Rare "
+        .. "extractor on it", kind, n, util.pos_str(spot), dist, dir))
     end,
   },
   ["rts-autotest"] = {

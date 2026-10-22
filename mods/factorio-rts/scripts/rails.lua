@@ -118,6 +118,7 @@ rails.SURVEY_GHOSTS = 50            -- ghosts placed per tick
 rails.MAX_EXPANSIONS = 160000       -- fine A* gives up after this many (per corridor width)
 rails.MAX_CORRIDOR = 3              -- corridor radius in cells, widened from 1 when the fine search fails
 rails.WEIGHT = 1.3                  -- heuristic weight (weighted A*)
+rails.WALL_CROSS_COST = 6           -- Phase 5 M3 integration: extra cost of a straight piece over own walls (gated)
 -- Phase 5 M3 perf: in a Nation match a survey is a scheduler job (scripts/sched.lua kind "rails_survey") that spends
 -- the nation's work units instead of the fixed per-tick counts above (those stay for the rails autotest outside a
 -- match). Units per item, calibrated with PERF=1 so that one unit is about 1 microsecond (docs/qa/phase5-perf-notes.md):
@@ -211,6 +212,7 @@ local BLOCKER_TYPES = {"assembling-machine", "furnace", "mining-drill", "robopor
   "pipe-to-ground", "storage-tank", "pump", "offshore-pump", "inserter", "transport-belt", "underground-belt",
   "splitter", "lamp"}
 local CLEAR_TYPES = {"tree", "simple-entity", "cliff"}
+local WALL_TYPES = {"wall", "gate"} -- Phase 5 M3 integration: own ones are crossed (rails.WALL_CROSS_COST, gates)
 local MANUAL_GHOST, SCRIPT, MANUAL = defines.build_check_type.manual_ghost, defines.build_check_type.script,
   defines.build_check_type.manual
 
@@ -474,6 +476,31 @@ local function stop_name(force_name, un)
   return string.format("%s depot %d", force_name, un)
 end
 
+-- Phase 5 M3 integration (M2 integration open issue 8): the stops keep their unique script names (schedules use them),
+-- but the map shows the owner a localised "Depot N" instead; the engine's station names are hidden in Nation matches
+-- (map view setting show-train-station-names, restored at teardown).
+rails.LABEL_SCALE = 1.2 -- on screen (scale_with_zoom), like the engine's station names (1.6 world-sized was unreadable)
+local function draw_depot_label(d)
+  if d.label and d.label.valid then d.label.destroy() end
+  d.label = nil
+  local e = d.entity
+  if not (e and e.valid) then return end
+  d.label = rendering.draw_text({text = {"rts.depot-name", d.index or d.un}, surface = e.surface, target = {entity = e,
+    offset = {0, -2.5}}, color = {r = 0.85, g = 0.85, b = 1, a = 1}, scale = rails.LABEL_SCALE, alignment = "center",
+    vertical_alignment = "middle", render_mode = "chart", forces = {d.force}, scale_with_zoom = true})
+end
+
+local function station_names(player, show)
+  if player and player.valid then player.map_view_settings = {["show-train-station-names"] = show} end
+end
+match.on_started(function()
+  if not rails.nation() then return end
+  for _, p in pairs(game.players) do station_names(p, false) end
+end)
+events.on(defines.events.on_player_joined_game, function(e)
+  station_names(game.get_player(e.player_index), not rails.nation())
+end)
+
 -- Platform layouts around a depot at p: {axis, track coordinate, rail centres, ends, stop specs}.
 local function platform_specs(p)
   local cx, cy = 2 * floor(p.x / 2), 2 * floor(p.y / 2)
@@ -599,6 +626,7 @@ local function setup_depot(un, rec)
     d = {un = un, force = rec.force, surface = e.surface.index, entity = e, stop_name = stop_name(rec.force, un),
          index = R.depot_index[rec.force]}
     R.depots[un] = d
+    draw_depot_label(d) -- Phase 5 M3 integration
     -- a depot keeps coal for the locomotives instead of the hub's plates (set once; the player edits it later)
     local pol = logistics.policy(un)
     if pol then
@@ -751,6 +779,8 @@ local function score_cell(job, s, cx, cy)
   local cliffs = s.count_entities_filtered({area = area, type = "cliff"})
   local trees = s.count_entities_filtered({area = area, type = {"tree", "simple-entity"}})
   local blockers = s.count_entities_filtered({area = area, type = BLOCKER_TYPES})
+  -- Phase 5 M3 integration (war2 notes open issue 4): own walls and gates (a fort belt) are crossed at a gate
+  blockers = blockers - s.count_entities_filtered({area = area, type = WALL_TYPES, force = job.force})
   local owner = territory_owner({x = x0 + C / 2, y = y0 + C / 2})
   local foreign = owner ~= nil and owner ~= job.force
   local mul = 1 + min(trees, 64) / 128 + (cliffs > 0 and 0.5 or 0) + min(blockers, 16) / 8 + (foreign and 0.5 or 0)
@@ -991,6 +1021,17 @@ local function heuristic(job, x, y, ck)
 end
 
 -- Placement check of one planned piece: true, false, or a number (allowed at that extra cost: cliffs to blow up).
+-- Phase 5 M3 integration (war2 notes open issue 4): a straight orthogonal piece whose only obstacles are walls and
+-- gates of its own force crosses them (its walls turn into gates when the ghosts are laid: gate_walls).
+local function wall_crossing(job, s, e, px, py)
+  if e.name ~= "straight-rail" or e.dir % 4 ~= 0 then return false end
+  local area = {{px - 1, py - 1}, {px + 1, py + 1}}
+  local own = s.count_entities_filtered({area = area, type = WALL_TYPES, force = job.force})
+  if own == 0 or s.count_entities_filtered({area = area, type = BLOCKER_TYPES}) > own then return false end
+  if s.count_tiles_filtered({area = area, collision_mask = "water_tile", limit = 1}) > 0 then return false end
+  return s.count_entities_filtered({area = area, name = RAIL_NAMES, limit = 1}) == 0
+end
+
 local function check_piece(job, s, e, px, py, ck)
   if e.elev then
     return s.can_place_entity({name = e.name, position = {px, py}, direction = e.dir, force = job.force,
@@ -1000,6 +1041,7 @@ local function check_piece(job, s, e, px, py, ck)
                          build_check_type = MANUAL_GHOST, forced = true}) then
     return true
   end
+  if wall_crossing(job, s, e, px, py) then return rails.WALL_CROSS_COST end -- Phase 5 M3 integration
   if not job.cliff[ck] then return false end
   -- only cliffs (plus trees and rocks) in the way, no water and no buildings: the builder clears them
   local r = 3
@@ -1166,6 +1208,27 @@ local function survey_extract(job)
     job.cells_scored or 0, job.R)
 end
 
+-- Phase 5 M3 integration: own walls under a straight orthogonal piece become gates across the track (vanilla gates
+-- stand on straight rails: a horizontal track takes a gate facing north, a vertical one east; belts.lua's rule).
+rails.GATE = "rts-gate"
+local function gate_walls(s, force_name, p)
+  if p.name ~= "straight-rail" or p.d % 4 ~= 0 or not prototypes.entity[rails.GATE] then return 0 end
+  local walls = s.find_entities_filtered({area = {{p.x - 1, p.y - 1}, {p.x + 1, p.y + 1}}, type = "wall",
+                                          force = force_name})
+  local gd = (p.d == D.east or p.d == D.west) and D.north or D.east
+  local n = 0
+  for _, w in ipairs(walls) do
+    local pos, share = w.position, w.health / w.max_health
+    w.destroy({raise_destroy = true})
+    local g = s.create_entity({name = rails.GATE, position = pos, direction = gd, force = force_name, raise_built = true})
+    if g then
+      g.health = g.max_health * share
+      n = n + 1
+    end
+  end
+  return n
+end
+
 -- Phase "ghosts": entity-ghosts of the pieces and supports.
 local function survey_ghosts(job, s, budget)
   local R = rstate()
@@ -1175,6 +1238,8 @@ local function survey_ghosts(job, s, budget)
   while job.ghost_i <= #pieces and n < budget do
     local p = pieces[job.ghost_i]
     job.ghost_i = job.ghost_i + 1
+    local gated = gate_walls(s, job.force, p) -- Phase 5 M3 integration
+    if gated > 0 then util.log("rails: survey #%d: %d wall(s) at (%.0f, %.0f) turned into gates", job.id, gated, p.x, p.y) end
     p.g = s.create_entity({name = "entity-ghost", inner_name = p.name, position = {p.x, p.y}, direction = p.d,
                            force = job.force})
     n = n + 1
@@ -1703,6 +1768,7 @@ function rails.set_route(train, pickup, dropoff)
   if not (rec and FREIGHT[rec.kind] and train and train.valid) then return false end -- Phase 5 M2 war
   if not (rails.depot(pickup) and rails.depot(dropoff)) or pickup == dropoff then return false end
   rec.pickup, rec.dropoff = pickup, dropoff
+  rec.lost_pickup, rec.lost_dropoff = nil, nil -- Phase 5 M3 integration: a new route replaces a lost one
   if not schedule_two(train, rec) then return false end
   local cargo = cargo_of(train)
   util.log("rails: train %d (%s) route depot #%d -> depot #%d", train.id, rec.force, pickup, dropoff)
@@ -1986,10 +2052,20 @@ local function line_index_at(line, pos)
 end
 
 -- Where the line's freight trains stand: list of piece indices.
+-- Phase 5 M3 ai (H4, applied by m3-integ): only this line's freight trains stand "ahead" of its crew; another line's
+-- train waiting at a shared capital depot kept a trunk line's crews turning back for 20 minutes (seed 801). A freight
+-- train is this line's when its AI line mark or a depot of its route is the line's; a train without a route still counts.
+local function on_line(rec, line)
+  if rec.ai_line then return rec.ai_line == line.id end
+  local p, d = rec.pickup, rec.dropoff
+  if not (p or d) then return true end
+  return p == line.a or p == line.b or d == line.a or d == line.b
+end
+
 local function cargo_positions(line)
   local list = {}
   for _, rec in pairs(rstate().trains) do
-    if rec.kind == "cargo" and rec.force == line.force then
+    if rec.kind == "cargo" and rec.force == line.force and on_line(rec, line) then
       local train = train_of(rec)
       if train then
         for _, stock in ipairs({train.front_stock, train.back_stock}) do
@@ -2642,6 +2718,7 @@ buildings.on_force_changed(function(un, rec, old)
   if d then
     d.force = rec.force
     d.stop_name = stop_name(rec.force, un)
+    draw_depot_label(d) -- Phase 5 M3 integration: the new owner's label
     local color = force_color(rec.force)
     for _, st in pairs(d.platform and d.platform.stops or {}) do
       if st.valid then
@@ -2680,11 +2757,26 @@ buildings.on_force_changed(function(un, rec, old)
       if trec.force == old and (trec.pickup == un or trec.dropoff == un or trec.home == un) then
         local train = train_of(trec)
         if train and train.valid then train.manual_mode = true end
-        if trec.pickup == un then trec.pickup = nil end
-        if trec.dropoff == un then trec.dropoff = nil end
+        -- Phase 5 M3 integration: remember the lost half, so a human's train takes its route up again (below)
+        if trec.pickup == un then trec.pickup, trec.lost_pickup = nil, un end
+        if trec.dropoff == un then trec.dropoff, trec.lost_dropoff = nil, un end
         trec.state, trec.reason = "stopped", "depot-lost"
         R.dwelling[id] = nil
         trec.dwell = nil
+      end
+    end
+    -- Phase 5 M3 integration (M2 integration open issue 12): the depot is back: trains routed by hand that lost it get
+    -- their route again (an AI rail program routes its own trains: rec.ai_line)
+    for _, id in ipairs(sorted_keys(R.trains)) do
+      local trec = R.trains[id]
+      if trec.force == rec.force and not trec.ai_line and (trec.lost_pickup == un or trec.lost_dropoff == un) then
+        if trec.lost_pickup == un then trec.pickup, trec.lost_pickup = un, nil end
+        if trec.lost_dropoff == un then trec.dropoff, trec.lost_dropoff = un, nil end
+        local train = train_of(trec)
+        if train and train.valid and trec.pickup and trec.dropoff and not trec.lost_pickup and not trec.lost_dropoff
+           and rails.set_route(train, trec.pickup, trec.dropoff) then
+          util.log("rails: train %d (%s) routed again: depot #%d is back", train.id, rec.force, un)
+        end
       end
     end
   end
@@ -2859,6 +2951,8 @@ rails.AI_CRAFT_TICKS = 300
 rails.AI_REPAIR_RAILS = 60
 rails.AI_EXPORT = 100
 rails.AI_KEEP = 3000
+rails.AI_PAY = true -- Phase 5 M3 ai: A.pay (a unit number, normally the capital's centre) pays a program's depots, kits and
+                    -- rails instead of A.anchor (a trunk edge between two towns, ai/planner.lua); nil = A.anchor
 
 local function ai_state(force_name)
   local R = rstate()
@@ -2957,7 +3051,7 @@ local function ai_depot(force_name, anchor_un, field, A)
   local un = A[field]
   if un and rails.depot(un) then return un end
   local anchor = buildings.get(anchor_un)
-  local net = anchor_net(A.anchor)
+  local net = anchor_net(A.pay or A.anchor)
   if not (anchor and net) then return nil end
   if net.get_item_count(rails.DEPOT) == 0 then
     if game.tick < (A.next_craft or 0) or not ai_pay(net, net, "rts-depot", 1) then return nil end
@@ -2979,11 +3073,11 @@ local function ai_depot(force_name, anchor_un, field, A)
   -- the new roboport may merge networks: the old LuaLogisticNetwork object is invalid afterwards
   local e = surface.create_entity({name = rails.DEPOT, position = pos, force = force_name, raise_built = true})
   if not e then
-    local back = anchor_net(A.anchor)
+    local back = anchor_net(A.pay or A.anchor)
     if back then back.insert({name = rails.DEPOT, count = 1}) end
     return nil
   end
-  net = anchor_net(A.anchor)
+  net = anchor_net(A.pay or A.anchor)
   A[field] = e.unit_number
   local own = logistics.hub_network(e.unit_number)
   util.log("rails: AI %s placed depot #%d at %s next to #%d (%s network as the capital)", force_name, e.unit_number,
@@ -3029,6 +3123,7 @@ function rails.ai_program(force_name, A)
     A.state = "idle"
     return
   end
+  if A.pay and not buildings.get(A.pay) then A.pay = nil end -- Phase 5 M3 ai
   local da = ai_depot(force_name, A.anchor, "depot_a", A)
   local db = da and ai_depot(force_name, A.far, "depot_b", A)
   if not (da and db) then
@@ -3093,11 +3188,11 @@ function rails.ai_program(force_name, A)
   if line.state == "building" or line.state == "cut" then
     A.state = line.state
     -- a crew at the capital end (and one at the far end once the line has opened once) with rails for the work
-    ai_kits(da, A.anchor, "construction", A)
-    ai_supplies(da, A.anchor, line.state == "building" and (line.bill.rails + 20) or rails.AI_REPAIR_RAILS)
+    ai_kits(da, A.pay or A.anchor, "construction", A)
+    ai_supplies(da, A.pay or A.anchor, line.state == "building" and (line.bill.rails + 20) or rails.AI_REPAIR_RAILS)
     if line.opened then
-      ai_kits(db, A.anchor, "construction", A)
-      ai_supplies(db, A.anchor, rails.AI_REPAIR_RAILS)
+      ai_kits(db, A.pay or A.anchor, "construction", A)
+      ai_supplies(db, A.pay or A.anchor, rails.AI_REPAIR_RAILS)
     end
     return
   end
@@ -3125,7 +3220,7 @@ function rails.ai_program(force_name, A)
       end
     end
     if not have then
-      if ai_kits(db, A.anchor, "cargo", A) then
+      if ai_kits(db, A.pay or A.anchor, "cargo", A) then
         local train = rails.create_train(db, "cargo")
         if train then
           local rec = rails.train_record(train)
@@ -3136,9 +3231,9 @@ function rails.ai_program(force_name, A)
       end
     end
     -- spare crew and rails for repairs at both ends
-    ai_kits(db, A.anchor, "construction", A)
-    ai_supplies(da, A.anchor, rails.AI_REPAIR_RAILS)
-    ai_supplies(db, A.anchor, rails.AI_REPAIR_RAILS)
+    ai_kits(db, A.pay or A.anchor, "construction", A)
+    ai_supplies(da, A.pay or A.anchor, rails.AI_REPAIR_RAILS)
+    ai_supplies(db, A.pay or A.anchor, rails.AI_REPAIR_RAILS)
   end
 end
 
@@ -3420,6 +3515,7 @@ match.on_teardown(function()
   R.ai_more, R.ai_lost = nil, nil -- Phase 5 M2 integration
   R.depot_index = {}
   R.test_nation, R.test_bridges, R.test_forces = nil, nil, nil
+  for _, p in pairs(game.players) do station_names(p, true) end -- Phase 5 M3 integration
   bind()
 end)
 

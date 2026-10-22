@@ -14,7 +14,7 @@
 --       "common" and "air" (balance.target_types.air). Numbers from balance.units[name]. The scout is unarmed (its
 --       attack never hurts and its vision is 1 tile, so it is never distracted); the bomber drops bombs (x2 against
 --       "structure", every RTS building); the interceptor's gun deals x3 against "air".
---   rts-airfield     6x6 simple-entity-with-owner (the cargo landing pad's graphics at 0.75) made by the factory
+--   rts-airfield     6x6 simple-entity-with-owner (a concrete apron with a hazard rim and a hangar) made by the factory
 --   rts-aa-turret    the RTS gun turret on magazines, attack_target_mask = {"air"}: it shoots planes and nothing else
 --   masks            every other rts-* turret (gun, laser, bunker, fort, garrison and any later one) gets
 --                    ignore_target_mask = {"air"}; every entity named in balance.buildings carries "structure"
@@ -227,28 +227,29 @@ for _, name in ipairs(A.planes) do define_plane(name) end
 -------------------------------------------------------------------------------
 local AF = A.airfield
 local AF_TINT = {r = 0.85, g = 0.9, b = 0.8, a = 1}
-local AF_SCALE = AF.size / 8 -- the cargo landing pad is 8x8
 
+-- Phase 5 M3 integration: a refined-concrete apron with a hazard-striped rim and a small robot hangar in one corner
+-- (base-game textures only). The cargo landing pad of wave A read as a large machine (air notes open issue 5).
 local function airfield_picture()
-  local pad = data.raw["cargo-landing-pad"] and data.raw["cargo-landing-pad"]["cargo-landing-pad"]
-  local parts = pad and pad.graphics_set and pad.graphics_set.picture
-  local layers = {}
-  for _, part in ipairs(parts or {}) do
-    for _, layer in ipairs(part.layers or {part}) do
-      if layer.filename or layer.filenames then
-        local l = table.deepcopy(layer)
-        l.scale = (l.scale or 1) * AF_SCALE
-        local s = l.shift or {0, 0}
-        l.shift = {(s[1] or s.x or 0) * AF_SCALE, (s[2] or s.y or 0) * AF_SCALE}
-        if not (l.draw_as_shadow or l.draw_as_glow or l.draw_as_light) then l.tint = AF_TINT end
-        layers[#layers + 1] = l
-      end
-    end
-  end
-  if #layers == 0 then -- fallback: the rocket silo's platform, as the project site
-    layers[1] = {filename = "__base__/graphics/entity/rocket-silo/06-rocket-silo.png", width = 608, height = 596,
-                 scale = 0.3, tint = AF_TINT}
-  end
+  local px = AF.size * 64 -- the terrain textures are 64 px per tile at scale 0.5
+  local rim = 32           -- half a tile
+  local edge = AF.size / 2 - 0.25
+  local CONCRETE = "__base__/graphics/terrain/concrete/refined-concrete.png"
+  local HAZARD = "__base__/graphics/terrain/hazard-concrete-left/refined-hazard-concrete-left.png"
+  local layers = {
+    {filename = CONCRETE, x = 0, y = 0, width = px, height = px, scale = 0.5},
+    {filename = HAZARD, x = 0, y = 0, width = px, height = rim, scale = 0.5, shift = {0, -edge}},
+    {filename = HAZARD, x = 0, y = 64, width = px, height = rim, scale = 0.5, shift = {0, edge}},
+    {filename = HAZARD, x = 512, y = 0, width = rim, height = px - 2 * rim, scale = 0.5, shift = {-edge, 0}},
+    {filename = HAZARD, x = 576, y = 0, width = rim, height = px - 2 * rim, scale = 0.5, shift = {edge, 0}},
+    -- the centre line of the runway: a dashed hazard strip along the long axis
+    {filename = HAZARD, x = 1024, y = 0, width = px - 4 * rim, height = 16, scale = 0.5, shift = {0, 0}},
+    -- the hangar: the roboport's base at a quarter of its size in the north-west corner
+    {filename = "__base__/graphics/entity/roboport/roboport-base.png", width = 228, height = 277, scale = 0.22,
+     shift = {-edge + 1.15, -edge + 1.1}},
+    {filename = "__base__/graphics/entity/roboport/roboport-shadow.png", width = 294, height = 201, scale = 0.22,
+     shift = {-edge + 1.6, -edge + 1.3}, draw_as_shadow = true},
+  }
   return {layers = layers}
 end
 
@@ -258,7 +259,7 @@ local airfield = {
   name = "rts-airfield",
   localised_name = {"entity-name.rts-airfield"},
   localised_description = {"entity-description.rts-airfield"},
-  icons = {{icon = "__base__/graphics/icons/cargo-landing-pad.png", icon_size = 64, tint = AF_TINT}},
+  icons = {{icon = "__base__/graphics/icons/roboport.png", icon_size = 64, tint = AF_TINT}},
   flags = {"placeable-neutral", "placeable-player", "player-creation", "not-upgradable"},
   minable = {mining_time = 1, result = "rts-airfield"},
   max_health = AF.health,

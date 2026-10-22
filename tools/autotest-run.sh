@@ -38,6 +38,8 @@ path, table = sys.argv[1], sys.argv[2]
 src = open(path).read()
 new, n = re.subn(r'^local AUTOTEST_MATCH = \{.*\}$', 'local AUTOTEST_MATCH = ' + table, src, count=1, flags=re.M)
 assert n == 1, "AUTOTEST_MATCH line not found"
+new, n = re.subn(r'^local AUTOTEST_ENABLED = false$', 'local AUTOTEST_ENABLED = true', new, count=1, flags=re.M)
+assert n == 1 or "AUTOTEST_ENABLED" not in new, "AUTOTEST_ENABLED line not found"  # older trees: always on
 open(path, "w").write(new)
 PY
 if [ -n "${DURATION_MIN:-}" ]; then

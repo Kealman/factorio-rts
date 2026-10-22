@@ -226,11 +226,19 @@ local function snapshot(D)
   D.sp_members = set
 end
 
+local function sorted_units(set)
+  local list = {}
+  for un in pairs(set) do list[#list + 1] = un end
+  table.sort(list)
+  return list
+end
+
 divisions.on_changed(function(D, what)
   local s = S()
   if what == "created" then
     local sum, n = 0, 0
-    for un in pairs(D.units) do
+    -- Phase 5 M3 integration (perf notes open issue 9): sums in unit-number order (a float sum depends on the order)
+    for _, un in ipairs(sorted_units(D.units)) do
       sum, n = sum + (s.unit_sp[un] or W.sp_start), n + 1
       s.unit_sp[un] = nil
     end
@@ -241,7 +249,7 @@ divisions.on_changed(function(D, what)
     local old = D.sp_members or {}
     local sp = D.sp or W.sp_start
     local stay, sum_new, n_new = 0, 0, 0
-    for un in pairs(D.units) do
+    for _, un in ipairs(sorted_units(D.units)) do -- Phase 5 M3 integration: unit-number order
       if old[un] then
         stay = stay + 1
       else

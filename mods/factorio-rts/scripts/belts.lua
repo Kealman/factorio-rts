@@ -275,6 +275,20 @@ function belts.layout(force_name, points, opts)
     g.nx, g.ny = nx, ny
   end
   local entries, seen, skipped = {}, {}, 0
+  -- Phase 5 M3 integration (GUI audit): the drop tile of an own mining drill (an extractor, a rare extractor) stays
+  -- free, so a belt laid across a drill's output does not stop it (a rare bonus was lost that way)
+  local drop = {}
+  do
+    local x0, y0, x1, y1 = pts[1].x, pts[1].y, pts[1].x, pts[1].y
+    for _, p in ipairs(pts) do
+      x0, y0, x1, y1 = math.min(x0, p.x), math.min(y0, p.y), math.max(x1, p.x), math.max(y1, p.y)
+    end
+    for _, d in ipairs(surface.find_entities_filtered({area = {{x0 - 8, y0 - 8}, {x1 + 8, y1 + 8}},
+                                                      type = "mining-drill", force = force_name})) do
+      local dp = d.drop_position
+      if dp then drop[floor(dp.x) * 65536 + floor(dp.y)] = true end
+    end
+  end
   local function own(x, y) return territory.owner_at({x = x, y = y}) == force_name end
   local function add(kind, name, x, y, dir)
     entries[#entries + 1] = {kind = kind, name = name, item = item_of(name), x = x, y = y, dir = dir or D.north}
@@ -285,7 +299,7 @@ function belts.layout(force_name, points, opts)
     if seen[key] then return end
     seen[key] = true
     local x, y = tx + 0.5, ty + 0.5
-    if not own(x, y) then
+    if not own(x, y) or drop[key] then -- Phase 5 M3 integration: a drill's drop tile is left free
       skipped = skipped + 1
       return
     end

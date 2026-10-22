@@ -625,8 +625,9 @@ function trainswar.panel_train_update(gel, el, rec, train)
       parts = {"rts-war3.gun-no-target", shells, TW.range}
     else
       local t = rec.last_target
-      parts = {"rts-war3.gun-bombard", shells, wait, t and {"entity-name." .. t.name} or {"rts-war3.gun-none"},
-               t and floor(t.distance + 0.5) or 0}
+      -- Phase 5 M3 integration: before the first shot the line read "last target: none (0 tiles)"
+      parts = t and {"rts-war3.gun-bombard", shells, wait, {"entity-name." .. t.name}, floor(t.distance + 0.5)}
+        or {"rts-war3.gun-bombard-first", shells, wait}
     end
   else
     parts = {"rts-war3.gun-idle", shells, rec.shots or 0}

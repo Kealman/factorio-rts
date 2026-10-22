@@ -178,8 +178,10 @@ function techgui.refresh(player)
     local key = status .. ":" .. pct
     if row.key ~= key and row.status.valid then
       row.key = key
+      -- Phase 5 M3 integration: the Age III gate (Air Force, Chemistry, Nuclear power) names Age III
+      local need = status == "age" and research.age_missing and research.age_missing(force.name, name)
       row.status.caption = status == "researching" and {"rts.tech-status-researching", pct}
-        or {"rts.tech-status-" .. status}
+        or (need and need >= 3 and {"rts.tech-status-age-3"}) or {"rts.tech-status-" .. status}
       row.status.style.font_color = STATUS_COLOR[status] or STATUS_COLOR.locked
       local cancel = status == "researching" or status == "queued"
       row.button.caption = cancel and {"rts.tech-cancel"} or {"rts.tech-research"}

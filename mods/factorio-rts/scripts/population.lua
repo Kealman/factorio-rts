@@ -46,7 +46,7 @@
 --   population.needs(city_id) -> {[item] = per_minute}
 -- More: population.get(id) (raw record), workforce(id), housing(id), total(force), set_draft(id, share),
 -- set_mood(city_id | force, key, delta), set_unrest(id, ticks), members(id), city_of_building(un), jobs_of(name, kind),
--- describe(id), ai_step(C, surface) (the AI governor's people part, scripts/ai/commander.lua).
+-- describe(id). The AI's people rules are scripts/ai/governor.lua's (m2-ai; the first governor here was removed in M3).
 -- Signal "rts_city_population" {city_id, pop, tier} after every growth pass that changed the whole-number population.
 -- Log lines "[rts] people: ...".
 --
@@ -114,7 +114,6 @@ local function S()
   s.members = s.members or {}
   s.loose = s.loose or {}
   s.force_moods = s.force_moods or {}
-  s.ai = s.ai or {}
   return s
 end
 
@@ -216,23 +215,43 @@ end)
 
 local function resolve_later()
   local s = storage.people
-  if s and next(s.loose) then s.resolve = true end
+  if s and next(s.loose) then
+    s.resolve = true
+    if s.resolve_list then s.resolve_more = true end -- Phase 5 M3 integration: one more pass after this one
+  end
 end
 events.on_signal(territory.SIGNAL, resolve_later)
 events.on_signal("rts_city_founded", resolve_later)
 events.on_signal("rts_city_tier", resolve_later)
 
+-- Phase 5 M3 integration (perf notes open issue 9): a pass looks at every loose building once, in unit-number order,
+-- RESOLVE_BUDGET per tick, from a snapshot of the keys. The walk over pairs(s.loose) began at the first key every tick,
+-- so past the budget it never got further (and its order was the insertion order).
 events.on(defines.events.on_tick, function()
   local s = storage.people
   if not (s and s.resolve) then return end
-  local n = 0
-  for un in pairs(s.loose) do
-    population.resolve(un)
-    n = n + 1
-    if n >= population.RESOLVE_BUDGET then return end
+  local list = s.resolve_list
+  if not list then
+    list = {}
+    for un in pairs(s.loose) do list[#list + 1] = un end
+    table.sort(list)
+    s.resolve_list, s.resolve_i, s.resolve_more = list, 0, nil
   end
+  local i, n = s.resolve_i, 0
+  while i < #list and n < population.RESOLVE_BUDGET do
+    i = i + 1
+    local un = list[i]
+    if s.loose[un] then
+      population.resolve(un)
+      n = n + 1
+    end
+  end
+  s.resolve_i = i
+  if i < #list then return end
   -- every loose building was looked at once (those still without a city stay loose)
-  s.resolve = nil
+  s.resolve_list, s.resolve_i = nil, nil
+  if not (s.resolve_more and next(s.loose)) then s.resolve = nil end
+  s.resolve_more = nil
 end)
 
 ---------------------------------------------------------------------------
@@ -500,6 +519,7 @@ events.on_signal("rts_city_lost", function(d)
     end
     s.members[d.city] = nil
     s.resolve = true
+    if s.resolve_list then s.resolve_more = true end -- Phase 5 M3 integration: one more pass after this one
   end
 end)
 
@@ -797,320 +817,6 @@ function population.describe(city_id)
     .. "employed %.0f, free %.0f, recruits %d, drafted %d", c.id, c.force, c.tier, math.floor(P.pop), P.housing,
     P.growth, table.concat(parts, " "), P.power and "ok" or "NO", math.floor(P.happiness + 0.5),
     population.workforce(city_id), st.jobs or 0, st.employed or 0, st.free or 0, st.recruits or 0, P.drafted)
-end
-
----------------------------------------------------------------------------
--- AI governor: the people part (scripts/ai/commander.lua calls population.ai_step every commander run)
----------------------------------------------------------------------------
--- The AI's builder factory makes the new buildings for its construction queue (orders_data.FACTORY_RECIPE).
-local ai_data, ai_layout, ai_construction
-do
-  local ok, mod = pcall(require, "scripts.ai.orders_data")
-  if ok and type(mod) == "table" then ai_data = mod end
-  ok, mod = pcall(require, "scripts.ai.layout")
-  if ok and type(mod) == "table" then ai_layout = mod end
-  ok, mod = pcall(require, "scripts.ai.construction")
-  if ok and type(mod) == "table" then ai_construction = mod end
-  if ai_data and ai_data.FACTORY_RECIPE then
-    for name in pairs(PB.buildings) do ai_data.FACTORY_RECIPE[name] = name end
-  end
-  -- a house is a small construction job (batched like belts: up to small_batch per job), so a burst of houses does not
-  -- take the build order's one-building-per-period slots
-  if ai_construction and ai_construction.SMALL then ai_construction.SMALL["rts-house"] = true end
-  local deps_ok, deps = pcall(require, "scripts.ai.deps")
-  if deps_ok and type(deps) == "table" then deps.population = population end
-end
-
-local AI = PB.ai
-
-local function plan_state(C, key)
-  local e = key and C.plan[key]
-  if not e then return "gone" end
-  if e.status == "built" then return (e.entity and e.entity.valid) and "built" or "gone" end
-  if e.status == "bad" then return "gone" end
-  return "pending"
-end
-
--- Count built and pending entries of a list of plan keys (dropping the gone ones).
-local function count_keys(C, keys)
-  local built, pending, keep = 0, 0, {}
-  for _, key in ipairs(keys) do
-    local st = plan_state(C, key)
-    if st == "built" then built = built + 1 elseif st == "pending" then pending = pending + 1 end
-    if st ~= "gone" then keep[#keep + 1] = key end
-  end
-  return built, pending, keep
-end
-
--- Queue a plan entry at the front of the AI's construction queue: houses and food are cheap and nothing grows without
--- them, while the queue holds 50-90 belts and buildings of the build order.
-local function queue_first(C, key)
-  if not ai_construction.queue(C, key) then return end
-  local q = C.queue
-  if q[#q] == key then
-    table.remove(q)
-    table.insert(q, 1, key)
-  end
-end
-
-local function queue_near_cc(C, surface, name)
-  local pos, pole = ai_layout.find_spot(C, surface, name, "cc")
-  if not pos then return nil end
-  if pole then queue_first(C, ai_construction.add(C, {name = ai_layout.POLE, x = pole.x, y = pole.y})) end
-  local key = ai_construction.add(C, {name = name, x = pos.x, y = pos.y})
-  queue_first(C, key)
-  return key, pos
-end
-
--- A spot for `name` on city c's land within AI.house_radius tiles (growing rings), behind the city (away from the
--- front: C.frame.fx), not on the AI's planned tiles. Unpowered buildings only (houses).
-local function queue_near(C, surface, name, c)
-  local cx, cy = math.floor(c.position.x), math.floor(c.position.y)
-  local fx = (C.frame and C.frame.fx) or 1
-  local pref = {x = cx - fx * 16, y = cy + 12}
-  for _, r in ipairs(AI.house_radius) do
-    local pos = ai_layout.find_spot_in(C, surface, name, cx - r, cy - r, cx + r, cy + r, pref)
-    if pos then
-      if population.city_at(pos) == c.id and territory.can_build(C.force, name, pos) then
-        local key = ai_construction.add(C, {name = name, x = pos.x, y = pos.y})
-        queue_first(C, key)
-        return key, pos
-      end
-    end
-  end
-  return nil
-end
-
-local function set_target(city_id, item, n)
-  local cur = districts.make_targets(city_id)
-  if cur[item] ~= n then districts.set_make_target(city_id, item, n) end
-end
-
---- One governor pass for AI commander C (Nation mode): draft by doctrine, labor priorities, pins, needs keeps
---- (keep_minutes of need), goods and brick targets at the capital, farms and bakeries at the capital per farm_per
---- residents of the nation, a house in a city whose housing runs short, and a supply hauler from the capital to every
---- other city (the capital exports rations and goods above its own keep). Houses from house_after, the rest from
---- start_after; houses and food go to the front of the construction queue.
-function population.ai_step(C, surface)
-  if not (territory.nation() and ai_layout and ai_construction) then return end
-  local m = storage.match
-  if not (m and m.tick_started) then return end
-  local s = S()
-  local A = s.ai[C.force]
-  if not A then
-    A = {houses = {}, farms = {}, bakeries = {}, haulers = {}, next = 0, house_at = 0}
-    s.ai[C.force] = A
-  end
-  if game.tick < A.next then return end
-  A.next = game.tick + AI.period
-  local age = game.tick - m.tick_started
-  if age < math.min(AI.start_after, AI.house_after) * 60 then return end
-  local food_time = age >= AI.start_after * 60
-  local lab = population.labor
-  if not food_time then lab = nil end -- before start_after: houses only
-  if lab and not A.priorities then
-    lab.set_priorities(C.force, AI.priorities)
-    A.priorities = true
-  end
-  -- pins: the builder, the workshop and the works factory, the first labs (their buildings may change)
-  if lab then
-    local want, factories, labs = {}, {}, {}
-    for un, rec in buildings.for_force(C.force, "factory") do factories[#factories + 1] = {un, rec} end
-    table.sort(factories, function(a, b) return a[1] < b[1] end)
-    local fixed = 0
-    for _, f in ipairs(factories) do
-      if f[2].recipe_mode == "auto" then
-        want[f[1]] = f[2]
-      elseif fixed < 2 then
-        fixed = fixed + 1
-        want[f[1]] = f[2]
-      end
-    end
-    for un, rec in buildings.for_force(C.force, "lab") do labs[#labs + 1] = {un, rec} end
-    table.sort(labs, function(a, b) return a[1] < b[1] end)
-    for i = 1, math.min(AI.pin_labs, #labs) do want[labs[i][1]] = labs[i][2] end
-    A.pins = A.pins or {}
-    for un in pairs(A.pins) do
-      local rec = buildings.get(un)
-      if not want[un] then
-        if rec then lab.pin(rec.entity, false) end
-        A.pins[un] = nil
-      end
-    end
-    for un, rec in pairs(want) do
-      if not A.pins[un] then
-        lab.pin(rec.entity, true)
-        A.pins[un] = true
-      end
-    end
-  end
-  local draft = PB.draft.doctrine[C.doctrine or ""] or PB.draft.default
-  local nation = storage.nations and storage.nations[C.force]
-  local capital = nation and cities.get(nation.capital)
-  if not capital then return end
-  local list = cities.for_force(C.force)
-  local total, goods_need = 0, 0
-  for _, c in ipairs(list) do
-    local P = population.get(c.id)
-    if P and food_time then
-      A.draft_set = A.draft_set or {}
-      if not A.draft_set[c.id] then -- once per city: the doctrine's draft (a player may change it later)
-        A.draft_set[c.id] = true
-        population.set_draft(c.id, draft)
-      end
-      total = total + P.pop
-      local needs = population.needs(c.id)
-      for _, spec in ipairs(NEEDS) do
-        local per = needs[spec.item]
-        if per and logistics.policy(c.center) then
-          local keep = math.max(spec.keep, math.ceil(per * AI.keep_minutes))
-          local pol = logistics.policy(c.center)
-          if pol.keep[spec.item] ~= keep then logistics.set_policy(c.center, "keep", spec.item, keep) end
-        end
-      end
-      goods_need = goods_need + (needs[population.GOODS] or 0)
-    end
-  end
-  local queued = false
-  if food_time then
-    -- goods and bricks at the capital (the works factory makes them on Auto)
-    if goods_need > 0 then
-      set_target(capital.id, population.GOODS, math.max(20, math.ceil(goods_need * AI.keep_minutes)))
-      set_target(capital.id, "stone-brick", AI.brick_target)
-    end
-    if AI.house_stock and AI.house_stock > 0 then set_target(capital.id, "rts-house", AI.house_stock) end
-    -- the capital exports food and goods above its own keep when there is another city to feed
-    local pol = logistics.policy(capital.center)
-    if pol and #list > 1 then
-      for _, spec in ipairs(NEEDS) do
-        local want = (pol.keep[spec.item] or spec.keep) + AI.export_extra
-        if pol.export_above[spec.item] ~= want then
-          logistics.set_policy(capital.center, "export_above", spec.item, want)
-        end
-      end
-    end
-    -- farms and bakeries at the capital
-    local farms_built, farms_pending
-    farms_built, farms_pending, A.farms = count_keys(C, A.farms)
-    local bakeries_built, bakeries_pending
-    bakeries_built, bakeries_pending, A.bakeries = count_keys(C, A.bakeries)
-    local slots = PB.farm_slots[capital.tier] or PB.farm_slots[1]
-    local farms_want = math.min(slots, math.max(1, math.ceil(total / AI.farm_per)))
-    local bakeries_want = math.max(1, math.ceil(farms_want / AI.bakery_farms))
-    if farms_built + farms_pending < farms_want and farms_pending == 0 then
-      local key = queue_near_cc(C, surface, "rts-farm")
-      if key then
-        A.farms[#A.farms + 1] = key
-        queued = true
-        util.log("ai %s: people: farm %d of %d queued (%d residents)", C.force, farms_built + farms_pending + 1,
-          farms_want, math.floor(total))
-      end
-    end
-    if not queued and bakeries_built + bakeries_pending < bakeries_want and bakeries_pending == 0
-       and farms_built + farms_pending > 0 then
-      local key = queue_near_cc(C, surface, "rts-bakery")
-      if key then
-        A.bakeries[#A.bakeries + 1] = key
-        queued = true
-        util.log("ai %s: people: bakery %d of %d queued", C.force, bakeries_built + 1, bakeries_want)
-      end
-    end
-  end -- food_time
-  -- the goods works: a second factory on Auto at the capital (make targets, like the age-up works factory)
-  if food_time and AI.goods_works then
-    local st = A.goods_key and plan_state(C, A.goods_key)
-    if st == "built" then
-      local e = C.plan[A.goods_key].entity
-      local rec = e and buildings.get(e.unit_number)
-      if rec and rec.recipe_mode ~= "auto" then production.set_auto(rec, true) end
-    elseif st ~= "pending" and not queued then
-      A.goods_key = queue_near_cc(C, surface, "rts-factory")
-      if A.goods_key then
-        queued = true
-        util.log("ai %s: people: goods works queued", C.force)
-      end
-    end
-  end
-  -- houses where free housing runs short and the city is fed
-  local houses_built, houses_pending
-  houses_built, houses_pending, A.houses = count_keys(C, A.houses)
-  if not queued and houses_pending < AI.max_queued and game.tick >= A.house_at then
-    local best, bfree
-    for _, c in ipairs(list) do
-      local P = population.get(c.id)
-      local r = P and P.needs[population.RATIONS]
-      if P and r and r.met >= PB.hold_at then
-        local housing = population.housing(c.id)
-        local free = housing - P.pop
-        -- before start_after: keep free_housing spare (the capital grows ahead of its jobs); from then on: a house
-        -- while the housing is below the residents the city's jobs ask for plus job_margin (the army's recruits). The
-        -- free-housing rule alone grew an AI capital to 1,077 residents by 59:00, and their goods took its iron.
-        local short
-        if lab then
-          local st = lab.city_stats(c.id) or {}
-          short = (st.jobs or 0) / PB.workforce + AI.job_margin - housing
-        else
-          short = AI.free_housing - free
-        end
-        if short > 0 and (not bfree or free < bfree) then best, bfree = c, free end
-      end
-    end
-    if best then
-      local key = queue_near(C, surface, "rts-house", best)
-      if key then
-        A.houses[#A.houses + 1] = key
-        A.house_at = game.tick + AI.house_gap * 60
-        util.log("ai %s: people: house queued in city %d (%d free housing, %d houses built)", C.force, best.id,
-          math.floor(bfree), houses_built)
-      end
-    end
-  end
-  -- a supply hauler from the capital to every other city
-  if not food_time then return end
-  C.people_haulers = math.max(0, #list - 1)
-  local L = logistics
-  local cc_un = capital.center
-  for _, c in ipairs(list) do
-    if c.id ~= capital.id then
-      local hun = A.haulers[c.id]
-      local h = hun and L.hauler(hun)
-      if not (h and h.mode == "manual" and h.pickup == cc_un and h.dropoff == c.center) then
-        A.haulers[c.id] = nil
-        for un, hh in L.haulers_of(C.force) do
-          local taken = false
-          for _, v in pairs(A.haulers) do if v == un then taken = true end end
-          if hh.mode == "auto" and not taken then
-            L.set_pickup(un, cc_un)
-            L.set_dropoff(un, c.center)
-            A.haulers[c.id] = un
-            util.log("ai %s: people: hauler #%d supplies city %d from the capital", C.force, un, c.id)
-            break
-          end
-        end
-      end
-    end
-  end
-end
-
---- "residents 312 in 2 cities, farms 2+0, bakeries 1+0, houses 5+1, haulers 1" (autotest minute line).
-function population.ai_describe(force_name)
-  local s = storage.people
-  local A = s and s.ai[force_name]
-  local n, total = 0, 0
-  for _, P in pairs(storage.population or {}) do
-    if P.force == force_name then
-      n = n + 1
-      total = total + P.pop
-    end
-  end
-  local parts = {string.format("residents %d in %d cities", math.floor(total), n)}
-  if A then
-    local h = 0
-    for _ in pairs(A.haulers) do h = h + 1 end
-    parts[#parts + 1] = string.format("farms %d, bakeries %d, houses %d planned, supply haulers %d", #A.farms,
-      #A.bakeries, #A.houses, h)
-  end
-  return table.concat(parts, ", ")
 end
 
 -- One log line per city and minute ("[rts] people minute N: ..."): the tests and the balance passes read it.

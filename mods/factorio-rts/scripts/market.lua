@@ -1376,7 +1376,9 @@ local function ai_buy(C, A, S, port_un, rows)
   local seen = {}
   for _, row in ipairs(rows) do
     if row.target and row.short > 0 and (row.made == 0 or row.short > row.made * AI.buy_horizon)
-       and not (row.hint and row.hint.city) then
+       and not (row.hint and row.hint.city)
+       -- Phase 5 M3 ai (H5, applied by m3-integ): plates and ores the nation makes are never bought (balance no_buy)
+       and not (AI.no_buy and AI.no_buy[(row.hint and row.hint.item) or row.item]) then
       local item = (row.hint and row.hint.item) or row.item
       seen[item] = true
       A.short[item] = A.short[item] or now

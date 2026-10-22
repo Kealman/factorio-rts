@@ -546,6 +546,16 @@ function selection.get(player_index)
   local p = state(player_index)
   if prune(p.selection) then sync_boxes(player_index, p) end
   local out = {}
+  -- Phase 5 M3 integration (perf notes open issue 9): a Nation match hands the units out in unit-number order (the
+  -- order decides formation ties and the command queue); Skirmish keeps the insertion order its autotests compare
+  local m = storage.match
+  if m and m.config and m.config.mode == "nation" then
+    local uns = {}
+    for un in pairs(p.selection) do uns[#uns + 1] = un end
+    table.sort(uns)
+    for i, un in ipairs(uns) do out[i] = storage.units[un].entity end
+    return out
+  end
   for un in pairs(p.selection) do out[#out + 1] = storage.units[un].entity end
   return out
 end

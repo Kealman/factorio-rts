@@ -18,7 +18,7 @@
 -- Flows (balance.nation.treasury, every STEP ticks one tenth-of-a-minute... a sixth of the per-minute rate):
 --   tax       residents x 0.2 x tax level (0.6 / 1.0 / 1.4) x happiness factor (0.5 at 0 .. 1.2 at 100); residents and
 --             happiness per city from scripts/population.lua when it is loaded (population.of(city).pop / .happiness,
---             or storage.population[city]), else a fallback by city tier; hard AI +20 %
+--             or storage.population[city]), else a fallback by city tier (Phase 5 M3: no hard AI bonus)
 --   buildings 1 per Age I building, 4 per Age II building (balance.nation.economy.buildings), half for a crafting
 --             machine without a recipe or switched off by script; walls, stockpiles, solar, accumulators, rolling
 --             stock, project sites, the Command Center, City Centers and trade posts pay nothing
@@ -394,11 +394,6 @@ local function happiness_factor(h)
   return hb.at0 + (hb.at100 - hb.at0) * h / 100
 end
 
-local function is_hard_ai(force_name)
-  local C = storage.ai and storage.ai[force_name]
-  return C ~= nil and C.difficulty == "hard"
-end
-
 -- Phase 5 M3 age3 (m3-perf's numbers: the census of every building and unit in one tick took up to 8 ms on a 4-nation
 -- 2048 match): buildings and units are counted in CENSUS_SLICES slices (unit_number % slices), one every
 -- STEP / CENSUS_SLICES ticks, into storage.treasury_census.partial; the last slice makes it the `done` census that the
@@ -543,7 +538,7 @@ local function step()
     local happy = c.pop > 0 and c.happy_w / c.pop or TB.tax.default_happiness
     N.pop, N.happiness, N.counts = c.pop, happy, c
     local tax = c.pop * TB.tax.per_resident * (TB.tax.levels[N.tax] or 1) * happiness_factor(happy)
-    if is_hard_ai(f) then tax = tax * (1 + TB.tax.hard_bonus) end
+    -- Phase 5 M3 ai (H2, applied by m3-integ; D7): no hard tax bonus any more, hard plays better (ai/difficulty.lua)
     if treasury.tax_bonus then tax = tax * (1 + treasury.tax_bonus(f)) end -- Phase 5 M3 age3: gold (scripts/rare.lua)
     local army = math.max(0, c.supply - TB.army.free) * TB.army.per_supply
     local transport = c.locos * TB.transport.locomotive + c.rail_tiles / TB.transport.rail_tiles

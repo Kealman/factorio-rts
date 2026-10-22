@@ -258,7 +258,8 @@ local function refresh_depot(player, g)
   if el.deploy_why and el.deploy_why.valid then
     local why_lines = {""}
     if why_cargo and why_cargo == why_troop then
-      why_lines[2] = {"rts.railgui-deploy-failed", {"rts.rails-why-" .. why_cargo}}
+      -- Phase 5 M3 integration: "Cannot deploy a train" read as if it covered Deploy artillery train under it
+      why_lines[2] = {"rts.railgui-deploy-why-both", {"rts.rails-why-" .. why_cargo}}
     else
       if why_cargo then why_lines[#why_lines + 1] = {"rts.railgui-deploy-why", {"rts.rails-why-" .. why_cargo}} end
       if why_troop then

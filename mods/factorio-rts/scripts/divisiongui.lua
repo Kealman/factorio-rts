@@ -69,7 +69,7 @@ local CITY_LIST, CITY_LIST_TOP, CITY_ROW = "rts_citygui_list", 128, 26
 local BOTTOM_RESERVE = 330     -- kept free above the bottom edge: selection panel (126 + 8) and the console above it
 local LIST_MIN, LIST_MAX = 96, 420
 local BAR_WIDTH = WIDTH - 16 - 12 - 4
-local NAME_WIDTH = 180
+local NAME_WIDTH = 220 -- Phase 5 M3 integration: "Mercenaries (Port of X)" was cut at 180 (the count needs about 40)
 local STANCE_WIDTH = math.floor((BAR_WIDTH - 2 * 4) / 3) -- three stance buttons share the card width
 local STANCE_TIPS = {hold = {"rts-div.stance-hold-tooltip"}, advance = {"rts-div.stance-advance-tooltip", 40},
                      screen = {"rts-div.stance-screen-tooltip", 20, 25}}

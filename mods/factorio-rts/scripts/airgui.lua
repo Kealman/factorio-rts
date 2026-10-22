@@ -26,6 +26,7 @@ airgui.FRAME = "rts_airfield_panel"
 airgui.REFRESH = 60
 airgui.WIDTH = 500
 airgui.ARM_TICKS = 30 * 60 -- an armed patrol is forgotten after this long
+airgui.TOP = 282 -- Phase 5 M3 integration: GUI units from the top (minimap 244 + the world generation line)
 local A = balance.nation.air
 local GREY = {r = 0.7, g = 0.7, b = 0.7}
 local YELLOW = {r = 1, g = 0.85, b = 0.3}
@@ -115,8 +116,9 @@ function airgui.open(player)
   hint.style.font_color = GREY
   ps.gui = g
   -- right edge, under the HUD's minimap (8 + 228 + 8 GUI units from the top): the map centre stays visible
+  -- Phase 5 M3 integration: and under the "World: N % generated" line (rts_worldgen_progress, about 36 units more)
   local res, scale = player.display_resolution, player.display_scale
-  frame.location = {math.max(0, math.floor(res.width - (airgui.WIDTH + 8) * scale)), math.floor(244 * scale)}
+  frame.location = {math.max(0, math.floor(res.width - (airgui.WIDTH + 8) * scale)), math.floor(airgui.TOP * scale)}
   airgui.refresh(player)
   util.log("air: panel opened player=%d", player.index)
   return frame

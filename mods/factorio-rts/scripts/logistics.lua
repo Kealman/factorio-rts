@@ -1500,8 +1500,16 @@ function logistics.init()
   alerts()
   -- policies for buildings registered before this module existed (saves, on_configuration_changed)
   if storage.buildings then
+    -- Phase 5 M3 integration (perf notes open issue 9): setup_hub registers composite parts, so the walk goes over a
+    -- sorted snapshot of the records instead of inserting into the table it traverses
+    local list = {}
     for un, rec in buildings.all() do
-      if rec.kind == "hub" then setup_hub(un, rec) elseif rec.kind == "cc" then ensure_policy(un, rec) end
+      if rec.kind == "hub" or rec.kind == "cc" then list[#list + 1] = un end
+    end
+    table.sort(list)
+    for _, un in ipairs(list) do
+      local rec = storage.buildings[un]
+      if rec and rec.kind == "hub" then setup_hub(un, rec) elseif rec and rec.kind == "cc" then ensure_policy(un, rec) end
     end
   end
   invalidate()

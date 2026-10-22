@@ -134,6 +134,7 @@ local P4 = {
   -- ages, every hotkey; P4.KEYS are its panel keys)
   HELP_NATION = {"rts.help-nation-1", "rts.help-2", "rts.help-nation-2", "rts.help-nation-3", "rts.help-nation-4",
                  "rts.help-nation-5", "rts.help-nation-6",
+                 "rts-age3.help-nation-age3", -- Phase 5 M3 integration: Age III, Space Program, rare bonuses, sinks
                  "rts-war3.help-nation-fronts", -- Phase 5 M3 war2: fronts, hold line, fort belts, war trains
                  "rts.help-nation-keys"},
   DEMOLISH_HEIGHT = 22, -- the building page's Demolish button (header row)
@@ -161,7 +162,7 @@ for _, name in ipairs({"rts-supply-crate", "rts-supply-crate-ii", "rts-field-dep
 -- Phase 5 M3 air: the airfield, the AA turret and the plane kits (Aviation, Air Force); the Nation help page's air line
 for _, name in ipairs({"rts-airfield", "rts-aa-turret", "rts-scout-plane-kit", "rts-bomber-kit", "rts-interceptor-kit"}) do
   P4.NATION_ONLY[name] = true end
-P4.HELP_NATION[#P4.HELP_NATION + 1] = "rts-air.help-nation-air"
+table.insert(P4.HELP_NATION, #P4.HELP_NATION, "rts-air.help-nation-air") -- Phase 5 M3 integration: before the keys
 -- Phase 5 M3 war2: the gate, the artillery wagon, armoured stock and rail shells
 for _, name in ipairs({"rts-gate", "rts-artillery-wagon-kit", "rts-armoured-locomotive-kit", "rts-armoured-wagon-kit",
                        "rts-rail-shell"}) do
@@ -2264,7 +2265,12 @@ function hud.toggle_help(player, source)
   bar.add({type = "sprite-button", name = PREFIX .. "help_close", style = "frame_action_button",
            sprite = "utility/close", tooltip = {"rts.help-close-tooltip"}, tags = {rts_hud = "help"}})
   local inner = frame.add({type = "frame", direction = "vertical", style = "inside_shallow_frame_with_padding"})
-  inner = inner.add({type = "flow", direction = "vertical"}) -- a frame style has no vertical_spacing
+  -- Phase 5 M3 integration: the Nation page outgrew 1280x800 in Russian; it scrolls inside 80 % of the window height
+  local res, scale = player.display_resolution, player.display_scale
+  local pane = inner.add({type = "scroll-pane", direction = "vertical", horizontal_scroll_policy = "never",
+                          vertical_scroll_policy = "auto"})
+  pane.style.maximal_height = math.max(300, math.floor(res.height / scale * 0.8) - 60)
+  inner = pane.add({type = "flow", direction = "vertical"}) -- a frame style has no vertical_spacing
   inner.style.vertical_spacing = 6
   -- Phase 5 M2 integration: a Nation match (or the lobby with Mode = Nation) gets the Nation page with every hotkey
   local lobby_mode = storage.lobby and storage.lobby.pending and storage.lobby.pending.mode
@@ -2280,7 +2286,7 @@ function hud.toggle_help(player, source)
   for _, key in ipairs(keys) do
     local line = inner.add({type = "label", caption = {key}})
     line.style.single_line = false
-    line.style.maximal_width = P4.HELP_WIDTH - 48
+    line.style.maximal_width = P4.HELP_WIDTH - 60 -- Phase 5 M3 integration: room for the scroll bar
   end
   player.opened = frame
   util.log("hud help opened player=%d (%s): %d lines%s", player.index, source or "?", #keys, nation and " (nation)" or "")

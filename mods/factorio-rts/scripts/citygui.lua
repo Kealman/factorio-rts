@@ -273,7 +273,7 @@ local function show_staff(player, g)
   -- Phase 5 M3 age3: the jobs after the building's automation kits
   if lab.job_factor then jobs = jobs * lab.job_factor(rec.entity) end
   el.text.caption = {"rts-people.staff-line", math.floor(step * 100 + 0.5), string.format("%.1f", step * jobs),
-                     string.format("%g", math.floor(jobs * 100 + 0.5) / 100),
+                     string.format("%g", math.floor(jobs * 10 + 0.5) / 10), -- Phase 5 M3 integration: "7.8 of 7.8"
                      c and cities.display_name(c) or {"rts-people.staff-no-city"},
                      family_name(lab.family(rec.entity.name, rec.kind))}
   el.text.style.font_color = step <= 0 and COLOR.red or (step < 1 and COLOR.yellow or COLOR.white)

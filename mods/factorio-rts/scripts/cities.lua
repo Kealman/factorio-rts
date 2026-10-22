@@ -625,12 +625,26 @@ local function site_candidates(C, home)
   return list
 end
 
+-- Phase 5 M3 integration: required at load, not in pick_site (Factorio refuses require outside control.lua parsing:
+-- "Require can't be used outside of control.lua parsing" ended every Nation match whose AI fell back to this function,
+-- seed 701 at 5:00); match.lua loads it before this file
+local WORLDGEN = require("scripts.worldgen")
+
 local function pick_site(C, surface, home)
   local half = match.arena_half()
   local world = storage.world
   if world and type(world.size) == "number" then half = world.size / 2 end
+  local worldgen = WORLDGEN -- Phase 5 M3 integration
   for _, cand in ipairs(site_candidates(C, home)) do
-    local p = surface.find_non_colliding_position(cities.CENTER, {cand.x, cand.y}, 24, 1, true)
+    -- Phase 5 M3 integration (world3 notes open issue 4): a candidate on ground that is not generated yet (a 4096
+    -- world fills in the background) is asked for and skipped this time
+    local p
+    if world and world.surface and not worldgen.generated(cand) then
+      local n = worldgen.request_area(C.force, {{cand.x - 64, cand.y - 64}, {cand.x + 64, cand.y + 64}})
+      util.log("ai %s: city site %s (%s) not generated yet: %d chunks requested", C.force, util.pos_str(cand), cand.why, n)
+    else
+      p = surface.find_non_colliding_position(cities.CENTER, {cand.x, cand.y}, 24, 1, true)
+    end
     if p then
       p = {x = math.floor(p.x + 0.5), y = math.floor(p.y + 0.5)}
       local inside = math.abs(p.x) < half - 12 and math.abs(p.y) < half - 12
@@ -694,6 +708,10 @@ function cities.ai_step(C, surface)
   local towns = ai_deps and ai_deps.towns or nil
   local site, why
   if towns and storage.world then site, why = towns.pick_site(C, surface, home) end
+  if why == "pending" then -- Phase 5 M3 ai (perf): the town site search runs as a planning job; this was no try
+    A.tries = A.tries - 1
+    return
+  end
   if not site then site, why = pick_site(C, surface, home) end
   if not site then
     A.retry_at = game.tick + 60 * 60

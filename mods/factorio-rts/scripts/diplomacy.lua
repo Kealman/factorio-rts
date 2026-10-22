@@ -410,11 +410,32 @@ local function commander_of(f)
   return ai and ai.get and ai.get(f) or nil
 end
 
---- True when a human plays this force (it has connected players): proposals to it wait for an answer.
+--- True when a human plays this force: proposals to it wait for an answer. Phase 5 M3 integration (perf notes open
+--- issue 9): in a Nation match a flag (D.human) set at the match start for the forces with players, and when a player
+--- joins a nation later; a disconnect no longer hands the nation's diplomacy to the AI. Outside a Nation match (or a
+--- save from before the flag): a force with connected players.
 function diplomacy.is_human(f)
-  local force = game.forces[name_of(f)]
+  local name = name_of(f)
+  local D = storage.diplomacy
+  if D and D.nation and D.human then return D.human[name] == true end
+  local force = game.forces[name]
   return force ~= nil and #force.connected_players > 0
 end
+
+local function mark_human(force)
+  local D = storage.diplomacy
+  if not (D and D.nation and D.human and force and D.index[force.name]) or D.human[force.name] then return end
+  D.human[force.name] = true
+  util.log("diplomacy: %s is played by a human from tick %d", force.name, game.tick)
+end
+events.on(defines.events.on_player_joined_game, function(e)
+  local p = game.get_player(e.player_index)
+  if p then mark_human(p.force) end
+end)
+events.on(defines.events.on_player_changed_force, function(e)
+  local p = game.get_player(e.player_index)
+  if p and p.connected then mark_human(p.force) end
+end)
 
 --- True when an AI commander decides for this force (and no human plays it).
 function diplomacy.is_ai(f)
@@ -1078,11 +1099,14 @@ function diplomacy.start_match()
   local m = storage.match
   if not (m and m.config and m.config.mode == "nation") then return end
   D.nation = true
+  D.human = {} -- Phase 5 M3 integration: who plays a nation is fixed at the start (and when a player joins it)
   for _, f in ipairs(match.forces()) do
     D.forces[#D.forces + 1] = f
     D.index[f] = true
     D.war_ticks[f] = 0
     D.ai[f] = {declined = {}}
+    local force = game.forces[f]
+    if force and #force.connected_players > 0 then D.human[f] = true end
   end
   local start = B.start_state
   for _, a in ipairs(D.forces) do

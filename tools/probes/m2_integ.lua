@@ -71,6 +71,10 @@ local function patch_share(values)
   end
 end
 
+-- Phase 5 M3 integration: the treasury census runs in 6 slices (m3-age3, treasury.lua): a new building counts in the
+-- step after the next full census, up to 1,200 ticks later (the M2 fixture waited 610)
+local CENSUS_WAIT = 1210
+
 local STEPS = {}
 local function step(fn) STEPS[#STEPS + 1] = fn end
 
@@ -81,7 +85,7 @@ step(function(s)
   s.home = cities.get(s.cap).position
   local N = treasury.get(F)
   s.up0 = N.rates and N.rates.buildings or 0
-  return 610
+  return CENSUS_WAIT
 end)
 step(function(s)
   local N = treasury.get(F)
@@ -89,13 +93,13 @@ step(function(s)
   local h = s.home
   s.house = place("rts-house", {x = h.x - 30, y = h.y + 20}, F)
   s.farm = place("rts-farm", {x = h.x - 30, y = h.y - 20}, F)
-  return 610
+  return CENSUS_WAIT
 end)
 step(function(s)
   local up1 = treasury.get(F).rates.buildings or 0
   s.factory = place("rts-factory", {x = s.home.x + 30, y = s.home.y + 20}, F)
   s.up1 = up1
-  return 610
+  return CENSUS_WAIT
 end)
 step(function(s)
   local up2 = treasury.get(F).rates.buildings or 0

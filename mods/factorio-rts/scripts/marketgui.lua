@@ -149,7 +149,7 @@ function marketgui.open(player)
   local cap = row3.add({type = "label", caption = ""})
   row3.add({type = "label", caption = {"rts-treasury.market-port"}})
   local port = row3.add({type = "drop-down", items = {}, tags = {rts_market = "port"}})
-  port.style.width = 220
+  port.style.width = 280 -- Phase 5 M3 integration: "Free City of Mardor (×1.30, +0)" was cut at 220
   local port_hint = top.add({type = "label", caption = ""})
   port_hint.style.single_line = false
   port_hint.style.maximal_width = marketgui.WIDTH - 40

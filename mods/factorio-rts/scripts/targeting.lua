@@ -138,7 +138,7 @@ end
 
 --- Make `entity` (a protected rail, signal or pole) destructible again now: an explicit attack order calls it.
 function targeting.expose(entity)
-  if not (entity and entity.valid and PROTECTED[entity.type]) then return end
+  if not (entity and entity.valid) or entity.destructible then return end -- Phase 5 M3 integration: buildings too
   local s = storage.targeting
   if not s then return end
   for i = #s.protected, 1, -1 do
@@ -150,10 +150,89 @@ function targeting.expose(entity)
   end
 end
 
+---------------------------------------------------------------------------
+-- Phase 5 M3 integration: collateral damage (Nation mode; M2 integration open issue 2)
+---------------------------------------------------------------------------
+-- A unit that fights an enemy unit (or attacks one by order) hits everything around its target with splash: belts,
+-- inserters, pipes and the plain buildings of a city (factories, extractors, smelters, stockpiles, labs, houses...)
+-- died in fights they had no part in. Rule: damage to an entity that is not a military target (walls, gates, units
+-- and rolling stock excepted) is undone when it comes from a careful unit (not a raider, not a plane) whose current
+-- attack aims at another entity: its distraction command's target, else its own attack command's target. Explicit
+-- attacks (the unit record's target), the strikes of attack-move re-targets and of divisions (D.order.strike,
+-- D.strike) and area commands without a target (a unit clearing a point, an obstacle in its path) still destroy it,
+-- so cities are still taken by siege and buildings razed on purpose. storage.targeting.collateral counts the undone hits.
+targeting.COLLATERAL_TYPES = {"transport-belt", "underground-belt", "splitter", "loader", "loader-1x1", "inserter",
+  "pipe", "pipe-to-ground"}
+targeting.COLLATERAL_SKIP = {wall = true, gate = true, unit = true, ["spider-unit"] = true, ["spider-vehicle"] = true,
+  character = true, car = true, locomotive = true, ["cargo-wagon"] = true, ["fluid-wagon"] = true,
+  ["artillery-wagon"] = true, tree = true, ["simple-entity"] = true}
+
+-- What a commandable is fighting: (target, fighting). A distraction is a fight (an attack on its target, or an
+-- attack_area the engine gives a unit or group distracted by an enemy: no target); an attack command aims at its target.
+local function aim(cm)
+  local dc = cm.distraction_command
+  if dc then
+    if dc.target and dc.target.valid then return dc.target, true end
+    return nil, true
+  end
+  local c = cm.has_command and cm.command
+  if c and c.type == CMD.attack and c.target and c.target.valid then return c.target, true end
+  return nil, false
+end
+
+-- A unit's own fight, else (a member of a unit group: a division) its group's.
+local function aimed_at(cause)
+  local cm = cause.commandable
+  if not cm then return nil, false end
+  local t, fighting = aim(cm)
+  if t or fighting then return t, fighting end
+  local g = cm.parent_group
+  if g and g.valid then return aim(g) end
+  return nil, false
+end
+
+--- True when this hit on `ent` is collateral damage to undo (header above).
+local function collateral(e, ent)
+  if ent.is_military_target or targeting.COLLATERAL_SKIP[ent.type] then return false end
+  local cause = e.cause
+  if not (cause and cause.valid and cause.unit_number) then return false end
+  local u = balance.units[cause.name]
+  if not u or u.kind == "raider" or u.air then return false end -- sabotage; bombers raze
+  local rec = storage.units and storage.units[cause.unit_number]
+  if not rec or rec.target == ent then return false end -- an explicit attack or a re-target strike on it
+  local meta = storage.division_meta
+  local did = meta and meta.member and meta.member[cause.unit_number]
+  local D = did and storage.divisions and storage.divisions[did]
+  if D then -- a division striking a building hits that building only
+    local st = (D.strike and D.strike.entity) or (D.order and D.order.strike)
+    if st == ent then return false end
+    if st and st.valid then return true end
+  end
+  local t, fighting = aimed_at(cause)
+  if t then return t ~= ent end
+  if fighting then return true end -- an area fight the engine started (distracted by an enemy)
+  -- no fight: an area command clears what it was sent to clear (a point, an obstacle); its order's target, when that
+  -- is another entity, makes the hit collateral
+  return rec.target ~= nil and rec.target.valid and rec.target ~= ent
+end
+
 local events = require("scripts.events")
 events.on(defines.events.on_entity_damaged, function(e)
   local ent = e.entity
-  if not (ent and ent.valid and PROTECTED[ent.type]) or not targeting.nation() then return end
+  if not (ent and ent.valid) or not targeting.nation() then return end
+  if not PROTECTED[ent.type] then -- Phase 5 M3 integration: collateral damage
+    if ent.force ~= e.force and e.force and collateral(e, ent) then
+      ent.health = ent.health + e.final_damage_amount
+      local s = tstate()
+      s.collateral = (s.collateral or 0) + 1
+      -- indestructible for PROTECT_TICKS, so the fight's area attack drops it and the units walk on (as for rails)
+      if ent.destructible then
+        ent.destructible = false
+        s.protected[#s.protected + 1] = {entity = ent, until_tick = game.tick + targeting.PROTECT_TICKS}
+      end
+    end
+    return
+  end
   local by = e.force
   if not by or by == ent.force then return end
   local cause = e.cause
@@ -197,7 +276,10 @@ function targeting.install_damage_filters()
   local out = {}
   for i, f in ipairs(filters) do out[i] = f end
   local added = false
-  for _, t in ipairs(targeting.PROTECTED_TYPES) do
+  local types = {}
+  for _, t in ipairs(targeting.PROTECTED_TYPES) do types[#types + 1] = t end
+  for _, t in ipairs(targeting.COLLATERAL_TYPES) do types[#types + 1] = t end -- Phase 5 M3 integration
+  for _, t in ipairs(types) do
     if not have[t] and #prototypes.get_entity_filtered({{filter = "type", type = t}}) > 0 then
       out[#out + 1] = {filter = "type", type = t}
       added = true

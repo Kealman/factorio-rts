@@ -48,6 +48,7 @@ local territory = require("scripts.territory")
 local cities = require("scripts.cities")
 local diplomacy = require("scripts.diplomacy")
 local balance = require("balance")
+local sched = require("scripts.sched") -- Phase 5 M3 integration: the refresh job runs on the work-unit scheduler
 
 local fronts = {}
 local FB = balance.nation.fronts
@@ -250,7 +251,7 @@ end
 --- Queue a recomputation of every front (the job covers all wars; `force` is accepted for the contract).
 function fronts.refresh(force_name)
   local s = S()
-  if s.job then
+  if s.job or s.job_id then
     s.pending = true
   else
     s.next_refresh = game.tick
@@ -546,9 +547,40 @@ local function job_step(job)
   return false
 end
 
+-- Phase 5 M3 integration (war2 notes open issue 9): in a Nation match the refresh is a scheduler job of kind
+-- "fronts_refresh" at BACKGROUND priority on the budget of the match's first nation (a human's budget is otherwise
+-- idle; spare units of the tick cap go to it too). One step of job_step (rows_per_tick rows / cell_budget cells, or one
+-- side's segments) counts STEP_UNITS; a call runs at least one step and more while its units last.
+fronts.STEP_UNITS = 300
+sched.register("fronts_refresh", function(job, units)
+  local used = 0
+  repeat
+    used = used + fronts.STEP_UNITS
+    if job_step(job.state) then return used, true end
+  until used + fronts.STEP_UNITS > units
+  return used, false
+end, function(job)
+  local s = storage.fronts
+  if not (s and s.job_id == job.id) then return end
+  s.job_id = nil
+  if s.pending then
+    s.pending = nil
+    s.next_refresh = game.tick + 1
+  end
+end)
+
 --- Finish the running (or a new) refresh job now (tests).
 function fronts.flush()
   local s = S()
+  if s.job_id then -- Phase 5 M3 integration: a scheduler job is finished here and taken off the scheduler
+    local J = sched.get(s.job_id)
+    local id = s.job_id
+    s.job_id = nil
+    if J and (J.status == "queued" or J.status == "running") then
+      s.job = J.state
+      sched.cancel(id)
+    end
+  end
   if not s.job then
     local T = territory.ensure_grid()
     if not T then return 0 end
@@ -566,7 +598,12 @@ end
 events.on(defines.events.on_tick, function(e)
   local s = storage.fronts
   if not s then return end
-  if s.job then
+  if s.job_id then -- Phase 5 M3 integration: the scheduler runs it
+    local st = sched.status(s.job_id)
+    if st == "queued" or st == "running" then return end
+    s.job_id = nil
+  end
+  if s.job then -- a job of a save from before the scheduler, or a match without it
     local prof = fronts.PROFILE_STEPS and helpers.create_profiler() or nil
     local phase, w = s.job.phase, s.job.w
     local finished = job_step(s.job)
@@ -588,7 +625,10 @@ events.on(defines.events.on_tick, function(e)
   local T = territory.ensure_grid()
   if not T then return end
   s.next_refresh = e.tick + FB.refresh
-  s.job = new_job(T)
+  local job = new_job(T)
+  local first = match.forces()[1]
+  local id = first and sched.enabled() and sched.submit(first, "fronts_refresh", job, sched.BACKGROUND)
+  if id then s.job_id = id else s.job = job end
 end)
 
 -- A new Nation match: the first refresh after a minute of play; wars start and end a refresh at once.

@@ -239,7 +239,10 @@ function lobby.show_menu(player)
   local m = storage.match
   if match.in_lobby() then return lobby.show_lobby(player) end
   local frame, inner = dialog(player, "menu", {"rts.menu-title"})
-  inner.add({type = "label", caption = lobby.config_text(m.config)})
+  -- Phase 5 M3 integration: the Nation line ("... · Conquest + Space · unlimited") is wider than the dialog: wrap it
+  local cfg = inner.add({type = "label", caption = lobby.config_text(m.config)})
+  cfg.style.single_line = false
+  cfg.style.maximal_width = DIALOG_WIDTH - 40
   local secs = math.floor(match.elapsed_seconds())
   inner.add({type = "label", caption = {"rts.menu-time", string.format("%02d:%02d", math.floor(secs / 60), secs % 60)}})
   local row = button_row(frame)
@@ -294,7 +297,10 @@ function lobby.show_results(player)
   sub.style.single_line = false
   sub.style.maximal_width = DIALOG_WIDTH - 40
   inner.add({type = "label", caption = {"rts.results-time", clock(match.elapsed_seconds())}})
-  inner.add({type = "label", caption = lobby.config_text(m.config)}).style.font_color = COLOR.dim
+  local cfg = inner.add({type = "label", caption = lobby.config_text(m.config)})
+  cfg.style.font_color = COLOR.dim
+  cfg.style.single_line = false -- Phase 5 M3 integration: the Nation line wraps (Russian, Conquest + Space)
+  cfg.style.maximal_width = 560
   -- Phase 5 M2 diplomacy: a Nation match names its victory and adds the score (D6) and the war score per nation
   local nation = m.config and m.config.mode == "nation"
   local l = package and package.loaded
