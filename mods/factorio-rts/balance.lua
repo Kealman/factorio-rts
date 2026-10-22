@@ -603,6 +603,10 @@ balance.nation.people = {
     -- from start_after, houses while the housing is below the city's jobs / workforce share + job_margin residents
     -- (the margin keeps recruits for the army; houses beyond it only fed goods demand)
     job_margin = 80, house_radius = {24, 40, 56},
+    -- Phase 5 M3 ai: capital_house_pref = {x towards the back, y} and capital_house_radius = {rings} move the capital's
+    -- houses out of the CC's logistic area (nil: as in M2; tried at {38, 30} / {56, 72}: the houses then blocked the
+    -- exits of the rail depots, which stand 26-74 tiles out, and a trunk line's survey failed for 40 minutes)
+    capital_house_pref = nil,
     -- a second factory on Auto at the capital from start_after: goods and their bricks took the works factory's time
     -- from the circuits of the Industrialisation kits (the economic AI researched it in 7.5 minutes instead of 3.5)
     goods_works = true,
@@ -611,6 +615,9 @@ balance.nation.people = {
     house_stock = 3,
     priorities = {"power", "food", "extraction", "metallurgy", "research", "military", "services", "electronics",
                   "chemistry"},
+    -- Phase 5 M3 ai: the order from Age II on (ai/governor.lua)
+    priorities_age2 = {"power", "food", "extraction", "metallurgy", "electronics", "chemistry", "research", "machinery",
+                       "military", "services", "construction"},
     -- pinned first: the builder and workshop factories (the two lowest fixed ones), the works factory (Auto) and the
     -- first `pin_labs` labs; nothing else gets built or researched without them
     pin_labs = 1,
@@ -1284,14 +1291,19 @@ do
   -- construction job, build_period, and buildings in flight), micro (off | basic | full: retreat by force ratio,
   -- resupply, focus), orders per minute per division (opm), the scheduler budget factor, how early the planner founds
   -- its cities (expand: x on the city times) and how many it founds (cities), how often the council thinks (council,
-  -- ticks) and when the first offensive may start (first_attack, x on the doctrine's).
+  -- ticks), when the first offensive may start (first_attack, x on the doctrine's), and how early and with what margin
+  -- over its defence a city-state operation starts (cs_from x balance.nation.diplomacy.ai.city_state_from; cs_ratio x
+  -- the city-state's points).
   AI3.difficulty = {
     easy = {intel_age = 60 * 60, ops = 1, sites = 8, astar = 20000, build_period = 360, in_flight = 2, micro = "off",
-            opm = 2, budget_factor = 0.75, expand = 1.3, cities = 3, council = 240, first_attack = 1.5},
+            opm = 2, budget_factor = 0.75, expand = 1.3, cities = 3, council = 240, first_attack = 1.5,
+            cs_from = 1.3, cs_ratio = 1.8},
     normal = {intel_age = 30 * 60, ops = 2, sites = 16, astar = 40000, build_period = 180, in_flight = 3,
-              micro = "basic", opm = 6, budget_factor = 1, expand = 1, cities = 4, council = 120, first_attack = 1},
+              micro = "basic", opm = 6, budget_factor = 1, expand = 1, cities = 4, council = 120, first_attack = 1,
+              cs_from = 1, cs_ratio = 1.5},
     hard = {intel_age = 10 * 60, ops = 4, sites = 32, astar = 60000, build_period = 120, in_flight = 4, micro = "full",
-            opm = 12, budget_factor = 1.5, expand = 0.8, cities = 4, council = 60, first_attack = 0.8},
+            opm = 12, budget_factor = 1.5, expand = 0.8, cities = 4, council = 60, first_attack = 0.8,
+            cs_from = 0.75, cs_ratio = 1.0},
   }
   -- Intelligence (ai/intel.lua): every difficulty intel_age ticks per nation, what any own entity sees within `sight` tiles (an own
   -- scout plane within `plane_sight`): rival and city-state cities, divisions, depots, planes and unit clusters (cells of
@@ -1319,17 +1331,26 @@ do
     weights = {ore = 1.0, oil = 1.6, rare = 0.8, choke = 0.5, port = 0.4, rail = 1.0, exposure = 0.8, need = 1.0},
     role_order = {"oil", "mining", "rare", "fortress", "trade"},
     oil = {reach = 14, pumpjacks = 3, export = {"rts-crude-oil", "plastic-bar", "sulfur"}, keep_crude = 400},
-    trunk = {period = 600, lines = 2, rival_factor = 3},
+    trunk = {period = 600, lines = 3, rival_factor = 3, max_surveys = 2, max_edge = 480, age1_circuits = 40},
     -- the oil chain at the capital once crude comes in (Age II): districts appended to the age-up list
     oil_districts = {"rts-district-electronics", "rts-district-petrochem", "rts-district-construction"},
+    -- once three cities are linked by rail (the lines' steel comes first): a second Steel works and an Engines works
+    -- (steel is what engines, kits, rails, depots and the Space Program's first stage all wait for)
+    linked_districts = {"rts-district-steel", "rts-district-engines"},
     -- Age III road: Electrification first in Age II; make targets for the industrial kit's parts and then the running
     -- Space Program stage's goods (capped at stage_cap per good); purchases of what the nation cannot make in time (the
     -- market AI's ai_buy covers ledger shortfalls) at most buy_share of the balance above buy_reserve per buy_period
     research_first = {"rts-electrification"}, kit_targets = {["engine-unit"] = 20, ["advanced-circuit"] = 20, sulfur = 20},
-    stage_cap = 200, buy_reserve = 1200, buy_share = 0.35, buy_period = 60 * 60, buy_max = 100,
+    stage_cap = 200, buy_reserve = 1500, buy_share = 0.25, buy_period = 60 * 60, buy_max = 100,
     -- a port farther than port_reach tiles from the capital is not used for purchases (a hauler takes minutes each way);
     -- city-states first. Every non-capital city exports export_goods (they reach the capital by haulers and trains)
     port_reach = 450,
+    -- rails kept at the capital while a line is under way (the Rail works make them; a make target)
+    rail_stock = 150,
+    -- Age II on: stone_buy stone when the capital holds less than stone_low (a ford city-state sells it)
+    stone_low = 150, stone_buy = 300,
+    -- and steel_buy steel when the capital holds less than steel_low (an iron city-state sells it)
+    steel_low = 40, steel_buy = 80,
     export_goods = {"plastic-bar", "sulfur", "advanced-circuit", "engine-unit", "concrete", "rts-crude-oil",
                     "processing-unit", "battery", "rocket-fuel", "light-oil-barrel"},
     -- rush the running project (the Railway Charter, a Space Program stage) or a wanted research (Electrification) when
@@ -1356,11 +1377,13 @@ do
     belt_threat = 30, belt_after = 3 * 60 * 60, belts = 2,
     -- without a front (the lands do not touch): a city with hostile strength >= sector_strength known within
     -- sector_radius for belt_after gets a sector_length belt across the approach
-    sector_strength = 6, sector_radius = 250, sector_length = 64,
+    sector_strength = 6, sector_radius = 250, sector_length = 64, sector_after = 2 * 60 * 60, sector_grace = 2 * 60 * 60,
     timeouts = {assemble = 2 * 60 * 60, advance = 8 * 60 * 60, siege = 6 * 60 * 60, capture = 4 * 60 * 60,
                 consolidate = 60 * 60, move = 4 * 60 * 60, engage = 3 * 60 * 60, strike = 3 * 60 * 60,
                 fly = 3 * 60 * 60, ["return"] = 3 * 60 * 60},
     siege_range = 90, abort_ratio = 1, field_reach = 220,
+    -- a nation without any operation by push_after ticks (at peace, Age II) is pushed into a city-state operation
+    push_after = 25 * 60 * 60,
     air_from = 25 * 60 * 60, scouts = 2, interceptors = 3, bombers = 3, patrol_radius = 48,
     artillery_range = 110,
     hire_at = 2500, hire_points = 8, merc_at = 2500, merc_army = 12,

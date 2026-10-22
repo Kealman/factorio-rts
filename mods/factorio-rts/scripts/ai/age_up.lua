@@ -334,6 +334,14 @@ function age_up.step(C, surface)
         N.district_at = game.tick + A.district_gap * 60
       elseif not wait then -- (Phase 5 M3 ai (perf): a planning job looks for the spot: no retry delay)
         N.district_at = game.tick + age_up.DISTRICT_RETRY
+        -- Phase 5 M3 ai (Nation): a district without a spot goes to the end of the list, so the next one is tried (one
+        -- that never fits blocked every later district: Electronics and Petrochemical works never came)
+        if #N.district_todo > 1 then
+          table.remove(N.district_todo, idx)
+          N.district_todo[#N.district_todo + 1] = name
+          N.district_at = game.tick + 10 * 60
+          util.log("ai %s: age-up: no spot for %s: tried after the others", C.force, name)
+        end
       end
     end
   end

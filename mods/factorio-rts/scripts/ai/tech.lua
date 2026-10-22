@@ -95,6 +95,9 @@ end
 --- Phase 5 M3 ai (Nation): the technologies the planner and the council want first, in that order.
 function tech.wants(C)
   local out = {}
+  for _, name in ipairs(deps.council and deps.council.research_urgent and deps.council.research_urgent(C) or {}) do
+    out[#out + 1] = name
+  end
   for _, src in ipairs({deps.planner, deps.council}) do
     local list = src and src.research_want and src.research_want(C)
     for _, name in ipairs(list or {}) do out[#out + 1] = name end
@@ -157,7 +160,10 @@ function tech.step(C)
     local wants = tech.wants(C)
     local rank = #wants + 1
     for i, name in ipairs(wants) do
-      if name == cur.name then rank = i end
+      if name == cur.name then
+        rank = i -- the first place it is wanted at (Fortification is in the list twice at war)
+        break
+      end
     end
     for i = 1, rank - 1 do
       local name = wants[i]

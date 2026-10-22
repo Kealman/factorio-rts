@@ -574,6 +574,7 @@ local function oil_step(C, P, surface)
 end
 
 --- True when crude oil reached the capital's network (the oil chain districts make sense).
+local LIVE = {depots = true, survey = true, building = true, cut = true} -- rail program states of a line under way
 local function crude_flows(C)
   return construction.have(C, "rts-crude-oil") > 0 or construction.flowing(C, "rts-crude-oil")
 end
@@ -605,8 +606,6 @@ end
 ---------------------------------------------------------------------------
 -- The trunk: an MST over own cities, one rails program per edge rails.lua does not serve itself
 ---------------------------------------------------------------------------
-local LIVE = {depots = true, survey = true, building = true, cut = true}
-
 local function mst(cities_list, root_id)
   -- Prim from the capital; ties by city id
   local inside = {[root_id] = true}
@@ -692,6 +691,23 @@ local function trunk_step(C, P, own, capital)
   local served = {}
   if main and main.far then served[main.far] = true end
   for _, Pm in ipairs(R and R.ai_more and R.ai_more[C.force] or {}) do served[Pm.far] = true end
+  -- rails.lua's own line (capital - town) carries the Age III goods too (a city-state purchase may arrive in the town)
+  if main and main.depot_a and main.depot_b and P.main_policies ~= main.depot_b and deps.logistics then
+    P.main_policies = main.depot_b
+    for _, item in ipairs(PB.export_goods) do
+      deps.logistics.set_policy(main.depot_b, "export_above", item, 0)
+      deps.logistics.set_policy(main.depot_a, "keep", item, deps.rails.AI_KEEP or 3000)
+    end
+  end
+  if not P.linked_at then
+    local open = 0
+    for _, E in pairs(P.trunk) do if E.opened then open = open + 1 end end
+    if main and main.state == "open" then open = open + 1 end
+    if open >= 2 then
+      P.linked_at = game.tick
+      util.log("planner: %s has three cities linked by rail", C.force)
+    end
+  end
   local parent, by_id = mst(own, capital.id)
   local live = (main and LIVE[main.state]) and 1 or 0
   for _, id in ipairs((function()
@@ -710,8 +726,10 @@ local function trunk_step(C, P, own, capital)
         util.log("planner: %s trunk edge to city %d dropped (an end is gone)", C.force, c.id)
         P.trunk[c.id], E = nil, nil
       end
-      if not E and live < PB.trunk.lines and match_seconds() >= 60 then
-        local from = by_id[parent[c.id] or capital.id] or capital
+      local from0 = by_id[parent[c.id] or capital.id] or capital
+      if not E and live < PB.trunk.lines and match_seconds() >= 60
+         and dist(c.position, from0.position) <= (PB.trunk.max_edge or math.huge) then
+        local from = from0
         local pay = rails.AI_PAY and capital.center or nil
         local anchor = (pay and from.center) or capital.center
         E = {to = c.id, from = rails.AI_PAY and from.id or capital.id, A = {anchor = anchor, far = c.center, pay = pay},
@@ -724,7 +742,33 @@ local function trunk_step(C, P, own, capital)
         util.log("planner: %s trunk edge city %d -> city %d (%.0f tiles, %s pays)", C.force, c.id, E.from,
           dist(c.position, (by_id[E.from] or capital).position), pay and "the capital" or "the anchor")
       end
-      if E then
+      -- an edge whose survey keeps failing (a depot exit boxed in) is anchored at the nearest other own city whose line
+      -- to the capital is open instead (its depots there are new ones); at most twice
+      if E and E.A.line ~= E.last_line then
+        E.last_line = E.A.line
+        E.surveys = (E.surveys or 0) + 1
+      end
+      if E and not E.opened and (E.surveys or 0) > PB.trunk.max_surveys and (E.moves or 0) < 2 then
+        local alt, ad
+        for _, o in ipairs(own) do
+          if o.id ~= c.id and o.id ~= E.from and o.center and o.position and (o.id == capital.id or P.trunk[o.id] and
+             P.trunk[o.id].opened or (main and main.far == o.center and main.state == "open")) then
+            local d = dist(o.position, c.position)
+            if not ad or d < ad then alt, ad = o, d end
+          end
+        end
+        if alt and rails.AI_PAY then
+          util.log("planner: %s trunk edge city %d -> city %d: %d surveys failed, anchored at city %d instead (%.0f tiles)",
+            C.force, c.id, E.from, E.surveys, alt.id, ad)
+          E = {to = c.id, from = alt.id, A = {anchor = alt.center, far = c.center, pay = capital.center, policies = true},
+               since = game.tick, moves = (E.moves or 0) + 1}
+          P.trunk[c.id] = E
+        end
+      end
+      -- (Age I: the edge's kits and depots wait while the capital holds fewer than age1_circuits circuits: they took
+      -- the aggressive AI's raider circuits in the M1 acceptance)
+      local hold = age_of(C.force) < 2 and construction.have(C, "electronic-circuit") < (PB.trunk.age1_circuits or 0)
+      if E and not hold then
         rails.ai_program(C.force, E.A)
         if E.A.depot_a and E.A.depot_b then edge_policies(C, P, E) end
         if E.A.state == "open" and not E.opened then
@@ -755,8 +799,19 @@ end
 
 -- The industrial kit's parts are wanted from Industrialisation on (they are bought during the Charter, so Electrification
 -- starts the minute Age II comes) until Electrification is researched.
+-- (Phase 5 M3 ai: and after it while a technology the council wants needs industrial kits: Aviation, Air Force)
+local KIT_TECHS = {"rts-aviation", "rts-air-force", "rts-military-railways"}
 local function kit_phase(C)
-  return not has_tech(C.force, ELECTRIFICATION) and (age_of(C.force) >= 2 or has_tech(C.force, INDUSTRIALISATION))
+  if not has_tech(C.force, ELECTRIFICATION) then
+    return age_of(C.force) >= 2 or has_tech(C.force, INDUSTRIALISATION)
+  end
+  local want = deps.council and deps.council.research_want and deps.council.research_want(C) or {}
+  for _, name in ipairs(want) do
+    for _, k in ipairs(KIT_TECHS) do
+      if name == k and not has_tech(C.force, name) then return true end
+    end
+  end
+  return false
 end
 
 --- Make targets the planner wants at the capital (ai/age_up.lua merges them with its own, the larger wins).
@@ -773,8 +828,22 @@ function planner.targets(C)
     out["plastic-bar"] = math.max(out["plastic-bar"] or 0, 40)
     out.sulfur = math.max(out.sulfur or 0, 20)
   end
+  -- rails in stock while a line is built: the Rail works make 3 rails per steel plate, the rail programs' own crafts 2
+  -- (rails.lua takes the rails a depot's network holds before it crafts any)
+  local building = false
+  local R = storage.rails
+  local main = R and R.ai and R.ai[C.force]
+  if main and LIVE[main.state] then building = true end
+  for _, E in pairs(P.trunk) do
+    if E.A and LIVE[E.A.state] then building = true end
+  end
+  if building then out.rail = math.max(out.rail or 0, PB.rail_stock) end
   local age3 = mod("age3")
   local missing = age3 and age3.missing and age3.missing(C.force)
+  -- (in Age III the later stages wait while the airfield is queued: their engines took every steel plate it needed)
+  if missing and age_of(C.force) >= 3 and deps.council and deps.council.air_pending and deps.council.air_pending(C) then
+    missing = nil
+  end
   if missing then
     for item, n in pairs(missing) do out[item] = math.max(out[item] or 0, math.min(n, PB.stage_cap)) end
     if missing["advanced-circuit"] then
@@ -829,6 +898,14 @@ local function buy_step(C, P)
       if missing[item] then want[item] = math.min(missing[item], PB.stage_cap) end
     end
   end
+  -- stone for the Construction works, bricks and concrete (houses and rails take it: capitals ran out at 40-55 min) and
+  -- the airfield's concrete (ai/council.lua's targets)
+  if age_of(C.force) >= 2 and construction.have(C, "stone") < PB.stone_low then want.stone = PB.stone_buy end
+  if age_of(C.force) >= 2 and construction.have(C, "steel-plate") < PB.steel_low then
+    want["steel-plate"] = math.max(want["steel-plate"] or 0, PB.steel_buy)
+  end
+  local ct = deps.council and deps.council.targets and deps.council.targets(C)
+  for item, n in pairs(ct or {}) do want[item] = math.max(want[item] or 0, n) end -- the airfield's, a belt's goods
   if next(want) == nil then return end
   local coming = {}
   for _, imp in ipairs(market.pending and market.pending(C.force) or {}) do
@@ -839,6 +916,10 @@ local function buy_step(C, P)
   end
   local port_has = port and market.port_contents and market.port_contents(port) or {}
   local budget = math.max(0, (treasury_balance(C.force) - PB.buy_reserve) * PB.buy_share)
+  -- no purchases while the treasury loses money (they put the nation on high taxes: happiness and growth fell)
+  local treasury = mod("treasury")
+  local t = treasury and treasury.get and treasury.get(C.force)
+  if t and (t.net or 0) < 0 and treasury_balance(C.force) < PB.buy_reserve * 2 then budget = 0 end
   local items = {}
   for item in pairs(want) do items[#items + 1] = item end
   table.sort(items)
@@ -906,6 +987,9 @@ function planner.districts(C)
   -- line opens, and the districts take minutes to build)
   if age_of(C.force) >= 2 then
     for _, name in ipairs(PB.oil_districts) do out[#out + 1] = name end
+    if P.linked_at then
+      for _, name in ipairs(PB.linked_districts or {}) do out[#out + 1] = name end
+    end
   elseif has_tech(C.force, ELECTRIFICATION) then
     -- the Space Program's advanced circuits and concrete: the Electronics and Construction works first
     for _, name in ipairs(PB.oil_districts) do
@@ -946,7 +1030,7 @@ local function rush_step(C, P)
   local force = game.forces[C.force]
   local cur = force and force.current_research
   if cur then
-    for _, name in ipairs(planner.research_want(C) or {}) do
+    for _, name in ipairs(PB.research_first) do -- (only the Age III road's research: Geology is not worth a rush)
       if name == cur.name then
         local ok, why = sinks.rush(C.force, name)
         if ok then

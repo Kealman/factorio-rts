@@ -289,7 +289,7 @@ end
 -- other force), a sight check counting UNITS_PER_CHECK work units.
 intel.UNITS_PER_CHECK = 15
 local PARTS = {"cities", "divisions", "depots", "planes"}
-sched.register("ai3_intel", function(job, units)
+sched.register("ai3_intel", function(job, budget) -- (budget unused: one part per step)
   local st = job.state
   local I = I_of(st.force, true)
   local surface = util.surface()

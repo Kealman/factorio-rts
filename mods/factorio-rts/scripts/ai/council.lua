@@ -80,7 +80,12 @@ end
 local function sorted_keys(t)
   local out = {}
   for k in pairs(t) do out[#out + 1] = k end
-  table.sort(out)
+  -- (numbers before strings: K.belts holds front segment ids and "c<city id>" sector keys)
+  table.sort(out, function(a, b)
+    local ta, tb = type(a), type(b)
+    if ta ~= tb then return ta < tb end
+    return a < b
+  end)
   return out
 end
 
@@ -530,7 +535,8 @@ local function belts_step(C, K)
     if not live[id] then K.threat_since[id] = nil end
   end
   if not has_tech(C.force, FORTIFICATION) then return end
-  local count = table_size(K.belts)
+  local count = 0
+  for _, id in pairs(K.belts) do if id then count = count + 1 end end
   if count >= CB.belts then return end
   local best, bt
   for _, s in ipairs(segs) do
@@ -562,21 +568,27 @@ function council.sector_belt(C, K, belts)
     return
   end
   K.sector_since = K.sector_since or {}
+  K.sector_last = K.sector_last or {}
   local tick = game.tick
   local territory = deps.territory
   local best, bs
   for _, c in ipairs(deps.cities.for_force(C.force)) do
     local n = intel.strength_near(C.force, nil, c.position, CB.sector_radius, 2 * difficulty.knobs(C.force).intel_age)
+    -- (sustained: the strength may drop out of sight for up to sector_grace ticks between two readings)
     if n >= CB.sector_strength then
       K.sector_since[c.id] = K.sector_since[c.id] or tick
-      if tick - K.sector_since[c.id] >= CB.belt_after and not K.belts["c" .. c.id] and (not bs or n > bs) then
-        best, bs = c, n
-      end
-    else
-      K.sector_since[c.id] = nil
+      K.sector_last[c.id] = tick
+    elseif K.sector_last[c.id] and tick - K.sector_last[c.id] > CB.sector_grace then
+      K.sector_since[c.id], K.sector_last[c.id] = nil, nil
+    end
+    local since = K.sector_since[c.id]
+    if since and tick - since >= CB.sector_after and not K.belts["c" .. c.id] and (not bs or n > bs) then
+      best, bs = c, n
     end
   end
-  if not best or table_size(K.belts) >= CB.belts then return end
+  local planned = 0
+  for _, id in pairs(K.belts) do if id then planned = planned + 1 end end
+  if not best or planned >= CB.belts then return end
   -- the direction of the threat: the strongest known hostile cluster near the city
   local I = intel.state(C.force)
   local tp, tn
@@ -677,6 +689,27 @@ local function air_step(C, K, surface)
       local pos, _, wait = layout.find_spot(C, surface, AIRFIELD, "cc")
       local ok, why = false, "no spot"
       if pos then ok, why = air.can_build_airfield(C.force, pos) end
+      -- a full Command Center area: anywhere on the capital's land (an airfield needs no power), behind the capital
+      if not ok and not wait and layout.find_spot_in then
+        local cx, cy = math.floor(capital.position.x), math.floor(capital.position.y)
+        local fx = (C.frame and C.frame.fx) or 1
+        local pref = {x = cx - fx * 30, y = cy - 20}
+        for _, r in ipairs({40, 64}) do
+          local p2, _, w2 = layout.find_spot_in(C, surface, AIRFIELD, cx - r, cy - r, cx + r, cy + r, pref)
+          if w2 then
+            wait = true
+            break
+          end
+          if p2 then
+            local ok2, why2 = air.can_build_airfield(C.force, p2)
+            if ok2 then
+              pos, ok, why = p2, true, nil
+              break
+            end
+            why = why2
+          end
+        end
+      end
       if wait then
         -- a planning job looks for the spot (ai/planjob.lua): ask again on a later pass
       elseif ok then
@@ -695,6 +728,32 @@ local function air_step(C, K, surface)
   Kair.ready = Kair.ready or game.tick
   -- the scout patrol division
   local scouts = plane_list(C, "scout-plane")
+  -- a nation at its supply cap retires idle walkers to make room for its scouts (a capped barracks makes nothing)
+  local supply = deps.supply
+  if #scouts < CB.scouts and C.capped and supply and game.tick >= (Kair.retire_at or 0) then
+    Kair.retire_at = game.tick + 60 * 60
+    local need = CB.scouts - #scouts
+    local a = C.army or {member = {}}
+    local list = {}
+    for un, rec in units.for_force(C.force) do
+      if rec.kind == "walker" and rec.order == units.IDLE and not a.member[un] and not (a.held and a.held[un])
+         and not divisions.of_unit(un) and rec.entity.valid then
+        list[#list + 1] = un
+      end
+    end
+    table.sort(list)
+    local n = 0
+    for i = 1, math.min(need, #list) do
+      local rec = units.get(list[i])
+      if rec and rec.entity.valid then
+        rec.entity.die()
+        n = n + 1
+      end
+    end
+    if n > 0 then
+      util.log("council: %s retires %d idle walker(s) to make room for its scout planes (supply capped)", C.force, n)
+    end
+  end
   local div = Kair.patrol and divisions.get(Kair.patrol) and Kair.patrol or nil
   if not div then Kair.patrol = nil end
   local loose = {}
@@ -785,13 +844,42 @@ local function air_step(C, K, surface)
   end
 end
 
---- Capital make targets the council wants (ai/age_up.lua merges them): the airfield's concrete while it is queued.
+--- True while the capital's airfield is queued and not built yet (ai/planner.lua holds the later Space Program stages).
+function council.air_pending(C)
+  if air_wanted(C) and not has_tech(C.force, AVIATION) then return true end -- (and while Aviation waits for kits)
+  local K = K_of(C.force, false)
+  local key = K and K.air and K.air.key
+  if not key then return false end
+  local st = construction.status(C, key)
+  return st == "queued" or st == "ghost" or st == "planned"
+end
+
+--- Capital make targets the council wants (ai/age_up.lua merges them): the airfield's concrete while it is queued, and
+--- the items a fort belt under way still waits for (walls, turrets, its field depot: its crew pays them from a city
+--- network, so they must be made).
+council.BELT_CAP = {["rts-wall"] = 100, ["rts-turret"] = 8, ["rts-aa-turret"] = 4, ["rts-field-depot"] = 1,
+                    ["rts-gate"] = 6, ["firearm-magazine"] = 40}
 function council.targets(C)
   local K = K_of(C.force, false)
-  if not (K and K.air and K.air.key) then return nil end
-  local st = construction.status(C, K.air.key)
-  if st == "queued" or st == "ghost" or st == "planned" then return {concrete = 40, ["steel-plate"] = 20} end
-  return nil
+  if not K then return nil end
+  local out = {}
+  if K.air and K.air.key then
+    local st = construction.status(C, K.air.key)
+    if st == "queued" or st == "ghost" or st == "planned" then out.concrete, out["steel-plate"] = 40, 20 end
+  end
+  local belts = mod("belts")
+  for _, key in ipairs(sorted_keys(K.belts)) do
+    local id = K.belts[key]
+    local plan = id and belts and belts.get and belts.get(id)
+    if plan and (plan.state == "laying" or plan.state == "building") then
+      for item, n in pairs(plan.need or {}) do
+        local left = n - ((plan.debited or {})[item] or 0)
+        local cap = council.BELT_CAP[item] or 20
+        if left > 0 then out[item] = math.max(out[item] or 0, math.min(left, cap)) end
+      end
+    end
+  end
+  return next(out) and out or nil
 end
 
 --- Plane kits the barracks should make now (ai/mix.lua): scouts once an airfield stands, interceptors when enemy
@@ -863,6 +951,21 @@ end
 ---------------------------------------------------------------------------
 -- Research the council wants
 ---------------------------------------------------------------------------
+--- The council's urgent research (ai/tech.lua tries it before the planner's): Fortification at war (cheap basic kits;
+--- it waited behind Electrification's industrial kits for a whole war).
+--- Aviation too for a military character (aggressive, turtle) once air is wanted: it goes for planes before the
+--- Space Program (an economic nation the other way round), so the two compete for industrial kits in neither.
+council.AIR_FIRST = {aggressive = true, turtle = true}
+function council.research_urgent(C)
+  if not nation_mode() then return nil end
+  local out = {}
+  if at_war(C.force) and not has_tech(C.force, FORTIFICATION) then out[#out + 1] = FORTIFICATION end
+  if council.AIR_FIRST[C.doctrine or ""] and air_wanted(C) and not has_tech(C.force, AVIATION) then
+    out[#out + 1] = AVIATION
+  end
+  return next(out) and out or nil
+end
+
 function council.research_want(C)
   if not nation_mode() then return nil end
   local out = {}
@@ -894,6 +997,17 @@ function council.step(C, surface)
   end
   K.next = tick + period
   ops_step(C, K)
+  -- a nation that has run no operation yet by push_after (at peace, Age II) goes for a city-state (army.lua relaxes its
+  -- reach and margin while C.army.cs_push is fresh)
+  local m2 = storage.match
+  if K.stats.ops == 0 and C.army and age_of(C.force) >= 2 and not at_war(C.force)
+     and tick - m2.tick_started >= CB.push_after * difficulty.knobs(C.force).cs_from
+     and tick - (K.push_at or -1e9) >= 10 * 3600 then
+    K.push_at = tick
+    C.army.cs_push = tick
+    util.log("council: %s has run no operation yet: pushes a city-state operation (idle army %d)", C.force,
+      C.army.pool_size or 0)
+  end
   holds_step(C, K)
   belts_step(C, K)
   air_step(C, K, surface)

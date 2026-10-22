@@ -202,6 +202,14 @@ local function capital_labor(C, G, labor)
     labor.set_priorities(C.force, AI.priorities)
     G.priorities = true
   end
+  -- Phase 5 M3 ai: from Age II the Age III road's families (electronics, chemistry: the advanced circuits, plastic and
+  -- sulfur of the industrial kits and the Space Program) come before the army and services (last in the M2 order, their
+  -- districts stood idle without workers while crude oil piled up)
+  if AI.priorities_age2 and G.priorities ~= "age2" and deps.ages and deps.ages.of(C.force) >= 2 then
+    labor.set_priorities(C.force, AI.priorities_age2)
+    G.priorities = "age2"
+    util.log("ai %s: governor: Age II labor priorities [%s]", C.force, table.concat(AI.priorities_age2, " "))
+  end
   local want, factories, labs = {}, {}, {}
   for un, rec in buildings.for_force(C.force, "factory") do factories[#factories + 1] = {un, rec} end
   table.sort(factories, function(a, b) return a[1] < b[1] end)
@@ -569,7 +577,15 @@ local function houses(C, G, surface, c, P, labor, population, age)
   if short <= 0 then return false end
   local fx = (C.frame and C.frame.fx) or 1
   local pref = {x = c.position.x - fx * 16, y = c.position.y + 12}
-  local key = queue_near(C, surface, "rts-house", c, pref, AI.house_radius, true)
+  local radii = AI.house_radius
+  -- Phase 5 M3 ai (Nation): the capital's houses go outside its Command Center's logistic area (the 50x50 square the
+  -- districts need: thirty houses there left the Age III road's Electronics and Petrochemical works without a spot)
+  if c.capital and AI.capital_house_pref then
+    local o = AI.capital_house_pref
+    pref = {x = c.position.x - fx * o[1], y = c.position.y + o[2]}
+    radii = AI.capital_house_radius or radii
+  end
+  local key = queue_near(C, surface, "rts-house", c, pref, radii, true)
   if not key then return false end
   S.houses[#S.houses + 1] = key
   G.house_at = game.tick + AI.house_gap * 60

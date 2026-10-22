@@ -51,6 +51,8 @@ function difficulty.of_level(level)
     cities = d.cities or 4,
     council = d.council or 120,
     first_attack = d.first_attack or 1,
+    cs_from = d.cs_from or 1,
+    cs_ratio = d.cs_ratio or 1.5,
   }
 end
 
@@ -83,4 +85,5 @@ function difficulty.apply(C)
   C.knobs_level = k.level
 end
 
+require("scripts.ai.deps").difficulty = difficulty
 return difficulty

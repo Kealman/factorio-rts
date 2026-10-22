@@ -189,11 +189,15 @@ function army.city_state_target(C, surface, from, list)
       if pos then rivals[#rivals + 1] = {force = f, pos = pos} end
     end
   end
+  -- Phase 5 M3 ai: the war council pushes a first operation (C.army.cs_push, ai/council.lua): a city-state as far from
+  -- us as from a rival is fair then, and a smaller margin over its defence will do
+  local push = C.army.cs_push and game.tick - C.army.cs_push < 10 * 60 * 60
+  local reach = WAR.ai.city_state_reach and (push and math.max(WAR.ai.city_state_reach, 1.05) or WAR.ai.city_state_reach)
   local function our_side(c)
-    if not (WAR.ai.city_state_reach and home_pos) then return true end
+    if not (reach and home_pos) then return true end
     local d_own = util.distance(c.position, home_pos)
     for _, r in ipairs(rivals) do
-      if d_own > WAR.ai.city_state_reach * util.distance(c.position, r.pos) then return false end
+      if d_own > reach * util.distance(c.position, r.pos) then return false end
     end
     return true
   end
@@ -219,7 +223,9 @@ function army.city_state_target(C, surface, from, list)
       end
       local gar = g and g.of and g.of(c.id)
       points = points + (gar and gar.points or 0) + city_defenders(surface, c)
-      if group >= WAR.ai.city_state_ratio * points then
+      local ratio = WAR.ai.city_state_ratio
+      if deps.difficulty and nation_mode() then ratio = deps.difficulty.knobs(C.force).cs_ratio end -- Phase 5 M3 ai
+      if group >= (push and math.min(1.2, ratio) or ratio) * points then
         local d = util.distance(from, c.position)
         if not bd or d < bd then
           best, bd = {position = c.position, kind = "city", city = c.id, un = c.center, defenders = points,

@@ -303,7 +303,7 @@ function nation.capture_ok(C)
   if not (ages and ages.of(C.force) >= 2) then return false end
   local m = storage.match
   -- Phase 5 M3 ai: a Territory victory makes land the goal: city-state operations start earlier
-  local from = NA.city_state_from
+  local from = NA.city_state_from * (deps.difficulty and deps.difficulty.knobs(C.force).cs_from or 1)
   local v = m and m.config and m.config.victory
   if v == "territory" or v == "any" then from = math.floor(from * (balance.nation.ai3.planner.territory_expand or 1)) end
   if not (m and m.tick_started) or game.tick - m.tick_started < from then return false end
