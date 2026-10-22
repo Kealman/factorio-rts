@@ -9,7 +9,7 @@ runs exactly as before.
 
 ## 1. Verdict
 
-### Wave B.2 (3ea458e), the tree frozen for QA
+### Wave B.2 (3ea458e + 5a06781), the tree frozen for QA
 
 | Criterion | Result |
 |---|---|
@@ -19,14 +19,14 @@ runs exactly as before.
 | Wars and peaces as in M2 | met: every seed |
 | 0 errors | met |
 | AI time ≤0.5 ms/tick/nation on average | met: about 0.03 |
-| Hard beats normal in ≥7/10 1v1 matches | **met: 7/10**. The player-side AI still won only 4/10 (section 4.6). |
+| Hard beats normal in ≥7/10 1v1 matches | **not met: 3/10** with the sides swapped per seed (section 4.7; the cause is documented there). The alternating-side batch J gave 7/10. |
 | Never-triggered paths: holding division, interceptors, bombers, artillery train, mercenaries | met: 6/6 paths pass in the scripted war probe (two seeds, 0 errors) |
 | Uranium and nuclear | minimal plan in place: outposts ran in 7 of 13 attempts; no nuclear plant finished by 60:00 |
 | Every nation's 3 cities linked by rail by 35:00 | **not met: 12/20** (target 16) |
-| Air patrols fly | **not met: 4/5 seeds** |
+| Air patrols fly | met: 5/5 seeds (batch M; 4/5 in batch K) |
 | No AI tick over 3 ms | **not met**: the town-site search is fixed; 8 commander runs of 14,412 still go over 3 ms (worst 25.8 ms, the arena-wide ore scan, now replaced; not re-benched) |
 | M1 seed 501 | 52/53: train_items, because the player's town line never opened (m3-integ's rails.lua work in progress) |
-| M2 seeds 701-705 | trade, war, peace and capture 5/5; starving 4/5 (701: a town at war) |
+| M2 seeds 701-705 | trade, war, peace and capture 5/5; starving 4/5 (701: towns at war) |
 
 Skirmish is byte-identical; smoke 65/65.
 
@@ -448,11 +448,120 @@ the player-side AI won 4 of 10.
 - 27 nations in Age III found no deposit within 260 tiles;
 - the nuclear plant entered a capital's district list once by 60:00 and was not finished.
 
-**War paths** (tools/probes/ai3_war_paths.lua, 1v1 hard, seeds 805 and 806, tree9): **6/6 paths PASS in both, 0
-errors**: holding division, interceptors, bombers (a bomb operation at a capture's target), artillery train at a
-siege, mercenaries, hired garrison. The probe sets the scene (technologies, money, two towns of the rival, one with
-touching land, an airfield, a depot in range, enemy waves and a scout plane) and lets the AI's own council act; its
-header documents the setup.
+**War paths: the M3 acceptance for these council paths** (accepted by the lead; tools/probes/ai3_war_paths.lua, written
+by a helper sub-agent):
+
+```sh
+KEEP_TREE=build/m3ai-tree9/factorio-rts EXTRA_LUA=tools/probes/ai3_war_paths.lua STOP_ON=RTS_WARPATHS_DONE \
+  DURATION_MIN=50 SEED=<811|806|805> SPEED=10 tools/autotest-run.sh m3ai-war-<seed> '{opponents = 1,
+  difficulty = "hard", mode = "nation", world_size = 2048, enemy_brain = "ai"}' 3000
+```
+
+The subject is rts-player's running hard AI with the aggressive doctrine; rts-ai-1's commander is stopped.
+
+What the probe sets up 8 s in:
+- Fortification, Military railways, Aviation and Air Force researched, and 6,000 cr (topped up below 3,000);
+- two towns of the rival: one 180 tiles out without a shared border (the war goal), one 118 tiles out with touching land
+  (a front);
+- war with those goals;
+- an airfield, and a depot within artillery range of the goal, kept stocked.
+
+What it spawns:
+- enemy waves on the capital;
+- an enemy scout plane;
+- once the plane is seen, the subject's interceptors and bombers;
+- two scout planes of the subject and 10 enemy walkers beyond the front.
+
+The AI's own council does the rest; the file's header documents every step.
+
+Results (seconds after the setup, seeds 811 / 806 / 805), **6/6 paths PASS on all three seeds, 0 errors**:
+
+| Path | 811 | 806 | 805 | Evidence (log) |
+|---|---|---|---|---|
+| hired garrison | 2 | 2 | 4 | `council: rts-player hires 8 garrison points at attacked city 1` |
+| interceptors | 6 | 6 | 6 | `interceptors (division #3, 3 planes) patrol the capital: enemy planes seen 1 s ago` |
+| holding division | 61 | 31 | 91 | `division #4 (15 units) holds front segment 2 (..., threat 89, enemy strength 10)` |
+| bombers | 262 | 527 | 292 | `operation #3 bomb -> city ... phase fly`, then `fly -> strike`, `strike -> return` |
+| artillery train | 269 | 534 | 297 | `advance -> siege (89 tiles)`, `artillery train 6 ... deployed at depot #527 with 20 shells`, 3 shots |
+| mercenaries | 301 | 528 | 293 | `sinks: rts-player hires mercenaries at port #504 ...: 8 units`, `council: ... hires mercenaries (division #9)` |
+
+Bugs it found, fixed in 5a06781 (council.lua):
+1. A reinforcement did not join a capture whose artillery train had made it a "siege", and started a second operation.
+2. Mercenaries hired at a port 790-1,160 tiles out walked into an attack group and kept its centre out of siege range,
+   so no siege phase and no artillery train. Now half the group within siege_range counts as there, and mercenaries
+   come from the nearest own port within port_reach (450).
+3. A mercenary hire at the supply cap was refused, and the retry waited 2 minutes. Now up to 8 idle walkers retire and
+   the hire comes again in 10 s.
+4. Front segment names logged as "table".
+
+Bug 5 (a ceasefire on weariness alone, scripts/diplomacy.lua:850) went to m3-integ through the lead.
+
+**The player slot** (a helper's read-only study of batches A and F, then batch J):
+- No code path treats rts-player's AI differently. It loses the same way rts-ai-1 does, and hard won 10 of 20 there.
+- What decides a match is the city-state race: the side left without a city-state loses about 250 land and 100
+  residents, about 350 points, which beat the margin in every such match.
+- The loser of the race used to pile onto the rival's siege (push level 2 switched the clear-of-rivals rule off),
+  arrive after the capture, and never try again: the push was gated on "no operation yet", and the capture cooldown
+  is 15 minutes.
+- Fixed in 5a06781:
+  - push until a city-state is held (and no offensive runs);
+  - never target a city-state a rival is capturing;
+  - from the second push only a rival division within 100 tiles keeps an AI off a city-state;
+  - losing the target city-state ends the capture cooldown.
+- One real slot asymmetry, measured in A and F: rts-ai-1 sold its captured port's 100 starting circuits in 20 of 20
+  runs, the player in 6 of 20 (a race of the strategist's sale against the market AI's haul, staggered by slot). It is
+  fixed in m3-integ's market.lua (the haul only while a hauler serves the port) and did not change who won.
+
+### 4.7 Wave B.2, final round (5a06781: war-probe fixes and the city-state race)
+
+Test tree build/m3ai-tree12 = HEAD a8d398e + 5a06781's AI + m3-integ's TOWN_PENDING_OK line (batch M).
+
+**Hard against normal, the lead's protocol: seeds 901-905, each played twice with the levels swapped between the
+slots** (`difh`: rts-ai-1 hard; `difn`: the player hard), so every map is played both ways:
+
+| Seed | difh: winner (margin) | difn: winner (margin) | land, difh (player / ai-1) | land, difn (player / ai-1) |
+|---|---|---|---|---|
+| 901 | normal +170 | normal +292 | 1721 / 1721 | 1468 / 1721 |
+| 902 | normal +155 | hard +429 | 1721 / 1721 | 1721 / 1581 |
+| 903 | hard +88 | normal +146 | 1734 / 1581 | 1721 / 1721 |
+| 904 | hard +255 | normal +5 | 1721 / 1721 | 1721 / 1721 |
+| 905 | normal +119 | normal +576 | 1721 / 1468 | 1468 / 1721 |
+
+**Hard wins 3 of 10. The goal (7 of 10) is not met**; this was the one attempt (goods chain at every level plus hard's
+city-state plan), and by the lead's rule the measurement stands with its cause:
+- **The knobs do not touch what the score counts.** The score is about 1,000 population, 1,470-1,730 land, 50-230
+  supply and a little treasury. Hard's knobs are fresher intelligence, more operations at once, full micro, a faster
+  council, more orders, a faster build pace and the city-state plan; they change how its army fights, not how fast its
+  cities grow.
+- **The economy is the same at both levels.** It is goods- and ration-bound, and since wave B.2 every level runs the
+  same goods chain. Hard's earlier 7 of 10 (batch J) was on alternating sides with the goods chain also at every level;
+  with the sides swapped on the same maps it is 3 of 10.
+- **With the race fixes both sides usually take a city-state.** Land was equal in 5 of the 10 matches, and hard won 1
+  of those 5 (904 difh). Where land differed, the side with more land won 4 of 5.
+- **Hard's own city-state plan fired** (`army ready for city-state ...: pushes`), but an earlier push does not win the
+  race when the rival's first army is as large.
+- **Without resource bonuses**, a stronger hard needs economic skill that normal lacks, for example a hard-only
+  district or goods plan. Wave B.2 gave the goods chain to every level, as the lead's item 4 asked.
+
+**4 normal AIs, seeds 801-805:**
+
+| Seed | linked by 35:00 (player, ai-1, ai-2, ai-3) | air patrols | fort belts | first Age III | errors |
+|---|---|---|---|---|---|
+| 801 | 2 of 4 (37, 59, 33, 30) | 1 | 4 | 40:00 | 0 |
+| 802 | 3 of 4 (33, 57, 30, 28) | 18 | 6 | 38:00 | 0 |
+| 803 | 1 of 4 (31, -, -, -) | 7 | 8 | 46:00 | 0 |
+| 804 | 4 of 4 (35, 34, 32, 33) | 3 | 6 | 40:00 | 0 |
+| 805 | 2 of 4 (31, 41, 30, 37) | 7 | 4 | 54:00 | 0 |
+
+Linked 12 of 20 (not met); air patrols 5 of 5 (met); belts 5 of 5; Age III by 40:00 3 of 5 (met); phased operations in
+every nation; 0 errors.
+
+**M2 seeds 701-705:** trade, war, peace and capture pass 5/5. Starving passes 4/5: in 701, rts-ai-1's town 12 at war
+starves at 38:00, and rts-ai-2's city 23 at 55:00. City-state captures rose to 2-4 per seed (were 1-3) with the race
+fixes. AI autotest 79/82, 81/83, 79/83, 81/83, 78/83.
+
+**M1 seed 501:** 52/53. train_items fails: the player's town line never opens; m3-integ's rails fixes (a detour around a
+blocked piece, depots kept off planned pieces) are not in this tree, and on their tree train_items passes.
 
 ## 5. Regressions
 
