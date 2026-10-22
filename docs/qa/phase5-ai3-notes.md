@@ -9,6 +9,29 @@ runs exactly as before.
 
 ## 1. Verdict
 
+### Wave B.2 (3ea458e), the tree frozen for QA
+
+| Criterion | Result |
+|---|---|
+| Operations with phases, ≥1 per nation | met: 20/20 nations |
+| A fort belt built on a threatened approach | met: 5/5 seeds |
+| Age III by 40:00 in ≥3/5 seeds | met: 3/5 |
+| Wars and peaces as in M2 | met: every seed |
+| 0 errors | met |
+| AI time ≤0.5 ms/tick/nation on average | met: about 0.03 |
+| Hard beats normal in ≥7/10 1v1 matches | **met: 7/10**. The player-side AI still won only 4/10 (section 4.6). |
+| Never-triggered paths: holding division, interceptors, bombers, artillery train, mercenaries | met: 6/6 paths pass in the scripted war probe (two seeds, 0 errors) |
+| Uranium and nuclear | minimal plan in place: outposts ran in 7 of 13 attempts; no nuclear plant finished by 60:00 |
+| Every nation's 3 cities linked by rail by 35:00 | **not met: 12/20** (target 16) |
+| Air patrols fly | **not met: 4/5 seeds** |
+| No AI tick over 3 ms | **not met**: the town-site search is fixed; 8 commander runs of 14,412 still go over 3 ms (worst 25.8 ms, the arena-wide ore scan, now replaced; not re-benched) |
+| M1 seed 501 | 52/53: train_items, because the player's town line never opened (m3-integ's rails.lua work in progress) |
+| M2 seeds 701-705 | trade, war, peace and capture 5/5; starving 4/5 (701: a town at war) |
+
+Skirmish is byte-identical; smoke 65/65.
+
+### 903a7b1 (before wave B.2)
+
 **Partly met.** On the final tree 903a7b1, 4 normal AIs, seeds 801-805:
 
 | Criterion | Result |
@@ -27,7 +50,8 @@ runs exactly as before.
 Regressions:
 
 - **Skirmish:** byte-identical, smoke 65/65.
-- **M1 seed 501:** 51/53. It moves between 51 and 53 from run to run; HEAD without this tuning also gave 52/53.
+- **M1 seed 501:** 51/53. The result moves between 51 and 53 from tree to tree; HEAD without this tuning also gave
+  52/53.
 - **M2 seeds 701-705:** trade, war, peace and capture pass. Starving fails in 701 and 702.
 
 Section 6 lists the causes and the next steps.
@@ -68,16 +92,24 @@ through hooks (`army.launch_ok`, `army.field_target`, `army.recall`, `C.army.hel
 | council period (ticks) | 240 | 120 | 60 |
 | first attack factor | 1.5 | 1 | 0.8 |
 | city-state operations: from (x `city_state_from`) / margin (x the city-state's points) | 1.3 / 1.8 | 1 / 1.5 | 0.75 / 1.6 |
-| goods works at the capital | people.ai rule (1, a 2nd when a town stalls) | same | one per 12 goods/min of need, at most 4 |
+| goods works at the capital (wave B.2) | one per 20 goods/min of need, at most 2 | one per 12, at most 4 | one per 12, at most 4 |
+| first city-state plan (army sized for it, artillery, early push) | - | - | yes |
 
 Vision is honest at every level (sight checks only, never chart state); hard's Skirmish bonuses stay off in Nation mode
 (`commander.NATION_NO_CHEATS`), and the M2 "+20 % tax for hard" goes (treasury.lua hunk H2, m3-integ). The goods works
 are a planning rule, not a resource: from tier 3 every AI capital ran short of goods (0-40 % met, 62-70 % happy, no
 growth) and the market AI imported them at 15-17 cr a piece in minutes of 380-500 cr, which took the balance below the
-tax hysteresis' `enter` (1,500) and held a high tax until 2,100. Hard's governor plans one goods works per 12 goods a
-minute of need (`C.cfg.goods_per_works`, at most 4), its second and further works fixed on the goods recipe (in auto
-mode three works made the capital's other targets and its goods stayed at 0 %); normal keeps the M2 rule and buys. (Tried and dropped: an import
-reserve of 2,200 for hard kept its tax normal but left its capital at 0 % goods; batch B, section 4.)
+tax hysteresis' `enter` (1,500) and held a high tax until 2,100. Since wave B.2 every level's governor plans
+the goods works by need (`C.cfg.goods_per_works`: one per 12 goods a minute of need, at most 4; easy one per 20, at most
+2), the second and further works fixed on the goods recipe (in auto mode three works made the capital's other targets
+and its goods stayed at 0 %), and the capital keeps 40 copper cable for them. (Tried and dropped: an import reserve of
+2,200 for hard kept its tax normal but left its capital at 0 % goods; batch B, section 4.)
+
+Hard's first city-state (`cs_plan`, wave B.2; council.cs_plan_step): from Age II at peace, before any operation, the
+council sizes the army for the nearest city-state of the world plan (1.2 x its turret and garrison points, the push's
+margin, counted as army.city_state_target counts them), the barracks weigh artillery x3, and the push goes out as soon
+as the idle army's supply reaches that size instead of at push_after. In seeds 901-910 it sized the army (28-32 points,
+38 supply wanted) but never fired: hard's regular push (at 0.75 x push_after) came first with the same army.
 
 ### 2.3 Economic planner (`ai/planner.lua`)
 
@@ -91,15 +123,25 @@ reserve of 2,200 for hard kept its tax normal but left its capital at 0 % goods;
 - **Cities.** The second city stays ai/towns.lua's mining town (`cities.ai_step`). The planner founds the third from
   9:00 (or once Industrialisation is researched) and the fourth from 18:00 (or Age II), times the difficulty's `expand`
   (x0.7 with a Territory victory), up to the difficulty's `cities` and `balance.nation.cities.limit` (4, capital
-  included). (Tried and dropped: the City Center at the front of the construction queue; behind 100 build-order jobs a
-  site planned at 7:30 was built at 15:46, but in front of them the new town's farm, turrets and houses held up the
-  capital's copper smelters by 2 minutes and M1 seed 501's Age II by 5. Also dropped: the third city from 7:00 and
-  Industrialisation and Railways wanted once it is under way; the aggressive AI's capital then ran out of copper in Age
-  I and its town line never got its second depot in M1 seed 501, and no nation linked its cities earlier.) A trunk edge takes no depot kit while rails.lua's own capital-town line still waits
-  for its depots (both are paid from the capital's plates; in M1 seed 501 the aggressive AI's town line stayed at one
-  depot for 53 minutes while its oil-town edge crafted its own). The third is the **oil town**: its City Center stands where its 16-tile logistic area covers the most wells
-  of the nation's home oil field (off every well's pumpjack footprint); from Age II pumpjacks on the covered wells put
-  crude oil into its network. A site on ground not generated yet is requested (worldgen.request_area) and skipped.
+  included). Site rules (wave B.2):
+  - The third city goes to a site within 250 tiles of an own city when one is left (`third_link`: a short trunk edge),
+    else to the best site.
+  - No city but the oil town lies farther than 450 tiles from the capital (`far_city`; a trade city 543 tiles out
+    starved in M2 seed 702).
+  - A site needs room for a farm within 15 tiles of its City Center, inside its 16-tile logistic area; a planned city
+    gets its farm at once (ai/governor.lua town_food, a 13- then a 15-tile ring).
+
+  The oil town's City Center stands where its 16-tile logistic area covers the most wells of the nation's home oil field
+  (off every well's pumpjack footprint); from Age II pumpjacks on the covered wells put crude oil into its network. A
+  site on ground not generated yet is requested (worldgen.request_area) and skipped.
+
+  Tried and dropped:
+  - The City Center at the front of the construction queue. Behind 100 build-order jobs a site planned at 7:30 was built
+    at 15:46, but in front of them the new town's farm, turrets and houses held up the capital's copper smelters by 2
+    minutes and M1 seed 501's Age II by 5.
+  - The third city from 7:00, with Industrialisation and Railways wanted once it is under way. The aggressive AI's capital
+    then ran out of copper in Age I and its town line never got its second depot in M1 seed 501, and no nation linked its
+    cities earlier.
 - **Trunk.** Prim's minimum spanning tree over own cities from the capital; every city that rails.lua's own program
   (the capital - town line, and its retaken-line programs) does not serve gets a `rails.ai_program` of the planner's
   (`A.pay` = the capital's centre: H1), at most 3 lines building at once (the main program counts), stepped every 300
@@ -108,7 +150,11 @@ reserve of 2,200 for hard kept its tax normal but left its capital at 0 % goods;
   waits for its depots or is being built and three cities are not linked yet, the barracks save steel and iron for it
   (`planner.saving_rail`, read by ai/age_up.lua as for rails.lua's own line). A survey that fails twice re-anchors the
   edge at the nearest linked city; an edge longer than 480 tiles waits. In Age I the trunk waits until the capital holds
-  40 circuits (the Charter's).
+  40 circuits (the Charter's). A trunk edge takes no depot kit while rails.lua's own capital-town line still waits for its
+  depots (both are paid from the capital's plates; in M1 seed 501 the aggressive AI's town line stayed at one depot for
+  53 minutes while its oil-town edge crafted its own). While three cities are not linked, the second Steel works is
+  the first Age II district. Only a city with an open rail line and no supply hauler exports the Age III goods (on every
+  city a town's ration hauler carried batteries 725 tiles instead and the town starved, M2 seed 701).
 - **Age III road.** Technologies first (`ai/tech.lua` tech.wants, preempting a running one; progress kept):
   Fortification at war (the council's urgent want), Electrification in Age II, then the council's (Aviation, Air Force),
   Geology for a rare deposit in reach. The industrial kit's parts (20 engines, advanced circuits, sulfur and 40 plastic)
@@ -124,6 +170,11 @@ reserve of 2,200 for hard kept its tax normal but left its capital at 0 % goods;
   and 60 % is delivered, and of Electrification while it runs. In Age III the Age III districts follow, and the capital
   automates metallurgy, electronics and chemistry once it holds 4 automation kits. Rare extractors go on deposits inside
   own land within 15 tiles of a city.
+- **Uranium and the nuclear plant** (wave B.2, a minimal plan). In Age III, the nearest uranium deposit of the world plan
+  within 260 tiles of an own city (not on a rival's land) gets an outpost once Geology is researched. The outpost is an
+  rts-hub 10 tiles south of the ore for network and power, one extractor on the ore, and a stockpile at the extractor's
+  output; the hub exports the ore and the capital keeps 40. With Nuclear power researched and the outpost running, the
+  nuclear plant joins the capital's district list and 2 fuel rods become a make target (Chemistry works).
 
 ### 2.4 War council (`ai/council.lua`)
 
@@ -158,6 +209,12 @@ reserve of 2,200 for hard kept its tax normal but left its capital at 0 % goods;
   own depot calls a relief group even on the capital's land.
 - **Money.** A city under attack hires 8 garrison points (balance above 2,500, every 2 minutes); the capital attacked
   with fewer than 12 idle units hires mercenaries at the port.
+
+- **Perf (wave B.2, Nation only).** scout.best_target keeps its result for 300 ticks per commander while the target
+  building stands, so army.step's scan over every known enemy building does not run every pass. scout.patch_list (the
+  raiders' fallback target) reads the world plan's recorded ore patches instead of scanning the whole arena; that scan
+  took 25 ms in one tick on a 2048 world. The commander's factory pass and its helpers are called through the module
+  table, so the bench's perf marks can time them (tools/probes/ai3_marks.lua).
 
 ### 2.5 Division controllers (`ai/controller.lua`)
 
@@ -255,7 +312,7 @@ The same AI on df6736c's base, without m3-integ's three commits (batch G, tree7)
 | 805 | 2 of 4 (30, 39, 31, 44) | 25 | 6 | 42:00 |
 
 That is 12 of 20 linked, air 5 of 5, belts 5 of 5, Age III 4 of 5. Two things may account for the gap: army upkeep
-at 1.2 cr per supply point (20 % more) makes money tighter, and one run per seed is noisy (section 6, item 8).
+at 1.2 cr per supply point (20 % more) makes money tighter, and one seed's outcome turns on small differences (section 6, item 8).
 
 ### 4.3 How the batches moved
 
@@ -324,6 +381,79 @@ mode = "nation", world_size = 2048, enemy_brain = "ai"}' 20` (4 nations, benchma
 
   The "at most 3 ms in any tick" goal **is not met**; the mean budget is.
 
+### 4.6 Wave B.2 (3ea458e on cb909ac, with m3-integ's uncommitted `cities.TOWN_PENDING_OK`)
+
+The test tree is HEAD cb909ac plus the B.2 AI plus m3-integ's one-line TOWN_PENDING_OK. m3-integ's work in progress in
+rails.lua, market.lua, diplomacy.lua, garrison.lua and sinks.lua is not in it. Batches J (tree9) and K (tree10) give
+the same numbers for the normal AIs; K is listed. Every run reproduces: K repeated J's 1v1 scores to the point.
+
+4 normal AIs, seeds 801-805 (batch K):
+
+| Seed | 3 cities linked by 35:00 (player, ai-1, ai-2, ai-3) | phased operations | air patrols | fort belts | first Age III | wars / ended / peaces | AI ms/tick (mean / worst minute, 4 nations) |
+|---|---|---|---|---|---|---|---|
+| 801 | 2 of 4 (37, 53, 33, 30) | 7, 21, 4, 1 | **0** | 4 | 40:00 | 4 / 3 / 3 | 0.29 / 0.48 |
+| 802 | 3 of 4 (33, -, 30, 28) | 5, 23, 5, 1 | 21 | 6 | 38:00 | 3 / 3 / 3 | 0.26 / 0.44 |
+| 803 | 1 of 4 (31, -, -, -) | 8, 30, 5, 3 | 3 | 8 | 51:00 | 9 / 8 / 8 | 0.25 / 0.43 |
+| 804 | 4 of 4 (35, 34, 32, 33) | 7, 27, 6, 3 | 3 | 6 | 40:00 | 3 / 3 / 3 | 0.30 / 0.51 |
+| 805 | 2 of 4 (31, 41, 30, 37) | 7, 26, 7, 1 | 9 | 4 | 52:00 | 5 / 4 / 4 | 0.26 / 0.41 |
+
+- **Linked by rail by 35:00: 12 of 20 nations, against a target of 16.**
+  - The 903a7b1 batch had 8 of 20; the same AI on df6736c's base, batch G, had 12.
+  - In 803, the aggressive rts-ai-1 took a town from rts-ai-2 at 23:00 and one from rts-ai-3 at 26:00, and neither of
+    them linked three cities afterwards.
+  - rts-ai-1 itself misses in 4 of 5 seeds: it is at war from 18-25 minutes and loses depots.
+  - The 250-tile rule set the third city in 6 of 20 nations. The others had no site that close and took the oil town
+    at about 300 tiles.
+  - The Age I steel smelter per trunk edge is not built: the capital's hub has no free slot for a second steel chain
+    (orders_data.lua: the four CC stockpiles cap it). The second Steel works heads the Age II districts instead.
+- Phased operations 20 of 20; fort belts 5 of 5; wars and peaces every seed; 0 errors.
+- Air patrols 4 of 5. In 801 no nation had a finished airfield by 60:00; Aviation came at 41-48.
+- Age III by 40:00: 3 of 5.
+
+**M2 seeds 701-705** (batch K):
+- trade, war, peace and capture pass 5/5;
+- **starving passes 4/5**;
+- 701 fails: rts-ai-1's mining town 12 had its own farm and bakery from 14:00 and was at war with rts-player from 21:50. Its rations fell from 100 % to 0 within two minutes at 35:00, it was taken at 44:00, and then starved as rts-player's;
+- 702 (the far trade city) now passes, under the 450-tile rule and the farm-room rule;
+- AI autotest 79/82, 81/83, 78/83, 81/83, 79/83.
+
+**M1 seed 501** (batch K): **52/53**. train_items fails: rts-player's town line never opened, so 6,269 items of the
+20,000 goal moved, all by rts-ai-1. m3-integ's work in progress on rails.lua (a detour around a blocked piece; depots
+kept off surveyed pieces) addresses that line.
+
+**Hard against normal, seeds 901-910** (batch J; K identical): **hard wins 7 of 10**.
+
+| Seed | 901 | 902 | 903 | 904 | 905 | 906 | 907 | 908 | 909 | 910 |
+|---|---|---|---|---|---|---|---|---|---|---|
+| hard side | ai-1 | player | ai-1 | player | ai-1 | player | ai-1 | player | ai-1 | player |
+| winner (margin) | hard +434 | hard +601 | hard +576 | normal +286 | normal +137 | hard +58 | hard +427 | hard +381 | hard +357 | normal +463 |
+
+The city-state plan never fired (section 2.2), and the goods chain runs at every level. So the 7 of 10 does not come
+from a hard-only rule. It comes from hard's knobs on a changed economy (pace, intel, micro), and the side still weighs:
+the player-side AI won 4 of 10.
+
+**Perf bench** (tree9, 20 minutes, 4 nations, seed 701, benchmark mode):
+- AI commanders 0.115 ms per tick for all four together;
+- towns.pick_site is gone (the async site search);
+- AI calls over 3 ms: 8 commander runs of 14,412.
+  - The worst was one army.step at 25.8 ms: scout.patch_list scanned the whole arena for ore, 8.3 ms of clustering plus
+    the scan. 3ea458e reads the recorded patches instead; not benched after the change.
+  - One 7 ms mix.manage_barracks (not attributed).
+  - The rest are 3.1-5.1 ms runs summed over several parts.
+- The 21.9 ms slice-2 spike of the 903a7b1 bench did not come back at that tick with the extra marks
+  (tools/probes/ai3_marks.lua: the factory pass took 0.38 ms there). It was not the AI's work; most likely a GC step.
+
+**Uranium and nuclear** (batch J, 21 runs):
+- 13 nations planned an outpost, and 7 of those outposts ran (ore exported);
+- 27 nations in Age III found no deposit within 260 tiles;
+- the nuclear plant entered a capital's district list once by 60:00 and was not finished.
+
+**War paths** (tools/probes/ai3_war_paths.lua, 1v1 hard, seeds 805 and 806, tree9): **6/6 paths PASS in both, 0
+errors**: holding division, interceptors, bombers (a bomb operation at a capture's target), artillery train at a
+siege, mercenaries, hired garrison. The probe sets the scene (technologies, money, two towns of the rival, one with
+touching land, an airfield, a depot in range, enemy waves and a scout plane) and lets the AI's own council act; its
+header documents the setup.
+
 ## 5. Regressions
 
 - **Skirmish:** byte-identical vs aaa8061 (`tools/determinism-compare.sh`, WHAT=all, seed 501, 10 minutes: 4,518 lines
@@ -331,7 +461,7 @@ mode = "nation", world_size = 2048, enemy_brain = "ai"}' 20` (4 nations, benchma
   planner, council and difficulty run in Nation mode only; governor goods works read `C.cfg.goods_per_works`, which
   only difficulty.apply sets (Nation); army.lua's push escalation reads `C.army.cs_push`, which only the council sets.
 - **M1 seed 501** (1 normal opponent, 60 minutes): **51/53** on 903a7b1 (produce_rts-ai-1, and train_items: 14,789 of
-  20,000). Single runs vary:
+  20,000). The result moves with small changes of the tree:
   - df6736c, batch A: 53/53.
   - c1c920d (m3-integ's head without this tuning): 52/53, failing produce_rts-ai-1.
   - Four variants of the pre-commit tree: 51-52, failing train_items, rail_line_rts-player (a blocked piece) or
@@ -372,7 +502,7 @@ mode = "nation", world_size = 2048, enemy_brain = "ai"}' 20` (4 nations, benchma
    - Next: a goods chain at every level (fixed goods works with their copper cable and bricks), so the capitals grow
      past tier 3. A hard-only city-state plan: a first army sized to the city-state's points plus artillery, sent
      before the rival's.
-3. **M1 seed 501 is 51-53 of 53 from run to run** (section 5). It fails rail_line_<force>, train_items (goal 20,000),
+3. **M1 seed 501 is 51-53 of 53 from tree to tree** (section 5). It fails rail_line_<force>, train_items (goal 20,000),
    produce or age2 depending on which line opens. scripts/rails.lua gives up on a blocked piece after MAX_PIECE_FAILS
    and never retries: the player's town line in batch G stayed at piece 24 from minute 26 (sent to m3-integ).
 4. **M2 starving in 701 and 702** (df6736c, c1c920d and 903a7b1).
@@ -396,9 +526,11 @@ mode = "nation", world_size = 2048, enemy_brain = "ai"}' 20` (4 nations, benchma
    - army.step, up to 3.8 ms.
 
    Next: perf marks inside slice 2, and army.step's target scan in steps.
-8. **One run per seed says little.** The autotest server runs (SPEED 6-10) did not reproduce from run to run (M1
-   seed 501 above), so a single run cannot judge a small AI change. Skirmish identity was checked in benchmark mode
-   (`tools/determinism-compare.sh`), where it holds line for line.
+8. **One seed says little about a small change.** The runs themselves are reproducible: batch K repeated batch J's
+   1v1 scores to the point on seeds 901-904, where the two trees differ only in code that did not fire there. (An
+   earlier version of these notes said the runs did not reproduce; the M1 differences it cited came from different
+   trees.) But one seed's outcome turns on small differences (which line opens, who reaches a city-state first), so a
+   single seed cannot judge a small AI change.
 
 ## 7. Commits
 
