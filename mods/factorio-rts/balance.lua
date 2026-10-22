@@ -770,7 +770,8 @@ balance.nation.treasury = {
                   ["rts-fishing-hut"] = true},
     crafter_kinds = {factory = true, barracks = true, district = true},
   },
-  army = {per_supply = 1, free = 0}, -- cr per supply point of military units per minute (haulers excluded)
+  -- Phase 5 M3 integration (balance pass): 1.2 (was 1): with m3-ai's AI keeping a reserve no nation went into debt
+  army = {per_supply = 1.2, free = 0}, -- cr per supply point of military units per minute (haulers excluded)
   transport = {locomotive = 2, rail_tiles = 100}, -- cr per locomotive per minute, 1 cr per this many tiles of line
   interest = {rate = 0.05, period = 5 * 60 * 60}, -- 5 % of the debt every 5 minutes
   credit = {minutes = 10, min = 500, -- credit line: 10 minutes of gross income (tax + exports), at least `min`

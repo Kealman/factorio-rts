@@ -344,12 +344,12 @@ Age III brings the **Chemistry district** (plastic and sulfur from crude oil, li
 | Tax | 0.2 per resident × tax level (low 0.6, normal 1.0, high 1.4) × happiness (0.5 at 0 … 1.2 at 100) |
 | Exports | 0.9 × the market price |
 | Building upkeep | 1 per Age I building, 4 per Age II building, half for an idle crafter; walls, stockpiles, solar, accumulators, houses, apartments, farms, bakeries, fishing huts, City Centers, the CC and trade ports are free |
-| Army | 1 per supply point (haulers and the Commander are free) |
+| Army | 1.2 per supply point (haulers and the Commander are free) |
 | Transport | 2 per locomotive, 1 per 100 tiles of rail line |
 | Imports | 1.1 × the market price |
 | Interest | 5 % of the debt every 5 minutes |
 
-**Debt.** Below zero imports stop (stage 1); after 60 s wages go unpaid (stage 2: barracks hold their kits, every building works one staffing step lower); after 180 s, or at the credit line (10 minutes of gross income), unrest (stage 3: −25 happiness). Back at zero or more everything clears at once.
+**Debt.** Below zero imports stop (stage 1); after 60 s wages go unpaid (stage 2: barracks hold their kits, every building works one staffing step lower); after 180 s, or at the credit line (10 minutes of gross income; when the income falls the line follows it over about ten minutes), unrest (stage 3: −25 happiness). Back at zero or more everything clears at once.
 
 **Trade ports** are gold buildings with two stockpiles and their own logistic network on the port sites; they start neutral with 300 steel, 100 circuits and 100 coal. One of your military units within 4 tiles for 10 s, with nobody else there, takes a port (a port held by another nation only while you are at war with it). Haul goods there with a hauler route or a train to a depot next to it.
 

@@ -40,9 +40,13 @@ supply (army upkeep at the same number of crowns a minute) that grow at war and 
 | The credit line falls at most 1 % per treasury step (about 6 % a minute) when the income falls | (2): a credit line that halves in a minute makes a temporary tax drop a bankruptcy | `scripts/treasury.lua`, `balance.nation.treasury.credit.decay = 0.99` |
 | Railways 10 basic kits (was 15) | first lines at 21-36 minutes; the labs waited for basic kits after Industrialisation | `prototypes/rails.lua` |
 | Electrification 25 industrial kits (was 40) | the labs waited for industrial kits 12-30 minutes after Age II; the Space Program started at 29:44-47:59 | `balance.nation.age3.techs` |
+| Army upkeep 1.2 cr per supply point a minute (was 1) | with m3-ai's tuned AI (a ₡ 500-1,500 reserve, fewer rushes) no nation went into debt in 4 seeds; at 1.2 two of four seeds had a nation in debt, none at its credit line | `balance.nation.treasury.army` |
 | Space Program stage 1: 200 steel, 150 concrete, 60 advanced circuits (was 200 / 200 / 100) | stage 1 took the AIs 10-24 minutes, the advanced circuits last; stages 2 and 3 (the Space victory) unchanged | `balance.nation.age3.stages` |
 
-TBD: the runs after the changes.
+| HEAD 9c60893 (this pass + m3-ai's df6736c tuning; `m3i-e2e1-801..804`) | none (lowest balances ₡ 157-503: the AI keeps a reserve) | none | 9 of 16 (26:54-50:20) | 2 of 4 (39:19; 36:06, 38:35) |
+| + army upkeep 1.2 per supply point (`m3i-army12-801, 802, 803, 805`) | 2 nations in 2 of 4 seeds (802 rts-ai-3, 805 rts-player; stage 3, lowest ₡ -364 / -488) | none | 10 of 16 | 1 of 4 (36:59) |
+
+TBD: the final runs.
 
 ### B. Fixes carried from M2 and wave A
 
@@ -85,6 +89,13 @@ English coordinates of the Russian layout; screenshots `build/shots-m3i-{en,ru}/
 | Russian wording: нации/страны/вольный город/Эпоха II/отряды/комплекты/семья | державы, город-государство, II эпоха, юниты, наборы, семейство (item names unchanged) | `locale/ru/*.cfg` |
 | A fort belt laid across a rare extractor's drop tile stopped it and its bonus ran out | the belt layout leaves the drop tile of every own mining drill near the line free | `scripts/belts.lua` |
 | The "Depot N" chart labels were unreadable at map zoom (world-sized scale 1.6) | screen-sized (`scale_with_zoom`, 1.2), like the engine's station names | `scripts/rails.lua` |
+
+After this package's later GUI changes (the Ready column, the artillery train's depot position, world-sized depot
+labels, the stage 1 goods) the probe ran again on HEAD 1851531 / 9c60893: English 50/53, Russian 48/53, 0 Lua errors
+(`build/shots-m3i-{en2,ru2}/`, window captures `build/shots-m3i-{en2,ru2}-window/`); every miss is a placement site of
+that run's world (the Steel works and the AA turret sites taken by the Launch complex or walkers; the Russian layout's
+own coordinates for the build tabs, Hire and the air panel's x, which the protocol gives), and the probe's fallback
+went on. The map shows "Депо 1" next to the depot and no raw station name (`m3d-g05-map-z010.png`).
 
 Checked and unchanged: the F11 page in its scroll pane (fits y 74-722, 11 paragraphs, Y/F/B/H in the keys, Russian
 reads well), "Needs Age III" for Chemistry, Nuclear power and Air Force, the lobby (Nations 2-6, 2048/3072/4096,
@@ -186,7 +197,26 @@ minutes.
 
 ## 6. Performance
 
-TBD. m3-perf's measurement of m3-age3's sliced treasury census (perf notes §6a, synced tree): a slice costs 0.058 ms on
+**Budget scene** (`KEEP_TREE=<HEAD 9c60893> SEED=701 REALTIME=5 tools/perf-bench.sh scene m3i-scene1 5`: 4 nations, 16
+cities, 604-608 units of which 371-431 moving, 40 freight trains):
+
+| Per tick, 18,000 benchmarked ticks | mean | p50 | p95 | p99 | max |
+|---|---|---|---|---|---|
+| wholeUpdate (ms) | 1.698 | 1.240 | 3.590 | 6.832 | 26.1 |
+| scriptUpdate (ms) | 0.546 | 0.041 | 2.231 | 5.060 | 24.7 |
+| entityUpdate (ms) | 0.802 | 0.786 | 1.043 | 1.232 | 2.8 |
+
+UPS capacity at the mean tick 589; 8 ticks over 16.67 ms in five minutes, the five worst at the minute boundaries where
+the AI autotest's minute report and the scene fixture log (test code, 10-13 ms of `ai/autotest`). The same save played
+on a headless server at speed 1: **60.0 s of wall clock per game minute** (59,995 / 60,005 / 59,997 / 60,005 ms).
+PERF per module over the realtime minutes: all modules 0.577 ms/tick, AI 0.353 (0.088 per nation), M2 modules 0.035,
+M3 modules 0.020 (sched 0.016, fronts 0.001, belts 0.001, age3 0.001, rare 0.001).
+
+**Determinism** (`PARALLEL=1 WHAT=events KEEP_TREE=<HEAD 9c60893> tools/determinism-compare.sh m3i-det-<seed> '<4
+nations>' 30 <seed>`: two fresh saves of the same seed, 30 minutes each): seed 801 202 event lines and seed 802 207
+(city sites and foundings, captures, wars, treaties, start lines, rail lines and surveys), **0 differing** in both.
+
+TBD: the 60-minute runs. m3-perf's measurement of m3-age3's sliced treasury census (perf notes §6a, synced tree): a slice costs 0.058 ms on
 average and 0.15 ms at worst, the treasury step 0.79 ms; the 600-tick census it replaced cost up to ~8 ms in one tick.
 
 ## 7. Open issues
