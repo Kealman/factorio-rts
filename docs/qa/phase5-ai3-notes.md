@@ -375,10 +375,14 @@ mode = "nation", world_size = 2048, enemy_brain = "ai"}' 20` (4 nations, benchma
 3. **M1 seed 501 is 51-53 of 53 from run to run** (section 5). It fails rail_line_<force>, train_items (goal 20,000),
    produce or age2 depending on which line opens. scripts/rails.lua gives up on a blocked piece after MAX_PIECE_FAILS
    and never retries: the player's town line in batch G stayed at piece 24 from minute 26 (sent to m3-integ).
-4. **M2 seed 702 starving** (df6736c): the planner's trade city 23, 543 tiles from the capital, had no farm spot within
-   13 tiles of its City Center (governor town_food). Its rations came by hauler and by the trunk line, and stopped for
-   4 minutes at 52-55 during a war. Next: farm spots in a wider ring with a supply hauler for the town, or no trade
-   city beyond 450 tiles.
+4. **M2 starving in 701 and 702** (df6736c, c1c920d and 903a7b1).
+   - 702: the planner's trade city 23, 543 tiles from the capital, had no farm spot within 13 tiles of its City Center
+     (governor town_food). Its rations came by hauler and by the trunk line, and stopped for 4 minutes during a war.
+   - 701 (m3-integ's diagnosis, c1c920d): rts-ai-1's mining town 12 lived on its capital supply hauler. From about
+     33:00 that hauler carried batteries over 725 tiles instead. The likely cause is the planner's export policies: every
+     non-capital city exports `export_goods` above 0 (planner.lua goods_policies), and the route hauler serves them.
+   - Next: export policies only on cities with an open trunk line and never on a hauler-supplied town; farm spots in a
+     wider ring; no trade city beyond 450 tiles.
 5. **Never triggered in the acceptance runs:** holding divisions (no front segment on 2048 worlds), interceptors (Air
    Force), bombers, artillery trains at sieges (Military railways and a depot within 110 tiles), mercenaries (1 in
    five seeds). The code paths ran in targeted probes only (wave B design runs). They need a 3072/4096 run with
