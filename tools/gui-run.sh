@@ -6,6 +6,7 @@ set -u
 source "$(dirname "$0")/factorio-env.sh"
 cd "$RTS_ROOT"
 MODS_DIR="${1:?mods dir required}"; CAP="${2:-120}"; MARKER="${3:-SELFTEST done}"; PATTERN="${4:-\\[rts}"
+factorio_version_guard "$MODS_DIR/factorio-rts" # the binary must match the tree's info.json factorio_version
 RUN_ID="$(basename "$MODS_DIR")"
 CFG="$(factorio_isolated_config "$RUN_ID-gui")"; SHOTS="$RTS_BUILD_DIR/runs/$RUN_ID-gui/script-output"
 SAVE="$RTS_BUILD_DIR/$RUN_ID-gui.zip"; LOG="$RTS_BUILD_DIR/$RUN_ID-gui.log"

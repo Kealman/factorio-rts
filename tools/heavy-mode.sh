@@ -25,6 +25,7 @@ SEED="${SEED:-701}"; WARMUP="${WARMUP:-60}"
 DEFAULT_MATCH='{opponents = 3, difficulty = "normal", mode = "nation", world_size = 2048, enemy_brain = "ai"}'
 MATCH="${MATCH:-$DEFAULT_MATCH}"
 SRC="${KEEP_TREE:-$RTS_MODS_DIR/factorio-rts}"
+factorio_version_guard "$SRC" # the binary must match the tree's info.json
 DIR="$RTS_BUILD_DIR/$NAME"; OUT="$RTS_BUILD_DIR/$NAME-out"
 rm -rf "$DIR" "$OUT"; mkdir -p "$DIR" "$OUT"
 cp -R "$SRC" "$DIR/factorio-rts"

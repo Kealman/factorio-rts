@@ -467,7 +467,14 @@ local function rounds_off(s, tick)
   -- research rush: the current research at twice the lab speed
   research.queue(F, "rts-supply-3")
   s.lab0 = game.forces[F].laboratory_speed_modifier
+  local _, working = research.lab_counts(F)
   local ok, why = sinks.rush(F, "rts-supply-3")
+  if working == 0 then -- Phase 5 M3 QA fix: no rush while no lab works
+    check("rush_research", not ok and why == "no-lab-work" and game.forces[F].laboratory_speed_modifier == s.lab0,
+      "rush Supply III with no working lab: %s (%s)", tostring(ok), tostring(why))
+    s.step, s.t = "hire", tick
+    return
+  end
   check("rush_research", ok and math.abs(game.forces[F].laboratory_speed_modifier - s.lab0 - (SB.rush.speed - 1)) < 1e-9,
     "rush Supply III: %s (%s), lab speed %+.2f", tostring(ok), tostring(why),
     game.forces[F].laboratory_speed_modifier - s.lab0)

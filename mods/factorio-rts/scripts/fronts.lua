@@ -660,7 +660,6 @@ redraw = function(force_name)
   local segs = fronts.segments(force_name)
   local top = 0
   for _, seg in ipairs(segs) do top = max(top, seg.threat) end
-  local size = (storage.world and storage.world.size or 2048) / 2048
   for _, seg in ipairs(segs) do
     local col = threat_color(seg.threat, top)
     objs[#objs + 1] = rendering.draw_line({surface = surface, color = col, width = 5, from = seg.a, to = seg.b,
@@ -668,10 +667,9 @@ redraw = function(force_name)
     local text = {"", {"rts-war3.front-label", seg.id, seg.threat}}
     local D = seg.holder and divisions.get(seg.holder)
     if D then text = {"", text, " · ", {"rts-war3.front-held", D.name}} end
-    objs[#objs + 1] = rendering.draw_text({text = text, surface = surface, target = seg.mid, color = col,
-      scale = 12 * size, alignment = "center", vertical_alignment = "middle", render_mode = "chart",
-      forces = {force_name}})
-    -- the game view too (thin, dashed, with the label): where H holds the line
+    -- the game view too (thin, dashed, with the label): where H holds the line. Phase 5 M3 QA fix (F3): one label, in the
+    -- game world at a fixed world size; the map's own label (chart, 12x) was drawn over every part of the game view
+    -- the force does not see and covered the screen edge at intermediate map zoom (the map keeps the coloured line)
     objs[#objs + 1] = rendering.draw_line({surface = surface, color = col, width = 3, from = seg.a, to = seg.b,
       dash_length = 2, gap_length = 1.5, forces = {force_name}})
     objs[#objs + 1] = rendering.draw_text({text = text, surface = surface, target = seg.mid, color = col, scale = 1.6,

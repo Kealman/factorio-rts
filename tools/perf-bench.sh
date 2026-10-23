@@ -40,6 +40,7 @@ source "$(dirname "$0")/factorio-env.sh"
 MODE="${1:?mode: match | scene | bench}"; NAME="${2:?name}"
 SEED="${SEED:-701}"; VARIANT="${VARIANT:-sa}"; SKIP="${SKIP:-0}"
 SRC="${KEEP_TREE:-$RTS_MODS_DIR/factorio-rts}"
+factorio_version_guard "$SRC" # the binary must match the tree's info.json
 DIR="$RTS_BUILD_DIR/$NAME"; OUT="$RTS_BUILD_DIR/$NAME-out"
 CFG="$(factorio_isolated_config "$NAME")"; WD="$RTS_BUILD_DIR/runs/$NAME"
 SCENE_MATCH='{opponents = 3, difficulty = "normal", mode = "nation", world_size = 2048, enemy_brain = "ai"}'
@@ -72,7 +73,7 @@ PY
   } >> "$M/control.lua"
   [ -n "${ROUTE_MARKS:-}" ] && printf 'return {route = true}\n' > "$M/scripts/perf_marks_cfg.lua"
   if [ "$VARIANT" = "base" ]; then
-    printf '{"mods":[{"name":"base","enabled":true},{"name":"elevated-rails","enabled":false},{"name":"quality","enabled":false},{"name":"space-age","enabled":false},{"name":"factorio-rts","enabled":true}]}\n' > "$DIR/mod-list.json"
+    printf '{"mods":[{"name":"base","enabled":true},{"name":"elevated-rails","enabled":false},{"name":"recycler","enabled":false},{"name":"quality","enabled":false},{"name":"space-age","enabled":false},{"name":"factorio-rts","enabled":true}]}\n' > "$DIR/mod-list.json"
   else
     cp "$RTS_MODS_DIR/mod-list.json" "$DIR/"
   fi

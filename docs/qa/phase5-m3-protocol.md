@@ -167,7 +167,7 @@ The M1 and M2 rows (`docs/qa/phase5-m2-protocol.md`, "Where things are on the HU
 | Depot panel, artillery | x 765–1012, from y 183 (the hub panel opens right of it, x 1019–1270) | As in M2, then "Artillery wagon kits: 1 · armoured locomotive kits: 0 · armoured wagon kits: 0 · rail shells: 40" (y≈383–398), **Deploy artillery train** (≈825, 417), Armoured (≈782, 437), the hint, Rail lines. |
 | Train panel, artillery | x 1026–1273, y 183–375 | "Artillery train N", "HP 1000/1000, coal 20", the position line, the state, "Stance:" **Hold fire** (≈1096, 274) and **Bombard [B]** (≈1162, 274; yellow when on), the gun line "Shells: 19 · next shot in 10 s · last target: City Center (86 tiles)" (y≈294–309), Resume (≈1058, 328), Disband (≈1110, 328), the hint. |
 | Market panel | x 310–970, from y 180 | As in M2 (× ≈951, 195; Tax ≈517, 227); row 3 (y≈265): Commerce bar and **Trade at** drop-down (≈800, 265). With an own port selected: **Mercenaries (₡ 600)** (≈370, 285), then "Mercenaries again in 600 s."; goods rows from y≈351, 22 px apart, Sell (≈770), **Buy** (≈821). The drop-down list opens under it: your port (≈800, 286), then every city-state, "Free City of Mardor (×1.30, +0)" from (≈800, 307), 21 px per entry. With a city-state selected a yellow hint "City-state Free City of Mardor: relation +0, its goods at ×1.30. …" (two lines) replaces the Mercenaries row; goods rows from y≈360; "At port" shows what the city-state sells. |
-| F10 menu | dialog x 482–797 | "Menu", the match line (two lines), "Match time: mm:ss", **Restart** (≈533, 438), Concede, Resume. |
+| F10 menu | dialog x 482–797 | "Menu", the match line (two lines), "Match time: mm:ss", **Restart** (≈533, 445), Concede, Resume. |
 
 **Build menu, Nation mode, M3** (x≈1067, 1098, 1129, 1160, 1191, 1222, 1253; row 1 y≈711, row 2 y≈742, row 3 y≈773):
 
@@ -329,11 +329,11 @@ the strip time and what was hit. The bomber of step 19 attacks your buildings by
    - *Input:* press L. Take a screenshot. Click **Start the Space Program** (≈683, 312). Wait 3 s. Take a screenshot.
      Leave the ledger open.
    - *Expect:* before the click the City ledger (x 355–925, y 242–557): "City: Capital", "Age II: Industry",
-     "Electrification is done: start the Space Program.", the button, "Stage 1/3: [advanced circuit] 100 [concrete] 200
+     "Electrification is done: start the Space Program.", the button, "Stage 1/3: [advanced circuit] 60 [concrete] 100
      [steel] 200", "Rare resources: none reaches the capital. …", **"Automation:"** with six greyed buttons (Metallurgy,
      Chemistry, Electronics, Military, Services, Research: Age III only). After the click: the button becomes **Rush**
      (≈748, 316) with a bar left of it, the line reads "Space Program stage 1/3: 0 % delivered from the capital's
-     network.", the goods "Stage 1/3: [icon] 0/100 [icon] 0/200 [icon] 0/200"; a green alert "<Region>: Space Program
+     network.", the goods "Stage 1/3: [icon] 0/60 [icon] 0/100 [icon] 0/200"; a green alert "<Region>: Space Program
      started next to the capital (stage 1)"; the 8×8 **Launch complex** (a round silo platform) appears 15–28 tiles
      from the CC with a blue bar and the label **"Space Program 1/3: 0 %"** above it (often behind the ledger).
    - *Pass/Fail:* PASS if the complex and its label appear. FAIL if the chat says "Space Program cannot start now: …"
@@ -426,7 +426,8 @@ the strip time and what was hit. The bomber of step 19 attacks your buildings by
       [#2 80 t52]" and a yellow alert "<Region>: Territory lost near Capital (N cells)"; the camera moves; about 384 px
       from the centre towards the town (east: x≈1024, top to bottom) run the borders of the two lands (thick dashes,
       blue for yours, red for the town's) and the front, with the small red label **"Front 2 · threat 52"** at its
-      middle (≈1024, 400 for an east town); the minimap shows a red land patch next to yours.
+      middle (≈1024, 400 for an east town); the minimap shows a red land patch next to yours. There is one label: no
+      large copy of it at the screen edge (the map shows the front as a coloured line without a label).
     - *Pass/Fail:* PASS if the dashed front line and its label show. FAIL if the reply says "no room for a town …" or
       "0 segments".
     - *If it fails:* `/rts-front` unknown (not merged): SKIP steps 13–15 and 20's target (the artillery train then has
@@ -451,6 +452,8 @@ the strip time and what was hit. The bomber of step 19 attacks your buildings by
     - *Input:* the division is still selected (if not, click its name button ≈50, 191). Press X (Stop). Move the mouse
       pointer onto the front's label or just below it (do not click; H takes the front within 64 tiles of the pointer,
       so any point between the screen centre and the line works). Press H. Wait 10 s. Take a screenshot.
+      (A computer-use agent without a pointer-move action: a scroll of 0.001 page at the point moves the pointer there
+      without zooming.)
     - *Expect:* after X the card's state reads "Idle"; after H it reads **"Holding the line (front 2)"** again and the
       walkers keep (or take back) their places along the line. H with the pointer far from any front only sets the
       Hold stance (no change of place).
@@ -521,14 +524,19 @@ the strip time and what was hit. The bomber of step 19 attacks your buildings by
     - *Input:* press SPACE. Click empty ground ≈(1000, 250). Open the console: `/rts-give rts-aa-turret 1`. Click
       **Defence** (≈1183, 684), then **AA turret** (≈1067, 742; row 2, first), left-click (512, 528), press Q. Wait 15
       s. Click the AA turret, take a screenshot. Click empty ground. Open the console: `/rts-spawn rts-bomber 1
-      rts-ai-1`. Take a screenshot at once and another after 5 s.
+      rts-ai-1 -70` when the AI town of step 13 is east, `/rts-spawn rts-bomber 1 rts-ai-1 70` otherwise (the bomber
+      appears 70 tiles west, or east, of the screen centre, away from the front's division, and flies in to attack the
+      turret's area). Take a screenshot at once, another after 10 s and one after 20 s.
     - *Expect:* the AA turret (2×2) built; its page "AA turret #N", **"Magazines: N"** (it takes magazines from the
       network within seconds), "Shoots only planes; magazines come from its network.". The reply "rts-spawn: 1 x
-      rts-bomber for rts-ai-1 near (x, y)"; a red bomber appears about (424, 592) and the AA turret fires at it (tracers,
-      hit sparks); within a few seconds the bomber falls; the kill feed (top left) shows "[icon] Bomber ✕ (AI 1)". The
-      bomber may hit a building first (a "Base under attack" alert).
-    - *Pass/Fail:* PASS if the AA turret fires and the bomber dies.
-    - *Log check (lead):* `rts-spawn: 1 x rts-bomber for rts-ai-1 near`, `build ghost rts-aa-turret player=1 at`
+      rts-bomber for rts-ai-1 near (x, y), attack-moving to (x, y)"; the bomber comes in from the screen edge, the AA
+      turret fires at it (tracers, hit sparks) from 30 tiles and it falls; the kill feed (top left) shows **"[icon] AA
+      turret › [icon] Bomber ✕ (AI 1)"**. A bomber the Commander or a unit finishes shows their icon instead.
+    - *Pass/Fail:* PASS if the kill feed line names the AA turret. PARTIAL if the bomber dies by another killer (report
+      the line).
+    - *Log check (lead):* `rts-spawn: 1 x rts-bomber for rts-ai-1 near .* attack-moving to`,
+      `build ghost rts-aa-turret player=1 at`, `aa: AA turret #[0-9]+ \(rts-player\) fires at rts-bomber`,
+      `aa: AA turret #[0-9]+ \(rts-player\) shot down rts-bomber`
 
 ### Part G: an artillery train
 
@@ -546,8 +554,8 @@ the strip time and what was hit. The bomber of step 19 attacks your buildings by
       kits: 1 · armoured locomotive kits: 0 · armoured wagon kits: 0 · rail shells: 40", **Deploy artillery train**
       enabled, the Armoured checkbox. The hub panel "Depot 1: stockpile policy" opens right of it.
       After the click a train of two locomotives and an artillery wagon stands on the platform.
-    - *Pass/Fail:* PASS if the artillery train appears. If the button is greyed, report the yellow line under the train
-      buttons (FAIL).
+    - *Pass/Fail:* PASS if the artillery train appears. If **Deploy artillery train** is greyed, the yellow line under
+      it says what is missing ("Artillery train needs: 2 × Locomotive kit (1 here), …"): report it (FAIL).
     - *Log check (lead):* `rails: depot #[0-9]+ .* of rts-player at .*: platform`,
       `train: artillery train [0-9]+ \(rts-player\) deployed at depot #[0-9]+ with 20 shells`,
       `train: click deploy artillery depot=#[0-9]+ armoured=false train=[0-9]+`
@@ -556,13 +564,15 @@ the strip time and what was hit. The bomber of step 19 attacks your buildings by
     - *Input:* click one of the train's carriages on the platform (east depot: about (1000, 528), the first locomotive).
       Take a screenshot. Press B. Watch 30 s; take a
       screenshot. (Optional: click the minimap on the red patch of the AI town to see the shells land; press SPACE.)
-    - *Expect:* the train panel (x 1026–1273, y 183–375): **"Artillery train N"**, "HP 1000/1000, coal 20", "No position
-      yet: right-click a depot or a rail", "Stance:" **Hold fire** (lit) and **Bombard [B]**, "Shells: 20 · fired 0",
+    - *Expect:* the train panel (x 1026–1273, y 183–375): **"Artillery train N"**, "HP 1000/1000, coal 20", "Position:
+      Depot 1", "Stance:" **Hold fire** (lit) and **Bombard [B]**, "Shells: 20 · fired 0",
       Resume, Disband, the hint. After B the build menu does not toggle; **Bombard [B]** is lit (yellow); the gun line
       reads "Shells: 20 · looking for a target, next shot in N s" until the first shot, then **"Shells: 19 · next shot in
       N s · last target: City Center (86 tiles)"**; a shell flies every 10 s (the depot tops the wagon up to 20).
     - *Pass/Fail:* PASS if Bombard lights up and the gun line names a target. FAIL if it reads "no hostile building
-      within 120 tiles" (the AI town is out of range or unseen: report the depot site).
+      within 120 tiles" (out of range: report the depot site) or "no hostile building seen within 120 tiles: scout it
+      first" (in range but no own land, unit, building, plane, radar or held front within 48 tiles of it). After a
+      right-click on another depot the position reads "At Depot 1 → Depot 2" (": no path" without a line between them).
     - *Log check (lead):* `train: key B train=[0-9]+ -> bombard ok=true`, `train: [0-9]+ \(rts-player\) stance bombard`,
       `train: [0-9]+ \(rts-player\) fires 1 shell\(s\) at rts-city-center #[0-9]+ of rts-ai-1`
 
@@ -605,12 +615,14 @@ the strip time and what was hit. The bomber of step 19 attacks your buildings by
 
 25. **Rush in the research panel.**
     - *Input:* press M (or Escape). Press T. Click **Research** in the Chemistry row (≈1175, 431). Take a screenshot.
-      Click **Rush** (≈1155, 194). Take a screenshot. Press T.
-    - *Expect:* "Researching: Chemistry (0 %)" with a bar and, at its right, **Rush**; after the click **"Stop rush (₡
-      N/min)"** (N may read 0 for the first second). Chemistry, Nuclear power and Air Force (if not researched) no longer
-      read "Needs Age III".
-    - *Pass/Fail:* PASS if Rush turns into "Stop rush".
-    - *Log check (lead):* `research: rts-player queued rts-chemistry: true`, `sinks: rts-player rushes research rts-chemistry \(x2\)`
+      Hover **Rush** (≈1155, 194) for 2 s and take a screenshot; click it; take a screenshot. Press T.
+    - *Expect:* "Researching: Chemistry (0 %)" with a bar and, at its right, **Rush**: grey, because this base has no
+      working lab (a rush only pays while a lab works); its tooltip ends "Rush refused: no lab is working: the labs need
+      this research's kits", and the click starts nothing. (With a lab working on kits the button is lit and turns into
+      **"Stop rush (₡ N/min)"**.) Chemistry, Nuclear power and Air Force (if not researched) no longer read "Needs Age
+      III".
+    - *Pass/Fail:* PASS if Rush is grey with that tooltip (or, with a working lab, turns into "Stop rush").
+    - *Log check (lead):* `research: rts-player queued rts-chemistry: true`; no `sinks: rts-player rushes research` line
 
 ### Part I: the map and the help page
 
@@ -637,7 +649,7 @@ the strip time and what was hit. The bomber of step 19 attacks your buildings by
 ### Part J: the 4096 lobby
 
 28. **Back to the lobby: 6 nations, 4096, Survey.**
-    - *Input:* press F10 (or click **Menu** on the strip, ≈868, 22). Take a screenshot. Click **Restart** (≈533, 438).
+    - *Input:* press F10 (or click **Menu** on the strip, ≈868, 22). Take a screenshot. Click **Restart** (≈533, 445).
       Wait 5 s. Click **Nations** (≈596, 267), then "6" (≈620, 372). Click **Map size** (≈615, 321), then "World
       (4096×4096)" (≈640, 384). Click **Start map** (≈596, 375), then "Survey" (≈620, 417). Take a screenshot.
     - *Expect:* the menu "Menu" with "Nation · 2 nations · Normal · World 2048×2048 · Conquest + Space · unlimited" (two
@@ -668,7 +680,8 @@ the strip time and what was hit. The bomber of step 19 attacks your buildings by
       script stops the client when the log shows the marker. Other agents use this machine too, and their Factorio
       windows open at the same place with the same title: a loading screen or a new match at 00:00 that appears after
       the QA match went is not this session. Do not send it any input; take one screenshot and stop.
-    - *Pass/Fail:* PASS if the line appears in the chat and the QA match is gone within about 10 s.
+    - *Pass/Fail:* PASS if the line appears in the chat and the QA match is gone within about 10 s. A screenshot request
+      that times out after the marker means the window is gone (expected), not a failure.
     - *Log check (lead):* `RTS_QA_END by player=1 at tick [0-9]+ \(console chat\)`
 
 **The AI meanwhile (lead).** Informational; the autotests measure these: `council:`, `planner:` and `air:` lines of

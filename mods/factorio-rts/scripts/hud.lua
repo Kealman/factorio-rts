@@ -1991,6 +1991,9 @@ local function update_kills(player, h)
     line.visible = k ~= nil
     if k then
       local killer = k.killer and valid_sprite("entity/" .. k.killer) and ("[img=entity/" .. k.killer .. "] › ") or ""
+      -- Phase 5 M3 QA fix (F2): a building that killed (an AA turret, a turret) is named, not only drawn
+      local kp = k.killer and not balance.units[k.killer] and prototypes.entity[k.killer]
+      if killer ~= "" and kp then killer = {"", "[img=entity/" .. k.killer .. "] ", kp.localised_name, " › "} end
       line.caption = {"", killer, "[img=" .. unit_sprite(k.name) .. "] ",
                       {"rts.kill-line", unit_name(k.name), side_label(k.force, own)}}
       line.style.font_color = faded(k.force == own and COLOR.red or COLOR.green, game.tick - k.tick, P4.KILL_TICKS,

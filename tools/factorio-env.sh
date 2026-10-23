@@ -27,3 +27,15 @@ factorio_isolated_config() {
   if [ -n "${RTS_LOCALE:-}" ]; then printf '\n[general]\nlocale=%s\n' "$RTS_LOCALE" >> "$dir/config.ini"; fi
   echo "$dir/config.ini"
 }
+
+# factorio_version_guard <mod dir>: refuse (exit 3, one line) when the binary's major.minor differs from the mod's
+# info.json factorio_version, in either direction (a Steam update to 2.1 failed every 2.0 run at map creation).
+factorio_version_guard() {
+  local info="$1/info.json" bin want
+  bin="$("$FACTORIO_BIN" --version 2>/dev/null | head -1 | sed -E 's/^Version: ([0-9]+\.[0-9]+).*/\1/')"
+  want="$(sed -nE 's/.*"factorio_version": *"([0-9]+\.[0-9]+)".*/\1/p' "$info" 2>/dev/null | head -1)"
+  if [ -z "$bin" ] || [ -z "$want" ] || [ "$bin" != "$want" ]; then
+    echo "refused: Factorio ${bin:-not found} but $info wants ${want:-unknown}"
+    exit 3
+  fi
+}

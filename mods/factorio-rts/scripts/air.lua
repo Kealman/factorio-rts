@@ -776,6 +776,40 @@ events.on_nth_tick(AAT.feed_period, function()
   end
 end)
 
+-- Phase 5 M3 QA fix (F2): the AA's work in the log. Every AA_LOOK ticks each AA turret's target: a plane it starts
+-- shooting at is logged once ("aa: AA turret #N (force) fires at rts-bomber #M of force, D tiles"), and a plane an AA
+-- turret kills ("aa: AA turret #N (force) shot down ..."); the kill feed names the turret (hud.lua). A QA run could not
+-- tell whether the AA fired at a bomber the Commander finished.
+local AA_LOOK = 15
+events.on_nth_tick(AA_LOOK, function()
+  local s = storage.air
+  if not (s and s.aa and next(s.aa) and nation()) then return end
+  s.aa_target = s.aa_target or {}
+  local list = {}
+  for un in pairs(s.aa) do list[#list + 1] = un end
+  table.sort(list)
+  for _, un in ipairs(list) do
+    local rec = buildings.get(un)
+    local e = rec and rec.entity
+    local t = e and e.valid and e.shooting_target
+    local tun = t and t.valid and t.unit_number or nil
+    if tun and s.aa_target[un] ~= tun and air.is_plane(t) then
+      util.log("aa: AA turret #%d (%s) fires at %s #%d of %s, %.0f tiles", un, e.force.name, t.name, tun, t.force.name,
+        util.distance(e.position, t.position))
+    end
+    s.aa_target[un] = tun
+  end
+end)
+
+events.on(defines.events.on_entity_died, function(e)
+  local ent, cause = e.entity, e.cause
+  if not (ent and ent.valid and cause and cause.valid and cause.name == air.AA_TURRET and air.is_plane(ent)) then return end
+  local s = storage.air
+  if s then s.shot_down = (s.shot_down or 0) + 1 end
+  util.log("aa: AA turret #%d (%s) shot down %s #%d of %s", cause.unit_number, cause.force.name, ent.name,
+    ent.unit_number, ent.force.name)
+end)
+
 ---------------------------------------------------------------------------
 -- Teardown, console
 ---------------------------------------------------------------------------

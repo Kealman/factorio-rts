@@ -222,27 +222,93 @@ local function hostile_forces(force_name)
   return out
 end
 
+local function loaded(name)
+  local l = package.loaded
+  return l["__" .. script.mod_name .. "__/" .. string.gsub(name, "%.", "/") .. ".lua"] or l[name]
+end
+
+local plane_list
+local function plane_names()
+  if not plane_list then
+    plane_list = {}
+    for name, u in pairs(balance.units) do
+      if u.air and prototypes.entity[name] then plane_list[#plane_list + 1] = name end
+    end
+    table.sort(plane_list)
+  end
+  return plane_list
+end
+
+-- Phase 5 M3 QA fix (F1): own land (territory cells) within r tiles of pos: a nation watches the ground next to its
+-- land (a town whose land touches ours has its centre within its 48-tile radius of our border)
+local function land_near(force_name, pos, r)
+  local territory = loaded("scripts.territory")
+  if not (territory and territory.owner_at) then return false end
+  if territory.owner_at(pos) == force_name then return true end
+  local step = territory.CELL or 8
+  for rr = step, r, step do
+    local n = math.max(8, floor(2 * math.pi * rr / step))
+    for i = 0, n - 1 do
+      local a = 2 * math.pi * i / n
+      if territory.owner_at({x = pos.x + rr * math.cos(a), y = pos.y + rr * math.sin(a)}) == force_name then
+        return true
+      end
+    end
+  end
+  return false
+end
+
+-- a front segment held by one of the force's divisions within r tiles of pos
+local function held_front_near(force_name, pos, r)
+  local fronts = loaded("scripts.fronts")
+  if not (fronts and fronts.segments) then return false end
+  for _, seg in ipairs(fronts.segments(force_name) or {}) do
+    if seg.holder and seg.a and seg.b then
+      local ax, ay, bx, by = seg.a.x, seg.a.y, seg.b.x, seg.b.y
+      local dx, dy = bx - ax, by - ay
+      local len2 = dx * dx + dy * dy
+      local t = len2 > 0 and math.max(0, math.min(1, ((pos.x - ax) * dx + (pos.y - ay) * dy) / len2)) or 0
+      local ex, ey = pos.x - (ax + t * dx), pos.y - (ay + t * dy)
+      if ex * ex + ey * ey <= r * r then return true end
+    end
+  end
+  return false
+end
+
 --- Does the force see a target at `pos`? A spotter: any entity of the force within spot_radius tiles of it (a unit, a
---- building, a train), or one of its radars within radar_radius. The same rule for players and AIs, and no chart state:
---- charting is not the same on a headless server and a GUI peer (m3-perf, LAN determinism), and AI forces are never
---- charted. Replaceable (m3-ai's intel): fn(force, surface, position) -> bool.
+--- building, a wall, a train), one of its planes within plane_sight, one of its radars within radar_radius, its own land
+--- within spot_radius, or a front segment one of its divisions holds within spot_radius (Phase 5 M3 QA fix F1: the
+--- land and the held fronts; a human's artillery 93 tiles from a rival town whose land touches ours found nothing). The
+--- same rule for players and AIs, and no chart state: charting is not the same on a headless server and a GUI peer
+--- (m3-perf, LAN determinism), and AI forces are never charted. Replaceable (m3-ai's intel): fn(force, surface,
+--- position) -> bool.
 trainswar.KNOWN = function(force, surface, pos)
   if surface.count_entities_filtered({position = pos, radius = TW.spot_radius, force = force, limit = 1}) > 0 then
     return true
   end
-  return surface.count_entities_filtered({position = pos, radius = TW.radar_radius, force = force, type = "radar",
-                                           limit = 1}) > 0
+  if TW.plane_sight and surface.count_entities_filtered({position = pos, radius = TW.plane_sight, force = force,
+                                                          name = plane_names(), limit = 1}) > 0 then
+    return true
+  end
+  if surface.count_entities_filtered({position = pos, radius = TW.radar_radius, force = force, type = "radar",
+                                       limit = 1}) > 0 then
+    return true
+  end
+  local name = type(force) == "string" and force or force.name
+  return land_near(name, pos, TW.spot_radius) or held_front_near(name, pos, TW.spot_radius)
 end
 
--- Hostile buildings within range of `from` that the force knows, best first.
+-- Hostile buildings within range of `from` that the force knows, best first, and how many were in range (seen or not).
 local function targets_from(force_name, from)
   local hostile = hostile_forces(force_name)
-  if #hostile == 0 then return {} end
+  if #hostile == 0 then return {}, 0 end
   local force = game.forces[force_name]
   local surface = from.surface
   local p = from.position
   local min2 = TW.min_range * TW.min_range
   local list = {}
+  local in_range = 0
+  local seen = {} -- KNOWN per 8-tile cell of the target (a town's buildings share their spotters)
   local found = surface.find_entities_filtered({position = p, radius = TW.range, name = names(), force = hostile})
   for _, e in pairs(found) do
     local un = e.valid and e.destructible and e.unit_number
@@ -251,8 +317,15 @@ local function targets_from(force_name, from)
       local ep = e.position
       local dx, dy = ep.x - p.x, ep.y - p.y
       local d2 = dx * dx + dy * dy
-      if d2 >= min2 and trainswar.KNOWN(force, surface, ep) then
-        list[#list + 1] = {e = e, un = un, d2 = d2, rank = TW.target_rank[brec.kind] or 5}
+      if d2 >= min2 then
+        in_range = in_range + 1
+        local key = floor(ep.x / 8) .. "," .. floor(ep.y / 8)
+        local known = seen[key]
+        if known == nil then
+          known = trainswar.KNOWN(force, surface, ep) and true or false
+          seen[key] = known
+        end
+        if known then list[#list + 1] = {e = e, un = un, d2 = d2, rank = TW.target_rank[brec.kind] or 5} end
       end
     end
   end
@@ -263,7 +336,7 @@ local function targets_from(force_name, from)
   end)
   local out = {}
   for i, t in ipairs(list) do out[i] = t.e end
-  return out
+  return out, in_range
 end
 
 --- Hostile buildings within range of the train's (first) artillery wagon, best first.
@@ -275,16 +348,17 @@ function trainswar.targets(train_id)
 end
 
 --- One shot: every artillery wagon of the train throws one shell at the best target. Returns the shells fired and the
---- target (nil and a reason: "no-train", "no-artillery", "no-target", "no-shells").
+--- target (nil and a reason: "no-train", "no-artillery", "no-target" (none in range), "unseen" (in range, none seen),
+--- "no-shells").
 function trainswar.fire(train_id)
   local rec = record(train_id)
   local train = train_of(rec)
   if not (train and train.valid) then return 0, nil, "no-train" end
   local wagons = arty_wagons(train)
   if #wagons == 0 then return 0, nil, "no-artillery" end
-  local list = targets_from(rec.force, wagons[1])
+  local list, in_range = targets_from(rec.force, wagons[1])
   local target = list[1]
-  if not target then return 0, nil, "no-target" end
+  if not target then return 0, nil, in_range > 0 and "unseen" or "no-target" end
   local fired = 0
   local force = game.forces[rec.force]
   for _, w in ipairs(wagons) do
@@ -603,7 +677,18 @@ function trainswar.panel_train_update(gel, el, rec, train)
     end
   end
   if rec.kind == trainswar.KIND and gel and gel.route and gel.route.valid then
-    if rec.pickup and rails.depot(rec.pickup) then
+    -- Phase 5 M3 QA fix (F4): where it stands and where it goes ("Position: Depot 2" read as if it stood there while it
+    -- waited at Depot 1 with no path)
+    local here = train and train.valid and depot_here(rec, train)
+    local stuck = train and train.valid and (train.state == TS.no_path or train.state == TS.path_lost)
+    if rec.pickup and rails.depot(rec.pickup) and here and here ~= rec.pickup then
+      gel.route.caption = {stuck and "rts-war3.train-position-going-nopath" or "rts-war3.train-position-going",
+                           logistics.hub_name(here), logistics.hub_name(rec.pickup)}
+    elseif rec.pickup and rails.depot(rec.pickup) and not here and train and train.valid
+        and (stuck or math.abs(train.speed) > 0.001) then
+      gel.route.caption = {stuck and "rts-war3.train-position-moving-nopath" or "rts-war3.train-position-moving",
+                           logistics.hub_name(rec.pickup)}
+    elseif rec.pickup and rails.depot(rec.pickup) then
       gel.route.caption = {"rts-war3.train-position-depot", logistics.hub_name(rec.pickup)}
     elseif rec.position_rail then
       gel.route.caption = {"rts-war3.train-position-rail", floor(rec.position_rail.x), floor(rec.position_rail.y)}
@@ -626,6 +711,8 @@ function trainswar.panel_train_update(gel, el, rec, train)
       parts = {"rts-war3.gun-no-shells", shells}
     elseif rec.war_reason == "no-target" then
       parts = {"rts-war3.gun-no-target", shells, TW.range}
+    elseif rec.war_reason == "unseen" then -- Phase 5 M3 QA fix (F1): the cause is sight, not range
+      parts = {"rts-war3.gun-no-target-seen", shells, TW.range}
     else
       local t = rec.last_target
       -- Phase 5 M3 integration: before the first shot the line read "last target: none (0 tiles)"
@@ -652,6 +739,12 @@ function trainswar.panel_depot(frame, un, player_index, width)
   el.armoured = row2.add({type = "checkbox", name = P .. "armoured", caption = {"rts-war3.armoured"},
     state = trainswar.deploy_opts(player_index).armoured, tooltip = {"rts-war3.armoured-tooltip", TW.health_factor,
     TW.resist}, tags = {rts_trainswar = "armoured"}})
+  -- Phase 5 M3 QA fix (F5): why Deploy artillery train is grey, and what is missing
+  el.why = frame.add({type = "label", style = "rts_hud_dim_label", caption = ""})
+  el.why.style.single_line = false
+  el.why.style.maximal_width = (width or 330) - 20
+  el.why.style.font_color = {r = 1, g = 0.8, b = 0.3}
+  el.why.visible = false
   return el
 end
 
@@ -676,6 +769,30 @@ function trainswar.panel_depot_update(el, un, player_index)
   el.deploy.tooltip = why and {"", {"rts-war3.deploy-artillery-tooltip"}, "\n",
     {"rts-war3.deploy-artillery-why", {"rts.rails-why-" .. why}}} or {"rts-war3.deploy-artillery-tooltip"}
   el.armoured.state = armoured
+  if el.why and el.why.valid then
+    -- what the train needs and what the depot's network lacks: "needs 2 × Locomotive kit (1 here), ..."; shells are
+    -- not needed to deploy, but a wagon without them cannot fire
+    local parts = {""}
+    local function need(item, count)
+      if n(item) < count then
+        if #parts > 1 then parts[#parts + 1] = ", " end
+        parts[#parts + 1] = {"rts-war3.deploy-need-item", count, {"item-name." .. item}, n(item)}
+      end
+    end
+    if why == "no-kits" or why == "no-fuel" then
+      for _, k in ipairs(rails.kit_list(trainswar.KIND, nil, armoured)) do need(k[1], k[2]) end
+      need(rails.FUEL, 2)
+    end
+    if #parts > 1 then
+      el.why.caption = {"rts-war3.deploy-artillery-needs", parts,
+                        n(trainswar.SHELL) == 0 and {"rts-war3.deploy-no-shells"} or ""}
+    elseif why then
+      el.why.caption = {"rts-war3.deploy-artillery-why", {"rts.rails-why-" .. why}}
+    elseif n(trainswar.SHELL) == 0 then
+      el.why.caption = {"", {"rts-war3.deploy-artillery-ready"}, " ", {"rts-war3.deploy-no-shells"}}
+    end
+    el.why.visible = #parts > 1 or why ~= nil or n(trainswar.SHELL) == 0
+  end
 end
 
 events.on(defines.events.on_gui_click, function(e)

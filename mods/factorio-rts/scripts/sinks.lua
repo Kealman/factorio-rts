@@ -176,6 +176,12 @@ function sinks.rush(force_name, what)
   local t = sinks.rush_target(force_name, what)
   if not t then return false, what == "project" and "no-project" or "not-researching" end
   if treasury.stage(force_name) >= 1 or treasury.balance(force_name) <= 0 then return false, "deficit" end
+  -- Phase 5 M3 QA fix (F6): a research rush only while a lab works (labs without the research's kits stand still; the
+  -- rush would cost nothing and do nothing, and the button gave no sign of it)
+  if t.kind == "research" then
+    local _, working = research.lab_counts(force_name)
+    if working == 0 then return false, "no-lab-work" end
+  end
   local s = N(force_name, true)
   if not s then return false, "mode" end
   if s.rush then sinks.cancel_rush(force_name, "replaced") end
@@ -662,6 +668,12 @@ techgui.extend_refresh = function(player, g)
   else
     b.caption = {"rts-age3.rush"}
     b.tooltip = {"rts-age3.rush-research-tooltip", RUSH.speed, string.format("%.2f", RUSH.research_cr)}
+    -- Phase 5 M3 QA fix (F6): grey while no lab works, and the reason in the tooltip
+    local _, working = research.lab_counts(f)
+    b.enabled = working > 0
+    if working == 0 then
+      b.tooltip = {"", b.tooltip, "\n", {"rts-age3.rush-refused", {"rts-age3.reason-no-lab-work"}}}
+    end
   end
 end
 

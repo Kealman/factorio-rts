@@ -650,7 +650,13 @@ step(function(player, P)
   selection.clear(player.index)
   local before = {}
   for _, rec in units.for_force(E) do before[rec.entity.unit_number] = true end
-  dbg.run_command("rts-spawn", "rts-bomber 1 " .. E, player.index)
+  -- Phase 5 M3 QA fix (F2): 70 tiles east of the AA turret, sent at it (spawned 11 tiles away it bombed the turret
+  -- before the turret could prove itself)
+  -- (on the side away from the front: the division holding it shot an eastern bomber down before the turret could)
+  local ap = P.aa and P.aa.valid and P.aa.position
+  local d = (P.seg and ap and P.seg.mid.x > ap.x) and -70 or 70
+  dbg.run_command("rts-spawn", ap and string.format("rts-bomber 1 %s %d %.1f %.1f", E, d, ap.x, ap.y)
+    or ("rts-bomber 1 " .. E), player.index)
   for _, rec in units.for_force(E) do
     if not before[rec.entity.unit_number] and rec.entity.name == "rts-bomber" then P.enemy = rec.entity end
   end
@@ -660,7 +666,13 @@ end)
 snap("f07-aa-firing")
 wait_until("bomber down", function(player, P) return not (P.enemy and P.enemy.valid) end, 30, 60 * 30)
 step(function(player, P)
-  check("aa", not (P.enemy and P.enemy.valid), "bomber %s", (P.enemy and P.enemy.valid) and "alive" or "dead")
+  -- the kill feed names the AA turret (hud.lua kill list: killer rts-aa-turret)
+  local by_aa = false
+  for _, k in ipairs(storage.hud and storage.hud.kills or {}) do
+    if k.name == "rts-bomber" and k.killer == "rts-aa-turret" then by_aa = true end
+  end
+  check("aa", not (P.enemy and P.enemy.valid) and by_aa, "bomber %s, killed by the AA turret: %s",
+    (P.enemy and P.enemy.valid) and "alive" or "dead", tostring(by_aa))
   return 30
 end)
 snap("f08-aa-after")
@@ -831,10 +843,15 @@ real("research_chemistry", function() drive("click 1175 431") end, function(play
   return s == "researching" or s == "queued", tostring(s)
 end, function(player, P) research.queue(P.F, "rts-chemistry") techgui.refresh(player) end, 60)
 snap("h08-research-chemistry")
+-- Phase 5 M3 QA fix (F6): the player has no lab here, so Rush is grey and a click starts nothing (its tooltip says why)
 real("research_rush", function() drive("click 1155 194") end, function(player, P)
   local rs = sinks.rush_state(P.F)
-  return rs ~= nil and rs.kind == "research", serpent.line(rs)
-end, function(player) click(player, util.pstorage(player.index).techgui.a3_rush) end, 60)
+  local b = util.pstorage(player.index).techgui and util.pstorage(player.index).techgui.a3_rush
+  local _, working = research.lab_counts(P.F)
+  if working > 0 then return rs ~= nil and rs.kind == "research", serpent.line(rs) end
+  return rs == nil and b ~= nil and b.valid and not b.enabled,
+    string.format("no working lab: rush %s, button %s", serpent.line(rs), b and b.valid and tostring(b.enabled) or "-")
+end, function(player) end, 60)
 snap("h09-research-rush")
 step(function(player, P)
   local b = rare.bonuses(P.F).saltpetre
@@ -866,7 +883,7 @@ step(function(player, P)
   return 30
 end)
 snap("j01-menu")
-real("menu_restart", function() drive("click 533 438") end, function(player)
+real("menu_restart", function() drive("click 533 445") end, function(player)
   return match.in_lobby(), "in lobby " .. tostring(match.in_lobby())
 end, function(player) click(player, find(player.gui.screen, "rts_lobby_menu_restart")) end, 120)
 snap("j02-lobby-again")

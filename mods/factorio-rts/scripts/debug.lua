@@ -1316,7 +1316,8 @@ end
 
 local COMMANDS = {
   ["rts-spawn"] = {
-    help = "<name> <count> <force> - spawn RTS units at the camera (or the force's spawn)",
+    help = "<name> <count> <force> [distance [x y]] - spawn RTS units at the camera (or the force's spawn); with a "
+      .. "distance they appear that many tiles east (a negative one: west) of the camera (or of x, y) and attack-move to it",
     run = function(cmd)
       if not admin_only(cmd) then return end
       local args = {}
@@ -1339,13 +1340,28 @@ local COMMANDS = {
         local ap = match.army_point(force_name)
         center = {x = ap.x + match.facing(force_name) * 13.5, y = ap.y}
       end
-      local made = 0
+      -- Phase 5 M3 QA fix (F2): `distance` tiles east of the camera (or of x, y), sent there with an attack-move (an
+      -- enemy bomber spawned 11 tiles from an AA turret bombed it before the turret could prove itself)
+      local dist = tonumber(args[4] or "")
+      local goal
+      if dist then
+        goal = {x = tonumber(args[5] or "") or center.x, y = tonumber(args[6] or "") or center.y}
+        center = {x = goal.x + dist + 13.5, y = goal.y - 12} -- (the first unit `dist` tiles east of the goal, west if < 0)
+      end
+      local made, list = 0, {}
       local sp = match.spacing(name)
       for i = 0, count - 1 do
         local pos = {x = center.x + (i % 10) * sp - 13.5, y = center.y + math.floor(i / 10) * sp + 12}
-        if units.spawn(name, pos, force_name) then made = made + 1 end
+        local e = units.spawn(name, pos, force_name)
+        if e then
+          made = made + 1
+          list[#list + 1] = e
+        end
       end
-      reply(cmd, string.format("rts-spawn: %d x %s for %s near %s", made, name, force_name, util.pos_str(center)))
+      local orders = loaded_module("scripts.orders")
+      if goal and orders and #list > 0 then orders.attack_move(list, goal) end
+      reply(cmd, string.format("rts-spawn: %d x %s for %s near %s%s", made, name, force_name,
+        util.pos_str(list[1] and list[1].position or center), goal and (", attack-moving to " .. util.pos_str(goal)) or ""))
     end,
   },
   ["rts-dump"] = {

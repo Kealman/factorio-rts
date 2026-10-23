@@ -1215,8 +1215,10 @@ balance.nation.air = {
   airfield = {kind = "airfield", cost = {["steel-plate"] = 20, concrete = 40, ["electronic-circuit"] = 10}, time = 12,
               health = 2500, size = 6, unlock = "rts-aviation"},
   -- Anti-air turret: magazines from the network it stands in (fed like turrets, scripts/air.lua), only planes
+  -- Phase 5 M3 QA fix (F2): damage_modifier 12 (was 6): against a bomber's 60 % physical resistance one turret did
+  -- 120 a second and lost the duel (the bomber's 360 a bomb to buildings); now it shoots one down in about 2.5 s
   aa_turret = {kind = "aa-turret", cost = {["iron-plate"] = 30, ["steel-plate"] = 10, ["electronic-circuit"] = 5},
-               time = 8, health = 1000, range = 30, cooldown = 6, damage_modifier = 6, unlock = "rts-aviation",
+               time = 8, health = 1000, range = 30, cooldown = 6, damage_modifier = 12, unlock = "rts-aviation",
                feed_min = 5, feed = 10, feed_period = 120},
   techs = {
     {name = "rts-aviation", kit = "rts-science-industrial", count = 30, age = 2, icon = "defender",
@@ -1271,6 +1273,7 @@ balance.nation.trains_war = {
   tech = "rts-military-railways",        -- Age II: the artillery wagon, rail shells, armoured stock
   range = 120, min_range = 16,           -- tiles from the artillery wagon to a target building
   spot_radius = 48, radar_radius = 96,   -- a target is seen with an own entity / an own radar this close to it
+  plane_sight = 64,                      -- Phase 5 M3 QA fix: ... or an own plane (own land and held fronts: spot_radius)
   period = 600,                          -- ticks between shots in stance bombard (1 shell per shot)
   shell_speed = 0.6, shell_damage = 420, shell_radius = 3.5, -- explosion damage in the radius, hostile forces only
   shells_keep = 20,                      -- shells a wagon tops up to at a depot of its force

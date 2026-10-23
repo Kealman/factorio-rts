@@ -27,6 +27,7 @@ NAME="${1:?name}"; MATCH="${2:?lua match table}"; CAP="${3:-640}"
 VARIANT="${VARIANT:-sa}"; SPEED="${SPEED:-1}"
 STOP_ON="${STOP_ON:-\[rts\] (ai )?autotest summary}"
 SRC="${KEEP_TREE:-$RTS_MODS_DIR/factorio-rts}"
+factorio_version_guard "$SRC" # the binary must match the tree's info.json factorio_version
 DIR="$RTS_BUILD_DIR/$NAME"
 rm -rf "$DIR"; mkdir -p "$DIR"
 cp -R "$SRC" "$DIR/factorio-rts"
@@ -82,7 +83,7 @@ LUA
   fi
 } >> "$M/control.lua"
 if [ "$VARIANT" = "base" ]; then
-  printf '{"mods":[{"name":"base","enabled":true},{"name":"elevated-rails","enabled":false},{"name":"quality","enabled":false},{"name":"space-age","enabled":false},{"name":"factorio-rts","enabled":true}]}\n' > "$DIR/mod-list.json"
+  printf '{"mods":[{"name":"base","enabled":true},{"name":"elevated-rails","enabled":false},{"name":"recycler","enabled":false},{"name":"quality","enabled":false},{"name":"space-age","enabled":false},{"name":"factorio-rts","enabled":true}]}\n' > "$DIR/mod-list.json"
 else
   cp "$RTS_MODS_DIR/mod-list.json" "$DIR/"
 fi

@@ -12,6 +12,7 @@
 set -uo pipefail
 source "$(dirname "$0")/factorio-env.sh"
 NAME="${1:?name}"; NATIONS="${2:?nations}"; SIZE="${3:?world size}"; SAVE_AT="${4:-}"; CAP="${5:-1500}"
+factorio_version_guard "${KEEP_TREE:-$RTS_MODS_DIR/factorio-rts}" # the binary must match the tree's info.json
 TMP="$RTS_BUILD_DIR/$NAME-probe"; mkdir -p "$TMP"
 SAVE_LUA="nil"; [ -n "$SAVE_AT" ] && SAVE_LUA="$SAVE_AT"
 sed -E "s/^local CFG = \{.*\}( --.*)?$/local CFG = {save_at = $SAVE_LUA, fill_limit_s = 480, area_chunks = 3}/" \

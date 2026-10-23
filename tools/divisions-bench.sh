@@ -15,6 +15,7 @@ source "$(dirname "$0")/factorio-env.sh"
 NAME="${1:?name}"; CFG_TABLE="${2:?lua cfg table}"; TICKS="${3:-3600}"; MAX_MEAN="${4:-6}"; MAX_TICK="${5:-20}"
 SKIP="${SKIP:-60}"; MODULE="${MODULE:-divisions_stress}"
 SRC="${KEEP_TREE:-$RTS_MODS_DIR/factorio-rts}"
+factorio_version_guard "$SRC" # the binary must match the tree's info.json
 DIR="$RTS_BUILD_DIR/$NAME"           # the mod directory of the run
 OUT="$RTS_BUILD_DIR/$NAME-out"       # save, logs, benchmark output (a zip in the mod directory would load as a mod)
 rm -rf "$DIR" "$OUT"; mkdir -p "$DIR" "$OUT"

@@ -452,3 +452,63 @@ came back, raw stop names on the map, the failed-survey loop, blocked rail lines
 payment, the town-site search in one tick, the tax switch count, the port-loot race against the player slot, the
 AI-run player's division owner, ceasefires on weariness while winning, the market pass in one run, mercenary names,
 the air panel's Ready column, the artillery train's position.
+
+## 8. QA fix round (Codex QA on dad7a40: 27 PASS, 3 FAIL; docs/qa/phase5-m3-qa-results.md)
+
+| Item | Cause | Fix | Where |
+|---|---|---|---|
+| F1 (FAIL 21): an artillery train in Bombard found no target in the QA town 93 tiles from its depot ("no hostile building within 120 tiles") | the town was in range but unseen: `trainswar.KNOWN` counted only own entities within 48 tiles and radars within 96; Division 1 had died at 08:57 and nothing of the player stood within 48 tiles of the town | spotters (no chart state): any own entity within spot_radius (48), an own plane within plane_sight (64), an own radar within 96, **own land within 48** (a town whose land touches ours has its centre within its 48-tile radius of our border), a **front segment held by an own division** within 48; KNOWN is computed once per 8-tile cell of the targets; the gun line tells sight from range: "no hostile building seen within 120 tiles: scout it first" (`unseen`) and "no hostile building within 120 tiles" (`no-target`) | `scripts/trainswar.lua`, `balance.nation.trains_war.plane_sight`, `locale/*/war3.cfg` |
+| F2 (FAIL 19): the bomber spawned 11 tiles from the AA turret bombed it and the Commander finished it; nothing showed whether the AA fired | the AA did fire (it engages at 30 tiles, and at 8-10 tiles when the bomber spawns close) but lost the duel: 12 damage a bullet after the bomber's 60 % physical resistance, 120 a second against 600 HP, while a bomber's bomb does 360 to buildings every 1.5 s; no AA log; the kill feed drew the killer's icon only | **AA damage_modifier 12** (was 6; one turret now shoots a lone bomber down from 11 or 70 tiles); the AA's work is logged ("aa: AA turret #N (force) fires at rts-bomber #M of force, D tiles", "... shot down ..."); the kill feed names a building killer ("[icon] AA turret › [icon] Bomber ✕ (AI 1)"); `/rts-spawn <name> <count> <force> [distance [x y]]` spawns `distance` tiles east (west when negative) of the camera (or x, y) and attack-moves there; protocol step 19 spawns the bomber 70 tiles out on the side away from the front (an eastern bomber met the division holding the front) and passes on the kill feed line | `scripts/air.lua`, `scripts/hud.lua`, `scripts/debug.lua`, `balance.nation.air.aa_turret`, protocol, GUI probe |
+| F3: a huge red copy of the front label at the screen edge after `/rts-front`, again at intermediate map zoom | each segment had a chart label at world scale 12 besides the game view's 1.6; chart objects are drawn wherever the force does not see, the game view included | one label, in the game world at scale 1.6; the map keeps the coloured line | `scripts/fronts.lua`, README, protocol step 13 |
+| F4: the train panel read "Position: Depot 2 · no path" while the train stood at Depot 1 | the position line showed the destination | "At Depot 1 → Depot 2" (": no path" while it has none), "On the way to Depot 2", "Position: Depot 2" once there | `scripts/trainswar.lua`, `locale/*/war3.cfg` |
+| F5: a grey Deploy artillery train with no reason (the yellow line spoke of freight and troop kits) | the reason was only in the tooltip | a yellow line under it: "Artillery train needs: 2 × Locomotive kit (1 here), 1 × Artillery wagon kit (0 here), 2 × Coal (0 here). No rail shells here: the gun cannot fire." | `scripts/trainswar.lua`, `locale/*/war3.cfg` |
+| F6 (notes item 8): a research Rush could start with no kits | the rush paid nothing while no lab worked but could be started | refused while no lab works ("Rush refused: no lab is working: the labs need this research's kits"); the button is grey with that tooltip; the QA base has no lab, so protocol step 25 now passes on the grey button and its tooltip; the age3 fixture expects the refusal when no lab works | `scripts/sinks.lua`, `locale/*/age3.cfg`, protocol, `tools/probes/age3_fixture.lua`, GUI probe |
+| F7: M2 starving in 701 and 703 (city 12) | bisected to dad7a40 (sections 4.3, 7); m3-ai: the town's supply hauler waits for coal after a raid destroyed the capital's hub and coal intake halved (701), chance in 703 | AI side (m3-ai: a coal reserve for supply haulers, coal imports while one waits, rebuilding destroyed hubs) | — |
+| F8: protocol | step 6 expected 100/200/200 (stage 1 is 60 advanced circuits, 100 concrete, 200 steel); Restart 7 px lower; step 15 pointer moves; step 19 spawn distance; step 30 screenshot timeouts | corrected; plus steps 13, 20, 21 and 25 for F1-F6 | `docs/qa/phase5-m3-protocol.md`, GUI probe (Restart at y 445) |
+
+Recorded from the QA run without a change: map labels are dense around the capital (city, region, resource icons and
+depot markers overlap at some zooms; deferred); the help page's Delete sentence is right ("Delete demolishes ... press
+twice").
+
+Verification **on Factorio 2.1.23** (the port f37d073 + this round; tree `build/m3i-trees/qa21` = `git archive f37d073`
++ `build/qa-fix/m3-integ.patch` + the AA damage):
+
+| Check | Result |
+|---|---|
+| `tools/probes/m3_qa_fix.lua` (seed 501: war, `/rts-front` town 115 tiles east, a depot 92 tiles from it, an artillery train in Bombard with every own unit within 64 tiles of the town removed; an AA turret 90 tiles off the base against a bomber spawned 11 tiles away, then one sent from 70) | **4/4**: 5 shells in 45 s at the town with the old rule blind ("the old rule would see it: false", own land 32 tiles away); the AA targets the near bomber at 8 tiles and the far one at 31 and shoots both down ("aa: AA turret #849 (rts-player) shot down rts-bomber #850 / #854") |
+| Skirmish smoke | 65/65, 0 errors |
+| Skirmish identity (seed 777, 1v1 medium and 1v3 small: f37d073 against f37d073 + this round) | 3,356 and 4,856 lines, **0 differing** |
+| Fixtures | m3_integ 6/6, age3 34/34 (the research rush refused with no working lab: one check fewer), m3_detour 2/2 with the rails autotest 8/8, war 27/27, war2 22/22, air 14/14, m2_targeting 5/5, m2_integ 11/11; 0 errors |
+| GUI pass EN (`m3_docs_gui.lua`, real clicks, 1280x800) | **51/53**: step 19 PASS ("bomber dead, killed by the AA turret: true"; "aa: AA turret #1085 fires at rts-bomber #1086, 29 tiles" ... "shot down"), step 21 PASS ("fires 1 shell(s) at rts-city-center ... 86 tiles, 19 shells left"), research rush grey with no working lab PASS; misses: build_steel_works (the site taken) and select_airfield (a click on the airfield that selected nothing; it passed in the previous 2.1 pass) |
+| GUI pass RU | 47/53: the changed texts read right (train panel "Позиция: Депо 1", the gun line "Снарядов: 19 · выстрел через 10 с · цель: Городской центр (87 кл.)", the grey Rush); misses: the Russian layout's coordinates (extractor, air panel ×, Hire), build_steel_works, select_airfield, and the AA step (the turret's ghost was not built within 40 s, so the bomber spawned at the camera and the division shot it) |
+
+2.1 GUI risks the port listed: box-select, right clicks, drag orders, the camera jumps and the map view all worked in
+both passes (no custom-input or remote-view miss); 2.1's new side buttons did not move any HUD element the protocol
+names (the frames log the same positions as on 2.0).
+
+## 9. Factorio 2.1: the re-acceptance plan
+
+Steam moved the machine to Factorio 2.1.23 (build 87750) on 2026-10-23 at 16:57; the owner decided to port rather than
+roll back (m3-port21 ports the mod in build/port21 and commits it onto a clean mods/). Every result above is on 2.0.77.
+`tools/autotest-run.sh` and `tools/gui-run.sh` now refuse in one line (exit 3) when the binary's major.minor differs
+from the tree's `info.json` `factorio_version` (`factorio_version_guard` in `tools/factorio-env.sh`).
+
+Order once the port is in HEAD:
+
+1. Re-apply this package's QA fix round (`build/qa-fix/m3-integ.patch`: F1-F6, the trains_war.plane_sight hunk) and
+   verify it on 2.1: `tools/probes/m3_qa_fix.lua`, smoke, the fixtures (m3_integ, age3, m3_detour, war, war2, air,
+   m2_targeting, m2_integ), the GUI pass EN with steps 19 and 21 PASS and RU for the changed texts; commit.
+2. Skirmish smoke 65/65.
+3. The Skirmish matrix (`build/m3i-tools/matrix-batched.sh`, seed 777, ten scenarios) recorded as the **new baseline**
+   (tag `m3i-p21`): line identity with m2-ready is void across engines; later Skirmish identity checks compare against
+   this baseline.
+4. M1 seed 501 (`m1_acceptance.lua`, twice: SPEED 6 and 10, line-identical).
+5. M2 seeds 701-705 and M3 seeds 801-805 (`m3_acceptance.lua`, 4 normal AIs, 60 minutes): `build/m3i-tools/final.sh
+   <rev> p21 e2e m2 m1 m1b sl det scene` (at most four servers).
+6. Save/load at 20 and 40 (seed 802), determinism on 801 and 802 (two runs each, 30 minutes), the perf scene (seed
+   701, 5 realtime minutes at 60 UPS).
+7. Heavy mode 10 minutes and the LAN check (two clients), GUI client on the screen alone.
+8. The GUI pass EN and RU on the final tree (`build/m3i-tools/guipass.sh <rev> en|ru <tag>`).
+
+Compare each number with section 4 (dad7a40 on 2.0.77); a change of the engine moves per-seed AI outcomes (section 7
+item 11), so judge the criteria, not line identity.

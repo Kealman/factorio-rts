@@ -7,6 +7,7 @@ source "$(dirname "$0")/factorio-env.sh"
 SECS="${1:-20}"
 PATTERN="${2:-\\[rts}"
 MODS_DIR="${3:-$RTS_MODS_DIR}"
+factorio_version_guard "$MODS_DIR/factorio-rts" # the binary must match the tree's info.json
 RUN_ID="$(basename "$MODS_DIR")"
 CFG="$(factorio_isolated_config "$RUN_ID")"   # own write dir => no .lock clash with other runs
 PORT=$(( 34200 + ( $(cksum <<< "$RUN_ID" | cut -d" " -f1) % 300 ) ))   # per-run UDP port so parallel servers do not clash

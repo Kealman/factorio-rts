@@ -19,6 +19,7 @@ CFG="$(factorio_isolated_config "$NAME")"
 PORT=$(( 38000 + ( $(cksum <<< "$NAME" | cut -d" " -f1) % 1000 ) ))
 while lsof -nP -iUDP:"$PORT" >/dev/null 2>&1; do PORT=$(( PORT + 1 )); done
 LOG="$RTS_BUILD_DIR/$NAME-loaded-server.log"
+factorio_version_guard "$RTS_BUILD_DIR/$NAME/factorio-rts" # the binary must match the tree's info.json
 "$FACTORIO_BIN" -c "$CFG" --mod-directory "$RTS_BUILD_DIR/$NAME" --start-server "$SAVE" --port "$PORT" \
   --server-settings "$RTS_ROOT/tools/server-settings.json" > "$LOG" 2>&1 &
 PID=$!
