@@ -297,7 +297,9 @@ local function refresh_hauler(player, g)
   local target = h.target and logistics.hub_rec(h.target) and logistics.hub_name(h.target)
   local dist = h.dest and string.format("%.0f", util.distance(h.entity.position, h.dest)) or "0"
   if h.state == "waiting" then
-    el.state.caption = {"rts.hauler-state-wait", state, REASON_KEYS[h.reason] and {REASON_KEYS[h.reason]} or (h.reason or "")}
+    -- Phase 5 M3 QA fix: a route hauler waiting at its pickup for the way back's coal too (logistics.lua h.fuel_back)
+    local rkey = (h.reason == "no-fuel" and h.fuel_back) and "rts.hauler-reason-no-fuel-back" or REASON_KEYS[h.reason]
+    el.state.caption = {"rts.hauler-state-wait", state, rkey and {rkey} or (h.reason or "")}
     el.state.style.font_color = COLOR.yellow
   elseif (h.state == "to_pickup" or h.state == "to_dropoff" or h.state == "to_home") and target then
     el.state.caption = {"rts.hauler-state-travel", state, target, dist}

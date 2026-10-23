@@ -729,11 +729,26 @@ local function go(h, hub_un, state)
     -- outpost without coal runs too (the docs agent's GUI check)
     local back = (state == "to_pickup" or state == "to_dropoff") and math.max(0, need - (tank - from_tank)) or 0
     local want = need_net + back
+    -- Phase 5 M3 ai (QA fix 3, in m3-integ's QA fix round): a route hauler leaving its pickup for a drop-off that cannot
+    -- refuel the way back (less
+    -- coal than it in its network) takes the way back too before it leaves; it left with whatever the network spared
+    -- and stood out of fuel at the town (M2 703 on f37d073: three supply haulers of rts-ai-2's town 12 in turn, the town
+    -- starving). Auto haulers keep the old rule (applied to every hauler, the aggressive AI opened no rail line in M2
+    -- 703 and 704)
+    local must = need_net
+    if back > 0 and h.mode == "manual" and state == "to_dropoff" and h.at_hub == h.pickup then
+      local dnet = logistics.hub_network(hub_un)
+      if not (dnet and dnet.valid and dnet.get_item_count("coal") >= back) then must = need_net + back end
+    end
     local got = (want > 0 and net) and net.remove_item({name = "coal", count = want}) or 0
-    if got >= need_net then
+    if got >= must then
       h.fuel = tank - from_tank + (got - need_net)
+      h.fuel_back = nil
     else
       if got > 0 then net.insert({name = "coal", count = got}) end
+      -- (it waits at its pickup, never at a hub without coal; h.fuel_back: the hub panel says it waits for the way
+      -- back's coal too; the reason stays "no-fuel" for the AI's fuel rules)
+      h.fuel_back = (got >= need_net and must > need_net) or nil
       set_state(h, "waiting", "no-fuel")
       -- one alert per hauler per FUEL_ALERT_TICKS: "Hauler N: no fuel at <hub>"
       if not h.fuel_alert or game.tick - h.fuel_alert >= logistics.FUEL_ALERT_TICKS then
