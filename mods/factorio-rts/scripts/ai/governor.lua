@@ -38,6 +38,7 @@ local governor = {}
 
 local PB = balance.nation.people
 local AI = PB.ai
+local AGE1_ARMY = balance.nation.economy.ai.age1_army -- (ai/mix.lua AGE1_ARMY)
 local WAI = balance.nation.war.ai
 
 governor.PERIOD = AI.period or 300
@@ -231,7 +232,9 @@ local function capital_labor(C, G, labor)
   -- both barracks of the aggressive AI stood disabled for 12 minutes (M1 seed 501). (Pinned for good, or whenever the
   -- barracks were idle for want of iron, the pin took workers from the Age I economy and the rail line's depots came
   -- 4-8 minutes later.)
-  if AI.pin_barracks and game.tick - (C.last_spawn_tick or C.started or 0) >= (AI.pin_barracks_after or 0) then
+  -- (QA fix 2: not while the rail program saves for its kits, nor at the Age I army cap: ai/mix.lua heartbeat)
+  if AI.pin_barracks and game.tick - (C.last_spawn_tick or C.started or 0) >= (AI.pin_barracks_after or 0)
+     and not (C.nation and C.nation.saving_rail) and production.army_size(C.force) < AGE1_ARMY then
     local bar = {}
     for un, rec in buildings.for_force(C.force, "barracks") do bar[#bar + 1] = {un, rec} end
     table.sort(bar, function(a, b) return a[1] < b[1] end)

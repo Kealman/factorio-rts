@@ -709,6 +709,41 @@ base: the rest of the delay is steel and circuits, which is (a).
 **Cost of the M1 fix.** On 801-805, 73f045b (S4) reaches Age III by 60:00 in 11/20 against 14/20, and links 11/20
 against 15/20. With five seeds that is within the swings seen between close trees, but it is recorded here.
 
+### 4.11 QA fix 2: the aggressive AI's rail lines under the M1 fix's heartbeat
+
+m3-integ found that on 73f045b plus their market slicing, rts-ai-1 (aggressive) opened no rail line by 45:00 in 3 of
+4 runs. Its lines waited for a construction train on no-kits, no-rails and no-fuel. My own runs showed the same
+pattern on 801-805: ai-1 linked its three cities at 51/43/51/58/58 min, against 35/31/56/37/43 on 705a33a.
+
+**Cause.** ai-1's army sits at the Age I cap (40) from minute 9: 41-49 units on seed 802. The M1 fix's 3-minute
+heartbeat still fired every 3 minutes. Each beat lifted the rail saving and the cap for every barracks and added 1-3
+units (41 -> 44 -> 47 -> 49). Iron, copper and steel went into the army instead of the rail program's kits.
+
+**The fix (Nation only, `ai/mix.lua`, `ai/governor.lua`):**
+- The M1 fix's beat (3 minutes, the first barracks makes drones) fires only below the Age I army cap and never while
+  the rail program saves (`C.nation.saving_rail`). The produce check does not count minutes at the cap or while
+  saving, so the beat is never needed there.
+- At the cap, only wave B.2's 4-minute bypass remains (`mix.HEARTBEAT_THREAT`), as on 705a33a.
+- The capital's barracks pin applies only under the same two conditions, so it is released while the rail program
+  saves.
+
+A first version also turned the B.2 bypass off during rail saving. ai-1's rails then paid its second depot at minutes
+10-12, which took the steel Industrialisation needed: Age II came at 21:56, and M1 501 fell to 51/53 (age2_rts-ai-1,
+train_items 17,847).
+
+| ai-1: first line / three cities linked | 705a33a | 73f045b | aaf8764 | aaf8764 + fix |
+|---|---|---|---|---|
+| seed 804 | 30 / 37:00 | 52 / 58:00 | - | 27 / 37:00 |
+| seed 802 | 28 / 31:00 | 32 / 43:00 | none / - (CC lost at 28:48) | none / - (its line destroyed in a war) |
+
+- **Seed 802 on aaf8764.** It is decided by ai-1's war with the player, not by the heartbeat. ai-1 loses its rail line
+  with the fix and loses its capital without it. On 1f28ccb the first version opened ai-1's first line at 28 and
+  linked at 29:00.
+- **M1 501 on aaf8764 + fix: 52/52, all passed.** The match ended at 59:19 when rts-ai-1 took the player's capital, so
+  harass_rts-ai-1 was not checked. train_items stood at 19,285 and was not yet due. Age II came for the player at
+  16:55 and for ai-1 at 19:15.
+- **Skirmish** is byte-identical against aaf8764 (4,518 lines, 0 differing). Smoke 65/65, 0 errors.
+
 ## 5. Regressions
 
 - **Skirmish:** byte-identical vs aaa8061 (`tools/determinism-compare.sh`, WHAT=all, seed 501, 10 minutes: 4,518 lines
@@ -799,6 +834,7 @@ against 15/20. With five seeds that is within the swings seen between close tree
 | 3ea458e, a8d398e | wave B.2: site and farm rules, exports only from linked towns, goods chain, hard's city-state plan, uranium outpost, perf, war-paths probe; notes |
 | 5a06781, cb4c563, e59259f | wave B.2 final: war-probe fixes, the city-state race; notes, re-bench |
 | 73f045b | QA fix: M1 seed 501 (barracks heartbeat, labor-disabled barracks pinned, Smelting works after the second Steel works) (section 4.8) |
-| (this) | hard's economic plan (section 4.9); no engine kits while the research lacks engines (section 4.10) |
+| 1f28ccb | hard's economic plan (section 4.9); no engine kits while the research lacks engines (section 4.10) |
+| (this) | QA fix 2: the heartbeat's beat and the barracks pin only below the Age I army cap and outside rail saving (section 4.11) |
 
 Hunks in other owners' files: H1-H5 (section 3, applied by m3-integ in 3edd55b); H6 withdrawn. Nothing pending.

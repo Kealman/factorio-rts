@@ -63,12 +63,26 @@ mix.AGE1_ARMY = require("balance").nation.economy.ai.age1_army
 -- Phase 5 M1 integration: the Nation-mode army floor (balance.nation.economy.ai.min_army)
 mix.NATION_MIN_ARMY = require("balance").nation.economy.ai.min_army or 0
 mix.THREAT_TICKS = 5 * 60
-mix.HEARTBEAT = 3 * 60 * 60 -- Phase 5 M3 ai (Nation): see mix.available (QA fix: was 4 minutes)
+mix.HEARTBEAT = 3 * 60 * 60 -- Phase 5 M3 ai (Nation, QA fix): the barracks' beat, see mix.heartbeat
+mix.HEARTBEAT_THREAT = 4 * 60 * 60 -- Phase 5 M3 ai (Nation, wave B.2): see mix.available
 -- Phase 5 M3 ai (QA fix, Nation): after HEARTBEAT without a new unit the barracks stop yielding to the economy and the
 -- first one makes the first of these kinds it can (a drone takes iron only: production.lua lets a consumer short of a
 -- single item reserve it) until a unit comes out. The economic AI's barracks chose heavies and cars short of iron and
 -- steel together, which reserve nothing, and made 0-1 kits a minute for 8 minutes (M1 seed 501, produce_rts-player)
 mix.BEAT_KINDS = {"drone", "walker"}
+-- Phase 5 M3 ai (QA fix 2, Nation): the beat only below the Age I army cap (at the cap the produce check has nothing to
+-- prove) and never while the rail program saves for its depots, kits and rails (C.nation.saving_rail, ai/age_up.lua);
+-- at the cap only wave B.2's HEARTBEAT_THREAT. With the beat at the cap (army 41-49 from minute 9, 1-3 units a beat)
+-- the aggressive AI linked its three cities at 43:00 instead of 31:00 (seed 802, 73f045b against 705a33a) and had no
+-- line by 45:00 in 3 of m3-integ's 4 runs.
+
+--- True while the barracks' beat is due (Nation mode): no unit for HEARTBEAT ticks, below the Age I army cap, no rail
+--- saving.
+function mix.heartbeat(C, tick)
+  if not (mix.HEARTBEAT and tick - (C.last_spawn_tick or C.started or 0) >= mix.HEARTBEAT) then return false end
+  if C.nation and C.nation.saving_rail then return false end
+  return production.army_size(C.force) < mix.AGE1_ARMY
+end
 
 -- Barracks kinds from balance.lua: tier-1 units with a barracks kit (mk2 come from research, haulers from the
 -- factory). {[kind] = {unit, kit, supply, cost, counters}}
@@ -199,9 +213,11 @@ function mix.available(C, kind)
   local ages = deps.ages
   if ages and ages.is_nation() then
     local threat = C.army and C.army.threat and game.tick - C.army.threat.tick <= mix.THREAT_TICKS
-    -- Phase 5 M3 ai: a heartbeat: after HEARTBEAT ticks without a new unit the barracks make one despite the saving and
-    -- the Age I cap (the Age III road's districts kept the economic AI saving, and its barracks idle, for 24 minutes)
-    if mix.HEARTBEAT and game.tick - (C.last_spawn_tick or C.started or 0) >= mix.HEARTBEAT then threat = true end
+    -- Phase 5 M3 ai: a heartbeat: after HEARTBEAT_THREAT ticks without a new unit the barracks make one despite the
+    -- saving and the Age I cap (the Age III road's districts kept the economic AI saving, and its barracks idle, for 24
+    -- minutes); the beat (mix.heartbeat) sooner
+    local idle = game.tick - (C.last_spawn_tick or C.started or 0)
+    if (mix.HEARTBEAT_THREAT and idle >= mix.HEARTBEAT_THREAT) or mix.heartbeat(C, game.tick) then threat = true end
     if C.nation and (C.nation.saving or C.nation.saving_rail) and not threat
        and production.army_size(C.force) >= mix.NATION_MIN_ARMY then
       return false, "saving" -- ai/age_up.lua; never below the army floor (Phase 5 M1 integration)
@@ -335,8 +351,7 @@ function mix.manage_barracks(C)
      and win.used < mix.YIELD_SHARE * mix.YIELD_WINDOW and tick - (C.last_spawn_tick or 0) < mix.YIELD_SPAWN_GAP then
     yield = mix.economy_hungry(C)
   end
-  local beat = deps.ages and deps.ages.is_nation() and mix.HEARTBEAT
-    and tick - (C.last_spawn_tick or C.started or 0) >= mix.HEARTBEAT
+  local beat = deps.ages and deps.ages.is_nation() and mix.heartbeat(C, tick)
   if beat then yield = false end
   if yield then
     if not C.yielding then C.stats.yields = (C.stats.yields or 0) + 1 end
