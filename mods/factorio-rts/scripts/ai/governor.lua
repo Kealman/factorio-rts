@@ -428,7 +428,9 @@ local function supply_haulers(C, G, capital, list)
         G.haulers[c.id] = nil
         if hun then taken[hun] = nil end
         for un, hh in L.haulers_of(C.force) do
-          if hh.mode == "auto" and not taken[un] then
+          -- (QA fix 3: not one that stands out of fuel at another hub: it never got to the capital, M2 701 rts-ai-1)
+          local stranded = hh.state == "waiting" and hh.reason == "no-fuel" and hh.at_hub ~= cc_un
+          if hh.mode == "auto" and not taken[un] and not stranded then
             L.set_pickup(un, cc_un)
             L.set_dropoff(un, c.center)
             G.haulers[c.id] = un
@@ -439,6 +441,72 @@ local function supply_haulers(C, G, capital, list)
         end
       end
     end
+  end
+end
+
+-- Phase 5 M3 ai (QA fix 3, Nation): fuel for the supply haulers. A hauler leaving a hub takes its coal from that hub's
+-- network (scripts/logistics.lua: 1 per hauler_tiles_per_coal tiles, the way back in its tank, h.fuel). The capital's
+-- coal also feeds the Steel works, plastic, explosives and supply crates: after a raid took a coal hub (M2 701,
+-- dad7a40) they ate all of it, the supply hauler of town 12 stood "no-fuel" at the capital from minute 25 and the town
+-- starved from 37:00. So while a supply hauler stands at the capital its tank is filled first, up to fuel_trips round
+-- trips; after fuel_buy_after ticks of waiting for fuel there the capital gets a coal make target of fuel_buy (the
+-- market AI imports a target's shortfall the nation does not make: scripts/market.lua ai_buy); one that waits as long
+-- out of fuel at another hub (a town has no coal: it left the capital with less than the way back) goes back to auto
+-- and supply_haulers sends another.
+local COAL = "coal"
+local function supply_fuel(C, G, capital)
+  local L = deps.logistics
+  local per = balance.nation.hauler_tiles_per_coal
+  if not (L and per and capital.position) then return end
+  local cc_un = capital.center
+  local e = capital.entity
+  local net = e and e.valid and e.logistic_network
+  local ids = {}
+  for id in pairs(G.haulers) do ids[#ids + 1] = id end
+  table.sort(ids)
+  local waiting = false
+  G.stranded = G.stranded or {}
+  local after = AI.fuel_buy_after or 3600
+  for _, id in ipairs(ids) do
+    local un = G.haulers[id]
+    local h = L.hauler(un)
+    local c = deps.cities.get(id)
+    local dry = h and h.state == "waiting" and h.reason == "no-fuel"
+    -- (at the capital: its last hub, and not on the way out; logistics keeps at_hub until the next arrival)
+    if h and c and c.position and h.mode == "manual" and h.pickup == cc_un and h.at_hub == cc_un
+       and h.state ~= "to_dropoff" then
+      local trip = 2 * math.ceil(util.distance(capital.position, c.position) * 1.1 / per)
+      local want = (AI.fuel_trips or 1) * trip - (h.fuel or 0)
+      if want > 0 and net and net.valid then
+        local got = net.remove_item({name = COAL, count = want})
+        if got > 0 then
+          h.fuel = (h.fuel or 0) + got
+          G.fuel_coal = (G.fuel_coal or 0) + got
+        end
+      end
+      if dry then waiting = true end
+      G.stranded[id] = nil
+    elseif h and dry and h.mode == "manual" and h.pickup == cc_un then
+      G.stranded[id] = G.stranded[id] or game.tick
+      if game.tick - G.stranded[id] >= after then
+        G.stranded[id], G.haulers[id] = nil, nil
+        L.set_mode(un, "auto")
+        L.set_home(un, cc_un)
+        G.fuel_swaps = (G.fuel_swaps or 0) + 1
+        util.log("ai %s: governor: supply hauler #%d of city %d stands out of fuel at hub #%s: another one goes",
+          C.force, un, id, tostring(h.at_hub))
+      end
+    else
+      G.stranded[id] = nil
+    end
+  end
+  if waiting then G.fuel_wait = G.fuel_wait or game.tick else G.fuel_wait = nil end
+  local buy = G.fuel_wait ~= nil and game.tick - G.fuel_wait >= after
+  if buy ~= (G.fuel_buy == true) then
+    G.fuel_buy = buy or nil
+    set_target(capital.id, COAL, buy and (AI.fuel_buy or 200) or nil)
+    util.log("ai %s: governor: %s", C.force, buy and "a supply hauler waits for fuel: the capital imports coal"
+      or "the supply haulers have fuel again")
   end
 end
 
@@ -792,6 +860,7 @@ local function city_pass(C, G, surface, c, capital, list, age)
       end
       if not queued and C.cfg and C.cfg.goods_chain then queued = goods_inputs(C, G, surface) end
       supply_haulers(C, G, c, list)
+      supply_fuel(C, G, c)
     end
   else
     -- a town: extraction first, defence, the export route, the goods stall watch
@@ -851,8 +920,8 @@ function governor.describe(C)
     if S.route then routes = routes + 1 end
   end
   return string.format("governor: farms %d, bakeries %d, goods works %d, houses %d, town turrets %d, export routes %d, "
-    .. "supply haulers %d", (count_keys(C, G.farms)), (count_keys(C, G.bakeries)), (count_keys(C, G.goods)), houses_n,
-    turrets, routes, table_size(G.haulers))
+    .. "supply haulers %d (tank coal %d, swaps %d)", (count_keys(C, G.farms)), (count_keys(C, G.bakeries)),
+    (count_keys(C, G.goods)), houses_n, turrets, routes, table_size(G.haulers), G.fuel_coal or 0, G.fuel_swaps or 0)
 end
 
 deps.governor = governor

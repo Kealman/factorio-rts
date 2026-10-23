@@ -744,6 +744,60 @@ train_items 17,847).
   16:55 and for ai-1 at 19:15.
 - **Skirmish** is byte-identical against aaf8764 (4,518 lines, 0 differing). Smoke 65/65, 0 errors.
 
+### 4.12 QA fix 3: starving towns, supply haulers without coal (Factorio 2.1, on f37d073)
+
+**The regression.** m3-integ found M2 starving on dad7a40 in seeds 701 and 703, city 12; 705a33a, 1f28ccb and aaf8764
+had none. In both seeds the town's supply hauler stood at the capital "waiting (no-fuel)". A hauler takes its coal from
+the network of the hub it leaves (1 per 40 tiles), and the Steel works, plastic, explosives and supply crates use the
+same coal.
+- **701.** rts-ai-1 went into the war with the player with 49-64 units, against 81 on aaf8764: the beat at the cap no
+  longer fired (section 4.11). A raid at 23:11 destroyed the hub that collects one of its two coal pits. Coal intake
+  fell from 120 to 60 a minute, and the rebuild waited 35 minutes behind 18 jobs. The hauler had no fuel from minute
+  25, and the town's rations ran out at 37:00.
+- **703.** Supply haulers left the capital with fuel for the outbound leg only and stood out of fuel at the town,
+  which holds no coal: three of rts-ai-2's in turn on the first 2.1 runs. The governor also picked haulers that stood
+  out of fuel at far hubs as supply haulers.
+
+**The fix:**
+- **Tank first.** `ai/governor.lua` `supply_fuel`: while a supply hauler stands at the capital, its tank (`h.fuel`) is
+  filled from the capital's network, ahead of the other coal users, up to `fuel_trips` round trips. 3 round trips took
+  the coal of rts-ai-1's construction trains on 703, so it is 1.
+- **Import.** After `fuel_buy_after` (1 minute) of a supply hauler waiting for fuel at the capital, the capital gets a
+  make target of `fuel_buy` (200) coal. The market AI imports a target's shortfall the nation does not make. In an
+  earlier round on 703, rts-ai-1 bought 198 coal twice; in the final runs no supply hauler waited that long at the
+  capital.
+- **Stranded haulers.** A supply hauler that waits as long out of fuel at another hub goes back to auto, and another
+  is sent. No auto hauler that stands out of fuel away from the capital is picked.
+- **Hubs first.** `ai/construction.lua` `repair`: a destroyed hub is re-queued at the front of the queue, so its item is
+  made first.
+- **Route rule (m3-integ's `logistics.lua`, my hunk; committed by m3-integ in 552ee2c).** A route hauler leaving its
+  pickup for a drop-off that cannot refuel the way back takes the way back too before it leaves. Applied to every
+  hauler, the aggressive AI opened no rail line in 703 and 704, so auto haulers keep the old rule.
+- **Counters.** The minute line gets the tank coal and the swaps: `supply haulers N (tank coal N, swaps N)`.
+
+All runs below are on Factorio 2.1 (f37d073 + the fix): M2 = 4 normal AIs, `m3_acceptance.lua`, 60 min, speed 8.
+
+| Run | Starving | Summary | Failures |
+|---|---|---|---|
+| M2 701 | PASS | 81/82 | techs_6min_rts-ai-1 |
+| M2 702 | PASS | 81/83 | age2_rts-player, cars_rts-ai-2 |
+| M2 703 | PASS | 79/83 | no_bad_spam (player, ai-3), age2_rts-player, train_items 18,825 |
+| M2 704 | PASS | 82/83 | rail_line_rts-ai-1 (also on f37d073 alone: 82/83, the same failure) |
+| M2 705 | PASS | 82/83 | train_items 19,333 |
+| M1 501 | - | 51/53 | age2_rts-ai-1, train_items: the port's 2.1 result is 51/53 too |
+| 4-nation 802 (`ai3_acceptance`) | - | 90/93 | ai-1: first line 37:49, linked 43:00 (dad7a40 on 2.0: no line) |
+| 4-nation 804 | - | 90/93 | ai-1: first line 23:23, linked 30:00 (dad7a40: 27 / 37:00) |
+| Skirmish | - | byte-identical against f37d073 and against 552ee2c (4,363 lines, 0 differing) | smoke 65/65 |
+
+**Supply hauler fuel on 2.1.**
+- Per run: 6-11 swaps of stranded haulers, and 182-797 coal per nation put into supply hauler tanks over 60 minutes.
+- The no_bad_spam failures on 703 (belts whose revive kept failing) failed on dad7a40's 703 too.
+- **Formation and spacing on 2.1.** The port restored the 2.0 unit steering. The AI's thresholds are distances of tens
+  of tiles to a target (siege 100, relief 40). Over 701-705 the operations' phase changes are in the 2.0 proportions:
+  raids 95 assemble -> advance, 46 advance -> strike; captures 44 assemble -> advance, 26 advance -> siege. No retune.
+- **2.1 tooling.** One M2 702 server died at 81 s on the shared autosave in build/ (fixed by m3-integ in dd8c4f2:
+  autosave off).
+
 ## 5. Regressions
 
 - **Skirmish:** byte-identical vs aaa8061 (`tools/determinism-compare.sh`, WHAT=all, seed 501, 10 minutes: 4,518 lines
@@ -835,6 +889,7 @@ train_items 17,847).
 | 5a06781, cb4c563, e59259f | wave B.2 final: war-probe fixes, the city-state race; notes, re-bench |
 | 73f045b | QA fix: M1 seed 501 (barracks heartbeat, labor-disabled barracks pinned, Smelting works after the second Steel works) (section 4.8) |
 | 1f28ccb | hard's economic plan (section 4.9); no engine kits while the research lacks engines (section 4.10) |
-| (this) | QA fix 2: the heartbeat's beat and the barracks pin only below the Age I army cap and outside rail saving (section 4.11) |
+| dad7a40 | QA fix 2: the heartbeat's beat and the barracks pin only below the Age I army cap and outside rail saving (section 4.11) |
+| (this) | QA fix 3 on Factorio 2.1: supply haulers' coal (tank first, import, stranded haulers replaced), destroyed hubs rebuilt first (section 4.12) |
 
 Hunks in other owners' files: H1-H5 (section 3, applied by m3-integ in 3edd55b); H6 withdrawn. Nothing pending.

@@ -293,6 +293,8 @@ function construction.step(C, surface)
   end
 end
 
+construction.HUB = "rts-hub"
+
 --- Re-queue every built entry whose entity is gone (rebuild what the enemy destroyed). Returns the count.
 function construction.repair(C)
   local n = 0
@@ -311,7 +313,16 @@ function construction.repair(C)
     for _, key in ipairs(keys) do
       local e = C.plan[key]
       e.status, e.entity = "planned", nil
-      if construction.queue(C, key) then n = n + 1 end
+      if construction.queue(C, key) then
+        n = n + 1
+        -- (Phase 5 M3 ai, QA fix 3: a hub first: its stockpiles' ore and coal reach the network only through it; a
+        -- raided coal hub waited 35 minutes behind 18 jobs and the capital's supply hauler ran out of fuel, M2 701)
+        local q = C.queue
+        if e.name == construction.HUB and q[#q] == key then
+          table.remove(q)
+          table.insert(q, 1, key)
+        end
+      end
     end
   else
     for key, e in pairs(C.plan) do
