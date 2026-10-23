@@ -784,10 +784,19 @@ All runs below are on Factorio 2.1 (f37d073 + the fix): M2 = 4 normal AIs, `m3_a
 | M2 703 | PASS | 79/83 | no_bad_spam (player, ai-3), age2_rts-player, train_items 18,825 |
 | M2 704 | PASS | 82/83 | rail_line_rts-ai-1 (also on f37d073 alone: 82/83, the same failure) |
 | M2 705 | PASS | 82/83 | train_items 19,333 |
-| M1 501 | - | 51/53 | age2_rts-ai-1, train_items: the port's 2.1 result is 51/53 too |
+| M1 501 | - | 51/53 | age2_rts-ai-1, train_items 10,411 (the 2.1 base: 51/53, train_items 19,397; with the route rule alone 14,949) |
 | 4-nation 802 (`ai3_acceptance`) | - | 90/93 | ai-1: first line 37:49, linked 43:00 (dad7a40 on 2.0: no line) |
 | 4-nation 804 | - | 90/93 | ai-1: first line 23:23, linked 30:00 (dad7a40: 27 / 37:00) |
 | Skirmish | - | byte-identical against f37d073 and against 552ee2c (4,363 lines, 0 differing) | smoke 65/65 |
+
+**The cost: train_items in M1 501.** The check count is unchanged, but items moved by train fall:
+- 19,397 on the 2.1 base (5a2cdcc, m3-integ's base21-m1), 14,949 with the route rule alone (fuel21-m1), and 10,411
+  with the rule and this fix.
+- rts-ai-1 opens only its town line (the base opens 2 more by 50:00). Its haulers burn more coal for fewer trips:
+  2,100 coal in 173 trips on the base, 2,552 in 115 here. The player: 3,463 in 556, then 3,553 in 279.
+- Supply haulers that no longer strand keep running the long town routes, and that coal used to go to outposts and
+  trains.
+- In the 4-nation M2 runs train_items stays in the base's range: 18,825-28,514, and f37d073 704 alone has 26,117.
 
 **Supply hauler fuel on 2.1.**
 - Per run: 6-11 swaps of stranded haulers, and 182-797 coal per nation put into supply hauler tanks over 60 minutes.
