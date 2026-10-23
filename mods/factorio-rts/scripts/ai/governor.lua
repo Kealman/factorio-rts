@@ -448,8 +448,10 @@ end
 -- network (scripts/logistics.lua: 1 per hauler_tiles_per_coal tiles, the way back in its tank, h.fuel). The capital's
 -- coal also feeds the Steel works, plastic, explosives and supply crates: after a raid took a coal hub (M2 701,
 -- dad7a40) they ate all of it, the supply hauler of town 12 stood "no-fuel" at the capital from minute 25 and the town
--- starved from 37:00. So while a supply hauler stands at the capital its tank is filled first, up to fuel_trips round
--- trips; after fuel_buy_after ticks of waiting for fuel there the capital gets a coal make target of fuel_buy (the
+-- starved from 37:00. So while a supply hauler stands at the capital and its town is short of rations (below
+-- town_rations_minutes of need) its tank is filled first, up to fuel_trips round trips (for every supply hauler at all
+-- times the town routes took the coal of the outposts and trains: M1 501 train_items 10,411 against 19,397); after
+-- fuel_buy_after ticks of waiting for fuel there the capital gets a coal make target of fuel_buy (the
 -- market AI imports a target's shortfall the nation does not make: scripts/market.lua ai_buy); one that waits as long
 -- out of fuel at another hub (a town has no coal: it left the capital with less than the way back) goes back to auto
 -- and supply_haulers sends another.
@@ -465,6 +467,7 @@ local function supply_fuel(C, G, capital)
   for id in pairs(G.haulers) do ids[#ids + 1] = id end
   table.sort(ids)
   local waiting = false
+  local population = mod("population")
   G.stranded = G.stranded or {}
   local after = AI.fuel_buy_after or 3600
   for _, id in ipairs(ids) do
@@ -477,7 +480,9 @@ local function supply_fuel(C, G, capital)
        and h.state ~= "to_dropoff" then
       local trip = 2 * math.ceil(util.distance(capital.position, c.position) * 1.1 / per)
       local want = (AI.fuel_trips or 1) * trip - (h.fuel or 0)
-      if want > 0 and net and net.valid then
+      local need = population and (population.needs(id)[RATIONS] or 0) or 0
+      local short = net_count(c, RATIONS) < (AI.town_rations_minutes or 4) * need
+      if short and want > 0 and net and net.valid then
         local got = net.remove_item({name = COAL, count = want})
         if got > 0 then
           h.fuel = (h.fuel or 0) + got

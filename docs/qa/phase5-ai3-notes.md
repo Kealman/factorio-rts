@@ -798,6 +798,20 @@ All runs below are on Factorio 2.1 (f37d073 + the fix): M2 = 4 normal AIs, `m3_a
   trains.
 - In the 4-nation M2 runs train_items stays in the base's range: 18,825-28,514, and f37d073 704 alone has 26,117.
 
+**Narrowed (the lead's option 2).** The tank comes first only while the town is short of rations (below
+`town_rations_minutes` of its need). Otherwise the supply hauler competes for coal like any other. The import target
+and the stranded-hauler replacement are unchanged.
+
+| HEAD 33eb037 + narrowing | Result |
+|---|---|
+| M2 701 | starving PASS, 81/82 (techs_6min_rts-ai-1); 6 stranded haulers replaced |
+| M2 703 | starving PASS, 77/82 (no_bad_spam x2, age2_rts-player, cars_rts-ai-3, train_items 18,125); 6 replaced, 3 coal imports |
+| M1 501 | 51/53, train_items **13,506** (player 4,130 in 16 trips, rts-ai-1 9,376 in 35); 10,411 before the narrowing |
+| Skirmish / smoke | byte-identical against e098e28 (4,363 lines); 65/65 |
+
+Tanks now take almost nothing: 0-18 coal per nation in 60 minutes, against 182-797. The rest of the gap to 19,397 is
+the route rule's return-leg estimate (14,949 with the rule alone), which m3-integ is calibrating.
+
 **Supply hauler fuel on 2.1.**
 - Per run: 6-11 swaps of stranded haulers, and 182-797 coal per nation put into supply hauler tanks over 60 minutes.
 - The no_bad_spam failures on 703 (belts whose revive kept failing) failed on dad7a40's 703 too.
@@ -899,6 +913,7 @@ All runs below are on Factorio 2.1 (f37d073 + the fix): M2 = 4 normal AIs, `m3_a
 | 73f045b | QA fix: M1 seed 501 (barracks heartbeat, labor-disabled barracks pinned, Smelting works after the second Steel works) (section 4.8) |
 | 1f28ccb | hard's economic plan (section 4.9); no engine kits while the research lacks engines (section 4.10) |
 | dad7a40 | QA fix 2: the heartbeat's beat and the barracks pin only below the Age I army cap and outside rail saving (section 4.11) |
-| (this) | QA fix 3 on Factorio 2.1: supply haulers' coal (tank first, import, stranded haulers replaced), destroyed hubs rebuilt first (section 4.12) |
+| 33eb037, e098e28 | QA fix 3 on Factorio 2.1: supply haulers' coal (tank first, import, stranded haulers replaced), destroyed hubs rebuilt first (section 4.12); its M1 cost |
+| (this) | QA fix 3 narrowed: the tank first only while the town is short of rations (section 4.12) |
 
 Hunks in other owners' files: H1-H5 (section 3, applied by m3-integ in 3edd55b); H6 withdrawn. Nothing pending.

@@ -602,9 +602,10 @@ balance.nation.people = {
     pin_barracks = 1, pin_barracks_after = 3 * 60 * 60,
     -- (wave B.2) copper cable the capital keeps for its fixed goods works (2 per 2 goods)
     goods_cable = 40,
-    -- (QA fix 3) a supply hauler standing at the capital gets coal for fuel_trips round trips in its tank first (3 took
-    -- the coal of the construction trains: an AI without a rail line, M2 703); after fuel_buy_after ticks of waiting for
-    -- fuel the capital gets a make target of fuel_buy coal (the market AI imports it)
+    -- (QA fix 3) a supply hauler standing at the capital gets coal for fuel_trips round trips in its tank first while
+    -- its town is short of rations (3 took the coal of the construction trains: an AI without a rail line, M2 703);
+    -- after fuel_buy_after ticks of waiting for fuel the capital gets a make target of fuel_buy coal (the market AI
+    -- imports it)
     fuel_trips = 1, fuel_buy_after = 60 * 60, fuel_buy = 200,
     -- (hard's economic plan, difficulty goods_chain) a copper cable works per goods_chain_cable goods works beyond the
     -- first, a brick works per goods_chain_brick (a goods works uses 30 cable and 15 bricks a minute)
