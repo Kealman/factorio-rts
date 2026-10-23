@@ -50,7 +50,7 @@ local function recipe(name, spec, result, subgroup, order)
   return {
     type = "recipe",
     name = name,
-    category = "rts-buildings",
+    categories = {"rts-buildings"}, -- 2.1: RecipePrototype::category -> categories
     subgroup = subgroup,
     order = order,
     enabled = false, -- scripts/warsupply.lua enables them per force in Nation mode

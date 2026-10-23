@@ -58,7 +58,7 @@ local function build_allowed()
     end
   end
   for rname, r in pairs(prototypes.recipe) do
-    if cats[r.category] and not r.hidden and not r.parameter then
+    if util.recipe_in(r, cats) and not r.hidden and not r.parameter then -- 2.1: categories
       for _, p in ipairs(r.products) do
         if p.type == "item" and not excluded(prototypes.item[p.name]) then
           if not allowed_set[p.name] then

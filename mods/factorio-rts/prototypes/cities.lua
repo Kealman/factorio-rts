@@ -55,7 +55,7 @@ local function recipe(name, cost, time, order)
   return {
     type = "recipe",
     name = name,
-    category = "rts-buildings",
+    categories = {"rts-buildings"}, -- 2.1: RecipePrototype::category -> categories
     subgroup = "rts-economy",
     order = order,
     enabled = true,

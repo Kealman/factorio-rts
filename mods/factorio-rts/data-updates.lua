@@ -23,3 +23,15 @@ require("prototypes.age3")
 -- Phase 5 M3 air (docs/qa/phase5-air-notes.md): planes, the airfield, the AA turret, Aviation and Air Force, and the
 -- air / structure masks of every RTS turret and building (last: it edits the prototypes defined before it).
 require("prototypes.air")
+
+-- Factorio 2.1 removed MapSettings::steering and gave every unit / spider-unit prototype its own steering. In 2.0 every
+-- RTS unit used the map defaults below (data.raw["map-settings"] of 2.0.77); in 2.1 they inherit the steering of the
+-- vanilla pentapod / biter they are copied from (spider-units: stay radius 3.6 with separation force 0.1, about 20x the
+-- 2.0 push). Restore the 2.0 values on every RTS unit (after prototypes.air: the planes are units too).
+local STEERING_2_0 = {move = {radius = 3, separation_force = 0.01, separation_factor = 3},
+                      stay = {radius = 1.2, separation_force = 0.005, separation_factor = 1.2}}
+for _, type_name in ipairs({"unit", "spider-unit"}) do
+  for name, proto in pairs(data.raw[type_name] or {}) do
+    if string.sub(name, 1, 4) == "rts-" then proto.steering = table.deepcopy(STEERING_2_0) end
+  end
+end

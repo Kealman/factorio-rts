@@ -94,7 +94,7 @@ function M.clean_machine(e, name, categories, health, power)
   e.fast_replaceable_group = nil
   e.factoriopedia_simulation = nil
   e.graphics_set_flipped = nil
-  e.forced_symmetry = nil
+  e.use_mirroring = nil -- 2.1: CraftingMachinePrototype::forced_symmetry -> use_mirroring (vanilla chemical plant / refinery set it)
   e.perceived_performance = nil
   e.enemy_map_color = ENEMY_MAP_COLOR
   e.trigger_target_mask = table.deepcopy(RAID_MASK)
@@ -118,7 +118,7 @@ function M.recipe(name, spec, subgroup)
     type = "recipe",
     name = name,
     localised_name = (#results > 1 or spec.named) and {"recipe-name." .. name} or nil,
-    category = spec.category,
+    categories = {spec.category}, -- 2.1: RecipePrototype::category -> categories
     subgroup = subgroup or spec.subgroup,
     order = spec.order,
     enabled = false,
@@ -158,7 +158,7 @@ function M.building_recipe(name, subgroup, order)
   return {
     type = "recipe",
     name = name,
-    category = "rts-buildings",
+    categories = {"rts-buildings"}, -- 2.1: RecipePrototype::category -> categories
     subgroup = subgroup,
     order = order,
     enabled = false,
@@ -216,8 +216,8 @@ local beam = {
   auto_recycle = false,
 }
 
-local kit = table.deepcopy(data.raw.tool["chemical-science-pack"])
-assert(kit, "factorio-rts: missing vanilla tool chemical-science-pack")
+local kit = table.deepcopy(data.raw.item["chemical-science-pack"]) -- 2.1: science packs are plain items
+assert(kit, "factorio-rts: missing vanilla science pack chemical-science-pack")
 kit.name = "rts-science-industrial"
 kit.localised_name = {"item-name.rts-science-industrial"}
 kit.localised_description = {"item-description.rts-science-industrial"}

@@ -88,4 +88,21 @@ function util.is_rts_unit(entity)
   return un ~= nil and storage.units ~= nil and storage.units[un] ~= nil
 end
 
+-- Factorio 2.1 removed LuaRecipePrototype::category (and additional_categories): a recipe has a list of categories.
+-- Every RTS recipe has exactly one; vanilla recipes may have several.
+
+--- The first (main) crafting category of a recipe prototype, or nil.
+function util.recipe_category(r)
+  local cats = r and r.categories
+  return cats and cats[1] or nil
+end
+
+--- True if any crafting category of the recipe prototype is a key of the set (e.g. LuaEntityPrototype::crafting_categories).
+function util.recipe_in(r, set)
+  for _, c in pairs(r.categories or {}) do
+    if set[c] then return true end
+  end
+  return false
+end
+
 return util

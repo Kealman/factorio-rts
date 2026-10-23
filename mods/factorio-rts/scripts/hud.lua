@@ -190,8 +190,9 @@ P4.LOGISTICS_PRODUCTS = {["transport-belt"] = true, ["fast-inserter"] = true, ["
   ["rts-artillery-wagon-kit"] = true, ["rts-armoured-locomotive-kit"] = true, ["rts-armoured-wagon-kit"] = true,
   ["rts-rail-shell"] = true} -- Phase 5 M3 war2
 P4.recipe_tab = function(r)
-  if r.category == "rts-science" then return "science" end
-  if r.category == "rts-intermediates" or r.category == "rts-age2" then return "intermediates" end
+  local cat = util.recipe_category(r) -- 2.1: LuaRecipePrototype::category -> categories
+  if cat == "rts-science" then return "science" end
+  if cat == "rts-intermediates" or cat == "rts-age2" then return "intermediates" end
   local product = r.products and r.products[1]
   if product and P4.LOGISTICS_PRODUCTS[product.name] then return "logistics" end
   if r.subgroup and r.subgroup.name == "rts-districts" then return "age2" end
@@ -592,7 +593,7 @@ local function recipe_for(item)
     recipe_by_item = {}
     for _, r in pairs(prototypes.recipe) do
       local product = r.products and r.products[1]
-      if RTS_CATEGORIES[r.category] and not r.parameter and product and product.type == "item"
+      if util.recipe_in(r, RTS_CATEGORIES) and not r.parameter and product and product.type == "item"
          and not recipe_by_item[product.name] then
         recipe_by_item[product.name] = r
       end
@@ -617,7 +618,7 @@ local function machine_recipes(entity)
   local categories = entity.prototype.crafting_categories or {}
   local keys = {}
   for _, r in pairs(prototypes.recipe) do
-    if categories[r.category] and not r.parameter and not r.hidden and not HIDDEN_KITS[r.name] then
+    if util.recipe_in(r, categories) and not r.parameter and not r.hidden and not HIDDEN_KITS[r.name] then
       list[#list + 1] = r
       keys[r.name] = recipe_sort_key(r)
     end
@@ -2855,7 +2856,7 @@ do -- dev-only locals stay out of the main chunk (Lua allows 200 locals there)
       local kit_ok = false
       if rec then
         production.set_recipe(un, "rts-raider-kit")
-        local out = rec.entity.get_inventory(defines.inventory.assembling_machine_output)
+        local out = rec.entity.get_inventory(defines.inventory.crafter_output) -- 2.1: assembling_machine_output -> crafter_output
         kit_ok = out and out.insert({name = "rts-raider-kit", count = 1}) == 1
       end
       hud.set_build_tab(player, "defence")

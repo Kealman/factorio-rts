@@ -312,7 +312,7 @@ local function building_recipe(name, spec, order)
   local ingredients = {}
   for item, amount in pairs(spec.cost) do ingredients[#ingredients + 1] = {type = "item", name = item, amount = amount} end
   table.sort(ingredients, function(a, b) return a.name < b.name end)
-  return {type = "recipe", name = name, category = "rts-buildings", subgroup = "rts-districts", order = order,
+  return {type = "recipe", name = name, categories = {"rts-buildings"}, subgroup = "rts-districts", order = order,
           enabled = false, hide_from_player_crafting = true, auto_recycle = false, energy_required = spec.time,
           ingredients = ingredients, results = {{type = "item", name = name, amount = 1}}}
 end

@@ -62,8 +62,8 @@ lab_item.auto_recycle = false
 -- Science kits
 -------------------------------------------------------------------------------
 local function kit(name, source, order)
-  local item = table.deepcopy(data.raw.tool[source])
-  assert(item, "factorio-rts: missing vanilla tool " .. source)
+  local item = table.deepcopy(data.raw.item[source]) -- 2.1: science packs are plain items (no "tool" prototypes)
+  assert(item, "factorio-rts: missing vanilla science pack " .. source)
   item.name = name
   item.localised_name = nil
   item.localised_description = {"item-description." .. name}
@@ -81,7 +81,7 @@ local function recipe(spec)
   return {
     type = "recipe",
     name = spec.name,
-    category = spec.category,
+    categories = {spec.category}, -- 2.1: RecipePrototype::category -> categories
     subgroup = spec.subgroup,
     order = spec.order,
     enabled = true,

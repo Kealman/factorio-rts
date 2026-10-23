@@ -32,7 +32,7 @@ for name, spec in pairs(balance.intermediates) do
   data:extend({{
     type = "recipe",
     name = name,
-    category = "rts-intermediates",
+    categories = {"rts-intermediates"}, -- 2.1: RecipePrototype::category -> categories
     subgroup = "rts-intermediates",
     order = ORDER[name] or "z",
     enabled = true,

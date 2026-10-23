@@ -418,8 +418,8 @@ local function eco_setup()
           f.get_recipe() and f.get_recipe().name or "none")
         local proto = prototypes.recipe["rts-stockpile"]
         local ok = production.set_recipe(f, "rts-stockpile")
-        check("eco_stockpile_recipe", proto ~= nil and proto.category == "rts-buildings" and ok,
-          "rts-stockpile recipe category=%s, factory accepts it=%s", proto and proto.category or "missing",
+        check("eco_stockpile_recipe", proto ~= nil and util.recipe_category(proto) == "rts-buildings" and ok,
+          "rts-stockpile recipe category=%s, factory accepts it=%s", proto and util.recipe_category(proto) or "missing",
           tostring(ok))
       end
       production.set_recipe(f, spec.recipe)

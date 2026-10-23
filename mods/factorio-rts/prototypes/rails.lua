@@ -164,7 +164,7 @@ local function recipe(name, spec, result, count)
   return {
     type = "recipe",
     name = name,
-    category = "rts-buildings",
+    categories = {"rts-buildings"}, -- 2.1: RecipePrototype::category -> categories
     subgroup = spec.subgroup or "rts-economy",
     order = spec.order,
     enabled = false, -- the Railways technology enables these per force (scripts/research.lua, rails.lua EFFECTS)

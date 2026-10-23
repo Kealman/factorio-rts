@@ -15,7 +15,7 @@ cp -R "$SRC" "$USER_MODS/factorio-rts"
 python3 - "$USER_MODS/mod-list.json" <<'PY'
 import json, sys
 path = sys.argv[1]
-keep = {"base", "space-age", "quality", "elevated-rails", "factorio-rts"}
+keep = {"base", "space-age", "quality", "elevated-rails", "recycler", "factorio-rts"}  # 2.1: quality and space-age need recycler
 try:
     data = json.load(open(path))
 except Exception:

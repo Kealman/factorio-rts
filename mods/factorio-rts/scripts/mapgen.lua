@@ -802,7 +802,7 @@ local function make_ruin(surface, pos, opts)
                                     create_build_effect_smoke = false})
   if cc then
     cc.destructible = false
-    cc.minable = false
+    cc.minable_flag = false -- 2.1: LuaEntity::minable is read-only, minable_flag
     cc.operable = false
     cc.health = cc.max_health * 0.3
     cc.energy = cc.electric_buffer_size or 0 -- no "no power" icon; it has no robots and no core, so it does nothing
@@ -813,7 +813,7 @@ local function make_ruin(surface, pos, opts)
                                      force = "neutral", create_build_effect_smoke = false})
     if s then
       s.destructible = false
-      s.minable = false
+      s.minable_flag = false -- 2.1: LuaEntity::minable is read-only, minable_flag
       local item = stock[i]
       if item then s.insert({name = item[1], count = item[2]}) end
       chests[#chests + 1] = s

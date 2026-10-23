@@ -126,7 +126,7 @@ if P4 then
   for _, name in ipairs({age3.KIT, age3.FUEL, "rts-rare-extractor", age3.NUCLEAR}) do P4.NATION_ONLY[name] = true end
   local base_tab = P4.recipe_tab
   P4.recipe_tab = function(r)
-    if r.category == "rts-age3" then return "intermediates" end
+    if util.recipe_category(r) == "rts-age3" then return "intermediates" end -- 2.1: categories
     return base_tab(r)
   end
   P4.ALERT_STYLE["space-started"] = {icons = {"item/rocket-fuel", "utility/check_mark_green"}, color = "green"}

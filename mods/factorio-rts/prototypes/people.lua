@@ -256,7 +256,7 @@ local function recipe(spec)
     type = "recipe",
     name = spec.name,
     localised_name = spec.localised_name,
-    category = spec.category,
+    categories = {spec.category}, -- 2.1: RecipePrototype::category -> categories
     subgroup = spec.subgroup or "rts-people",
     order = spec.order,
     enabled = spec.enabled ~= false,

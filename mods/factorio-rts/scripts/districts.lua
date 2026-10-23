@@ -260,7 +260,7 @@ local function drain(rec)
   end
   local put = net.insert({name = districts.CRUDE_ITEM, count = n})
   if put > 0 then
-    e.remove_fluid({name = districts.CRUDE, amount = put * districts.CRUDE_PER_ITEM})
+    e.extract_fluid({name = districts.CRUDE, amount = put * districts.CRUDE_PER_ITEM}) -- 2.1: remove_fluid -> extract_fluid
     rec.pump_state = "pumping"
     rec.pumped = (rec.pumped or 0) + put
     local st = D().stats[rec.force] or {crude = 0}

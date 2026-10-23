@@ -233,7 +233,7 @@ local function recipe(spec)
   return {
     type = "recipe",
     name = spec.name,
-    category = "rts-buildings",
+    categories = {"rts-buildings"}, -- 2.1: RecipePrototype::category -> categories
     subgroup = spec.subgroup,
     order = spec.order,
     enabled = true,

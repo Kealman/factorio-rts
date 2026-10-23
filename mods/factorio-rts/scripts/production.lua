@@ -631,7 +631,7 @@ local function recipes_of(entity)
   list = {}
   local cats = entity.prototype.crafting_categories or {}
   for name, r in pairs(prototypes.recipe) do
-    if cats[r.category] and not r.parameter and not r.hidden then
+    if util.recipe_in(r, cats) and not r.parameter and not r.hidden then -- 2.1: categories
       local entry = {name = name, products = {}, ingredients = {}, order = r.order or ""}
       for _, p in ipairs(r.products) do
         if p.type == "item" then entry.products[#entry.products + 1] = p.name end

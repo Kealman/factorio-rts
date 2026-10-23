@@ -52,7 +52,7 @@ local function recipe(name, spec, subgroup, order, result)
   return {
     type = "recipe",
     name = name,
-    category = "rts-buildings",
+    categories = {"rts-buildings"}, -- 2.1: RecipePrototype::category -> categories
     subgroup = subgroup,
     order = order,
     enabled = false, -- research enables it per force (scripts/belts.lua, scripts/trainswar.lua: research.EFFECTS)

@@ -150,7 +150,7 @@ local function tradeable_item(name)
 end
 
 local function usable_recipe(r, district_ok)
-  local cat = r.category or ""
+  local cat = util.recipe_category(r) or "" -- 2.1: LuaRecipePrototype::category -> categories
   if cat == "recycling" or string.find(cat, "recycling", 1, true) then return false end
   local district = string.sub(cat, 1, 13) == "rts-district-"
   if district and not district_ok then return false end
@@ -199,7 +199,7 @@ local function derive_prices()
         for _, prod in ipairs(r.products or {}) do
           if prod.name == item and prod.type == "item" then
             local a = prod.amount or ((prod.amount_min or 0) + (prod.amount_max or 0)) / 2
-            amount = amount + a * (prod.probability or 1)
+            amount = amount + a * (prod.independent_probability or prod.probability or 1) -- 2.1: Product::probability -> independent_probability
           end
         end
         if ok and amount > 0 then
@@ -504,7 +504,7 @@ function market.place_port(surface, pos)
   end
   for _, e in ipairs(port_entities(p)) do
     e.destructible = false
-    e.minable = false
+    e.minable_flag = false -- 2.1: LuaEntity::minable is read-only, minable_flag
     if e ~= post then S.parts[e.unit_number or -1] = un end
   end
   local stock = {}

@@ -34,6 +34,7 @@ local HIDDEN_CHROME = {
   "show_controller_gui", "show_minimap", "show_research_info", "show_alert_gui", "show_crafting_queue",
   "show_tool_bar", "show_quickbar", "show_shortcut_bar", "show_side_menu", "show_map_view_options",
   "show_surface_list", "show_hotkey_suggestions", "update_entity_selection",
+  "show_pins_gui", -- Factorio 2.1: the new map pins panel (GameViewSettings::show_pins_gui)
 }
 
 -- Input actions that break the RTS illusion. Deliberately NOT blocked: start_walking (it may be what

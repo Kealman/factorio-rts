@@ -39,7 +39,7 @@ local function building_recipe(name, order)
   return {
     type = "recipe",
     name = name,
-    category = "rts-buildings",
+    categories = {"rts-buildings"}, -- 2.1: RecipePrototype::category -> categories
     subgroup = "rts-districts",
     order = order,
     enabled = false,
@@ -91,7 +91,7 @@ local rod = {
   icons = age2.icon_layers(cell or data.raw.item["uranium-ore"], {r = 0.75, g = 1, b = 0.6, a = 1}),
   subgroup = "rts-age3-goods",
   order = "b[fuel-rod]",
-  fuel_category = "nuclear",
+  fuel_categories = {"nuclear"}, -- 2.1.20: ItemPrototype::fuel_category -> fuel_categories
   fuel_value = A3.nuclear.fuel_value,
   stack_size = 50,
   auto_recycle = false,
