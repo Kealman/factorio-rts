@@ -602,6 +602,9 @@ balance.nation.people = {
     pin_barracks = 1, pin_barracks_after = 3 * 60 * 60,
     -- (wave B.2) copper cable the capital keeps for its fixed goods works (2 per 2 goods)
     goods_cable = 40,
+    -- (hard's economic plan, difficulty goods_chain) a copper cable works per goods_chain_cable goods works beyond the
+    -- first, a brick works per goods_chain_brick (a goods works uses 30 cable and 15 bricks a minute)
+    goods_chain_cable = 6, goods_chain_brick = 2,
     -- while the AI's rail line is built, houses wait below this much stone (its rails take 1 stone per 2)
     rail_stone = 150,
     -- below stone_low stone (once the steel flows) one more stone extractor of the start line, at most every stone_gap
@@ -1322,7 +1325,8 @@ do
               cs_from = 1, cs_ratio = 1.5, goods_per_works = 12, goods_works_cap = 4},
     hard = {intel_age = 10 * 60, ops = 4, sites = 32, astar = 60000, build_period = 120, in_flight = 4, micro = "full",
             opm = 12, budget_factor = 1.5, expand = 0.8, cities = 4, council = 60, first_attack = 0.8,
-            cs_from = 0.75, cs_ratio = 1.6, goods_per_works = 12, goods_works_cap = 4, cs_plan = true},
+            cs_from = 0.75, cs_ratio = 1.6, goods_per_works = 10, goods_works_cap = 5, cs_plan = true,
+            goods_chain = true},
   }
   -- Intelligence (ai/intel.lua): every difficulty intel_age ticks per nation, what any own entity sees within `sight` tiles (an own
   -- scout plane within `plane_sight`): rival and city-state cities, divisions, depots, planes and unit clusters (cells of

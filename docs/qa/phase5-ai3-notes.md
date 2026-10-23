@@ -611,7 +611,7 @@ The fix (Nation only):
   - the heartbeat only outside the rail and district saving: 52/53;
   - the second Steel works back after linking: 52/53, and linking 11/20.
 
-### 4.9 Hard's economic plan: one attempt, not adopted
+### 4.9 Hard's economic plan: adopted as hard-only behaviour; "hard beats normal 7/10" not met
 
 Hard (`goods_chain`) gives the goods works' inputs works of their own, fixed on their recipe:
 - one copper-cable works per 6 goods works beyond the first, and one brick works per 2;
@@ -631,8 +631,8 @@ Seeds 901-905, each played with the levels swapped:
 | 905 | hard +17 / hard +51 | normal +149 / normal +507 |
 | hard wins | 7/10 | **5/10** |
 
-On the tree it would ship with, hard wins 5 of 10, so by the lead's rule the plan is not adopted. The cause is the
-side, not the level:
+On the tree it ships with, hard wins 5 of 10: the criterion "hard beats normal in 7 of 10" is **not met**. The cause
+is the side, not the level:
 - On 5a06781 the rts-ai-1 side won 8 of 10 (as hard 5 of 5); on 705a33a + the fix the player side won 8 of 10 (as
   hard 4 of 5).
 - With the city-state race fixed, land was equal in 8 of 10 matches there, and population decided by margins of 32-507.
@@ -640,6 +640,74 @@ side, not the level:
   goods chain adds.
 - Without resource bonuses, a measurable hard needs an economic edge larger than this side swing, or the measurement
   needs more seeds than 5 played both ways.
+
+The lead's decision: the plan goes in anyway, as a hard-only economic behaviour, not as proof of the criterion. A
+human facing hard meets a stronger economy (the goods chain's input works), and normal AIs are untouched: the 4-nation
+runs on 801-805 are all normal, so their logs are the same line for line with and without the plan.
+
+### 4.10 Age III by 40:00 on 705a33a: 0/5 against 3/5
+
+The lead asked whether Age III by 40:00 fell from 3/5 to 0/5 because of m3-integ's B.2 or because of my run setup. It
+is neither a setup difference nor a broad regression:
+- Batch M (my tree on the old base) and batch P (705a33a) used the same lane.sh, seeds, maps and probes. Their logs
+  are identical through minute 3.
+- The trees differ only in m3-integ's five B.2 files: diplomacy, garrison, market, rails and sinks.
+
+| 801-805 | old base (batch M) | 705a33a (batch P) | 73f045b (batch S4) |
+|---|---|---|---|
+| first Electrification, mean | 32.7 min | 34.9 min | 35.8 min |
+| first Age III per seed | 39:29 37:42 45:12 39:29 53:11 | 40:10 43:19 44:40 41:46 47:27 | 42:10 43:05 45:05 46:03 46:37 |
+| first Age III, mean / by 40:00 | 43.0 min / 3/5 | 43.5 min / 0/5 | 44.6 min / 0/5 |
+| by 60:00: Electrification / Age III | 16/20, 11/20 | 19/20, 14/20 | 15/20, 11/20 |
+| stage 1 delivery (start to Age III), median | 8.1 min | 3.0 min | 10.3 min |
+
+**Threshold effect.** The drop from 3/5 to 0/5 is mostly the 40:00 line:
+- two of the old hits came at 39:29;
+- P-801 misses the line by 10 s;
+- 705a33a brings more nations to Age III by 60:00, not fewer.
+
+**What is later.** The front-runner's Electrification. On seed 802, rts-ai-2's Age III moved from 37:42 to 43:19:
+1. **Port loot (market.ai_wanted gate, minute 3).** On the old base ai-2 sent neutral port #463's 100 circuits home:
+   30 arrived by minute 9 and the rest were sold at minute 13. On 705a33a no hauler serves the route, so it sells all
+   100 at minute 3 for 348 cr. Industrialisation (20 advanced science: circuits and steel) finishes at 815 s instead of
+   720 s, the Railway Charter starts 95 s later, and Age II comes at 18:24 instead of 17:52.
+2. **Rail work pulled forward into the research window.** The Electrification research takes 1,045 s instead of 660 s.
+   The labs wait for industrial science (engine, advanced circuit, sulfur), and advanced circuits stay at 6 from
+   minute 24 to 30 (old base: 24-50). From minute 18 to 37:
+   - ai-2 makes 412 steel plates instead of 564;
+   - its districts report steel starvation 55 times instead of 17;
+   - all six AI depots are paid through the escrow and placed at minutes 24-25 (old base: minutes 23-34). Each costs
+     40 iron, 10 steel and 10 copper, and the escrow has no steel floor;
+   - rail tiles at minute 30 are 805 instead of 513, and the rails district makes 504 rails instead of 366.
+3. **Armoured cars (AI side).** ai-2's 7th district finishes at minute 34 (old base: 31), which ends its saving. The
+   barracks then make 14 Armoured cars, 28 engines, while the research still waits for engines. On the old base the
+   switch came after Electrification.
+
+The tax cap plays no part: ai-2 switched tax once, and on 705a33a it held more money (2,795 against 2,176 at minute
+35).
+
+Two fixes:
+- **(a) m3-integ:** the escrow leaves 50 steel, and stage 1's concrete goes from 150 to 100. They are testing it.
+- **(b) AI side, in this commit:** `mix.available` refuses any kit that takes engines (the Armoured car) while the
+  current research is the Age III road's (`planner.research_first`: Electrification), its science kit takes engines,
+  and the capital holds fewer engines than the remaining kits need (`mix.research_engines`).
+  - A first version blocked engine kits during any research. On seed 802 the player slot's Aviation then waited 19
+    minutes for engines, the nation made no Armoured car in 60 minutes, and `cars_rts-player` failed.
+
+Seed 802 on 73f045b + hard's plan + (b), against 73f045b (the 4 AIs are normal, so hard's plan changes nothing here):
+
+| Seed 802 | 73f045b (S4) | + (b), any research (W1) | + (b), research_first (W2) |
+|---|---|---|---|
+| ai-2 Electrification (after the previous research) | 1,040 s, 6 cars during it | 1,005 s, 1 car | 1,005 s, 1 car |
+| Age III: ai-2 / player / ai-3 | 51:54 / 59:30 / 43:05 | - | 45:54 / 52:54 / 43:05 |
+| autotest | 88/93 | 87/93 (+ `cars_rts-player`) | 88/93 (the same 5 failures as S4) |
+
+(b) shortens ai-2's Electrification by only 35 s. Its gain comes later: the engines it keeps bring ai-2's Age III
+6 minutes earlier and the player's 6.6 minutes earlier. The research still takes about 1,000 s against 660 s on the old
+base: the rest of the delay is steel and circuits, which is (a).
+
+**Cost of the M1 fix.** On 801-805, 73f045b (S4) reaches Age III by 60:00 in 11/20 against 14/20, and links 11/20
+against 15/20. With five seeds that is within the swings seen between close trees, but it is recorded here.
 
 ## 5. Regressions
 
@@ -683,7 +751,8 @@ side, not the level:
    - Next: a steel smelter per pending trunk edge in Age I (build order), third-city sites within 250 tiles, and a
      make target for the depot kit instead of rails.lua's all-at-once craft (40 iron + 10 steel + 10 copper at one
      check; the aggressive AI's capital had 0 copper from 13:00 to 20:00 in M1 seed 501, batch F).
-2. **Hard beats normal in 5 of 10, not 7** (section 4.4).
+2. **Hard beats normal in 5 of 10, not 7** (sections 4.4 and 4.9; the goods chain and the city-state plan are in, the
+   criterion is still not met: the side swing is larger than the level's edge, and 5 seeds played both ways are too few).
    - The score follows land (a city-state taken) and population (goods). The knobs (pace, micro, intel, council
      period, opm) do not change either.
    - Next: a goods chain at every level (fixed goods works with their copper cable and bricks), so the capitals grow
@@ -726,6 +795,10 @@ side, not the level:
 | a03e09f | first pass: planner, council, controller, intel, difficulty, resumable layout planners (with m3ai-perf) |
 | df6736c | tuning 1: Age III road, air, belts, operations, rails |
 | 903a7b1 | tuning 2: fort belts at war, trunk lines wait for the town line's depots and make the barracks save, the push escalation, hard's goods works (section 2) |
-| (this) | these notes, filled in with the acceptance runs |
+| a6ab6b4, cb909ac | wave B notes: acceptance runs; the starving towns in M2 701/702 |
+| 3ea458e, a8d398e | wave B.2: site and farm rules, exports only from linked towns, goods chain, hard's city-state plan, uranium outpost, perf, war-paths probe; notes |
+| 5a06781, cb4c563, e59259f | wave B.2 final: war-probe fixes, the city-state race; notes, re-bench |
+| 73f045b | QA fix: M1 seed 501 (barracks heartbeat, labor-disabled barracks pinned, Smelting works after the second Steel works) (section 4.8) |
+| (this) | hard's economic plan (section 4.9); no engine kits while the research lacks engines (section 4.10) |
 
 Hunks in other owners' files: H1-H5 (section 3, applied by m3-integ in 3edd55b); H6 withdrawn. Nothing pending.

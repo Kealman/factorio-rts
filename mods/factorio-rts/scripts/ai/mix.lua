@@ -143,6 +143,52 @@ function mix.desired(C)
   return w, seen
 end
 
+-- Phase 5 M3 ai (Age III fix, Nation): kits that take engines (the Armoured car) wait while the Age III road's research
+-- (balance.nation.ai3.planner.research_first: Electrification) is current, its science kit takes engines and the
+-- network holds fewer than its remaining kits need. On seed 802 (705a33a) rts-ai-2 made 14 Armoured cars, 28 engines,
+-- in minutes 34-38 while Electrification waited 1,045 s for industrial science (660 s on the old base, where the cars
+-- came after it). Only that research: with any research, the player slot's Aviation waited 19 minutes for engines
+-- and the nation made no Armoured car in 60 minutes.
+mix.ENGINE = "engine-unit"
+mix.ENGINE_FIRST = {}
+for _, name in ipairs(require("balance").nation.ai3.planner.research_first or {}) do mix.ENGINE_FIRST[name] = true end
+local KIT_ENGINES = {} -- [science kit] = engines per kit, from the kit's recipe (static data)
+local function kit_engines(kit)
+  local per = KIT_ENGINES[kit]
+  if per then return per end
+  per = 0
+  local r = prototypes.recipe[kit]
+  if r then
+    local made = 0
+    for _, p in ipairs(r.products) do
+      if p.name == kit then made = made + (p.amount or 1) end
+    end
+    for _, ing in ipairs(r.ingredients) do
+      if ing.name == mix.ENGINE and made > 0 then per = ing.amount / made end
+    end
+  end
+  KIT_ENGINES[kit] = per
+  return per
+end
+
+--- Engines the force's current research still needs for its science kits beyond the kits in the network (0 when its
+--- kits take none or it is not one of ENGINE_FIRST).
+function mix.research_engines(C)
+  local force = game.forces[C.force]
+  local tech = force and force.current_research
+  if not (tech and mix.ENGINE_FIRST[tech.name]) then return 0 end
+  local left = math.ceil((1 - (force.research_progress or 0)) * tech.research_unit_count - 1e-9)
+  local need = 0
+  for _, ing in ipairs(tech.research_unit_ingredients) do
+    local per = kit_engines(ing.name)
+    if per > 0 then
+      local kits = math.max(0, left * ing.amount - construction.have(C, ing.name))
+      need = need + math.ceil(kits * per - 1e-9)
+    end
+  end
+  return need
+end
+
 --- True when the force may and can make `kind` now (see the header), else false, reason.
 function mix.available(C, kind)
   local def = mix.KINDS[kind]
@@ -159,6 +205,10 @@ function mix.available(C, kind)
     if C.nation and (C.nation.saving or C.nation.saving_rail) and not threat
        and production.army_size(C.force) >= mix.NATION_MIN_ARMY then
       return false, "saving" -- ai/age_up.lua; never below the army floor (Phase 5 M1 integration)
+    end
+    -- (Phase 5 M3 ai, Age III fix: the research's engines first; see mix.research_engines)
+    if def.cost[mix.ENGINE] and mix.research_engines(C) > construction.have(C, mix.ENGINE) then
+      return false, "research engines"
     end
     -- (Phase 5 M3 ai: a harassing doctrine's raider reserve is exempt: with retreats by force ratio its army stayed at
     -- the cap and the aggressive AI built its first raider in minute 54 of the M1 acceptance)

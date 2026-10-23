@@ -349,6 +349,51 @@ local function goods_works(C, G, surface, capital, goods_need, want_more)
   return true
 end
 
+-- Phase 5 M3 ai (hard's economic plan, C.cfg.goods_chain): the goods works' inputs get works of their own, fixed on
+-- their recipe: copper cable (one per goods_chain_cable goods works) and bricks (one per goods_chain_brick). In auto mode
+-- the capital's works factory made them only between its other targets: at 40-50 minutes the capitals held 3,000-4,600
+-- iron and 2,200 stone while their goods stood at 0 % and their happiness at 62 (swapped 1v1 set, batch M).
+local GOODS_INPUTS = {{recipe = "copper-cable", per = "goods_chain_cable"}, {recipe = "rts-brick", per = "goods_chain_brick"}}
+local function goods_inputs(C, G, surface)
+  local works = 0
+  for _, key in ipairs(G.goods or {}) do
+    if plan_state(C, key) == "built" then works = works + 1 end
+  end
+  -- (the first goods works is the capital's general works factory: inputs only for the goods-only ones)
+  if works < 2 then return false end
+  G.inputs = G.inputs or {}
+  for _, spec in ipairs(GOODS_INPUTS) do
+    local built, pending, list = count_keys(C, G.inputs[spec.recipe] or {})
+    G.inputs[spec.recipe] = list
+    for _, key in ipairs(list) do
+      if plan_state(C, key) == "built" then
+        local e = C.plan[key].entity
+        local rec = e and buildings.get(e.unit_number)
+        if rec then
+          local r = e.get_recipe()
+          if rec.recipe_mode ~= "fixed" or not r or r.name ~= spec.recipe then
+            production.set_auto(rec, false)
+            production.set_recipe(e, spec.recipe)
+          end
+        end
+      end
+    end
+    local want = math.ceil((works - 1) / (AI[spec.per] or 2))
+    if pending == 0 and built < want then
+      local pos, pole = layout.find_spot(C, surface, "rts-factory", "cc")
+      if pos then
+        if pole then construction.queue(C, construction.add(C, {name = layout.POLE, x = pole.x, y = pole.y})) end
+        local key = construction.add(C, {name = "rts-factory", x = pos.x, y = pos.y})
+        construction.queue(C, key)
+        list[#list + 1] = key
+        util.log("ai %s: governor: %s works %d queued (goods chain)", C.force, spec.recipe, built + 1)
+        return true
+      end
+    end
+  end
+  return false
+end
+
 -- A supply hauler from the capital to every other city (an auto hauler switched to the route).
 local function supply_haulers(C, G, capital, list)
   local L = deps.logistics
@@ -742,6 +787,7 @@ local function city_pass(C, G, surface, c, capital, list, age)
       if not queued and AI.goods_works then
         queued = goods_works(C, G, surface, c, goods_need, stalled and net_count(c, GOODS) < NEEDS[2].keep)
       end
+      if not queued and C.cfg and C.cfg.goods_chain then queued = goods_inputs(C, G, surface) end
       supply_haulers(C, G, c, list)
     end
   else
