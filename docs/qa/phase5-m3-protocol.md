@@ -117,7 +117,7 @@ what comes after it. Type each line exactly, one per console opening. `/rts-age`
 | Step | Text | Why |
 |---|---|---|
 | 5 | `/rts-age rts-player 2`, `/rts-research rts-industrialisation`, `/rts-research rts-electrification`, `/rts-treasury add 20000` | Age II, the Space Program's research, crowns for Rush, Hire, Mercenaries and trade |
-| 7 | `/rts-give steel-plate 200`, `/rts-give concrete 150`, `/rts-give advanced-circuit 60` | the goods of stage 1 (structure) |
+| 7 | `/rts-give steel-plate 200`, `/rts-give concrete 100`, `/rts-give advanced-circuit 60` | the goods of stage 1 (structure) |
 | 9 | `/rts-give rts-district-steel 1` | a Steel works to automate |
 | 10 | `/rts-give rts-automation-kit 4` | two kits for the Steel works (and two spare) |
 | 11 | `/rts-research rts-geology`, `/rts-deposit saltpetre`, `/rts-give rts-rare-extractor 1` | rare deposits lie far out, most on city-state land; **`/rts-deposit` is new** (see below) |
@@ -342,7 +342,7 @@ the strip time and what was hit. The bomber of step 19 attacks your buildings by
      `age3: rts-player started the Space Program \(stage 1\) at .* \(in a logistic network`
 
 7. **The stage goods and Rush.**
-   - *Input:* open the console once per line: `/rts-give steel-plate 200`, `/rts-give concrete 150`,
+   - *Input:* open the console once per line: `/rts-give steel-plate 200`, `/rts-give concrete 100`,
      `/rts-give advanced-circuit 60`. Wait 5 s, take a screenshot of the ledger. Click **Rush** (≈748, 316; if you
      closed and reopened the ledger: ≈748, 279). Take a screenshot.
    - *Expect:* three replies "rts-give: 200 x steel-plate into the rts-player pool" etc.; the ledger's goods count up

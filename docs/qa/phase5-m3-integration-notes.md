@@ -40,11 +40,25 @@ supply (army upkeep at the same number of crowns a minute) that grow at war and 
 | Electrification 25 industrial kits (was 40) | the labs waited for industrial kits 12-30 minutes after Age II; the Space Program started at 29:44-47:59 | `balance.nation.age3.techs` |
 | Army upkeep 1.2 cr per supply point a minute (was 1) | with m3-ai's tuned AI (a ₡ 500-1,500 reserve, fewer rushes) no nation went into debt in 4 seeds; at 1.2 two of four seeds had a nation in debt, none at its credit line | `balance.nation.treasury.army` |
 | Space Program stage 1: 200 steel, 150 concrete, 60 advanced circuits (was 200 / 200 / 100) | stage 1 took the AIs 10-24 minutes, the advanced circuits last; stages 2 and 3 (the Space victory) unchanged | `balance.nation.age3.stages` |
+| Wave B.2: stage 1 concrete 100 (was 150) | concrete was the last good of stage 1 in every 4-nation seed (12-96 of 150 at 40:00, steel 200/200) | `balance.nation.age3.stages` |
+| Wave B.2: escrow part payments leave 50 steel (`rails.AI_ESCROW_FLOOR`) | the escrow paid all six AI depots of seed 802 in minutes 24-25 and Electrification waited for steel (m3-ai: steel made in minutes 18-37 412 against 564, the research 1,045 s against 660 s) | `scripts/rails.lua` |
 
 | HEAD 9c60893 (this pass + m3-ai's df6736c tuning; `m3i-e2e1-801..804`) | none (lowest balances ₡ 157-503: the AI keeps a reserve) | none | 9 of 16 (26:54-50:20) | 2 of 4 (39:19; 36:06, 38:35) |
 | + army upkeep 1.2 per supply point (`m3i-army12-801, 802, 803, 805`) | 2 nations in 2 of 4 seeds (802 rts-ai-3, 805 rts-player; stage 3, lowest ₡ -364 / -488) | none | 10 of 16 | 1 of 4 (36:59) |
 
-TBD: the final runs.
+| HEAD 705a33a (wave B.2: m3-ai's 5a06781 AI, this package's rail fixes and escrow; `m3i-f1-801..805`) | 2 nations in 2 of 5 seeds (804 rts-player stage 2, 805 rts-ai-3 stage 3; lowest ₡ -695) | none | 3 cities linked by 35:00: 15 of 20 (m3-ai's 5a06781 tree: 8 of 20) | 0 of 5 (leaders 40:10, 43:19, 41:46; m3-ai's batch M on 5a06781: 3 of 5, 38-40) |
+| the same with army upkeep 0.8 (A/B arm, `m3i-f1-ab-801..805`) | **none in 5 seeds** (lowest ₡ 105-501) | none | similar | 0 of 5 |
+
+**Army upkeep A/B** (the lead's wave B.2 item 5; m3-ai suspected 1.2 cost linking, air and Age III): at 0.8 no nation
+reaches a debt stage in 5 seeds (the money criterion fails) and Age III is no earlier; linking, air patrols and belts
+are the same in both arms. **1.2 stays.**
+
+**Age III by 40:00** (0 of 5 on 705a33a): a bisect on seed 802 that takes out one wave B.2 change at a time
+(rts-ai-2 / rts-ai-3 at 43:19 / 43:55 on the base): weary_ratio and the tax cap change nothing (line-identical up to
+minute 45); without the escrow 42:40 / 40:31, but linking by 35:00 falls from 4 of 4 nations to 1 of 4; without the
+port hold rts-ai-2 has no Age III by 45:00 and rts-ai-3 42:02. The Space Program waits for Electrification (stage 1
+started 35:39-41:32) and then for concrete, the last good of stage 1 in every seed (12-96 of 150 at 40:00, steel
+200/200).
 
 ### B. Fixes carried from M2 and wave A
 
@@ -74,6 +88,7 @@ TBD: the final runs.
 | Wave B.2: the player slot sold its captured port's 100 circuits in 6 of 20 runs, rts-ai-1 in 20 of 20 (the lead's slot diagnosis) | `ai_wanted` held a port's goods for the trip home whether or not a hauler served the route, racing the strategist's sale (staggered by slot in force-name order) | goods are held for home only while a hauler serves the port route | `scripts/market.lua` | slot diagnosis |
 | Wave B.2: an AI-driven rts-player's garrison, troop train and mercenary divisions had owner "player" (latent; the AI controller ignores those) | owner from `match.ai_forces()`, which never lists rts-player | owner "ai" whenever `diplomacy.is_ai(force)` | `scripts/garrison.lua`, `scripts/sinks.lua` | war fixture 27/27 |
 | Wave B.2: an economic AI at power ratio 4.58 sued for a ceasefire on 38 % weariness in the middle of its siege (war-paths probe) | weariness alone was enough to offer | an offer on weariness alone only below `balance.nation.diplomacy.weary_ratio` (1.0); a ratio below cf_ratio still offers as before; acceptance unchanged | `scripts/diplomacy.lua`, balance | 801-805 |
+| Wave B.2: `market.ai_step` cost 2.3-3.2 ms inside one AI run (m3-ai's 4-nation bench; the perf scene on 705a33a: 2 ticks over 3 ms, worst 3.65) | the whole market pass (taxes, envoy, route, haul home, sales, purchases, restores) ran in one commander run, the capital's ledger read in it | four slices on consecutive AI runs (taxes and envoy; route and haul home; sales; purchases and restores), the ledger rows read once a pass and kept in the AI's market state until the purchases | `scripts/market.lua` | perf scene (section 6) |
 
 ### C. HUD and UX
 
@@ -241,6 +256,8 @@ The hard, restart and stress failures are m2-ready's own (as in the M2 integrati
 | `war2_autotest.lua` (fronts on the scheduler) | 22/22 |
 | `air_autotest.lua` | 14/14 |
 | `age3_fixture.lua` | 35/35 (the research rush charge rule) |
+| `m3_detour.lua` (wave B.2: the rails autotest's main line with a foreign furnace on piece 103 of 309; 1v1 Skirmish beside it, speed 4) | 2/2 and the rails autotest 8/8: blocked at piece 103, the crew went home, detour survey of pieces 98..108 in 0.1 s (5 pieces for 11), line open 344 s after the furnace with the bill exact (535 rails, 0.0 %), then a freight train over the detour, the cut, the repair and the resumed deliveries |
+| `war_autotest.lua` on the wave B.2 tree (garrison owner) | 27/27 |
 | Skirmish smoke | 65/65 before every commit |
 
 ### 5.3 LAN and heavy mode
@@ -277,6 +294,13 @@ M3 modules 0.020 (sched 0.016, fronts 0.001, belts 0.001, age3 0.001, rare 0.001
 **Determinism** (`PARALLEL=1 WHAT=events KEEP_TREE=<HEAD 9c60893> tools/determinism-compare.sh m3i-det-<seed> '<4
 nations>' 30 <seed>`: two fresh saves of the same seed, 30 minutes each): seed 801 202 event lines and seed 802 207
 (city sites and foundings, captures, wars, treaties, start lines, rail lines and surveys), **0 differing** in both.
+
+**Reproducibility of the autotest runs** (wave B.2, the lead's item 4): the same frozen tree (903a7b1 + this package's
+rails fixes), M1 seed 501, at SPEED 6 and at SPEED 10: 56,137 `[rts]` lines up to the autotest summary, **0 differing**
+(`build/m3i-tools/runcmp.py`, the matrix comparison's normalisation; both 52/53 with the same failure). The mod and the
+probes read no wall clock and no game speed (profilers are only logged, scheduler budgets are work units); the harness's
+cap is a wall-clock stop that cuts a run, it never changes one. The spread of 51-53 on seed 501 came from different
+trees (m3-ai confirmed it in its notes, section 6 item 8).
 
 TBD: the 60-minute runs. m3-perf's measurement of m3-age3's sliced treasury census (perf notes §6a, synced tree): a slice costs 0.058 ms on
 average and 0.15 ms at worst, the treasury step 0.79 ms; the 600-tick census it replaced cost up to ~8 ms in one tick.

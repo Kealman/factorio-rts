@@ -985,9 +985,10 @@ A3.pull_per_second = 10
 A3.period = 60
 A3.raze_loss = 0.5
 A3.stages = {
-  -- Phase 5 M3 integration (balance pass): 150 concrete and 60 advanced circuits (was 200 and 100): the AIs took 10-24
-  -- minutes for stage 1, the advanced circuits last (21 of 100 after 9 minutes)
-  {id = "structure", required = {["steel-plate"] = 200, concrete = 150, ["advanced-circuit"] = 60}, build_seconds = 20},
+  -- Phase 5 M3 integration (balance pass): 100 concrete and 60 advanced circuits (was 200 and 100): the AIs took 10-24
+  -- minutes for stage 1, the advanced circuits last (21 of 100 after 9 minutes); wave B.2: concrete was the last good
+  -- of stage 1 in every 4-nation seed (12-96 of 150 at 40:00), 150 -> 100
+  {id = "structure", required = {["steel-plate"] = 200, concrete = 100, ["advanced-circuit"] = 60}, build_seconds = 20},
   {id = "systems", required = {["processing-unit"] = 40, battery = 100, ["engine-unit"] = 80}, build_seconds = 30},
   {id = "fuel", required = {["rocket-fuel"] = 40, sulfur = 200, ["light-oil-barrel"] = 50}, build_seconds = 120},
 }

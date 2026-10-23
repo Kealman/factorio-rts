@@ -3236,8 +3236,9 @@ end
 rails.AI_RESERVE = {["iron-plate"] = 40, ["copper-plate"] = 20, ["stone"] = 20}
 rails.AI_RESERVE_EXPANDED = {["iron-plate"] = 150, ["copper-plate"] = 60}
 -- Phase 5 M3 integration: a part payment into the escrow (ai_pay) leaves this much more for the barracks (m3-ai: the
--- walker and drone kits starve on copper first)
-rails.AI_ESCROW_FLOOR = {["iron-plate"] = 60, ["copper-plate"] = 60, ["electronic-circuit"] = 20}
+-- walker and drone kits starve on copper first; 50 steel for the industrial kits: six AI depots paid in two minutes held
+-- Electrification back, seed 802)
+rails.AI_ESCROW_FLOOR = {["iron-plate"] = 60, ["copper-plate"] = 60, ["electronic-circuit"] = 20, ["steel-plate"] = 50}
 
 -- Raw goods to take from `pay` for `count` of `item` (an intermediate it lacks is paid with its inputs, 3 levels deep;
 -- `taken` holds what earlier parts of the same payment already take). Returns false when the network cannot pay.

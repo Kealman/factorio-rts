@@ -1478,28 +1478,49 @@ function market.ai_step(C)
      and ((C.want_haulers or 0) > 0 or game.tick - (C.started or 0) >= AI.hauler_after) then
     C.want_haulers = (C.want_haulers or 0) + 1
   end
-  if game.tick < A.next then return end
-  A.next = game.tick + AI.period
+  -- Phase 5 M3 integration: the pass runs in four slices on consecutive AI runs (taxes and envoy; route and haul home;
+  -- sales; purchases and restores): in one run it cost 2.3-3.2 ms (m3-ai's 4-nation bench). The capital's ledger rows
+  -- are read once a pass and kept in A.rows until the purchases.
+  if not A.slice then
+    if game.tick < A.next then return end
+    A.next = game.tick + AI.period
+    A.slice = 1
+  end
+  local k = A.slice
+  A.slice = k < 4 and k + 1 or nil
   local m = storage.match
-  if m.phase ~= "running" then return end
+  if m.phase ~= "running" then
+    A.slice, A.rows = nil, nil
+    return
+  end
   local on = market.AI
-  if on.taxes then ai_taxes(C, A) end
-  if on.envoy then ai_envoy(C, A, S) end
+  if k == 1 then
+    if on.taxes then ai_taxes(C, A) end
+    if on.envoy then ai_envoy(C, A, S) end
+    return
+  end
   local ports = market.ports(C.force)
   if #ports == 0 then
     A.route_port = nil
+    A.slice, A.rows = nil, nil
     return
   end
   local home_port = ports[1]
-  local rows = (on.route or on.buy) and capital_rows(C.force) or nil
-  if on.route then
-    A.route_port = home_port -- from now on the force wants one more hauler (the port route's)
-    ai_route(C, A, S, home_port)
-    ai_wanted(C, A, S, home_port, rows)
+  if k == 2 then
+    local rows = (on.route or on.buy) and capital_rows(C.force) or nil
+    A.rows = rows
+    if on.route then
+      A.route_port = home_port -- from now on the force wants one more hauler (the port route's)
+      ai_route(C, A, S, home_port)
+      ai_wanted(C, A, S, home_port, rows)
+    end
+  elseif k == 3 then
+    if on.sell then ai_sell(C, A, S, ports) end
+  else
+    if on.buy then ai_buy(C, A, S, home_port, A.rows) end
+    A.rows = nil
+    ai_restore(C, A, S, home_port)
   end
-  if on.sell then ai_sell(C, A, S, ports) end
-  if on.buy then ai_buy(C, A, S, home_port, rows) end
-  ai_restore(C, A, S, home_port)
 end
 
 -- Entry points for a strategist that runs the parts itself (see market.AI).
