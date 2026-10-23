@@ -1,13 +1,38 @@
 # Phase 5 M3 integration (wave B): balance, fixes, HUD, acceptance, docs
 
-Date: 2026-10-17. Factorio 2.0.77 (mac-arm64, Steam), Space Age on unless noted. Agent: `m3-integ`. Contract:
+Date: 2026-10-17 to 2026-10-23. Factorio 2.0.77 (mac-arm64, Steam), Space Age on unless noted. Agent: `m3-integ`. Contract:
 `docs/PHASE5-M3.md` (§4 "M3 end-to-end" is this package's acceptance). Starting point: HEAD 80bcdbe (tag
 `m3-wave-a` = m2-ready + the five M3 wave A snapshots). Package notes: `docs/qa/phase5-{air,age3,war2,perf,world3}-notes.md`;
 the AI of wave B is `m3-ai`'s. Everything below is Nation mode only unless it says otherwise.
 
 ## 1. Verdict
 
-TBD
+Final HEAD **dad7a40** (m3-ai's AI 5a06781 → 73f045b → 1f28ccb → dad7a40, this package's 3edd55b … 705a33a, aaf8764).
+M3 runs end to end with 0 Lua errors in every run of this package, at 60 UPS, deterministic, through save/load and on
+LAN; the Skirmish matrix is line-identical to m2-ready. The economy criteria hold except where the AI's pace decides
+them; three contract numbers are short and listed as open issues (section 7).
+
+| Criterion (PHASE5-M3 §4) | Result | |
+|---|---|---|
+| 0 Lua errors, 60 UPS | every run; speed-1 minutes 60.0 s (60.1-60.2 in the last, the autotest's end); perf scene 60.0 s per game minute | PASS |
+| M2 end-to-end criteria on 801-805 (trade, war, peace, capture, starving) | 5 of 5 seeds (section 4.2) | PASS |
+| Every nation founds ≥ 3 cities | 20 of 20 | PASS |
+| … and links them by rail by 35:00 | 10 of 20 nations (15 of 20 on 705a33a; 8 of 20 on 5a06781) | **short** |
+| ≥ 1 operation with phases per nation | 19 of 20 | **1 short** |
+| Air patrols fly | 3 of 5 seeds | PASS (partial) |
+| A belt on a threatened segment | built in 5 of 5 seeds (sector belts: lands rarely touch on 2048) | PASS |
+| Age III by 40:00 in ≥ 3 of 5 | 2 of 5 (33:03, 39:48; a third at 40:13) | **short** |
+| Wars and peaces as in M2 | 2-7 wars, all seeds back to peace, 3-9 captures | PASS |
+| AI budget ≤ 0.5 ms/tick/nation mean, ≤ 3 ms any tick | 0.063 ms per nation in the perf scene; commander runs over 3 ms: 17 ticks of 18,000 (worst 5.98 ms), market.ai_step once (3.54 ms) | mean PASS, worst-tick **short** |
+| Save/load at 20 and 40 | 0 errors in all halves | PASS |
+| Skirmish matrix unchanged vs m2-ready | 10 scenarios, 0 differing lines (705a33a; later commits are Nation-only, m3-ai's byte-identical) | PASS |
+| GUI protocol (Codex) | `docs/qa/phase5-m3-protocol.md`; this package's own pass EN 52/53, RU 48/53 (placements and Russian coordinates) | ready |
+| Perf scene 60 UPS, M2+M3 ≤ 1 ms | 1.369 ms mean, UPS capacity 731, realtime 60.0 s per minute; M2 0.025, M3 0.013 ms/tick | PASS |
+| Determinism (two seeds) | 801 and 802, 30 minutes: 214 and 209 event lines, 0 differing | PASS |
+| Heavy mode 10 min, LAN | heavy: ticks 3,600-4,200, 0 desyncs; LAN: two clients, 0 desyncs, 33 + 25 checksums equal | PASS |
+| M1 seed 501 | 52/52 all passed, twice identical (the aggressive AI won at 59:18) | PASS |
+| M2 seeds 701-705 within tolerance | trade, war, peace, capture 5 of 5; starving 2 seeds (tolerance 1) | **short** |
+| Money (balance target): debt in ≥ 2 of 5 seeds, nobody bankrupt | debt in 1 of 5; nobody at the credit line | **short** |
 
 ## 2. What changed
 
@@ -164,9 +189,70 @@ integration`; m3-ai's hunks applied here are marked `-- Phase 5 M3 ai`.
 
 ## 4. Acceptance in detail
 
-(On HEAD c1c920d = this package + m3-ai's df6736c; rerun on the final HEAD where m3-ai's later commits change the AI.)
+The final HEAD is **dad7a40** (this package's aaf8764 on m3-ai's 1f28ccb + dad7a40). `build/m3i-tools/final.sh <rev>
+<tag> <steps>` runs everything below on a `git archive` of the revision, at most four headless servers at a time
+(tags `f1` = 705a33a, `f2` = dad7a40; outputs `build/m3i-<tag>-*`, `build/final-<tag>/`).
 
-### 4.1 Save and load
+### 4.1 Save and load (dad7a40)
+
+`SAVE_MINUTE=20|40 SPEED=8 DURATION_MIN=60 SEED=802 tools/saveload-check.sh m3i-f2-sl20|40 '<4 nations, 2048>' 400`:
+saved at minute 20 (towns, trunk lines building, scheduler jobs in flight) and at minute 40 (wars, captures, Space
+Programs running, fronts, belts), loaded and played on to minute 61: **0 errors in all four halves**. On 705a33a the two
+loaded games reached the same state lines at minutes 60 and 61 (`units 68 kits 138`, `units 70 kits 141` for
+rts-player in both).
+
+### 4.2 M3 end-to-end: 4 normal AIs, 60 minutes, 2048, seeds 801-805 (dad7a40)
+
+```sh
+PERF=1 KEEP_TREE=<tree> EXTRA_LUA=tools/probes/m3_acceptance.lua DURATION_MIN=60 SEED=801 SPEED=8 \
+  tools/autotest-run.sh m3i-f2-801 '{opponents = 3, difficulty = "normal", mode = "nation", world_size = 2048,
+  enemy_brain = "ai"}' 12000
+```
+
+| Seed | AI autotest | Lowest trade (₡) | Wars / back to peace | Cities changed hands | Starving | Debt (stage) | Lowest balance | First Age III | 3 cities linked by 35:00 | Speed-1 minutes (s) |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 801 | 82/83 | 4,228 | 4 / 3 | 8 | none | none | ₡ 234 | 44:21 | 3 of 4 | 60.0 x4, 60.2 |
+| 802 | 77/83 | 5,753 | 2 / 2 | 3 | none | none | ₡ 499 | **33:03** | 2 of 4 | 60.0 x4, 60.2 |
+| 803 | 81/83 | 5,575 | 7 / 6 | 9 | none | none | ₡ 246 | 47:12 | 2 of 4 | 60.0 x4, 60.2 |
+| 804 | 82/83 | 5,047 | 6 / 5 | 7 | none | rts-player (3) | ₡ -552 | **39:48** | 2 of 4 | 60.0 x4, 60.2 |
+| 805 | 81/82 | 5,741 | 4 / 3 | 8 | none | none | ₡ 329 | 42:59 | 1 of 4 | 60.0 x4, 60.1 |
+
+0 Lua errors in every run; nobody at the credit line; tax switches 1.00-1.25 per nation-hour. **M2 criteria** (trade,
+war, peace, capture, no starving): 5 of 5. **Money**: a nation in a debt stage in 1 of 5 seeds (the target is 2 of 5;
+the AIs keep a reserve of ₡ 234-499). **AI criteria** (§4 of the contract, from the ai3 summary): every nation founds
+3-8 cities (20 of 20); operations with phases in 19 of 20 nations (802 rts-ai-2 none); a fort belt built in 5 of 5
+seeds; air patrols in 3 of 5 seeds (801, 802, 805); three cities linked by rail by 35:00 for 10 of 20 nations (the
+aggressive rts-ai-1 links at 37-57 or not at all); **Age III by 40:00 in 2 of 5** (802, 804; 802's rts-ai-2 at 40:13).
+
+The same set on 705a33a (`f1`, before m3-ai's 73f045b-dad7a40 and this package's aaf8764): debt 2 of 5, starving 1 of 5
+(801), linked 15 of 20, air patrols 5 of 5, Age III by 40:00 0 of 5 (40:10, 43:19, 41:46); with army upkeep 0.8 (A/B
+arm) debt 0 of 5 and Age III 0 of 5 (section 2.A).
+
+### 4.3 M2 acceptance: seeds 701-705 (the same fixture and match, dad7a40)
+
+| Seed | AI autotest | Lowest trade (₡) | Wars / back to peace | Cities changed hands | Starving | Debt | Speed-1 minutes (s) |
+|---|---|---|---|---|---|---|---|
+| 701 | 79/82 | 5,048 | 6 / 5 | 6 | **city 12** (rts-ai-1's town from 40:00, then rts-player's after its capture, from 50:00) | none | 60.0 x4, 60.2 |
+| 702 | 81/83 | 5,988 | 6 / 5 | 6 | none | none | 60.0 x4, 60.2 |
+| 703 | 82/83 | 5,232 | 6 / 4 | 13 | **rts-ai-3** (city 12 from 55:00) | none | 60.0 x4, 60.2 |
+| 704 | 82/83 | 4,563 | 6 / 6 | 10 | none | rts-ai-2 (2) | 60.0 x4, 60.2 |
+| 705 | 81/83 | 4,884 | 6 / 6 | 9 | none | none | 60.0 x4, 60.2 |
+
+Trade, war, peace and capture pass in 5 of 5; starving in 2 seeds (the tolerance is 1). On 705a33a the same five seeds
+had no starving city (m3-ai's export policy of 3ea458e fixed 701 and 702); the two cases came back with the last AI
+round (73f045b-dad7a40: the barracks heartbeat and pin) or this package's market slicing; not bisected (open issue).
+
+### 4.4 M1 acceptance (1v1, seed 501, 60 minutes, `m1_acceptance.lua`, dad7a40)
+
+**52/52, all passed**, in two runs (SPEED 6 and 10: 66,906 `[rts]` lines, 0 differing): both rail lines open (rts-player
+21:49, rts-ai-1 30:01), 19,285 items by train (rts-player 6,230 in 35 trips, rts-ai-1 13,055 in 78), produce passes for
+both; the aggressive AI took the player's capital at 59:10 and the match ended at 59:18 (winner rts-ai-1), so the
+train-items goal (20,000 at minute 60) reads "not due" and one 60-minute check is not reached. On 705a33a: 51/53
+(produce_rts-player, train_items 17,433), twice identical.
+
+### 4.5 Earlier trees
+
+#### Save and load (c1c920d)
 
 `SAVE_MINUTE=20|40 SPEED=8 DURATION_MIN=60 SEED=802 KEEP_TREE=<HEAD c1c920d> tools/saveload-check.sh m3i-sl20|40 '<4
 nations, 2048>' 400`: saved at minute 20 (towns, trunk lines building, scheduler jobs in flight) and at minute 40 (wars,
@@ -174,7 +260,7 @@ captures, Space Programs running, fronts, belts), loaded and played on to minute
 after the load the scheduler resumed every nation's jobs (`sched: minute 21 ... ended`) and the wars, treaties and
 captures went on.
 
-### 4.2 M3 end-to-end: 4 normal AIs, 60 minutes, 2048, seeds 801-805
+#### M3 end-to-end on c1c920d
 
 ```sh
 PERF=1 KEEP_TREE=<tree> EXTRA_LUA=tools/probes/m3_acceptance.lua DURATION_MIN=60 SEED=801 SPEED=8 \
@@ -200,7 +286,7 @@ patrols fly in 9 of 20 nations; a fort belt is built in 6 of 20; Age III by 40:0
 3 of 5; open issue). Costs in the speed-1 minutes: AI 0.39-0.51 ms/tick for four nations (0.10-0.13 per nation), M2
 modules 0.035-0.059, M3 modules 0.052-0.074.
 
-### 4.3 M2 acceptance: seeds 701-705 (the same fixture and match)
+#### M2 acceptance on c1c920d
 
 | Seed | AI autotest | Lowest trade (₡) | Wars / back to peace | Cities changed hands | Starving | Debt | Speed-1 minutes (s) |
 |---|---|---|---|---|---|---|---|
@@ -215,7 +301,7 @@ town's ration hauler was taken over by the planner's Age III export haul (65 bat
 city without a farm ran dry; both are AI governance (sent to m3-ai). The first 702 run (c1c920d) found the failing-survey
 loop of section 2.B (sched 3.44 ms/tick in minutes 55-60); with aaa8061 the scheduler costs 0.11 ms/tick there.
 
-### 4.4 M1 acceptance (1v1, seed 501, 60 minutes, `m1_acceptance.lua`, SPEED 6)
+#### M1 acceptance on 1851531
 
 HEAD 1851531: **53/53**, 0 errors, 23,259 items by train (rts-player 9,340 in 48 trips, rts-ai-1 13,919 in 76 trips;
 goal 20,000; wave A 22,999, M2 26,612), both nations alive, 60 UPS in the speed-1 minutes. On the first integration tree
@@ -246,6 +332,10 @@ The hard, restart and stress failures are m2-ready's own (as in the M2 integrati
 
 ### 5.2 Fixtures
 
+On the final HEAD dad7a40: `m3_integ.lua` 6/6, `age3_fixture.lua` 35/35 (stage 1 at 100 concrete), `m3_detour.lua` 2/2
+with the rails autotest 8/8, `war_autotest.lua` 27/27, Skirmish smoke 65/65; 0 Lua errors. The list below is the
+earlier pass (HEAD 4de0bc6-1851531) and the wave B.2 tree:
+
 | Fixture | Result |
 |---|---|
 | `m3_integ.lua` (collateral lanes A-D, wall crossing, human flag), 1v1 Nation seed 501 | 6/6 (collateral hits undone 12; lanes A and B lose nothing; an explicit attack and a division strike destroy their factory, the belts beside the strike survive) |
@@ -262,6 +352,15 @@ The hard, restart and stress failures are m2-ready's own (as in the M2 integrati
 
 ### 5.3 LAN and heavy mode
 
+**Final HEAD dad7a40**: `KEEP_TREE=<dad7a40> SEED=701 tools/heavy-mode.sh m3i-f2-heavy 10`: the 4-nation match saved at
+tick 3,600 and played in the GUI client with `--heavy` for 10 minutes of wall clock: ticks 3,600-4,200, **0 desync
+lines, PASS**, no Lua error (the client's "Steam API could not be initialized" is the environment).
+`KEEP_TREE=<dad7a40> SEED=701 tools/lan-check.sh m3i-f2-lan 10 5`: a headless 4-nation server, GUI client 1 joined at
+tick 1,636, client 2 at minute 5 by hand-over (tick 22,819); **0 desync lines** on the server and both clients, 33 and 25
+checksum lines equal to the server's, no Lua error: **PASS**.
+
+Earlier (HEAD 1851531):
+
 `KEEP_TREE=<HEAD 1851531> SEED=701 tools/lan-check.sh m3i-lan1 10 5`: a headless 4-nation server, GUI client 1 from
 tick 1,716, client 2 at minute 5 by hand-over (one Steam account: the server refuses the same player name twice); 0
 desync lines on the server and both clients, 34 and 24 checksum lines equal to the server's, no Lua error (the clients'
@@ -275,6 +374,17 @@ clock: ticks 3,600-4,200+, 0 desync lines, no desync report, no Lua error. Heavy
 minutes.
 
 ## 6. Performance
+
+**Final HEAD dad7a40** (`KEEP_TREE=<dad7a40> SEED=701 REALTIME=5 tools/perf-bench.sh scene m3i-f2-scene 5`): wholeUpdate
+mean 1.369 ms (p50 0.980, p95 2.617, p99 5.282, max 24.1), scriptUpdate mean 0.427, UPS capacity 731; 4 ticks over
+16.67 ms, at the autotest's minute reports (test code); on a headless server at speed 1 **60.0 s per game minute**
+(59,987 / 60,008 / 59,998 / 60,005 ms). PERF over the benchmarked minutes: all modules 0.419 ms/tick, AI 0.254 (0.063
+per nation), M2 modules 0.025, M3 modules 0.013. Script ticks over 3 ms by mark: commander.run 17 (worst 5.98 ms),
+market.ai_step 1 (3.54 ms; 2 at 3.65 ms before its slicing on 705a33a). In the 4-nation end-to-end runs (section 4.2)
+the AI commanders cost 0.49-0.93 ms/tick for four nations in minutes 56-60 (0.12-0.23 per nation). Determinism on
+dad7a40: seeds 801 and 802, 30 minutes, 214 and 209 event lines, 0 differing.
+
+Earlier, on HEAD 9c60893:
 
 **Budget scene** (`KEEP_TREE=<HEAD 9c60893> SEED=701 REALTIME=5 tools/perf-bench.sh scene m3i-scene1 5`: 4 nations, 16
 cities, 604-608 units of which 371-431 moving, 40 freight trains):
@@ -302,34 +412,37 @@ probes read no wall clock and no game speed (profilers are only logged, schedule
 cap is a wall-clock stop that cuts a run, it never changes one. The spread of 51-53 on seed 501 came from different
 trees (m3-ai confirmed it in its notes, section 6 item 8).
 
-TBD: the 60-minute runs. m3-perf's measurement of m3-age3's sliced treasury census (perf notes §6a, synced tree): a slice costs 0.058 ms on
+m3-perf's measurement of m3-age3's sliced treasury census (perf notes §6a, synced tree): a slice costs 0.058 ms on
 average and 0.15 ms at worst, the treasury step 0.79 ms; the 600-tick census it replaced cost up to ~8 ms in one tick.
 
 ## 7. Open issues
 
-1. **First rail lines after 25:00** for about half of the AI nations in the 4-nation runs (9-10 of 16-20, at 25-53
-   minutes): the AI's rail program pays its locomotive and construction wagon kits from the capital's network, which held
-   1-54 iron plates for most of the match (seed 804, rts-ai-1: survey done at 19:30, "waits for a construction train:
-   no-kits" until 29:30). Railways at 10 kits moved research earlier; the iron allocation is m3-ai's (sent).
-2. **Age III by 40:00 in 2 of 5 seeds** (802, 804; the contract wants 3 of 5). Electrification at 25 kits and a lighter
-   stage 1 moved it from 38-48 minutes to 35-49; what is left is the industrial kits' and stage goods' production in
-   the AI's capital (m3-ai's planner).
-3. **Starving cities in the M2 acceptance in 2 of 5 seeds** (701: the town's ration hauler taken over by an Age III
-   export haul; 702: a far trade city without a farm). AI governance (sent to m3-ai). The M3 seeds 801-805 have none.
-4. **AI armies do not shrink in debt**: army upkeep of 160-280 cr a minute against 200-340 of tax; stage 2 stops the
-   kits but no unit leaves, so a nation in debt late in the match runs towards its credit line (m3-ai: disband in
-   debt, sent). Nobody reached the credit line in 10 seeds. The treasury rules themselves are unchanged (stage 2 unpaid
-   wages, stage 3 unrest).
-5. **Air, holds, artillery trains unused by the AI's war** (interceptors, bombers, artillery and holds 0 in every run;
-   patrols fly in 9 of 20 nations, fort belts in 6 of 20): the balance of air kits, AA, belts, artillery and armoured
-   stock stays at wave A's first guesses until the AI uses them in a fight (m3-ai).
-6. **The research Rush can still be started with no industrial kits in stock**; it costs nothing until a lab works.
-7. **4096 x 6 start**: planning 2.5-3.2 s and the forced core 2.6-2.9 s are world3's (core <= 3 s holds; the start
-   blocks for about 5 s in all); the AIs' first layouts are m3-ai's resumable planner now (planjob).
-8. **GUI pass misses** (section 2.C): the Codex run placed 50 of 53 steps in English and 48 in Russian; the misses are
-   site placements on a busy map and two Russian coordinates, not panel defects. The LAN join through the GUI is the
-   lead's separate check.
+1. **Age III by 40:00 in 2 of 5 seeds** (contract 3 of 5): Electrification waits for industrial kits (steel, engines,
+   advanced circuits) and stage 1 for concrete. This package moved stage 1 to 100 concrete and left the AI 50 steel in
+   the escrow; m3-ai's dad7a40 holds engine kits back while Electrification lacks engines. The rest is the AI capital's
+   production (m3-ai).
+2. **Three cities linked by 35:00 for 10 of 20 nations**: the aggressive AI (rts-ai-1) links at 37-57 or never; its
+   capital spends its iron, steel and circuits on the army. The escrow (wave B.2) gives every program its depot and
+   kits in time once the plates are there (705a33a: 15 of 20); the last AI round (barracks heartbeat, pin) took part
+   of that back (m3-ai's dad7a40 limits them).
+3. **Money: a debt stage in 1 of 5 seeds** (target 2 of 5) on the final tree; 2 of 5 on 705a33a and c1c920d. The AIs
+   now keep a reserve (lowest balances ₡ 234-499 in four seeds). Army upkeep 1.3 (or a smaller AI reserve) is the
+   lever if QA wants the pressure back; 0.8 gives no debt at all (A/B, section 2.A).
+4. **Starving towns in M2 701 and 703** (tolerance 1 seed; 0 on 705a33a): city 12 in both, a mining town supplied by a
+   hauler. Came with the last AI round or this package's market slicing; not bisected.
+5. **Worst AI ticks**: 17 commander runs over 3 ms in the perf scene (worst 5.98 ms; town-site search gone with
+   TOWN_PENDING_OK), market.ai_step once at 3.54 ms after the slicing (the capital's ledger read).
+6. **Air, holds and artillery in the AI's war**: patrols in 3 of 5 seeds; interceptors, bombers, artillery trains
+   and holds 0 in every run. Their balance (air kits, AA, artillery, armoured stock) stays at wave A's first guesses.
+7. **AI armies do not shrink in debt** (m3-ai): nobody reached the credit line in 20 seeds.
+8. **The research Rush can be started with no industrial kits in stock**; it costs nothing until a lab works.
+9. **4096 x 6 start**: planning 2.5-3.2 s and the forced core 2.6-2.9 s block the start for about 5 s (world3's; core
+   ≤ 3 s holds).
+10. **M1 seed 501** ends at 59:18 with the aggressive AI taking the player's capital: 52/52, but the 60-minute
+    train-items goal reads "not due" (19,285 items by then).
 
-Fixed in this package from the draft list: mercenary divisions are named after their region ("Mercenaries (Karvis)")
-and fit the card in Russian; the air panel's planes on the apron count as Ready, not Flying; an artillery
-train standing on its depot shows that depot as its position; the AI's failed-survey loop (section 2.B).
+Fixed in this package from the earlier lists: fights razing belts and plain buildings, trains stuck after a lost depot
+came back, raw stop names on the map, the failed-survey loop, blocked rail lines (detour), the depot kit's all-at-once
+payment, the town-site search in one tick, the tax switch count, the port-loot race against the player slot, the
+AI-run player's division owner, ceasefires on weariness while winning, the market pass in one run, mercenary names,
+the air panel's Ready column, the artillery train's position.
