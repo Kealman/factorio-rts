@@ -441,6 +441,12 @@ average and 0.15 ms at worst, the treasury step 0.79 ms; the 600-tick census it 
 10. **M1 seed 501** ends at 59:18 with the aggressive AI taking the player's capital: 52/52, but the 60-minute
     train-items goal reads "not due" (19,285 items by then).
 
+11. **Per-seed AI outcomes are sensitive to small changes** (finding): on seed 802, dad7a40's rts-ai-1 opens no line;
+    the same tree without the escrow's steel floor, or without the market slicing, gives it a first line at 28:10 and
+    three linked cities at 30-31 (first differences at minute 21 and minute 3). Every run is deterministic, but a
+    seed's war outcome flips with any perturbation, so single-seed comparisons between trees carry a spread of about
+    one nation per seed.
+
 Fixed in this package from the earlier lists: fights razing belts and plain buildings, trains stuck after a lost depot
 came back, raw stop names on the map, the failed-survey loop, blocked rail lines (detour), the depot kit's all-at-once
 payment, the town-site search in one tick, the tax switch count, the port-loot race against the player slot, the
