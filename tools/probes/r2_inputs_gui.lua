@@ -373,6 +373,11 @@ snap("c03-pan-order")
 ---------------------------------------------------------------------------
 -- Part D: control groups and camera jumps
 ---------------------------------------------------------------------------
+-- the walkers still walk to the last right click: stop them, so the group's centre holds still for the jump check
+step(function(player)
+  orders.stop(player.index)
+  return 30
+end)
 real("group_set_ctrl1", function() drive("key %d ctrl", KEY.ONE) end, function(player, P)
   local n = selection.group_count(player.index, 1)
   return n == #P.walkers, n .. " in group 1"
@@ -387,8 +392,7 @@ real("group_recall_1", function() drive("key %d", KEY.ONE) end, function(player,
   return n == #P.walkers, n .. " selected"
 end, function(player) selection.group_recall(player.index, 1) end, 30)
 real("group_double_tap", function()
-  drive("key %d", KEY.ONE)
-  drive("key %d", KEY.ONE)
+  drive("dtap %d", KEY.ONE) -- one command: two "key" lines each bring the window to the front first, 21+ ticks apart
 end, function(player, P)
   local c = util.centroid(P.walkers)
   local d = c and util.distance(player.position, c) or 999

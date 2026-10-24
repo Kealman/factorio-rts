@@ -12,6 +12,7 @@
 // fdrive keydown CODE | keyup CODE            hold a key across other commands (e.g. D pans while clicking)
 // fdrive hold CODE MS [click|rclick X Y]     a held key with auto-repeat for MS milliseconds (WASD camera pan),
 //                                              optionally a click half way through
+// fdrive dtap CODE                            a double tap (two presses 120 ms apart)
 // fdrive wheel N                              N lines of the scroll wheel at the pointer (positive: up, zoom in)
 // fdrive sleep MS                             wait (a pause between two commands logged in the same tick)
 // A plain "move" is not always seen by the game (a click is: it moves the pointer before the press).
@@ -182,6 +183,15 @@ case "hold":
     }
   }
   CGEvent(keyboardEventSource: src, virtualKey: code, keyDown: false)?.post(tap: .cghidEventTap)
+case "dtap":
+  // a double tap of one key (two presses 120 ms apart: a control group's camera jump wants both within 20 ticks)
+  let code = CGKeyCode(Int(args[2])!)
+  for i in 0..<2 {
+    CGEvent(keyboardEventSource: src, virtualKey: code, keyDown: true)?.post(tap: .cghidEventTap)
+    usleep(50000)
+    CGEvent(keyboardEventSource: src, virtualKey: code, keyDown: false)?.post(tap: .cghidEventTap)
+    if i == 0 { usleep(70000) }
+  }
 case "keydown", "keyup":
   let code = CGKeyCode(Int(args[2])!)
   CGEvent(keyboardEventSource: src, virtualKey: code, keyDown: args[1] == "keydown")?.post(tap: .cghidEventTap)

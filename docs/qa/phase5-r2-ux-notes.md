@@ -33,7 +33,8 @@ miss does not cascade. The header of the probe has the commands for a run.
 The probe needs the driver commands added to `tools/gui-input/fdrive.swift` for this issue (all backwards compatible):
 `click X Y [shift|ctrl|cmd|alt|a+b]`, `rclick X Y [mods]`, `drag X1 Y1 X2 Y2 [left|right] [mods]`, `key CODE [mods]`,
 `keydown CODE`, `keyup CODE`, `hold CODE MS [click|rclick X Y]` (a held key with auto-repeat, optionally a click half
-way), `wheel N` and `sleep MS`; `tools/gui-drive.sh` passes every argument of an `RTS_DRIVE` line through.
+way), `dtap CODE` (a double tap), `wheel N` and `sleep MS`; `tools/gui-drive.sh` passes every argument of an
+`RTS_DRIVE` line through (b2e3021).
 
 ### 1.2 Findings and fixes
 
@@ -72,6 +73,8 @@ clicks empty ground of the lobby first.
 | `build/r2-i1-en` | HEAD | 20/28: the drag and sequence checks came before the input (waits), the leg attack (finding 2), Escape (finding 1) |
 | `build/r2-i3-en` | HEAD + fixes | 28/29: the first lobby click lost (focus) |
 | `build/r2-i4-en`, `build/r2-i4-ru` | HEAD + fixes, final probe | **29/29** and **29/29**, 0 Lua errors, 0 remote-view exits |
+| `build/r2-i5` | HEAD (2bde7e7 and later), the repository's `tools/gui-drive.sh` | 28/29: the two presses of the double tap came 21 ticks apart (each "key" line first brings the window to the front), one tick over the double-tap window |
+| `build/r2-i7en`, `build/r2-i7ru` | HEAD 214a05d, the repository's driver; the double tap as one `dtap` command, the walkers stopped before the group checks | **29/29** and **29/29**, 0 Lua errors |
 | `build/r2-smoke12b` | HEAD + fixes + the help text | Skirmish smoke 65/65, 0 errors |
 
 Screenshots: `build/shots-r2-i4-{en,ru}/` (game area) and `build/shots-r2-i4-{en,ru}-window/` (with the title bar); the
