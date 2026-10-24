@@ -36,7 +36,10 @@ Contents: [Gallery](#gallery) · [Highlights](#highlights) · [Requirements](#re
 
 - **Factorio 2.1** (tested on 2.1.23). This version does not load on Factorio 2.0.
 - **Space Age is optional.** With it, units use the Gleba pentapod graphics, rail lines can cross water on bridges and food spoils. Without it, units are built from the spidertron, and rations keep. Drones use biter graphics either way.
-- **Platforms.** The mod is developed and tested on macOS (Apple silicon, Steam build). It is pure Lua and uses only the game's own graphics, so Windows and Linux should work, but nobody has tested them yet. The development tooling under `tools/` is macOS-shaped.
+- **Platforms.** The mod is developed and tested on macOS (Apple silicon, Steam build). It is pure Lua and uses only the game's own graphics, so it should run wherever Factorio 2.1 runs, but:
+  - **Windows is untested.** Nobody has played it on Windows yet. If you do, please tell us how it went, whether it works or not: open an issue with the [bug report template](https://github.com/Kealman/factorio-rts/issues/new?template=bug_report.md), which asks for the OS, the Factorio and mod versions and `factorio-current.log`.
+  - **Linux is untested.** Reports are welcome the same way.
+  - The development tooling under `tools/` is macOS-shaped.
 - **Play it alone, in a new game.** The mod is designed to run with the base game and, optionally, Space Age. Other mods are untested; mods that change the character, freeplay or map generation are likely to conflict. It takes over the session (no character, its own surfaces), so do not add it to a save you care about.
 
 ## Install
@@ -498,7 +501,7 @@ This is a first public version. The lists below come from the acceptance notes o
 
 **Platform and setup**
 
-- Only macOS (Apple silicon, Steam) has been tested. Windows and Linux are expected to work but are unverified.
+- Only macOS (Apple silicon, Steam) has been tested. Windows and Linux are expected to work but are unverified; reports from either are welcome (see [Requirements](#requirements)).
 - The mod is meant to run alone, in a new game. Compatibility with other mods is untested.
 - Performance was measured on one Apple-silicon Mac. There a 4-nation scene with 16 cities, about 600 units and 40 trains runs at 60 UPS, but a few AI ticks take 4-6 ms, which a slower machine may feel as a short stutter.
 - A 4096 world with 6 nations blocks for about 5 seconds at the start while the core of the world is planned and generated. The rest of a 4096 world takes about 6½ minutes to fill in the background.
