@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # Real input for a GUI probe (Phase 5 M2 QA round 1): runs every "RTS_DRIVE <n> <cmd> <args>" line of a GUI log once,
-# in order. Commands: click X Y, rclick X Y, move X Y, key <keycode> (tools/gui-input/fdrive.swift, game-area
-# coordinates of the 1280x800 window) and capture <tag> (a window capture into OUT/<tag>.png; take_screenshot cannot
-# show the engine's own info boxes). Ends at MARKER or when the client is gone. Start it before tools/gui-run.sh:
+# in order. capture <tag> is a window capture into OUT/<tag>.png (take_screenshot cannot show the engine's own info
+# boxes); every other command goes to tools/gui-input/fdrive.swift with all its arguments, in game-area coordinates of
+# the 1280x800 window: move X Y, click / rclick X Y [mods], drag X1 Y1 X2 Y2 [left|right] [mods], key CODE [mods],
+# keydown / keyup CODE, hold CODE MS [click|rclick X Y], wheel N, sleep MS (see fdrive.swift; an unknown command fails
+# there with exit 2 and the drive goes on). Ends at MARKER or when the client is gone. Start it before tools/gui-run.sh:
 #   tools/gui-drive.sh build/<run>-gui.log build/shots-<run>-window RTS_QF_DONE & tools/gui-run.sh build/<run> 600 RTS_QF_DONE
 # The input reaches whatever Factorio window is in front: check `pgrep -fl 'MacOS/factorio' | grep window-size` first.
 set -u
@@ -23,13 +25,13 @@ for i in $(seq 1 18000); do
   [ -f "$LOG" ] || continue
   while IFS= read -r line; do
     set -- $line
-    n="$2"; cmd="$3"; a="${4:-}"; b="${5:-}"
+    n="$2"; cmd="$3"; a="${4:-}"
     [ "$n" -le "$last" ] && continue
     last=$n
     case "$cmd" in
       capture) wid=$("$BIN" win | awk '{print $1}'); screencapture -x -o -l "$wid" "$OUT/$a.png"; echo "captured $a";;
-      click|rclick|move) front; "$BIN" "$cmd" "$a" "$b"; echo "$cmd $a $b";;
-      key) front; "$BIN" key "$a"; echo "key $a";;
+      sleep) "$BIN" "${@:3}"; echo "${*:3}";; # a pause needs no window in front
+      *) front; "$BIN" "${@:3}"; echo "${*:3}";;
     esac
   done < <(grep -o 'RTS_DRIVE [0-9]* .*' "$LOG")
   grep -q "$MARKER" "$LOG" && { echo "gui-drive: marker seen"; break; }
