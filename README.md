@@ -74,7 +74,7 @@ Start Factorio and choose **New game** with the **Freeplay** scenario. The RTS l
 - **Map** (Skirmish): *Chokepoints* puts a 16-tile water moat in front of every base, with one 14-tile land gap, plus lakes and forests. A small map with 2 or 3 opponents has no room for moats and gets only lakes and forests. *Open field* is flat grass. Both maps have the same ore patches and a ruin in the middle.
 - **World size, Start map, Victory and Time limit** (Nation): see [Starting a Nation match](#starting-a-nation-match).
 
-Every side starts with a Command Center (CC), the same stock and 6 walkers. Human players also get a Commander. **F11** opens How to play at any time (Nation mode adds its own help page), and **F10** opens the match menu.
+Every side starts with a Command Center (CC), the same stock and 6 walkers. Human players also get a Commander. **F11** opens How to play at any time (Nation mode adds its own help page), and **F10** opens the match menu. **Guided objectives** (a switch in the lobby, on by default for your first match of each mode) show a short checklist of first steps at the top right and tick off as you play.
 
 ## Controls
 
@@ -106,6 +106,7 @@ Every side starts with a Command Center (CC), the same stock and 6 walkers. Huma
 | Delete or Backspace, or the **Demolish** button | Demolish the selected own building (two presses, see [Demolishing](#demolishing)). Nation: with units and no building selected, disband them (two presses) |
 | F3 | Jump to the newest alert (press again for older ones) |
 | F10 | Match menu: resume, restart, concede (click twice); after the match, the results again |
+| Esc | Game menu: save, load, settings, exit (the RTS panels close first if one is open) |
 | F11 | How to play |
 | F1 | Get the RTS cursor back |
 | **Nation mode only** | |
