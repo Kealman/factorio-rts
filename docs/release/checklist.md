@@ -10,7 +10,7 @@ The exact steps to publish the repository on GitHub and the mod on the Factorio 
 | Repository | `Kealman/factorio-rts` (the name is free as of 2026-10-24) | `info.json` homepage and contact, README links, portal texts, announcements |
 | Contact | `https://github.com/Kealman/factorio-rts/issues` | `info.json` contact |
 | Version | 0.1.0, unchanged | `info.json`, zip name, `changelog.txt`, tag `v0.1.0` |
-| Mod changelog | `docs/release/changelog.txt` in the Factorio format; copy it to `mods/factorio-rts/changelog.txt` unless it is already there | in-game mod browser and the portal's Changelog tab |
+| Mod changelog | `mods/factorio-rts/changelog.txt` in the Factorio format, one `Version: 0.1.0` section with no date; add a `Date:` line after the version line on release day if you want one | in-game mod browser and the portal's Changelog tab |
 | In-game description | the `[mod-description]` lines in `mods/factorio-rts/locale/en/factorio-rts.cfg` and `locale/ru/factorio-rts.cfg` still describe the Skirmish-only game, and they override `info.json` in the game's mod list | the in-game Mods screen |
 | AI-development note | README, Development section: "Most of the code, tests and documents were written by AI coding agents (Claude Code) under the owner's direction" | README |
 | Roadmap | six candidate directions in the README | README |

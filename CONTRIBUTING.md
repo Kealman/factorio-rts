@@ -76,7 +76,7 @@ Interactive GUI test protocols live in `docs/qa/`: `phase1-protocol.md` to `phas
 ## Pull requests
 
 - Keep a pull request to one topic, and describe what changed, why, and which tests you ran with their results.
-- Update `README.md`, `docs/FEATURES.md` and `CHANGELOG.md` when you change something a player can see.
+- Update `README.md`, `docs/FEATURES.md` and `CHANGELOG.md` when you change something a player can see; the maintainer adds the matching lines to `mods/factorio-rts/changelog.txt` at release time.
 - Do not bump the version in `info.json`; releases are cut by the maintainer with `tools/package.sh` and `docs/release/checklist.md`.
 
 By contributing you agree that your contribution is licensed under the [MIT license](LICENSE).
