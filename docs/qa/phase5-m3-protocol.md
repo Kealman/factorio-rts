@@ -159,7 +159,7 @@ The M1 and M2 rows (`docs/qa/phase5-m2-protocol.md`, "Where things are on the HU
 | Lobby lists | open below their drop-down, 21 px per entry | Nations: 2 (≈620, 288), 3 (309), 4 (330), 5 (351), 6 (372). Map size: World (2048×2048) (≈640, 342), (3072×3072) (363), (4096×4096) (384). Start map: Explore (≈620, 396), Survey (417). Victory: Conquest + Space (≈640, 423), Conquest (444), Territory (465), Score (486), Any (507). |
 | Help page "How to play" | x 400–880, y 74–722 | × (≈861, 89). A scroll pane (scroll bar at x≈857): the wheel over the text scrolls it. Nation page: 11 paragraphs, "Nation mode:", "Controls:", "Cities and people:", "Treasury:", "Diplomacy and war:", "Supply:", "Rails and ages:", **"Age III and money:"**, **"Fronts and fortifications:"**, **"Air:"**, **"Keys:"** (the last one ends at y≈700 when scrolled down). |
 | Objective strip (0.1.1) | x 916–1096, from y 6, between the strip and the minimap | "Objectives 0/7", the current step in yellow ("Open your capital's panel") and a hint; the arrow (≈1056, 21) shows the list of the seven steps, the × (≈1078, 21) hides it until the next match. On in a fresh save's first match of each mode; the lobby's **Guided objectives** switch (≈499, 513 in the Skirmish dialog, at the left of Start match in either dialog) turns it on or off. No step below needs it. Russian: "Задачи 0/7", arrow ≈1047, × ≈1070. |
-| World generation line | x 1103–1273, y≈180–207, right under the minimap | "World: 8 % generated", counting up while the far land is generated (2048: about 2 minutes; 4096: about 7); it goes when the world is complete. |
+| World generation line | x 1103–1273, y≈180–207, right under the minimap | "World: 8 % generated", counting up while the far land is generated (2.1: 2048 about 1 minute, 4096 about 4); it goes when the world is complete. |
 | Age badge | x 251–363, y 6–100 | **Age I / Age II / Age III** (≈303, 22) and under it the national project: "Electrification is done: start the Space Program.", "Space Program stage 1/3: 18 % delivered from the capital's network.", "Space Program stage 2/3: …". |
 | Strip, row 3 | y≈62 | "Conquest (every rival capital held or every rival out) or a launched Space Program. Time limit: unlimited" |
 | Build menu | x 1043–1273, y 647–797 (three rows now) | "Build [B]" (≈1070, 663); the **gate button** (fort belt tool) at the right of the title (≈1256, 663). Tabs (y≈684): **Economy** (≈1077), **Production** (≈1131), **Defence** (≈1183), the **Age II** icon tab (≈1216). Items at x≈1067, 1098, 1129, 1160, 1191, 1222, 1253; row 1 y≈711, row 2 y≈742, row 3 y≈773. |
@@ -317,11 +317,11 @@ the strip time and what was hit. The bomber of step 19 attacks your buildings by
    - *Expect:* the camera on your capital: the CC at (640, 400) with 4 stockpiles, the Commander and 6 walkers. Strip:
      timer from 00:00, row 3 "Conquest (every rival capital held or every rival out) or a launched Space Program. Time
      limit: unlimited"; the age badge "Age I"; under the minimap a line **"World: N % generated"** (≈1188, 194) that
-     counts up for about two minutes and then goes; the build menu with three rows of space (rows 2 and 3 mostly empty
+     counts up for about a minute (2.1) and then goes; the build menu with three rows of space (rows 2 and 3 mostly empty
      on the Economy tab).
    - *Pass/Fail:* PASS if the goal line names the Space Program and the generation line counts up.
    - *Log check (lead):* `match: starting match [0-9]+: 1 opponent\(s\), normal, nation, world 2048x2048, brain ai`,
-     `world: background generation done: 4096 chunks` (about 2 minutes later)
+     `world: background generation done: 4096 chunks` (about a minute later on 2.1)
 
 ### Part B: the Space Program and Age III
 
@@ -669,7 +669,7 @@ the strip time and what was hit. The bomber of step 19 attacks your buildings by
     - *Expect:* the menu "Menu" with "Nation · 2 nations · Normal · World 2048×2048 · Conquest + Space · unlimited" (two
       lines, not cut), "Match time: mm:ss", Restart, Concede, Resume. Restart opens the start dialog again, Mode still
       Nation. After the clicks: Nations "6", Map size "World (4096×4096)" (6 nations on 2048 would move it to 3072),
-      Start map "Survey", and the generation line **"World 4096×4096 (16384 chunks): … in about 7 min, …"**.
+      Start map "Survey", and the generation line **"World 4096×4096 (16384 chunks): … in about 5 min, …"** (0.1.1: the 2.1 fill rate; 0.1.0 said 7).
     - *Pass/Fail:* PASS if the dialog shows 6, 4096, Survey and the 4096 generation line.
     - *Log check (lead):* `lobby: back in the lobby \(restart by player 1\)`,
       `lobby: player 1 set opponents -> 5 opponent\(s\), normal, nation`,

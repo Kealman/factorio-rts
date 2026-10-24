@@ -201,9 +201,10 @@ function lobby.show_lobby(player)
   if nation then -- Phase 5 M3 world3: how the world is generated (the core at the start, the rest in the background)
     local ws = p.world_size or world.size_for(p.opponents + 1)
     local chunks = (ws / 32) ^ 2
-    -- minutes at the measured background rate (42-45 chunks per second at 60 UPS)
+    -- minutes at the measured background rate: 66-67 chunks per second at 60 UPS on 2.1.23 (42-45 on 2.0; r2-platform,
+    -- issue #13), rounded with 64 so the line stays a slight overestimate under load
     local gen = inner.add({type = "label", name = PREFIX .. "generation",
-                           caption = {"rts-world3.lobby-generation", ws, chunks, math.ceil(chunks / 42 / 60)}})
+                           caption = {"rts-world3.lobby-generation", ws, chunks, math.ceil(chunks / 64 / 60)}})
     gen.style.single_line = false
     gen.style.maximal_width = DIALOG_WIDTH - 40
     gen.style.font_color = COLOR.dim
