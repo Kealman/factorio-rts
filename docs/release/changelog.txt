@@ -1,0 +1,24 @@
+---------------------------------------------------------------------------------------------------
+Version: 0.1.0
+  Major Features:
+    - First public release.
+    - Skirmish: an RTS on Factorio. A free camera, box selection, right-click orders, control groups,
+      abilities and a Commander hero, with an army built through a real Factorio production economy.
+    - Skirmish: 1 to 3 AI commanders with economic, aggressive or turtle doctrines on generated arenas.
+    - Nation: a mini-state on a world of 2048, 3072 or 4096 tiles with 2 to 6 nations, regions,
+      city-states, trade ports and ruins.
+    - Nation: cities and territory, people and labor, rails and trains, a treasury, a world market
+      and diplomacy with wars, treaties and victory modes.
+    - Nation: three ages, from the Railway Charter to the Space Program and a Space victory.
+    - Nation: divisions with supply, city capture, garrisons, fronts, fort belts, air units,
+      anti-aircraft turrets, and artillery and armoured trains.
+    - Nation: a layered nation AI whose difficulty changes skill, never resources.
+  Features:
+    - Divisions and demolishing your own buildings work in both modes.
+    - English and Russian texts.
+  Compatibility:
+    - Requires Factorio 2.1. Space Age is optional: with it units use the pentapod graphics,
+      rail lines can cross water on bridges and food spoils.
+    - Designed to run alone in a new Freeplay game. Other mods are untested.
+  Info:
+    - Known issues and the full feature list: https://github.com/Kealman/factorio-rts

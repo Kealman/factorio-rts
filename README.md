@@ -1,26 +1,77 @@
 # Factorio RTS
 
-A Factorio 2.0 mod that turns the game into a StarCraft-style RTS. You get a free camera instead of an engineer, box-select and right-click orders, and a Factorio production chain that turns ore into an army. Your opponents are AI commanders that build real bases, expand and attack you. The economy is the core of the game: you mine, smelt, build forward hubs, run haulers between them and research upgrades, while you fight over ore patches that run out.
+**Factorio as a StarCraft-style real-time strategy (RTS) game, with a real Factorio production economy, grown into a Rise of Nations-style mini-state.** You command from a free camera instead of walking an engineer: box-select units, right-click to move and attack, set control groups and fire abilities. Your army comes out of a factory you build yourself: extractors on finite ore patches, smelters, belts and inserters, factories and labs, forward hubs with their own logistic networks and haulers that carry goods between them. **Skirmish** is a 15 to 30 minute match on a generated arena against 1 to 3 AI commanders. **Nation** grows that into a small state on a world of up to 4096×4096 tiles: you found cities, feed and house their people, link them by rail, keep a treasury, trade, go to war for goals, capture cities and race 1 to 5 AI nations through three ages to a Space Program launch.
 
-**Status: Phase 5, milestone M3 ("A state at war").** Two modes. **Skirmish** is the Phase 4 game: 1v1 to 1v3 matches against AI commanders with their own doctrines, with hubs, haulers, research, abilities, a Commander hero and generated arenas with water moats. **Nation** plays on a generated world of 2048 to 4096 tiles with 2 to 6 nations: you found cities, feed and house their people, connect them by rail, keep a treasury and trade, make war and peace, and climb three ages; Age III is the Space Program, a second road to victory (see [Nation mode](#nation-mode)). Divisions and demolishing your own buildings work in both modes. Design: `docs/DESIGN.md` and `docs/SCALE-VISION.md`. Phase plans: `docs/PHASE1.md` to `docs/PHASE4.md` and `docs/PHASE5-M1.md` to `docs/PHASE5-M3.md`. QA protocols and module notes: `docs/qa/`.
+![A Nation capital: districts, stockpiles, rail depots and the city list](docs/media/02-capital.png)
 
-## Install (macOS, Steam build)
+**Version 0.1.0** for Factorio 2.1 · Space Age optional · [Mod Portal](https://mods.factorio.com/mod/factorio-rts) · [Full feature list](docs/FEATURES.md) · [Changelog](CHANGELOG.md) · [MIT license](LICENSE)
+
+Contents: [Gallery](#gallery) · [Highlights](#highlights) · [Requirements](#requirements) · [Install](#install) · [Quick start](#quick-start) · [Controls](#controls) · [The economy](#the-economy) · [Your first Skirmish match](#your-first-skirmish-match) · [Units](#units) · [AI and difficulty](#ai-and-difficulty) · [Nation mode](#nation-mode) · [Multiplayer](#multiplayer) · [Known limitations](#known-limitations-and-open-issues) · [Roadmap](#roadmap) · [Development](#development) · [Contributing](#contributing) · [License and credits](#license-and-credits)
+
+## Gallery
+
+| | | |
+|---|---|---|
+| ![Lobby](docs/media/01-lobby.png)<br>The lobby: mode, nations, difficulty, world size, start map, victory and time limit | ![Capital](docs/media/02-capital.png)<br>A Nation capital with its districts, stockpiles and depots | ![Rail line](docs/media/03-rail-line.png)<br>A rail line between two depots, laid by a construction train |
+| ![Division battle](docs/media/04-division-battle.png)<br>Divisions fighting at a border | ![Front and fort belt](docs/media/05-front-fort-belt.png)<br>A front held by a division behind a fort belt | ![Air](docs/media/06-air.png)<br>An airfield with planes and the air panel (Y) |
+| ![Artillery train](docs/media/07-artillery-train.png)<br>An artillery train bombarding an enemy town | ![Space Program](docs/media/08-space-program.png)<br>The Space Program's launch complex in Age III | ![Strategic map](docs/media/09-strategic-map.png)<br>The strategic map: regions, borders, cities, chokes and ports |
+| ![Diplomacy](docs/media/10-diplomacy.png)<br>The diplomacy panel (F4): relations, wars, treaties and proposals | ![Market](docs/media/11-market.png)<br>The market panel (M): world prices, trade at your port, tax and contracts | ![4096 world](docs/media/12-world-4096.png)<br>A 4096×4096 world with six nations |
+| ![Commander and abilities](docs/media/13-commander-abilities.png)<br>The Commander and the ability bar in a Skirmish fight | ![Skirmish base](docs/media/14-skirmish-base.png)<br>A Skirmish base with mining lines, factory, barracks and turrets | ![City panel](docs/media/15-city-panel.png)<br>The city panel: residents, needs, workforce and labor priorities |
+
+## Highlights
+
+- **RTS controls on top of Factorio.** A free camera, box select, right-click orders, attack-move, control groups, a minimap, unit cards, alerts and a kill feed. There is no character to walk around.
+- **An economy you build.** Extractors mine finite patches, ore goes through smelters, belts and inserters into stockpiles, factories make buildings and science, and the barracks turns plates into units. Forward hubs run their own logistic networks, and haulers carry goods between them and can be raided.
+- **Counters, research and a hero.** Five combat unit types in a counter wheel with Mk2 upgrades, 19 Skirmish technologies, five abilities and a Commander hero who builds in the field and levels up.
+- **AI commanders that play by the rules.** Each AI draws an economic, aggressive or turtle doctrine, builds a real base, expands, raids your haulers, researches and attacks.
+- **Nation mode: a small state.** Worlds of 2048, 3072 or 4096 tiles with 2 to 6 nations, named regions, mountain ranges, rivers with fords, neutral city-states, trade ports and ruins.
+- **Cities, people and money.** Up to 4 cities per nation claim territory, house and feed residents who staff your buildings and become your recruits, and pay into a treasury that funds upkeep, soldiers and imports on a shared world market.
+- **Railways with a purpose.** Select a depot, right-click another, and the game surveys a route and sends a construction train to lay it. Freight, troop, artillery and armoured trains run on it.
+- **Three ages.** The Railway Charter brings Age II (oil as goods, districts, armoured cars, bunkers). The Space Program brings Age III (chemistry, nuclear power, automation) and, on its third stage, a Space victory.
+- **War is logistics.** Divisions burn supply, enemy land bleeds your armies, cities are captured rather than razed, and wars end in treaties. Garrisons, fronts, fort belts, air units with anti-aircraft (AA) defence and artillery trains round it out.
+- **A layered nation AI without cheats.** An economic planner, city governors, a war council, division controllers and an intelligence layer that only knows what its units see. Difficulty changes skill, never resources.
+- **Tested hard.** Headless autotests, save/load and determinism checks, a 60 UPS (updates per second) performance budget, multiplayer desync checks and GUI passes by an automated tester. English and Russian.
+
+## Requirements
+
+- **Factorio 2.1** (tested on 2.1.23). This version does not load on Factorio 2.0.
+- **Space Age is optional.** With it, units use the Gleba pentapod graphics, rail lines can cross water on bridges and food spoils. Without it, units are built from the spidertron, and rations keep. Drones use biter graphics either way.
+- **Platforms.** The mod is developed and tested on macOS (Apple silicon, Steam build). It is pure Lua and uses only the game's own graphics, so Windows and Linux should work, but nobody has tested them yet. The development tooling under `tools/` is macOS-shaped.
+- **Play it alone, in a new game.** The mod is designed to run with the base game and, optionally, Space Age. Other mods are untested; mods that change the character, freeplay or map generation are likely to conflict. It takes over the session (no character, its own surfaces), so do not add it to a save you care about.
+
+## Install
+
+**From the Mod Portal.** In the game's main menu open **Mods**, search the online mods for "Factorio RTS", install it and let the game restart. You can also download it from [mods.factorio.com/mod/factorio-rts](https://mods.factorio.com/mod/factorio-rts).
+
+**Manually.** Download `factorio-rts_0.1.0.zip` from the [GitHub releases](https://github.com/Kealman/factorio-rts/releases) and put the zip, unpacked or not, into your mods folder. Then enable the mod in **Mods**.
+
+| System | Mods folder |
+|---|---|
+| Windows | `%APPDATA%\Factorio\mods` |
+| macOS | `~/Library/Application Support/factorio/mods` |
+| Linux | `~/.factorio/mods` |
+
+**From source (macOS, Steam build).**
 
 ```sh
 tools/install.sh      # copies mods/factorio-rts into ~/Library/Application Support/factorio/mods
-                      # and enables only base, Space Age DLC mods and factorio-rts (your old mod list is backed up)
+                      # and enables only base, the Space Age DLC mods and factorio-rts (your old mod list is backed up)
 tools/uninstall.sh    # removes the mod and restores the backed-up mod list
+tools/package.sh      # builds build/release/factorio-rts_<version>.zip, the archive the Mod Portal takes
 ```
 
-Start Factorio and choose New game → Freeplay. The RTS lobby opens as soon as you join. Pick your settings and press **Start match**:
+## Quick start
+
+Start Factorio and choose **New game** with the **Freeplay** scenario. The RTS lobby opens as soon as you join. Pick your settings and press **Start match**:
 
 - **Mode:** *Skirmish* (the arena maps below) or *Nation* (a generated world, see [Nation mode](#nation-mode)).
-- **Opponents:** 1 to 3 AI commanders, free-for-all (Nation: **Nations**, 2 to 6 including you).
+- **Opponents:** 1 to 3 AI commanders, free-for-all. In Nation mode this is **Nations**: 2 to 6 including you.
 - **Difficulty:** easy, normal or hard.
-- **Map size:** small (256×256), medium (384×384) or large (512×512).
-- **Map:** *Chokepoints* puts a 16-tile water moat in front of every base, with one 14-tile land gap, plus lakes and forests. A small map with 2 or 3 opponents has no room for moats and gets only lakes and forests. *Open field* is flat grass. Both maps have the same ore patches and a ruin in the middle.
+- **Map size** (Skirmish): small (256×256), medium (384×384) or large (512×512).
+- **Map** (Skirmish): *Chokepoints* puts a 16-tile water moat in front of every base, with one 14-tile land gap, plus lakes and forests. A small map with 2 or 3 opponents has no room for moats and gets only lakes and forests. *Open field* is flat grass. Both maps have the same ore patches and a ruin in the middle.
+- **World size, Start map, Victory and Time limit** (Nation): see [Starting a Nation match](#starting-a-nation-match).
 
-Every side starts with a Command Center (CC), the same stock and 6 walkers. Human players also get a Commander. Space Age is optional: with it, units use the Gleba pentapod graphics; without it, they are built from the spidertron. Drones use biter graphics either way.
+Every side starts with a Command Center (CC), the same stock and 6 walkers. Human players also get a Commander. **F11** opens How to play at any time (Nation mode adds its own help page), and **F10** opens the match menu.
 
 ## Controls
 
@@ -43,40 +94,42 @@ Every side starts with a Command Center (CC), the same stock and 6 walkers. Huma
 | Right click a hub or CC with haulers selected | Set the route's pickup |
 | Shift + right click a hub or CC with haulers selected | Set the route's drop-off |
 | Right click the ground with haulers selected | Move there and park (**Resume** in the hauler panel restarts the route) |
-| Right click another own depot with a depot selected | Nation: lay a rail line between the two depots |
-| Right click / Shift + right click a depot with a train selected | Nation: set the train's pickup / drop-off |
 | Z / C / V / G | Stim / Shield / Scanner sweep / Artillery strike (see below) |
 | B | Show or hide the build menu |
 | Left click on the map while placing | Place a ghost (R rotates) |
 | R / Shift + R | Rotate the building or ghost under the cursor (while placing: the ghost on the cursor) |
 | Q or right click | Stop placing |
 | T | Research panel |
-| L, or a click on the age badge | Nation: city ledger (age, national project, goods, make targets) |
-| M, or a click on the treasury in the strip | Nation: market panel (prices, sell and buy at your port, tax level, contracts) |
-| F4 | Nation: diplomacy panel (war, ceasefire, peace, alliance, gifts, contracts, proposals) |
-| N | Nation: the HUD minimap shows the region around the camera or the whole world |
-| Y | Nation: the air panel (airfields, planes, **Patrol**, **Return to airfield**) |
-| F with no unit selected, or the gate button in the build menu's header | Nation: the fort belt tool (right-click 2–6 points in your land, then **Build**) |
-| B with your train selected | Nation: Bombard (an artillery train fires at hostile buildings in range) |
-| H with whole divisions selected and the cursor at a front | Nation: they spread along that front and hold it (elsewhere H holds position) |
-| Right click your City Center or CC with units selected | Nation: they enter its garrison |
-| Right click your depot with units selected | Nation: they board a troop train there |
-| Delete or Backspace, or the **Demolish** button | Demolish the selected own building: the first press arms (the button turns red), a second press within 3 s demolishes it. 50 % of its cost goes back to the nearest other stockpile of its logistic network, else to another own stockpile within 64 tiles, else to your Command Center's network; a refund with no room anywhere spills on the ground with an alert. The building's contents go to another stockpile of its network or spill on the ground. A hub, depot or City Center takes its stockpiles with it. The Command Center, the capital and trains cannot be demolished ("Locomotive cannot be demolished."). Nation: with units and no building selected, Delete disbands them the same way (two presses; their recruits go home) |
+| Delete or Backspace, or the **Demolish** button | Demolish the selected own building (two presses, see [Demolishing](#demolishing)). Nation: with units and no building selected, disband them (two presses) |
 | F3 | Jump to the newest alert (press again for older ones) |
 | F10 | Match menu: resume, restart, concede (click twice); after the match, the results again |
 | F11 | How to play |
 | F1 | Get the RTS cursor back |
-| Ctrl+Shift+R | QA: restart the current match with the same settings (admin) |
-| Ctrl+Shift+E | QA: write a state summary and the `RTS_QA_END` marker to the log |
-| The grave key (`` ` ``), or F9 in `tools/gui-run.sh` clients | Game console: chat and the admin commands under Development. A chat line `RTS_QA_END` also writes the end marker |
+| **Nation mode only** | |
+| L, or a click on the age badge | City ledger (age, national project, goods, make targets) |
+| M, or a click on the treasury in the strip | Market panel (prices, sell and buy at your port, tax level, contracts) |
+| F4 | Diplomacy panel (war, ceasefire, peace, alliance, gifts, contracts, proposals) |
+| N | The HUD minimap shows the region around the camera or the whole world |
+| Y | The air panel (airfields, planes, **Patrol**, **Return to airfield**) |
+| Right click another own depot with a depot selected | Lay a rail line between the two depots |
+| Right click / Shift + right click a depot with a train selected | Set the train's pickup / drop-off |
+| F with no unit selected, or the gate button in the build menu's header | The fort belt tool (right-click 2–6 points in your land, then **Build**) |
+| B with your train selected | Bombard (an artillery train fires at hostile buildings in range) |
+| H with whole divisions selected and the cursor at a front | They spread along that front and hold it (elsewhere H holds position) |
+| Right click your City Center or CC with units selected | They enter its garrison |
+| Right click your depot with units selected | They board a troop train there |
+| **Testing (admin)** | |
+| Ctrl+Shift+R | Restart the current match with the same settings |
+| Ctrl+Shift+E | Write a state summary and the `RTS_QA_END` marker to the log |
+| The grave key (`` ` ``), or F9 in `tools/gui-run.sh` clients | Game console: chat and the admin commands under [Development](#development). A chat line `RTS_QA_END` also writes the end marker |
 
 On macOS, every Ctrl chord also works with Cmd. You can rebind keys under Settings → Controls; the mod's controls are named "RTS: …", "Ability: …", "Research panel" and "City ledger". Haulers are left out of Ctrl+A; select them with a click or a box.
 
-Abilities are on the bar at the bottom centre. Cooldowns are per side.
+**Abilities** are on the bar at the bottom centre. Cooldowns are per side.
 
 | Key | Ability | Needs | Effect | Cooldown |
 |---|---|---|---|---|
-| Z | Stim | Damaged units selected; 10 iron per unit | Heals 30 % of max HP; drones and the Commander also move 50 % faster for 8 s | 30 s |
+| Z | Stim | Damaged units selected; 10 iron per unit | Heals 30 % of max hit points (HP); drones and the Commander also move 50 % faster for 8 s | 30 s |
 | C | Shield | A live Commander | The Commander and your units within 8 tiles take half damage for 10 s | 45 s |
 | V | Scanner sweep | *Scanner sweep* research; then right-click a target | Reveals a 48×48 area for 30 s | 60 s |
 | G | Artillery strike | An artillery walker 8–44 tiles from the target (its own range); then right-click a target | Each one fires 2 shells, then keeps attacking there | 20 s |
@@ -84,7 +137,13 @@ Abilities are on the bar at the bottom centre. Cooldowns are per side.
 
 After you press V or G, the ability waits for your target. Pressing the key again, X or F cancels it.
 
-## How the economy works
+### Demolishing
+
+Select an own building and press Delete or Backspace, or the **Demolish** button: the first press arms (the button turns red), and a second press within 3 s demolishes it. 50 % of its cost goes back to the nearest other stockpile of its logistic network, else to another own stockpile within 64 tiles, else to your Command Center's network; a refund with no room anywhere spills on the ground with an alert. The building's contents go to another stockpile of its network or spill on the ground. A hub, depot or City Center takes its stockpiles with it. The Command Center, the capital and trains cannot be demolished ("Locomotive cannot be demolished."). In Nation mode, Delete with units and no building selected disbands them the same way (two presses; their recruits go home).
+
+## The economy
+
+Both modes share this economy; Nation mode adds the layers in [Nation mode](#nation-mode).
 
 **The pool.** Your CC is a roboport with 3,000 HP, 20 construction and 10 logistic robots, 4 stockpiles and a 4 MW power core. Its logistic network covers 25 tiles in every direction, and its robots build up to 40 tiles out; further out, the Commander builds (see below). Stockpiles inside a logistic area belong to that network, and barracks, factories, labs and turrets pull what they need from the network they stand in. A building outside every logistic area gets nothing. Everything you order is a ghost. Construction robots build a ghost from items in the network, but only inside a construction area; the CC's panel shows both ranges.
 
@@ -106,11 +165,11 @@ After you press V or G, the ability waits for your target. Pressing the key agai
 
 A hub at the natural is more than 39 tiles from the CC, so it has its own network. Its stockpiles start empty, and mined plates stay there until a **hauler** takes them home: set the hub's *Export above* (for example iron above 20), make a hauler, and give it a route: right-click the natural hub (pickup), then Shift + right-click the CC (drop-off). A hub within 39 tiles of the CC (logistic areas touch) or 28 tiles of another joined hub joins that network instead and needs no haulers.
 
-**Haulers** carry items between separate networks: a hub at a natural or middle patch, the ruin's stockpiles, or a chain of hubs cut because its middle hub died. The factory makes a hauler from a hauler kit (30 iron, 10 circuits). It walks out in **auto** mode, homed at the hub of the factory's network. An auto hauler fills its home's *Keep* amounts from the nearest network that exports the item. For a **manual route**, right-click the pickup hub and Shift + right-click the drop-off hub. The hauler loads what the pickup exports and the drop-off wants (a drop-off with no *Keep* set takes every export), and loops until you change it. Haulers have 400 HP, 20 cargo slots (+10 with *Hauler capacity I*; 10 slots and coal fuel in Nation mode, see below), no weapons and about twice a walker's speed, and they path around water. Raiders deal 2.5× damage to them and drones hunt them; each loss raises an alert.
+**Haulers** carry items between separate networks: a hub at a natural or middle patch, the ruin's stockpiles, or a chain of hubs cut because its middle hub died. The factory makes a hauler from a hauler kit (30 iron, 10 circuits). It walks out in **auto** mode, homed at the hub of the factory's network. An auto hauler fills its home's *Keep* amounts from the nearest network that exports the item. For a **manual route**, right-click the pickup hub and Shift + right-click the drop-off hub. The hauler loads what the pickup exports and the drop-off wants (a drop-off with no *Keep* set takes every export), and loops until you change it. Haulers have 400 HP, 20 cargo slots (+10 with *Hauler capacity I*), no weapons and about twice a walker's speed, and they path around water. Raiders deal 2.5× damage to them and drones hunt them; each loss raises an alert. In Nation mode haulers carry less and burn coal: see [Haulers in Nation mode](#haulers-in-nation-mode).
 
 **Supply.** The cap is 40 with a CC, +10 per hub, and +10 each for *Supply I* and *Supply II* (in Nation mode also +10 per depot, the supply of your other cities and +15 for *Supply III*). Walkers and drones cost 1 supply, raiders 2, heavies 3 and artillery 4; Mk2 units cost the same as their base unit. Haulers and the Commander are free. At the cap, a finished kit waits in the barracks until a unit dies or the cap grows.
 
-**Research.** Labs take science kits from their network, at 10 s per kit per lab, so more labs research faster. The factory makes **basic kits** from 1 gear + 1 copper plate (5 s). Gears come from the factory too, at 2 iron each. **Advanced kits** take 2 circuits + 1 steel (10 s); a circuit is 1 iron + 3 copper cable, and one copper plate makes 2 cable. Tier 1 uses basic kits and tier 2 advanced kits.
+**Research.** Labs take science kits from their network, at 10 s per kit per lab, so more labs research faster. The factory makes **basic kits** from 1 gear + 1 copper plate (5 s). Gears come from the factory too, at 2 iron each. **Advanced kits** take 2 circuits + 1 steel (10 s); a circuit is 1 iron + 3 copper cable, and one copper plate makes 2 cable. Tier 1 uses basic kits and tier 2 advanced kits. Nation mode adds more technologies (Railways, the age projects, air, fortification and more); they are described where they matter in [Nation mode](#nation-mode).
 
 | Technology | Kits | Effect |
 |---|---|---|
@@ -128,7 +187,7 @@ A hub at the natural is more than 39 tiles from the CC, so it has its own networ
 
 **Power.** The CC core supplies 4 MW and powers everything within 18 tiles; medium poles carry it further. Other sources are a hub's 300 kW, solar arrays (400 kW each, steady, because the arena is always day) and steam plants. A steam plant needs the *Steam power* research, gives 1.8 MW and burns 0.45 coal/s that an inserter feeds in. Accumulators store spare power for peaks. For scale, an extractor draws 90 kW, a smelter 180 kW and a lab 60 kW. A laser turret needs no ammo but takes 800 kJ per shot, up to 2 MW while it fires. Low power slows every machine.
 
-**Depletion and expansion.** Patches are finite:
+**Depletion and expansion.** Patches are finite. In Skirmish:
 
 | Patch | Iron | Copper | Stone | Coal |
 |---|---|---|---|---|
@@ -138,9 +197,9 @@ A hub at the natural is more than 39 tiles from the CC, so it has its own networ
 
 A main iron patch at full speed lasts 50 minutes with 2 extractors, 25 with 4, about 17 with 6 and 12.5 with 8. An extractor that feeds a single smelter only drains 0.625 ore/s, so 4 such lines last 40 minutes. The normal AI's main iron lasts about half an hour. Extractors on the thin edge of a patch run dry first. A *patch depleted* alert tells you when a patch is empty.
 
-**The ruin** sits in the middle of the map: a dead CC with two stockpiles holding 200 steel plates and 50 circuits. A unit standing within 4 tiles of a ruin stockpile for 10 s captures both stockpiles, as long as no other side's units are there. A rival can take them back the same way. The stockpiles only join a network if a hub stands next to them: walk the Commander there to build one, then haul the steel and circuits home.
+**The ruin** sits in the middle of the Skirmish map: a dead CC with two stockpiles holding 200 steel plates and 50 circuits. A unit standing within 4 tiles of a ruin stockpile for 10 s captures both stockpiles, as long as no other side's units are there. A rival can take them back the same way. The stockpiles only join a network if a hub stands next to them: walk the Commander there to build one, then haul the steel and circuits home.
 
-## Your first match
+## Your first Skirmish match
 
 You start with 400 iron, 150 copper, 2 extractors, 2 smelters, 1 barracks, 1 factory, 2 stockpiles, 60 belts, 16 fast inserters, 16 medium poles, 6 walkers and the Commander. All of the buildings are still items in the stockpiles. Your iron patch is about 17 tiles in front of the CC and 10 to one side, with copper on the other side and stone and coal further out. This plan mirrors the normal AI's opening.
 
@@ -156,7 +215,7 @@ You start with 400 iron, 150 copper, 2 extractors, 2 smelters, 1 barracks, 1 fac
 8. **By 6:00** Aim to have Supply I and one unlock (Heavy walkers or Raiders) done, and to mix units by counter. Walkers and drones need no research, and walkers are your default unit.
 9. **6:00–10:00** Make advanced kits (cable, circuits and steel) for Artillery walkers, Laser turrets and Supply II, expand to the middle patches and contest the ruin.
 
-**Winning.** A side is out when it has no CC, barracks or factory and no combat units left (haulers and the Commander do not count). You win when every AI is out and you are not. The results window lists every side's units and buildings built and lost; **Concede** in the F10 menu ends the match as a defeat, and the menu's **Results** button shows the window again after you closed it.
+**Winning.** A side is out when it has no CC, barracks or factory and no combat units left (haulers and the Commander do not count). You win when every AI is out and you are not. The results window lists every side's units and buildings built and lost; **Concede** in the F10 menu ends the match as a defeat, and the menu's **Results** button shows the window again after you closed it. Nation mode has its own victory rules (see [Diplomacy, wars and victory](#diplomacy-wars-and-victory)).
 
 ## Units
 
@@ -171,7 +230,10 @@ You start with 400 iron, 150 copper, 2 extractors, 2 smelters, 1 barracks, 1 fac
 | Commander | free, one per player | 0 | 2,000 | 30 | Hero: rockets; level 2 at 5 kills and level 3 at 15, each adding a 400 shield; respawns at the CC 60 s after dying | – | – | – |
 | Hauler | 30 iron, 10 circuits (factory) | 0 | 400 | – | Unarmed cargo | – | raiders, drones | – |
 
-Kits come from the barracks: walkers take 3 s, drones 2 s, raiders 5 s, heavies 8 s and artillery 12 s. Speeds relative to a walker: drone ×1.45, raider ×1.35, artillery ×0.65, heavy ×0.55. Defences:
+Kits come from the barracks: walkers take 3 s, drones 2 s, raiders 5 s, heavies 8 s and artillery 12 s. Speeds relative to a walker: drone ×1.45, raider ×1.35, artillery ×0.65, heavy ×0.55. Nation mode adds the Armoured car (Age II) and three planes (Age II and III); see [Ages](#ages) and [Air](#air).
+
+Defences:
+
 - **Turret:** 1,200 HP, range 21, about 42 damage/s, fed with magazines from the network.
 - **Laser turret:** 1,000 HP, range 22, 75 damage/s from power.
 - **Wall:** 500 HP per segment.
@@ -179,9 +241,9 @@ Kits come from the barracks: walkers take 3 s, drones 2 s, raiders 5 s, heavies 
 
 You see only what your units and buildings see.
 
-## AI
+## AI and difficulty
 
-Each AI side draws a **doctrine** at match start. The draw is seeded by the map seed, the match number and the AI's number, so AIs in one match can differ and a new match draws again. An admin can override it with `/rts-ai-doctrine <force> <name>`.
+**Skirmish.** Each AI side draws a **doctrine** at match start. The draw is seeded by the map seed, the match number and the AI's number, so AIs in one match can differ and a new match draws again. An admin can override it with `/rts-ai-doctrine <force> <name>`.
 
 - **Economic:** builds units after its third iron smelter. Its first hub goes up right after the steel chain (around 4:00 on normal), a copper hub follows at about 4:30, and each hub gets a hauler. Two units patrol the route to the hub. Research: Supply I, Heavy walkers, Mining I, Logistics I…
 - **Aggressive:** makes units from the start, adds a second barracks at 4:00, and fields drones and raiders (Raiders right after Supply I). It harasses haulers and outlying buildings every 2 minutes, targets extractors and hubs first and builds its hub late.
@@ -198,13 +260,34 @@ Each AI side draws a **doctrine** at match start. The draw is seeded by the map 
 
 Easy opens with one iron and one copper smelter, and only half of its idle army defends. Hard runs the normal build order with time gates ×0.7, and its economic and turtle doctrines add a second barracks. The AI researches its unlocks like a player and its barracks obey the same locks.
 
+**Nation.** The nation AI plays by the player's rules with a layered design: a **strategist** (taxes, trade, contracts, war and peace), an **economic planner** (city sites, rail trunks, the road to Age III), a **governor** per city (food, goods, housing, labor), a **war council** (fronts, fort belts, operations, air patrols, sieges) and **division controllers**, all fed by an **intelligence** layer that only knows what its units see. In Nation mode difficulty changes skill, never resources: easy, normal and hard differ in how fresh their intelligence is, how many operations run at once, how fast they build and how well they handle their divisions. Details are in [What the AI does in Nation mode](#what-the-ai-does-in-nation-mode).
+
 ## Nation mode
 
-Nation mode turns a match into a small state. You found cities on a large generated world, claim the land around them, feed and house their people, connect them by rail, ship goods between them, keep a treasury, trade on a world market, make war and peace with the other nations, and capture their cities. Everything you know from Skirmish still works; Nation adds the layers below. Skirmish matches are unchanged.
+Nation mode turns a match into a small state. You found cities on a large generated world, claim the land around them, feed and house their people, connect them by rail, ship goods between them, keep a treasury, trade on a world market, make war and peace with the other nations, and capture their cities. Everything from Skirmish still works; Nation adds the layers below, and Skirmish matches are unchanged by them. A Nation match is meant to run one to three hours and to be saved and resumed. F11 shows a Nation help page (it scrolls) with every rule and hotkey below in short.
 
-**Starting a match.** In the lobby set **Mode** to *Nation*. The map type becomes *World* (greyed). **Nations** sets how many nations share the world (2 to 6, you included; at most 4 on 2048), and the size drop-down offers 2048×2048 (the default), 3072×3072 or 4096×4096; 5 or 6 nations move a 2048 world to 3072. **Start map** is *Explore* (only the land around your capital is charted) or *Survey* (the generated world is charted as it appears). **Victory** offers Conquest + Space (the default), Conquest, Territory, Score or Any, and **Time limit** 60, 90, 120 minutes or unlimited; see "Diplomacy, wars and victory" below. A dim line under the grid says how long the world takes to generate. Every size is playable a few seconds after **Start match**: the land around every capital, city-state and port comes first, the rest is generated in the background while you play (about 1½ minutes on 2048, 3½ on 3072 and 6½ on 4096; "World: N % generated" under the minimap until it is done). A Nation match is meant to run far longer than a skirmish. F11 shows a Nation help page (it scrolls) with every rule and hotkey below in short.
+### Your first Nation match
 
-**The world.** Mountain ranges (grey rock that no unit crosses) with passes, rivers with walkable fords, coasts, lakes, swamps, deserts and forests split the world into named regions (highland, plain, lakeland, coast, swamp, desert, forest, mountain) whose names appear on the map and in alerts ("Iron Hills: Hauler lost"). Every nation starts with the same ore within 150 tiles of its capital, laid out as in Skirmish, and gets one *home specialty* region a little closer to it than to anyone else; the large deposits lie between the nations, and on a 4-nation world there are only two large copper regions, so every nation lacks some ore and has to fight or trade for it. Each nation has a home oil field about 300 tiles out, and a large contested oil swamp lies in the middle; uranium (1–2 deposits on contested ground) is mined only after the *Geology* research, and rare deposits (saltpetre, quartz, tungsten, diamonds, rare earths and gold) on desert and mountain rims and city-state land feed the rare extractors (see "Rare resources"). **City-states** (4, 5 or 6 for 2, 3 or 4 nations) are neutral cities on scarce sites (contested copper, the oil swamp, the coast, passes and fords): see below. Ruins (8–12) hold steel and circuits and are captured like the skirmish ruin; **trade ports** (2–4, on the coast or the map edge, fair by path for every nation) are your way to the world market. Passes, fords and narrows are named chokes, marked on the map. Worlds of 5 or 6 nations and 4096 worlds have more of everything (7–8 city-states, 5–6 ports, 16 ruins and 10 rare deposits on 4096). At the start only the land within 160 tiles of your capital is charted; the rest stays black until your units or buildings see it.
+1. **Lobby.** Set **Mode** to *Nation*, **Nations** to 2, **Difficulty** to easy and keep the 2048 world and *Conquest + Space*.
+2. **Opening.** Build the Skirmish opening at your capital (iron, copper and stone lines, a factory, a lab), and add a coal line early: in Nation mode haulers and trains burn coal.
+3. **Feed the capital.** Its 200 residents eat 20 rations a minute, so the 300 rations they start with last about 15 minutes, and the 100 household goods about 12. Build farms and a bakery (or a fishing hut by water), set a factory to household goods, and add houses as the city grows. The city panel (click your CC) shows every need.
+4. **Research Railways** (10 basic kits), then *Industrialisation* (20 advanced kits) for Age II.
+5. **Found a second city.** The factory makes a City charter. Place it next to a far ore region, at least 96 tiles from every City Center, and walk the Commander next to the ghost so its robots build it.
+6. **Link the cities.** Build a rail depot in each, select one and right-click the other. Keep locomotive and construction wagon kits, rails and coal at the first depot. Once the line is open, **Deploy freight train** and give it a pickup and a drop-off.
+7. **Age II.** Start the Railway Charter in the ledger (L), then build districts and set make targets so your factories run on Auto.
+8. **Money and trade.** Watch the treasury on the top strip and take a trade port with one military unit to sell your surplus (M).
+9. **War.** Declare war from the diplomacy panel (F4) with a goal, form divisions, keep supply crates in depots near the front, and capture cities by subduing their City Centers.
+10. **Age III.** Research *Electrification* and start the Space Program. Its third stage launches a rocket that wins the match under *Conquest + Space*.
+
+### Starting a Nation match
+
+In the lobby set **Mode** to *Nation*. The map type becomes *World* (greyed). **Nations** sets how many nations share the world (2 to 6, you included; at most 4 on 2048), and the size drop-down offers 2048×2048 (the default), 3072×3072 or 4096×4096; 5 or 6 nations move a 2048 world to 3072. **Start map** is *Explore* (only the land around your capital is charted) or *Survey* (the generated world is charted as it appears). **Victory** offers Conquest + Space (the default), Conquest, Territory, Score or Any, and **Time limit** 60, 90, 120 minutes or unlimited; see [Diplomacy, wars and victory](#diplomacy-wars-and-victory). A dim line under the grid says how long the world takes to generate. Every size is playable a few seconds after **Start match**: the land around every capital, city-state and port comes first, and the rest is generated in the background while you play (about 1½ minutes on 2048, 3½ on 3072 and 6½ on 4096; "World: N % generated" under the minimap until it is done).
+
+### The world
+
+Mountain ranges (grey rock that no unit crosses) with passes, rivers with walkable fords, coasts, lakes, swamps, deserts and forests split the world into named regions (highland, plain, lakeland, coast, swamp, desert, forest, mountain) whose names appear on the map and in alerts ("Iron Hills: Hauler lost"). Every nation starts with the same ore within 150 tiles of its capital, laid out as in Skirmish, and gets one *home specialty* region a little closer to it than to anyone else. The large deposits lie between the nations, and on a 4-nation world there are only two large copper regions, so every nation lacks some ore and has to fight or trade for it. Each nation has a home oil field about 300 tiles out, and a large contested oil swamp lies in the middle. Uranium (1–2 deposits on contested ground) is mined only after the *Geology* research, and rare deposits (saltpetre, quartz, tungsten, diamonds, rare earths and gold) on desert and mountain rims and city-state land feed the rare extractors (see [Rare resources](#rare-resources)).
+
+**City-states** (4, 5 or 6 for 2, 3 or 4 nations) are neutral cities on scarce sites (contested copper, the oil swamp, the coast, passes and fords); see [Supply, capture, garrisons and troop trains](#supply-capture-garrisons-and-troop-trains). Ruins (8–12) hold steel and circuits and are captured like the Skirmish ruin. **Trade ports** (2–4, on the coast or the map edge, fair by path for every nation) are your way to the world market. Passes, fords and narrows are named chokes, marked on the map. Worlds of 5 or 6 nations and 4096 worlds have more of everything (7–8 city-states, 5–6 ports, 16 ruins and 10 rare deposits on 4096). At the start only the land within 160 tiles of your capital is charted; the rest stays black until your units or buildings see it.
 
 **The strategic map.** The HUD minimap shows the region around the camera (1,000 tiles); **N** switches it to the whole world and back. Zoom far out and the view turns into the map view: region names with their resources, choke circles, city and city-state names in their owner's colour, port names and markers for your divisions.
 
@@ -214,7 +297,7 @@ Nation mode turns a match into a small state. You found cities on a large genera
 
 **Founding a city.** The factory makes a **City charter** (80 iron, 30 copper, 40 stone, 20 s); founding moves 40 settlers from your nearest city that can spare them. Place it from the build menu's Production tab like a hub: at least 96 tiles from every other City Center of any nation, on your own or neutral land, never on enemy land, at most 4 cities per nation (capital included). New sites lie beyond your robots' reach, so walk the Commander next to the ghost; its robots build the City Center from your stock. A **City Center** has 1,800 HP, two stockpiles and its own logistic network (radius 16, 10 construction robots reaching 30 tiles, 6 logistic robots), 1 MW of power, and keeps 50 iron and 20 copper by default like a hub. An alert announces "City founded: <name>".
 
-**Tiers.** A city grows from village to town to city with its residents (see "People and labor"): it goes up at the next growth pass after it reaches the next threshold, and falls back only after two minutes below 80 % of its tier's threshold.
+**Tiers.** A city grows from village to town to city with its residents (see [People and labor](#people-and-labor)): it goes up at the next growth pass after it reaches the next threshold, and falls back only after two minutes below 80 % of its tier's threshold.
 
 | Tier | Land radius | Supply | Residents |
 |---|---|---|---|
@@ -241,7 +324,7 @@ A refused ghost disappears with a flying text such as "Enemy land: nothing can b
 
 ### The city panel, make targets and the ledger
 
-**The city panel** opens left of the stockpile panel when you select your CC or a City Center, or with the magnifier in the city list. It shows the name (a field to rename it), tier and land radius, your nation's age, the city's land cells and their share of your nation, its supply, what the next tier needs, the logistic networks on its land, the city's make targets, and a **Demolish** button (greyed for the capital). Demolishing a City Center (two presses, like any building) ends the city: its land goes, and half of the charter's cost returns to another stockpile of its network (a depot's, for example), else to another own stockpile within 64 tiles, else to your Command Center's network.
+**The city panel** opens left of the stockpile panel when you select your CC or a City Center, or with the magnifier in the city list. It shows the name (a field to rename it), tier and land radius, your nation's age, the city's land cells and their share of your nation, its supply, what the next tier needs, the logistic networks on its land, the city's make targets, the people section (see [People and labor](#people-and-labor)) and a **Demolish** button (greyed for the capital). Demolishing a City Center (two presses, like any building) ends the city: its land goes, and half of the charter's cost returns to another stockpile of its network (a depot's, for example), else to another own stockpile within 64 tiles, else to your Command Center's network.
 
 **Make targets** tell a city how many of a good to keep in stock. Add one with the **+** button under "Make targets" (it opens a picker of the goods your factories and districts can make; the city ledger's item button opens the same picker) and type a number (empty clears it). In Nation mode a new factory or district starts on **Auto**: every second it switches to the good with the largest shortfall among its city's targets that its inputs allow, and stops when every target is met. Choosing a recipe or Pause in the building page fixes it; the **Auto** button (the circular arrows next to Pause) switches it back.
 
@@ -249,7 +332,7 @@ A refused ghost disappears with a flying text such as "Enemy land: nothing can b
 
 ### Haulers in Nation mode
 
-Haulers carry 10 slots instead of 20 (*Hauler capacity I* and *II* add 10 each) and burn coal: a hauler leaving a hub takes 1 coal per 40 tiles of the trip (×1.1, rounded up) from that hub's network. A hauler leaving for a pickup or a drop-off also fills its tank with the coal for the way back, so one end of a route with coal is enough: keep coal at your capital, and outposts need none. A walk inside one network (a new hauler from its factory to its home hub) burns nothing. The hauler panel shows the tank after the cargo ("Tank: [coal] 4"). Without coal the hauler waits with "no coal for the trip in the hub network", and an alert "Hauler N: no fuel at <hub>" comes at most every 2 minutes per hauler. Beyond about 300 tiles, trains are the better carrier. In Nation mode every inserter also moves 3 items per swing instead of 1, so one inserter into a stockpile keeps up with several extractors.
+Haulers carry 10 slots instead of 20 (*Hauler capacity I* and *II* add 10 each) and burn coal: a hauler leaving a hub takes 1 coal per 40 tiles of the trip (×1.1, rounded up) from that hub's network. A hauler leaving for a pickup or a drop-off also fills its tank with the coal for the way back, so one end of a route with coal is enough: keep coal at your capital, and outposts need none. When the drop-off's network holds less coal than the way back, a route hauler waits at its pickup until both legs are in its tank. A walk inside one network (a new hauler from its factory to its home hub) burns nothing. The hauler panel shows the tank after the cargo ("Tank: [coal] 4"). Without coal the hauler waits with "no coal for the trip in the hub network", and an alert "Hauler N: no fuel at <hub>" comes at most every 2 minutes per hauler. Beyond about 300 tiles, trains are the better carrier. In Nation mode every inserter also moves 3 items per swing instead of 1, so one inserter into a stockpile keeps up with several extractors.
 
 ### Rails
 
@@ -266,7 +349,7 @@ Haulers carry 10 slots instead of 20 (*Hauler capacity I* and *II* add 10 each) 
 
 **Depots.** A rail depot (build menu, Economy tab) is a hub with a railway: 1,500 HP, logistic radius 14, construction radius 22, +10 supply, the same keep / export policy as a hub (it keeps 50 coal by default), and a 40-tile platform with a stop at each end that the game lays next to it (an alert says when there is no room). Select a depot to see its rail panel left of the stockpile panel: platform, kits, rails and coal in its network, its line and the force's line list. On the map each of your depots is labelled with its panel name ("Depot 2").
 
-**Laying a line.** Select a depot and right-click another of your depots. The game surveys a route in a few seconds (around water, buildings and foreign land; across your own walls, whose pieces under the track become gates), shows it as ghost rails, and sends a **construction train** (2 locomotive kits + 1 construction wagon kit, rails and coal from the first depot's network). It lays about 10 pieces per second, clears trees, rocks and cliffs on the way, and adds signals; the line reads *surveying*, *building*, then *open* ("Rail line open"). A piece the crew cannot lay because something stands on it raises the alert "Rail line blocked: the construction train cannot lay track here"; after two minutes the crew goes home and the line is surveyed again around that spot (a short detour; the rails it took up go back to the depot). A line costs roughly 0.6 rails per tile of track; curves, signals and bridges cost more. In M1 each depot has one line.
+**Laying a line.** Select a depot and right-click another of your depots. The game surveys a route in a few seconds (around water, buildings and foreign land; across your own walls, whose pieces under the track become gates), shows it as ghost rails, and sends a **construction train** (2 locomotive kits + 1 construction wagon kit, rails and coal from the first depot's network). It lays about 10 pieces per second, clears trees, rocks and cliffs on the way, and adds signals; the line reads *surveying*, *building*, then *open* ("Rail line open"). A piece the crew cannot lay because something stands on it raises the alert "Rail line blocked: the construction train cannot lay track here"; after two minutes the crew goes home and the line is surveyed again around that spot (a short detour; the rails it took up go back to the depot). A line costs roughly 0.6 rails per tile of track; curves, signals and bridges cost more. Each depot has one line; build another depot for another line.
 
 **Freight trains.** **Deploy freight train** in the depot's rail panel assembles locomotive + 2 cargo wagons + locomotive (2 locomotive kits, 2 cargo wagon kits, at least 2 coal) on its platform. A greyed Deploy button says why in a yellow line under the buttons (no kits, no coal, the platform occupied, a rail of it missing, enemies on it); your own units standing on the platform track step off it when the train appears. Click any carriage to select the train and open the train panel. Right-click a depot to set the pickup and Shift + right-click another to set the drop-off; the train then runs at about 30 tiles/s. It loads what the pickup network exports and the drop-off network keeps (a drop-off with no Keep takes every export), 200 items per second per wagon, 40 stacks a wagon, and refuels its locomotives to 20 coal at every stop. The panel shows the route, the state (with the reason when it waits), the cargo, the trips and what it delivered. Auto haulers leave a network to the train once a freight train runs from it to their home. A train that stands on a platform without coal takes coal from the depot as soon as some arrives.
 
@@ -276,7 +359,7 @@ Haulers carry 10 slots instead of 20 (*Hauler capacity I* and *II* add 10 each) 
 
 ### Ages
 
-Today's game is **Age I**. *Industrialisation* (tier-2 research, 20 advanced kits) lets you **Start the Railway Charter** from the ledger: a 6×6 site next to the capital takes 100 steel, 100 circuits, 100 gears and 150 stone from the capital's network, at most 10 of each per second, shown as "Railway Charter N %" over the site and on the badge. When everything has arrived, a 20 s countdown runs, and your nation (only yours) enters **Age II**; your rivals get a chat line. A destroyed site loses half of its deliveries; start it again for the rest.
+Every nation starts in **Age I**, the Skirmish game. *Industrialisation* (tier-2 research, 20 advanced kits) lets you **Start the Railway Charter** from the ledger: a 6×6 site next to the capital takes 100 steel, 100 circuits, 100 gears and 150 stone from the capital's network, at most 10 of each per second, shown as "Railway Charter N %" over the site and on the badge. When everything has arrived, a 20 s countdown runs, and your nation (only yours) enters **Age II**; your rivals get a chat line. A destroyed site loses half of its deliveries; start it again for the rest.
 
 **Age II** brings:
 
@@ -311,7 +394,7 @@ A district is one 5×5 building that runs a compressed production chain from its
 
 ### Age III and the Space Program
 
-*Electrification* (Age II, 25 industrial kits) lets you **Start the Space Program** from the ledger (L): an 8×8 Launch complex next to the capital pulls each stage's goods from its network (10 per good and second) and counts down when the list is complete. Stage 1 (structure: 200 steel, 100 concrete, 60 advanced circuits; 20 s) brings **Age III**. Stage 2 (systems: 40 processing units, 100 batteries, 80 engines; 30 s). Stage 3 (fuel: 40 rocket fuel, 200 sulfur, 50 light-oil barrels) ends in a 120 s launch countdown that every nation is warned about, and the launch wins the match under Conquest + Space and Any. Every nation sees the complex's label ("Space Program 2/3: 45 %"); a destroyed complex loses half of the running stage's deliveries (finished stages stay). **Rush** next to Start pulls and counts down twice as fast for crowns (₡ 0.01 per missing item and second, ₡ 8 a second in the countdown); the research panel (T) has a **Rush** for the current research (twice the lab speed, ₡ 0.1 per missing unit and second). A rush stops when the treasury cannot pay.
+*Electrification* (Age II, 25 industrial kits) lets you **Start the Space Program** from the ledger (L): an 8×8 Launch complex next to the capital pulls each stage's goods from its network (10 per good and second) and counts down when the list is complete. Stage 1 (structure: 200 steel, 100 concrete, 60 advanced circuits; 20 s) brings **Age III**. Stage 2 (systems: 40 processing units, 100 batteries, 80 engines; 30 s). Stage 3 (fuel: 40 rocket fuel, 200 sulfur, 50 light-oil barrels) ends in a 120 s launch countdown that every nation is warned about, and the launch wins the match under Conquest + Space and Any. Every nation sees the complex's label ("Space Program 2/3: 45 %"); a destroyed complex loses half of the running stage's deliveries (finished stages stay). **Rush** next to Start pulls and counts down twice as fast for crowns (₡ 0.01 per missing item and second, ₡ 8 a second in the countdown); the research panel (T) has a **Rush** for the current research (twice the lab speed, ₡ 0.1 per missing unit and second), greyed while no lab is working. A rush stops when the treasury cannot pay.
 
 Age III brings the **Chemistry district** (plastic and sulfur from crude oil, light-oil barrels; batteries and rocket fuel with *Chemistry*; fuel rods with *Nuclear power*), the **Electronics II plant** (advanced circuits, processing units, automation kits), the **Concrete works**, and with *Nuclear power* (Age III and *Geology*) the **Nuclear plant** (40 MW from fuel rods) and uranium rounds for heavy walkers (+30 % damage while the capital's network pays a magazine per heavy walker a minute).
 
@@ -333,7 +416,7 @@ Age III brings the **Chemistry district** (plastic and sulfur from crude oil, li
 
 **Recruits.** A unit takes one resident per supply point from the barracks' city when its kit becomes a unit. The barracks waits with "No recruits" when the city has none: recruits are the unemployed workers plus the **draft** share (0/10/20/30/50 %) of the employed ones. **Disband** (the bin at the top right of the units page, or Delete with units selected; press twice) removes the selected units and sends their recruits home; nothing else is refunded.
 
-**The city panel** (click a City Center or the CC) adds the people section: residents and housing with the growth per minute, happiness and power, one bar per need, the workforce line, the draft drop-down and the **Priorities** list (two families per row, each with an up button: a family moves down when the next one moves up). While the city is under attack (a hit in the last 30 s, or its centre subdued or being captured) a red line says so with a **Jump** button, and the city list marks the city with a warning icon.
+**The city panel's people section** shows residents and housing with the growth per minute, happiness and power, one bar per need, the workforce line, the draft drop-down and the **Priorities** list (two families per row, each with an up button: a family moves down when the next one moves up). While the city is under attack (a hit in the last 30 s, or its centre subdued or being captured) a red line says so with a **Jump** button, and the city list marks the city with a warning icon.
 
 ### Treasury and trade
 
@@ -355,7 +438,7 @@ Age III brings the **Chemistry district** (plastic and sulfur from crude oil, li
 
 **The market panel** (M) shows the treasury line with the tax drop-down and the debt stage, the last minute's flows, the commerce cap bar and the port the buttons trade at, then one row per tradeable good: price (green above its base, red below), a 10-minute sparkline, the count at the port, an amount field and **Sell** / **Buy**. Selling takes the goods from the port's network now; bought goods appear in the port's stockpiles 30 s later. Prices follow a shared world stock (p = base × (S0 / S)^0.6, 0.4–3 × the base) and drift 5 % a minute back towards it, so every nation's sales move the price. The **commerce cap** limits what you sell and buy per minute: ₡ 300 + 150 per port held, +25 % per *Commerce* research. Contracts between nations (a fixed price per delivery, settled at both nations' ports) are offered from the diplomacy panel.
 
-**Money sinks.** **Hire** (city panel): +4 garrison points for ₡ 160, at most 32 per city, losing 1 a minute; they man the city's hidden turrets with the garrisoned units. **Mercenaries** (market panel, with your port selected in **Trade at**): a small division of the port's region for ₡ 600, once per 10 minutes, within your supply cap. Rush is under "Age III and the Space Program".
+**Money sinks.** **Hire** (city panel): +4 garrison points for ₡ 160, at most 32 per city, losing 1 a minute; they man the city's hidden turrets with the garrisoned units. **Mercenaries** (market panel, with your port selected in **Trade at**): a small division of the port's region for ₡ 600, once per 10 minutes, within your supply cap. **Rush** is described under [Age III and the Space Program](#age-iii-and-the-space-program).
 
 **City-state trade.** The market's **Trade at** list names every city-state after your ports ("Free City of X (×1.30, +0)"). A city-state sells its region's goods at 1.3× the market price (falling to 1.1× at relation 100) and buys any good at 0.7×; what you buy arrives in your city nearest to it after 30 s, what you sell leaves that city. Every ₡ 100 traded is +1 relation with it; below −50 it refuses. Capturing a city-state while you are at peace with every nation costs 10 relation with every other nation.
 
@@ -381,7 +464,7 @@ Nations start at **peace**. Between two nations the state is war, ceasefire, pea
 
 ### Air
 
-*Aviation* (Age II, 30 industrial kits) unlocks the **airfield** (6×6, one per city; 20 steel, 40 concrete, 10 circuits), the **scout plane** and the **AA turret**; *Air Force* (Age III, 50 industrial kits) the **bomber** (twice the damage against buildings) and the **interceptor** (three times against planes). A plane kit needs an airfield in its barracks' city, and the plane appears on the airfield. Planes fly over water, mountains and walls; gun and laser turrets cannot hit them, walkers and drones can, and the AA turret shoots only planes. A plane has 100 supply: it loses 1 a second away from your airfields and refills 10 a second within 24 tiles of one, flies home by itself when the way back needs it (at 20 at the latest) and crashes at 0. **Y** opens the air panel: the airfields, the planes by kind and state, **Patrol** (then right-click the centre) and **Return to airfield**. Planes join divisions like other units.
+*Aviation* (Age II, 30 industrial kits) unlocks the **airfield** (6×6, one per city; 20 steel, 40 concrete, 10 circuits), the **scout plane** and the **AA turret**; *Air Force* (Age III, 50 industrial kits) the **bomber** (twice the damage against buildings) and the **interceptor** (three times against planes). A plane kit needs an airfield in its barracks' city, and the plane appears on the airfield. Planes fly over water, mountains and walls; gun and laser turrets cannot hit them, walkers and drones can, and the AA turret shoots only planes. A plane has 100 supply: it loses 1 a second away from your airfields and refills 10 a second within 24 tiles of one, flies home by itself when the way back needs it (at 20 at the latest) and crashes at 0. **Y** opens the air panel: the airfields, the planes by kind and state, **Patrol** (then right-click the centre) and **Return to airfield**. Planes join divisions like other units. The kill feed names the AA turret that shot a plane down.
 
 ### Fronts and fort belts
 
@@ -389,7 +472,7 @@ In a war the border with the enemy is cut into **fronts** of 128–192 tiles, re
 
 ### Artillery and armoured trains
 
-*Military railways* (Age II, 25 industrial kits) unlocks the artillery wagon kit, rail shells and armoured locomotive and wagon kits. **Deploy artillery train** in the depot panel makes 2 locomotives and an artillery wagon with 20 shells from the depot; tick **Armoured** for armoured stock (3× health, 40 % resistance). With the train selected, right-click a depot or a rail to move it there; **B** (or Bombard in the train panel) fires a shell every 10 s at the most important hostile building within 120 tiles that your units or radars see (turrets and forts first). It takes shells again at your depots. An armoured troop train is a troop train of armoured stock.
+*Military railways* (Age II, 25 industrial kits) unlocks the artillery wagon kit, rail shells and armoured locomotive and wagon kits. **Deploy artillery train** in the depot panel makes 2 locomotives and an artillery wagon with 20 shells from the depot; tick **Armoured** for armoured stock (3× health, 40 % resistance). A greyed Deploy button lists what is missing in a yellow line. With the train selected, right-click a depot or a rail to move it there; **B** (or Bombard in the train panel) fires a shell every 10 s at the most important hostile building within 120 tiles that your units, planes, radars, land or held fronts see (turrets and forts first). The gun line says whether no target is in range or none is seen yet ("scout it first"). It takes shells again at your depots. An armoured troop train is a troop train of armoured stock.
 
 ### Divisions (both modes)
 
@@ -401,12 +484,86 @@ The AI plays by the same rules. It mines coal once its iron core runs (haulers a
 
 As a nation the AI runs a **strategist** every 10 s (taxes, sales at its ports above a price floor, contracts for the ores it lacks with the nation it likes best, war and peace by its doctrine's table, and in 3- and 4-nation matches opportunity wars on a weakly held rival town) and a **governor** per city every 5 s (rations and goods kept, farms and bakeries by need, houses by jobs, the goods works, the draft, labor priorities by the city's role, two turrets and a farm at each town, supply haulers from the capital and an export hauler from a full town to the port). When a war starts a quarter of its idle army garrisons the capital; an attacked town gets a relief group; capture operations go for the war's goal cities, and in Age II at peace for a city-state on its own side of the map. Nations start at peace; in five test hours of four AIs, four matches had 4-6 wars each, most ending in a treaty (a ceded city, a tribute or a white peace), and 3-7 cities changed hands; the fifth stayed at peace.
 
-In M3 the AI is a layered nation AI (`docs/qa/phase5-ai3-notes.md`): an **economic planner** scores city sites and founds a third and fourth city (the oil town with its pumpjacks), links its cities by a rail trunk, takes the road to Age III (Electrification, the Space Program and its goods, bought from city-states when it cannot make them, rushes), builds rare extractors and automates; **intelligence** only knows what its units see; a **war council** holds threatened fronts with divisions, lays fort belts, runs operations with phases and timeouts, flies patrols, sends bombers and artillery trains to sieges and hires garrisons and mercenaries; **division controllers** retreat when outnumbered and go back for supply. Difficulty changes skill, never resources: easy, normal and hard differ in how fresh their intelligence is, how many operations run at once, how fast they build and how well they handle their divisions (the M2 "+20 % tax for hard" is gone).
+Above these sits the layered nation AI (`docs/qa/phase5-ai3-notes.md`): an **economic planner** scores city sites and founds a third and fourth city (the oil town with its pumpjacks), links its cities by a rail trunk, takes the road to Age III (Electrification, the Space Program and its goods, bought from city-states when it cannot make them, rushes), builds rare extractors and automates; **intelligence** only knows what its units see; a **war council** holds threatened fronts with divisions, lays fort belts, runs operations with phases and timeouts, flies patrols, sends bombers and artillery trains to sieges and hires garrisons and mercenaries; **division controllers** retreat when outnumbered and go back for supply. Difficulty changes skill, never resources: easy, normal and hard differ in how fresh their intelligence is, how many operations run at once, how fast they build and how well they handle their divisions. In Nation mode hard gets none of the Skirmish bonuses: no extra stock, mining or free units, and no map-wide vision.
+
+## Multiplayer
+
+You can host a match for friends (Multiplayer → Host new game, then the same Freeplay start). Every human joins the player's side and plays it together against the AI sides: in Nation mode you share one nation, its cities and its treasury, and every human gets a Commander. There is no player-versus-player mode yet. In a multiplayer game only an admin can change the lobby or use the admin console commands.
+
+The simulation is deterministic, which multiplayer needs: a headless server with GUI clients joining mid-match showed no desync, every client's state checksum matched the server's, and a 10-minute heavy-mode run (the engine saves, loads and compares the whole state every tick) found nothing. These checks ran with one client at a time on one machine; two humans playing at once have not been tested yet.
+
+## Known limitations and open issues
+
+This is a first public version. The lists below come from the acceptance notes of the last milestone (`docs/qa/phase5-m3-integration-notes.md`, sections 7, 9 and 10, and `docs/qa/phase5-port21-notes.md`).
+
+**Platform and setup**
+
+- Only macOS (Apple silicon, Steam) has been tested. Windows and Linux are expected to work but are unverified.
+- The mod is meant to run alone, in a new game. Compatibility with other mods is untested.
+- Performance was measured on one Apple-silicon Mac. There a 4-nation scene with 16 cities, about 600 units and 40 trains runs at 60 UPS, but a few AI ticks take 4-6 ms, which a slower machine may feel as a short stutter.
+- A 4096 world with 6 nations blocks for about 5 seconds at the start while the core of the world is planned and generated. The rest of a 4096 world takes about 6½ minutes to fill in the background.
+- Multiplayer with two humans connected at the same time is untested (see [Multiplayer](#multiplayer)). One of three local test sessions on Factorio 2.1 saw a client crash inside the engine's Steam networking start-up before the first game tick; the rerun was clean.
+
+**Nation AI and balance**
+
+- The AI is slower to Age III than designed: in the final 4-nation, 60-minute test seeds only 1 of 5 matches had a nation in Age III by minute 40.
+- The aggressive AI spends its iron, steel and circuits on its army and links its cities by rail late or never: 12 of 20 AI nations had three cities linked by rail by minute 35.
+- The AI rarely uses its newest tools. Air patrols flew in 3 of 5 test matches, but interceptors, bombers, artillery trains and front holds stayed unused, and their balance is still a first guess.
+- Money pressure is light: AI nations keep a cash reserve and seldom go into debt, and AI armies do not shrink when they do.
+- An AI mining town can starve when its supply hauler runs out of coal (1 of 5 test seeds).
+- Small changes swing per-seed AI outcomes. Every run is deterministic, but a seed's war outcome can flip with any change to the code.
+- Rail freight is below its design target: in the 60-minute 1v1 Nation test the two AI-run sides move about 13,500 items by train together, against a target of 20,000.
+
+**Gameplay and interface**
+
+- A hauler checks the coal at its drop-off when it leaves, not when it arrives. If the drop-off spends that coal meanwhile, the hauler can strand there until coal arrives.
+- Map labels crowd around the capital at some zoom levels.
+- Most build-menu buttons are icons whose names show only in tooltips.
+- Walkers are large and can hide nearby buildings, while planes are small at normal zoom.
+- Panels can open over other panels.
+- The Russian translation is complete, but the GUI QA protocol's screen coordinates are measured on the English layout.
+
+**Out of scope for now**: naval units, vassals, tariffs and embargoes, razing cities (cities are always captured), Space Age planets and content beyond the graphics swap, and player-versus-player.
+
+## Roadmap
+
+There is no fixed schedule. These are the next candidates, roughly in order:
+
+1. **Nation AI.** Reach Age III on pace, link cities by rail sooner, use air, artillery trains and front holds in real wars, and shrink armies in debt.
+2. **Balance.** Tune air, anti-aircraft, artillery and armoured trains from play data, and add money pressure where matches stay comfortable.
+3. **Multiplayer.** Test two or more humans at once, then add player-versus-player nations.
+4. **Platforms.** Verify Windows and Linux, and make the development tooling portable.
+5. **Interface.** Thin out map labels, caption the build menu and keep panels from covering each other.
+6. **Content.** Naval units, vassals, tariffs and embargoes, and more of Space Age.
+
+Ideas and votes are welcome in the issue tracker.
 
 ## Development
 
-- `tools/headless-run.sh <seconds> '\[rts' mods` runs a map with the mod on a headless server and prints the mod's log. The autotests (`[rts] autotest`, `[rts] ai autotest`) run in test copies only (`local AUTOTEST_ENABLED = true` in `scripts/debug.lua`, which `tools/autotest-run.sh`, `perf-bench.sh`, `heavy-mode.sh` and `lan-check.sh` set) when no player is connected.
-- `tools/gui-run.sh mods <seconds> 'RTS_GUI_READY'` launches the real client with an isolated config (its own write dir and port; F9 opens the console).
+The mod is written in Lua against the Factorio 2.1 API. It has no graphics of its own: every building and unit reuses the game's sprites at load time. Most of the code, tests and documents were written by AI coding agents (Claude Code) under the owner's direction, and the GUI test passes were run by an automated computer-use tester (OpenAI Codex). That is why the notes in `docs/qa/` name agents such as `m3-integ` or `m3-ai`.
+
+### Repository layout
+
+```
+mods/factorio-rts/     the mod: info.json, data.lua, data-updates.lua, control.lua, balance.lua (every number),
+                       prototypes/ (data stage), scripts/ (runtime; scripts/ai/ is the AI), locale/en, locale/ru
+mods/mod-list.json     the mod list the test runners use
+tools/                 headless and GUI runners, autotests, benchmarks, probes (tools/probes/), install, package
+docs/                  DESIGN.md and SCALE-VISION.md (design), PHASE1-4.md and PHASE5-M1..M3.md (milestone contracts),
+                       research/ (API and design studies), qa/ (GUI protocols, QA results, module and integration notes),
+                       media/ (screenshots), release/ (store texts and the publishing checklist)
+spikes/                the Phase 0 feasibility mods (camera, units, economy)
+build/                 generated test trees, saves and logs (git-ignored)
+```
+
+Inside the mod, `control.lua` loads the modules in `scripts/`, which talk through a small event bus (`scripts/events.lua`). Each module owns its part of `storage`. The milestone contracts (`docs/PHASE*.md`) describe the modules, their storage and their public functions.
+
+### Tooling
+
+The tools are bash scripts written for macOS with the Steam build (paths in `tools/factorio-env.sh`, BSD `sed`). Every runner refuses to start when the game binary's version does not match the `factorio_version` in the tree's `info.json`.
+
+- `tools/headless-run.sh <seconds> '\[rts' mods` runs a map with the mod on a headless server and prints the mod's log. The autotests (`[rts] autotest`, `[rts] ai autotest`) run in test copies only (`local AUTOTEST_ENABLED = true` in `scripts/debug.lua`, which `tools/autotest-run.sh`, `perf-bench.sh`, `heavy-mode.sh` and `lan-check.sh` set) when no player is connected. In a test, the AI also plays the player's side.
+- `tools/gui-run.sh mods <seconds> 'RTS_GUI_READY'` launches the real client with an isolated config (its own write dir and port; F9 opens the console). `tools/gui-drive.sh` replays real clicks and keys from a GUI probe's log (needs the macOS Accessibility permission).
 - `tools/autotest-run.sh <name> '<lua match table>' [cap=640]` runs one headless AI-autotest scenario on a copy in `build/<name>/` and prints the summary, the per-minute and perf lines and every Lua error. Env options:
   - `VARIANT=sa|base`: Space Age or the base game.
   - `SPEED=<n>`: game speed; UPS numbers only mean something at 1.
@@ -414,16 +571,55 @@ In M3 the AI is a layered nation AI (`docs/qa/phase5-ai3-notes.md`): an **econom
   - `RESTART_AT=<s>`: restart the match through the Ctrl+Shift+R path, then run the autotest again.
   - `PERF=1`: per-module handler timings.
   - `STRESS=<s>:<n>`: give every side `n` extra walkers and `n`/2 drones at `s` seconds.
+  - `EXTRA_LUA=<file>`: add a test-only module from `tools/probes/`.
   - Also `DURATION_MIN`, `DOCTRINES`, `STOP_ON` and `KEEP_TREE`.
-- `tools/autotest-matrix.sh <tag> [filter]` runs the Phase 4 validation matrix in parallel (difficulties, sizes, 1v3, base-only, stress, restart) into `build/matrix-<tag>/` and prints a one-line-per-run table.
+- `tools/autotest-matrix.sh <tag> [filter]` runs the Skirmish validation matrix in parallel (difficulties, sizes, 1v3, base-only, stress, restart) into `build/matrix-<tag>/` and prints a one-line-per-run table. `tools/matrix-compare.sh <tag-a> <tag-b>` compares two matrix runs line by line (every `[rts]` line before the stop marker, timings and static prototype counts normalised): `SEED=777 tools/autotest-matrix.sh a` on two trees, then compare; Skirmish must show 0 differing lines.
 - `tools/autotest-batch.sh <tag> <reps> 1v<n>-<difficulty>-<size>...` runs seeded balance samples (the same rep uses the same seed in every tree, so two trees give paired samples) into `build/batch-<tag>/`.
 - `tools/saveload-check.sh <name> '<lua match table>' [seconds]` saves a running match at minute 3, reloads it and reports errors from both halves.
 - `tools/balance-sim/run.sh <name> [sa|base]` and `tools/balance-sim/both.sh` run the equal-cost unit fight simulator that checks the counter table (`docs/qa/phase4-balance-notes.md`).
 - `tools/locale-probe/gen.py <mod dir> <out.lua>` generates a probe that makes a GUI client translate every locale key the mod uses and logs the missing ones.
-- `tools/probes/*.lua` are test-only modules: `EXTRA_LUA=tools/probes/wavec_headless.lua` (a hub at the natural built by the Commander, hauler cargo between two networks, Concede) and `commander_field.lua` (Commander field construction) run headless through `tools/autotest-run.sh`; `menu_gui.lua` drives the F10 menu, Concede and Results in a GUI client; `m1_docs_gui.lua` walks a GUI client through the Nation panels of the Phase 5 M1 protocol and saves the screenshots its coordinates come from.
-- Admin console: `/rts-match` (add `nation [2048|3072|4096]` for a Nation match), `/rts-give <item> [n]` (into your CC's network), `/rts-spawn <unit> <count> [force]`, `/rts-research <technology>` (finish an RTS technology at once, e.g. `rts-railways`), `/rts-age [force] [age]` (show or set a nation's age), `/rts-treasury`, `/rts-market` (prices, ports, sell, buy, capture a port), `/rts-supply <sp>` (your divisions' supply points), `/rts-goto city-state|port|ai` (camera), `/rts-diplomacy [propose <from> <to> peace|ceasefire|alliance]`, `/rts-world`, `/rts-strategic`, `/rts-dump`, `/rts-mapgen`, `/rts-ai-doctrine`, `/rts-qa-reset`, `/rts-qa-end`. The GUI QA protocols use a few of them as shortcuts, and a tester ends a session by typing `RTS_QA_END` in the console.
-- `tools/matrix-compare.sh <tag-a> <tag-b>` compares two matrix runs line by line (every `[rts]` line before the stop marker, timings and static prototype counts normalised): `SEED=777 tools/autotest-matrix.sh a` on two trees, then compare; Skirmish must show 0 differing lines.
-- Nation fixtures for `tools/autotest-run.sh` (`EXTRA_LUA=...`): `m1_acceptance.lua` (the last 5 minutes at speed 1 for the UPS lines), `m2_acceptance.lua` (the M2 end-to-end checks: trade, wars, peace, captures, starving, plus the same final speed 1), `m2_integ.lua` (the M2 integration rules), `m2_targeting.lua` (attack-moves and rail protection), and the wave A fixtures `people_m2.lua`, `treasury_fixture.lua`, `diplomacy_accept.lua`, `war_autotest.lua`, `world2_autotest.lua`.
-- M3 tools: `tools/perf-bench.sh` (`match`, `scene`, `bench`: per-tick benchmarks and the 4 nations / 16 cities / 600 units / 40 trains budget scene), `tools/perf-log.sh` (the PERF lines of a log), `tools/determinism-compare.sh` (two runs of a seed, or two trees, line by line), `tools/heavy-mode.sh` (a GUI client in heavy mode on a 4-nation save), `tools/lan-check.sh` (a headless server and GUI clients, desync checks), `tools/world3-run.sh` (huge worlds and background generation). M3 fixtures: `age3_fixture.lua`, `air_autotest.lua`, `war2_autotest.lua`, `perf_sched.lua`, `world3_autotest.lua`, `m3_acceptance.lua` (the M3 end-to-end measurements: the M2 criteria plus treasury lows and debt stages, rail line dates, ages, the M3 modules), `m3_integ.lua` (collateral damage, rail lines across own walls), `m3_reroute.lua`; GUI probes `m3_docs_gui.lua` and the wave A `*_gui.lua`.
-- M3 console commands: `/rts-age3 [force] [start | stage <n> | automate <city> <family> on|off]`, `/rts-sinks [force] [rush ... | hire ... | merc ... | cs ...]`, `/rts-air [force]`, `/rts-front [force]` (QA: a rival town next to your land, for a front), `/rts-deposit <kind>` (QA: a rare deposit next to your capital).
-- Interactive QA protocols and results are in `docs/qa/` (`phase1-protocol.md` to `phase4-protocol.md`, `phase5-m1-protocol.md`, `phase5-m2-protocol.md` and `phase5-m3-protocol.md` for Nation matches). Mod layout, storage schema and module contracts are in `docs/PHASE1.md` to `docs/PHASE4.md` and `docs/PHASE5-M1.md` to `docs/PHASE5-M3.md`; per-module notes are in `docs/qa/*-notes.md`.
+- Performance and determinism: `tools/perf-bench.sh` (`match`, `scene`, `bench`: per-tick benchmarks and the 4 nations / 16 cities / 600 units / 40 trains budget scene), `tools/perf-log.sh` (the PERF lines of a log), `tools/determinism-compare.sh` (two runs of a seed, or two trees, line by line), `tools/heavy-mode.sh` (a GUI client in heavy mode on a 4-nation save), `tools/lan-check.sh` (a headless server and GUI clients, desync checks), `tools/divisions-bench.sh` (the division pathfinding budget), `tools/world-seeds.sh` and `tools/world3-run.sh` (world generation across seeds, huge worlds and background generation).
+- `tools/probes/*.lua` are test-only modules. Skirmish: `wavec_headless.lua` (a hub at the natural built by the Commander, hauler cargo between two networks, Concede) and `commander_field.lua` (Commander field construction) run headless; `menu_gui.lua` drives the F10 menu, Concede and Results in a GUI client. Nation acceptance: `m1_acceptance.lua` (the last 5 minutes at speed 1 for the UPS lines), `m2_acceptance.lua` (trade, wars, peace, captures, starving), `m3_acceptance.lua` (the M2 criteria plus treasury lows and debt stages, rail line dates, ages and the M3 modules). Nation fixtures: `m2_integ.lua`, `m2_targeting.lua`, `people_m2.lua`, `treasury_fixture.lua`, `diplomacy_accept.lua`, `war_autotest.lua`, `world2_autotest.lua`, `age3_fixture.lua`, `air_autotest.lua`, `war2_autotest.lua`, `perf_sched.lua`, `world3_autotest.lua`, `m3_integ.lua`, `m3_reroute.lua`, `m3_qa_fix.lua`. GUI probes: `m1_docs_gui.lua`, `m3_docs_gui.lua` and the other `*_gui.lua`.
+- `tools/package.sh` builds the release zip (see [Releasing](#releasing)).
+
+A Skirmish smoke test and a Nation run:
+
+```sh
+tools/autotest-run.sh smoke '{opponents = 1, difficulty = "normal", size = "small", enemy_brain = "waves"}' 240
+tools/autotest-run.sh nation-1v1 '{opponents = 1, difficulty = "normal", mode = "nation", world_size = 2048, enemy_brain = "ai"}' 900
+```
+
+### Admin console commands
+
+Open the console with the grave key (or F9 in `tools/gui-run.sh` clients). The GUI QA protocols use a few of these as shortcuts, and a tester ends a session by typing `RTS_QA_END`.
+
+- Matches and the camera: `/rts-match` (add `nation [2048|3072|4096]` for a Nation match), `/rts-goto city-state|port|ai`, `/rts-qa-reset`, `/rts-qa-end`.
+- Stock and units: `/rts-give <item> [n]` (into your CC's network), `/rts-spawn <unit> <count> [force] [distance [x y]]` (with a distance, that many tiles east of the camera, or west when negative, attack-moving there), `/rts-supply <sp>` (your divisions' supply points).
+- Research and ages: `/rts-research <technology>` (finish an RTS technology at once, e.g. `rts-railways`), `/rts-age [force] [age]`, `/rts-age3 [force] [start | stage <n> | automate <city> <family> on|off]`.
+- Nation state: `/rts-treasury`, `/rts-market` (prices, ports, sell, buy, capture a port), `/rts-diplomacy [propose <from> <to> peace|ceasefire|alliance]`, `/rts-sinks [force] [rush ... | hire ... | merc ... | cs ...]`, `/rts-air [force]`, `/rts-front [force]` (a rival town next to your land, for a front), `/rts-deposit <kind>` (a rare deposit next to your capital).
+- Inspection: `/rts-world`, `/rts-strategic`, `/rts-dump`, `/rts-mapgen`, `/rts-ai-doctrine <force> <name>`.
+
+### How a milestone is accepted
+
+1. **A contract.** Each milestone starts with a contract (`docs/PHASE1.md` to `docs/PHASE4.md`, `docs/PHASE5-M1.md` to `docs/PHASE5-M3.md`): the decisions, module names, storage, public functions and a measurable acceptance section.
+2. **Headless autotests.** Real matches run on a dedicated server at high game speed, with the AI on every side, and log `[rts]` checks with PASS or FAIL and a summary. The Nation acceptances are 60-minute matches on fixed seeds (M1: seed 501; M2: 701-705; M3: 801-805) with fixtures that measure the contract's numbers.
+3. **Skirmish stays byte-identical.** Nation work must not change Skirmish: the seed 777 matrix must give 0 differing `[rts]` lines against the recorded baseline (`tools/matrix-compare.sh`).
+4. **Determinism, saves and performance.** Two runs of a seed must match line by line, saves at minutes 20 and 40 must load without errors, the budget scene must hold 60 UPS, and heavy mode and the multiplayer check must show no desync.
+5. **A GUI pass.** An automated tester with computer use follows a written protocol (`docs/qa/phase*-protocol.md`) with real mouse clicks and keys, judges every step from the screen, and records PASS or FAIL with screenshots (`docs/qa/*-qa-results.md`). Failures go to a QA fix round.
+6. **Integration notes.** The verdict, every measured number and the open issues go into `docs/qa/*-integration-notes.md`, and the milestone gets a tag (`m1-ready`, `m2-ready`, `m3-ready`).
+
+### Releasing
+
+`tools/package.sh` reads the name and version from `mods/factorio-rts/info.json` and writes `build/release/factorio-rts_<version>.zip` with the mod inside a `factorio-rts_<version>/` folder, as the Mod Portal expects. The publishing steps are in `docs/release/checklist.md`.
+
+## Contributing
+
+Bug reports, balance feedback and pull requests are welcome. Please read [CONTRIBUTING.md](CONTRIBUTING.md): it covers running the autotests, the QA protocols, the code conventions and what a good bug report contains (the seed, the mode and the `[rts]` lines of the log).
+
+## License and credits
+
+The code and documents are released under the [MIT license](LICENSE).
+
+Factorio, Space Age and their graphics and sounds are © Wube Software. This mod ships no game assets; it reuses the installed game's sprites at load time. It is a fan project and is not affiliated with or endorsed by Wube Software.
+
+The design borrows from StarCraft, WarCraft III, Age of Empires, Rise of Nations and Workers & Resources: Soviet Republic.

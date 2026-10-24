@@ -2,11 +2,13 @@
   "name": "factorio-rts",
   "version": "0.1.0",
   "title": "Factorio RTS",
-  "author": "factorio-rts",
+  "author": "Kealman",
+  "contact": "https://github.com/Kealman/factorio-rts/issues",
+  "homepage": "https://github.com/Kealman/factorio-rts",
   "factorio_version": "2.1",
   "dependencies": [
     "base >= 2.1",
     "? space-age"
   ],
-  "description": "Factorio as a real-time strategy game: a remote-view camera instead of a character, box selection and orders for spider-unit armies, Factorio production chains, hubs and haulers, research, abilities and a Commander hero, against 1 to 3 AI commanders on generated maps."
+  "description": "Factorio as a StarCraft-style real-time strategy game. Command from a free camera with box selection, right-click orders, control groups and abilities, and build your army through a real Factorio economy: mining lines, factories, research, forward hubs and haulers. Skirmish: 15-30 minute matches against 1 to 3 AI commanders with their own doctrines on generated arenas. Nation: a mini-state on a world of up to 4096x4096 tiles with 2 to 6 nations. Found cities, feed and house their people, link them by rail, run a treasury and trade, go to war for goals, capture cities and race through three ages to a Space Program launch. Start a new Freeplay game and the RTS lobby opens. Space Age optional."
 }

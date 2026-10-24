@@ -1,0 +1,155 @@
+# Mod Portal listing: Factorio RTS
+
+Everything the owner pastes into the Factorio Mod Portal (mods.factorio.com). The steps that use these texts are in [checklist.md](checklist.md). Text between the `=====` markers is meant to be copied as it is.
+
+## Fields
+
+| Portal field | Value |
+|---|---|
+| Internal name (from `info.json`) | `factorio-rts` (free on the portal as of 2026-10-24) |
+| Title | Factorio RTS |
+| Summary (192 of 200 characters) | see below |
+| Category | Overhaul |
+| Tags | Combat, Enemies, Logistics, Logistic network, Trains, Manufacturing, Environment |
+| License | MIT |
+| Source URL | https://github.com/Kealman/factorio-rts |
+| Homepage (from `info.json`) | https://github.com/Kealman/factorio-rts |
+| Thumbnail | `mods/factorio-rts/thumbnail.png`, 144×144 |
+| Gallery | the 15 files of `docs/media/`, in the order below |
+
+The tag list is the portal's 2.0-era list (Transportation, Logistics, Trains, Combat, Armor, Character, Enemies, Environment, Mining, Fluids, Logistic network, Circuit network, Manufacturing, Power, Storage, Blueprints, Cheats). Check it against the edit page and drop any tag it no longer offers.
+
+## Summary
+
+=====
+Factorio as a StarCraft-style RTS: command armies from a free camera, build them through a real Factorio economy, then grow a nation of cities, rails, trade and war on worlds up to 4096 tiles.
+=====
+
+## Long description (the portal's Markdown)
+
+=====
+**Factorio as a StarCraft-style real-time strategy game, with a real Factorio production economy, grown into a Rise of Nations-style mini-state.**
+
+You command from a free camera instead of walking an engineer: box-select units, right-click to move and attack, set control groups and fire abilities. Your army comes out of a factory you build yourself: extractors on finite ore patches, smelters, belts and inserters, factories and labs, forward hubs with their own logistic networks, and haulers that carry goods between them.
+
+Two modes:
+
+* **Skirmish**: a 15 to 30 minute match on a generated arena against 1 to 3 AI commanders.
+* **Nation**: a small state on a world of up to 4096×4096 tiles with 2 to 6 nations. Found cities, feed and house their people, link them by rail, keep a treasury, trade, go to war for goals, capture cities and race your rivals through three ages to a Space Program launch.
+
+Start a **new Freeplay game**; the RTS lobby opens as soon as you join. Press **F11** in a match for How to play.
+
+### RTS controls on top of Factorio
+
+* A free camera with no character, box select, right-click orders, attack-move (F), stop (X) and hold (H).
+* Control groups (Ctrl+1..5), a minimap, unit cards, alerts with a jump key (F3) and a kill feed.
+* Divisions that march as one formation with stances and reinforcements.
+* Demolish your own buildings (Delete, two presses) for a 50 % refund.
+
+### An economy you build
+
+* Extractors mine finite patches; smelters, belts and inserters feed stockpiles; factories make buildings, intermediates and science; the barracks turns plates into units.
+* Forward hubs run their own logistic networks with Keep and Export policies, and haulers carry goods between them. Raiders hunt your haulers.
+* Power from the Command Center, solar arrays and steam plants; low power slows everything.
+* 19 Skirmish technologies, a supply cap and patches that run dry.
+
+### Units, abilities and a hero
+
+* Walkers, drones, heavy walkers, raiders and artillery walkers form a counter wheel, with Mk2 upgrades.
+* Five abilities: Stim, Shield, Scanner sweep, Artillery strike and Overcharge.
+* The Commander hero levels up, respawns and builds outposts beyond your robots' reach.
+
+### AI commanders
+
+* Each AI draws an economic, aggressive or turtle doctrine, builds a real base, expands, researches, raids and attacks.
+* Easy, normal and hard. In Nation mode the AI is a layered nation AI (planner, governors, war council, division controllers, intelligence) and difficulty changes skill, never resources.
+
+### Nation mode
+
+* **The world:** named regions, mountain ranges with passes, rivers with fords, a scarcity portfolio that leaves every nation short of something, neutral city-states, trade ports, ruins, uranium and six rare resources.
+* **Cities and territory:** up to 4 cities per nation, tiers from village to city, an ownership grid with borders, build rules and attrition in enemy land, and forts.
+* **People:** residents who need housing, rations and household goods, staff your buildings by labor priority and become your recruits.
+* **Rails:** select a depot, right-click another, and a construction train lays the line. Freight, troop, artillery and armoured trains.
+* **Money:** a treasury in crowns, taxes, upkeep, three debt stages, a shared world market, contracts, and money sinks (Rush, Hire, Mercenaries).
+* **Diplomacy:** war, ceasefire, peace and alliance, war goals, treaties, and Conquest, Territory, Score or Space victories.
+* **Three ages:** the Railway Charter brings Age II (oil as goods, districts, armoured cars, bunkers); the Space Program brings Age III (chemistry, nuclear power, automation) and a Space victory.
+* **War is logistics:** divisions burn supply, cities are captured rather than razed, garrisons, fronts, fort belts, air units with anti-aircraft turrets, and artillery trains.
+
+### Screenshots (gallery order)
+
+1. The lobby: mode, nations, difficulty, world size, start map, victory and time limit.
+2. A Nation capital with its districts, stockpiles and depots.
+3. A rail line between two depots, laid by a construction train.
+4. Divisions fighting at a border.
+5. A front held by a division behind a fort belt.
+6. An airfield with planes and the air panel.
+7. An artillery train bombarding an enemy town.
+8. The Space Program's launch complex in Age III.
+9. The strategic map: regions, borders, cities, chokes and ports.
+10. The diplomacy panel: relations, wars, treaties and proposals.
+11. The market panel: world prices, trade at your port, tax and contracts.
+12. A 4096×4096 world with six nations.
+13. The Commander and the ability bar in a Skirmish fight.
+14. A Skirmish base with mining lines, factory, barracks and turrets.
+15. The city panel: residents, needs, workforce and labor priorities.
+
+### Requirements
+
+* Factorio 2.1. Space Age is optional.
+* Play it alone (base game, optionally Space Age) and in a new game.
+
+The full player guide, the feature list, known issues and the source are on [GitHub](https://github.com/Kealman/factorio-rts). Bug reports are welcome there: please include the seed, the mode and the `[rts]` lines of your log.
+=====
+
+## FAQ (the portal's FAQ tab)
+
+=====
+### What do I need?
+
+Factorio 2.1. Space Age is optional: with it, units use the Gleba pentapod graphics, rail lines can cross water on bridges and food spoils. Without it, units are built from the spidertron and food keeps. The mod does not load on Factorio 2.0.
+
+### How do I start a match?
+
+Start a **new game** with the Freeplay scenario. The RTS lobby opens as soon as you join: pick Skirmish or Nation, the opponents, the difficulty and the map, and press Start match. F11 explains the controls and rules at any time.
+
+### Can I add it to my existing factory save?
+
+No. The mod takes over the session: there is no character, and matches run on their own surfaces. Use a new game.
+
+### Skirmish or Nation?
+
+Skirmish is a classic RTS match of 15 to 30 minutes on an arena: one base, expansions, hubs and haulers, research, a hero and abilities against 1 to 3 AI commanders. Nation is a one-to-three-hour game on a world of up to 4096 tiles: several cities, people and labor, rails, a treasury and trade, diplomacy, three ages and wars won by capturing cities. Start with Skirmish on Easy to learn the controls and the economy; everything from Skirmish carries over into Nation.
+
+### Does it work in multiplayer?
+
+Yes, cooperatively: every human joins the player's side against the AI, and only an admin can change the lobby. There is no player-versus-player mode yet. Multiplayer determinism was checked with a dedicated server and clients joining mid-match, but only one client at a time; two humans at once have not been tested yet.
+
+### Does it work with other mods?
+
+It is designed to run alone. Other mods are untested, and mods that change the character, freeplay or map generation are likely to conflict.
+
+### Windows and Linux?
+
+The mod is pure Lua and uses only the game's own graphics, so it should work everywhere Factorio 2.1 runs. It was developed and tested on macOS; reports from Windows and Linux are very welcome.
+
+### Is it heavy on performance?
+
+A 4-nation Nation match with 16 cities, about 600 units and 40 trains runs at 60 updates per second on the development Mac (Apple silicon). Huge worlds generate in the background while you play; a 4096 world with 6 nations pauses for about 5 seconds at the start.
+
+### What are the known issues?
+
+* The Nation AI is slower to Age III than designed and rarely uses air units, artillery trains or front holds.
+* The aggressive AI links its cities by rail late.
+* AI nations seldom go into debt, so money pressure on them is light.
+* Map labels crowd around the capital at some zoom levels, and most build-menu buttons are icons with tooltips.
+
+The full list is in the README on GitHub.
+
+### Which languages?
+
+English and Russian.
+
+### Where do I report a bug?
+
+On GitHub: https://github.com/Kealman/factorio-rts/issues. Please include the Factorio version, Space Age on or off, the mode and lobby settings, the map seed (type `/seed` in the console) and the `[rts]` lines of `factorio-current.log`.
+=====

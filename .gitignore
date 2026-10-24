@@ -1,8 +1,15 @@
 build/
 *.zip
 .DS_Store
+Thumbs.db
 factorio-current.log
-
-# screenshots from QA runs are evidence, not source
-docs/qa/*screenshots*/
 *.orig
+*.rej
+*.swp
+*~
+.idea/
+.vscode/
+
+# screenshots from QA runs are evidence, not source (the tracked ones were added on purpose with git add -f)
+docs/qa/*screenshots*/
+# docs/media/ (README and Mod Portal screenshots) and mods/factorio-rts/thumbnail.png are tracked: never ignore them
