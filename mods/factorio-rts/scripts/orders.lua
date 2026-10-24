@@ -833,9 +833,51 @@ local function right_click_order(player_index, position, entities)
   return "move", orders.move(player_index, position)
 end
 
+-- 0.1.1 (issue #12, tools/probes/r2_inputs_gui.lua): a right click on a pentapod often lands on one of its long legs,
+-- and the reverse selection then holds only the leg (type spider-leg, its own unit number and force): the attack
+-- order went to the leg ("order attack n=6 target=#315 rts-walker-leg"). Each leg is replaced by the spider it
+-- belongs to (found by its legs among the spiders of the leg's force within LEG_OWNER_RADIUS), once per spider.
+local LEG_OWNER_RADIUS = 12
+local function legs_to_owners(entities)
+  local has_leg = false
+  for _, e in pairs(entities) do
+    if e.valid and e.type == "spider-leg" then
+      has_leg = true
+      break
+    end
+  end
+  if not has_leg then return entities end
+  local out, seen = {}, {}
+  for _, e in pairs(entities) do
+    local pick = e
+    if e.valid and e.type == "spider-leg" then
+      pick = nil
+      local nearest, nearest_d
+      for _, s in ipairs(e.surface.find_entities_filtered({position = e.position, radius = LEG_OWNER_RADIUS,
+          type = {"spider-unit", "spider-vehicle"}, force = e.force})) do
+        local ok, legs = pcall(s.get_spider_legs)
+        for _, leg in ipairs(ok and legs or {}) do
+          if leg == e then pick = s end
+        end
+        if pick then break end
+        local d = util.distance_sq(s, e)
+        if not nearest or d < nearest_d then nearest, nearest_d = s, d end
+      end
+      pick = pick or nearest -- a spider whose legs cannot be read: the nearest one of the leg's force
+    end
+    local key = pick and pick.valid and (pick.unit_number or pick.name .. util.pos_str(pick.position))
+    if key and not seen[key] then
+      seen[key] = true
+      out[#out + 1] = pick
+    end
+  end
+  return out
+end
+
 --- Reverse-select area from the rts-cursor (right click / drag; alt = shift, attack-move).
 --- Cancels any pending rts-rclick fallback for the player. Returns the order name and unit count.
 function orders.handle_reverse_area(player_index, entities, area, alt)
+  entities = legs_to_owners(entities)
   local o = ostate()
   o.area_tick[player_index] = game.tick
   o.rclick[player_index] = nil

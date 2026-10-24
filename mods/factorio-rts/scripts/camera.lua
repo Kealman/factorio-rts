@@ -133,6 +133,14 @@ local function ensure_permission_group()
   return group
 end
 
+-- 0.1.1 (issue #12): Factorio 2.1 lets the toggle-menu key (Escape) leave the remote view; with the god body parked on
+-- the lobby surface that showed the empty lobby for a tick until the guard below re-entered the remote view, and the
+-- game menu (save, load, settings, quit) could never open. With the switch off, Escape closes an open panel first and
+-- otherwise opens the game menu, and the view stays remote (tools/probes/r2_inputs_gui.lua, "escape_game_menu").
+local function keep_remote_on_menu(player)
+  if player.toggle_menu_leaves_remote_view ~= false then player.toggle_menu_leaves_remote_view = false end
+end
+
 local function view_summary(player)
   local shown = chrome_shown(player)
   return string.format("controller=%s physical=%s character=%s position=%s zoom=%.3f render_mode=%s "
@@ -190,6 +198,7 @@ function camera.setup(player, reason)
   player.set_zoom_limits(REMOTE, ZOOM_LIMITS) -- two positional arguments (spike #1 gotcha 11)
   player.zoom = START_ZOOM                     -- the engine picks 0.2 or 0.133 otherwise (gotcha 9)
   hide_chrome(player)
+  keep_remote_on_menu(player)
 
   p.last_remote_pos = pos
   p.last_zoom = START_ZOOM
@@ -480,6 +489,7 @@ function camera.init()
     local p = storage.players and storage.players[player.index]
     if not (p and p.setup_done) then camera.setup(player, "init") end
   end
+  for _, player in pairs(game.players) do keep_remote_on_menu(player) end -- saves from 0.1.0 (issue #12)
 end
 
 events.on(defines.events.on_player_created, function(e)
@@ -494,6 +504,7 @@ events.on(defines.events.on_player_joined_game, function(e)
     return
   end
   hide_chrome(player)
+  keep_remote_on_menu(player)
   reapply(player, "joined")
   cursor.ensure(player)
 end)

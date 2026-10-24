@@ -45,6 +45,11 @@ world is generated anew for every run: the capital's place, the terrain around i
 from run to run, so map positions are given relative to your Command Center (CC). Panels that grow with their content
 give their rows in order; when a row is not exactly at its coordinate, find it by its text one or two rows away.
 
+**Factorio 2.1.** The coordinates hold on 2.1.23: the probe's pass on 2.1 is English 53/53
+(`build/m3i-p21b-en`), and 2.1 adds no vanilla side button or panel to the screen (`docs/qa/phase5-r2-ux-notes.md`
+section 1). One input changed in 0.1.1: with no panel open, Escape opens the Factorio game menu (it used to leave the
+remote view for a tick).
+
 Background: `README.md` ("Nation mode"), `docs/PHASE5-M3.md`, `docs/qa/phase5-m2-protocol.md` (the M1 and M2 parts of
 the HUD are unchanged except the build menu, which is one row taller: see below) and `docs/qa/phase5-*-notes.md`.
 
@@ -100,7 +105,8 @@ pgrep -f '^/Users/.*/MacOS/factorio .*--window-size' || RTS_LOCALE=en tools/gui-
 - **Empty ground** (to deselect): ≈(1000, 250) after SPACE, 22 tiles right of the CC and 9 up. No step places anything
   there except, when the AI town lies north, the depot of step 20 (from then on use ≈(300, 200)).
 - **Escape** closes the market, the diplomacy panel, the research panel, the ledger, the help page and an open console
-  line. If the Factorio game menu opens instead, press Escape once more.
+  line. With nothing open it opens the Factorio game menu (Resume, Restart, Load game, Save game, Settings, Exit); press
+  Escape once more, or click **Resume**, to close it. Never click its Restart or Exit.
 - **Evidence.** Take a screenshot after every step. Report one of PASS, PARTIAL (the main effect is there, a detail
   differs: say which), FAIL (the main effect is missing) or SKIP (a precondition is missing: say which), with one line
   on what the screenshot shows.
@@ -167,7 +173,7 @@ The M1 and M2 rows (`docs/qa/phase5-m2-protocol.md`, "Where things are on the HU
 | Depot panel, artillery | x 765–1012, from y 183 (the hub panel opens right of it, x 1019–1270) | As in M2, then "Artillery wagon kits: 1 · armoured locomotive kits: 0 · armoured wagon kits: 0 · rail shells: 40" (y≈383–398), **Deploy artillery train** (≈825, 417), Armoured (≈782, 437), the hint, Rail lines. |
 | Train panel, artillery | x 1026–1273, y 183–375 | "Artillery train N", "HP 1000/1000, coal 20", the position line, the state, "Stance:" **Hold fire** (≈1096, 274) and **Bombard [B]** (≈1162, 274; yellow when on), the gun line "Shells: 19 · next shot in 10 s · last target: City Center (86 tiles)" (y≈294–309), Resume (≈1058, 328), Disband (≈1110, 328), the hint. |
 | Market panel | x 310–970, from y 180 | As in M2 (× ≈951, 195; Tax ≈517, 227); row 3 (y≈265): Commerce bar and **Trade at** drop-down (≈800, 265). With an own port selected: **Mercenaries (₡ 600)** (≈370, 285), then "Mercenaries again in 600 s."; goods rows from y≈351, 22 px apart, Sell (≈770), **Buy** (≈821). The drop-down list opens under it: your port (≈800, 286), then every city-state, "Free City of Mardor (×1.30, +0)" from (≈800, 307), 21 px per entry. With a city-state selected a yellow hint "City-state Free City of Mardor: relation +0, its goods at ×1.30. …" (two lines) replaces the Mercenaries row; goods rows from y≈360; "At port" shows what the city-state sells. |
-| F10 menu | dialog x 482–797 | "Menu", the match line (two lines), "Match time: mm:ss", **Restart** (≈533, 445), Concede, Resume. |
+| F10 menu | dialog x 482–797 | "Menu", the match line (two lines), "Match time: mm:ss", **Restart** (≈533, 445), Concede, Resume. In a Skirmish match the line is one line and Restart is at (≈533, 438). |
 
 **Build menu, Nation mode, M3** (x≈1067, 1098, 1129, 1160, 1191, 1222, 1253; row 1 y≈711, row 2 y≈742, row 3 y≈773):
 
