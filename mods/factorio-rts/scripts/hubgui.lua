@@ -177,6 +177,30 @@ local function build_hub(player, g, un)
   place(player, frame)
 end
 
+-- Economy 0.1.1 (#10): the colour of a count. Yellow: below the selected hub's own Keep (not the network's largest Keep:
+-- "809 / Keep 400" read yellow while another hub of the network kept 1,000). Green: above the network's export level
+-- (what haulers take away; a network's level is the largest Export above of its hubs, at least its Keep). The count's
+-- tooltip names the network's levels when its hubs share it. Returns "yellow" | "green" | "white", tooltip | nil.
+function hubgui.count_colour(entry, own_policy, item, n)
+  local own = own_policy and own_policy.keep[item]
+  local net_keep = entry and entry.keep[item]
+  local export = entry and entry.export[item]
+  local colour = (own and n < own) and "yellow" or ((export and n > export) and "green" or "white")
+  local tooltip
+  if entry and #entry.hubs > 1 and (net_keep or export) then
+    local lines = {""}
+    if net_keep and net_keep ~= own then
+      lines[#lines + 1] = {"rts.hubgui-count-net-keep", net_keep}
+    end
+    if export then
+      if #lines > 1 then lines[#lines + 1] = "\n" end
+      lines[#lines + 1] = {"rts.hubgui-count-net-export", export}
+    end
+    if #lines > 1 then tooltip = lines end
+  end
+  return colour, tooltip
+end
+
 local function refresh_hub(player, g)
   local un = g.un
   local rec = logistics.hub_rec(un)
@@ -203,13 +227,14 @@ local function refresh_hub(player, g)
     el.network.style.font_color = COLOR.red
   end
   local net = entry and entry.network
+  local own = logistics.policy(un)
   for item, count in pairs(g.rows) do
     if count.valid then
       local n = (net and net.valid) and net.get_item_count(item) or 0
       count.caption = tostring(n)
-      local keep = entry and entry.keep[item]
-      local export = entry and entry.export[item]
-      count.style.font_color = (keep and n < keep) and COLOR.yellow or ((export and n > export) and COLOR.green or COLOR.white)
+      local colour, tooltip = hubgui.count_colour(entry, own, item, n)
+      count.style.font_color = COLOR[colour]
+      count.tooltip = tooltip or ""
     end
   end
   local home, inbound = 0, 0
@@ -481,6 +506,12 @@ camera.add_selftest_step(1000, "logistics_setup", function(player)
   hubgui.refresh(player.index)
   util.log("hubgui selftest: hub #%d at %s, hauler #%s, hub selected", hub.unit_number, util.pos_str(hub.position),
     tostring(st.hauler))
+  -- Economy 0.1.1 (#10): the stone count is coloured against this hub's Keep 30, not a larger Keep of the network
+  local entry = logistics.entry_for_hub(hub.unit_number)
+  local n = entry and entry.network.valid and entry.network.get_item_count("stone") or 0
+  local colour, tip = hubgui.count_colour(entry, logistics.policy(hub.unit_number), "stone", n)
+  util.log("hubgui selftest: stone %d, own keep 30, network keep %s, %d hubs -> %s%s", n,
+    tostring(entry and entry.keep.stone), entry and #entry.hubs or 0, colour, tip and " (network tooltip)" or "")
 end)
 
 camera.add_selftest_step(1050, "logistics_screenshot_hub", function(player) camera.screenshot(player) end)
