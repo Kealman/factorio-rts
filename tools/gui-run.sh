@@ -2,6 +2,7 @@
 # Create a fresh save with the given mods dir and launch the real GUI client for up to CAP seconds
 # (or until the log contains STOP_MARKER). Opens a window on this Mac; Steam must be running.
 # Usage: tools/gui-run.sh <mods-dir> [cap-seconds=120] [stop-marker='SELFTEST done'] [grep-pattern='\[rts']
+# Env: RTS_WINDOW=<w>x<h> (default 1280x800) sets the window size, e.g. 1920x1080 for tools/showcase.sh.
 set -u
 source "$(dirname "$0")/factorio-env.sh"
 cd "$RTS_ROOT"
@@ -13,7 +14,7 @@ SAVE="$RTS_BUILD_DIR/$RUN_ID-gui.zip"; LOG="$RTS_BUILD_DIR/$RUN_ID-gui.log"
 rm -f "$SAVE"
 "$FACTORIO_BIN" -c "$CFG" --mod-directory "$MODS_DIR" --create "$SAVE" > "$RTS_BUILD_DIR/$RUN_ID-gui-create.log" 2>&1 \
   || { echo "save creation failed, see $RTS_BUILD_DIR/$RUN_ID-gui-create.log"; exit 1; }
-"$FACTORIO_BIN" -c "$CFG" --mod-directory "$MODS_DIR" --load-game "$SAVE" --window-size 1280x800 --disable-audio > "$LOG" 2>&1 &
+"$FACTORIO_BIN" -c "$CFG" --mod-directory "$MODS_DIR" --load-game "$SAVE" --window-size "${RTS_WINDOW:-1280x800}" --disable-audio > "$LOG" 2>&1 &
 PID=$!
 echo "started pid $PID at $(date +%T)"
 for i in $(seq 1 "$CAP"); do
