@@ -512,3 +512,49 @@ Order once the port is in HEAD:
 
 Compare each number with section 4 (dad7a40 on 2.0.77); a change of the engine moves per-seed AI outcomes (section 7
 item 11), so judge the criteria, not line identity.
+
+### 9.1 Results on 2.1
+
+**Skirmish matrix, the new baseline** (`KEEP_TREE=<5a2cdcc> SEED=777 build/m3i-tools/matrix-batched.sh m3i-p21`; later
+Skirmish identity checks compare with `mx-m3i-p21-*`): 0 Lua errors in all ten scenarios.
+
+| Scenario | 2.1 (5a2cdcc) | 2.0 m2-ready |
+|---|---|---|
+| 1v1-easy-medium | 23/23 | 23/23 |
+| 1v1-hard-medium | 23/23 | 20/23 |
+| 1v1-normal-medium | 23/23 | 23/23 |
+| 1v1-normal-small-nosa | 22/22 (rts-ai-1 won: the match ended) | 23/23 |
+| 1v1-normal-small-restart | 23/23 | 22/23 |
+| 1v2-normal-medium | 31/31 | 31/31 |
+| 1v3-normal-small | 39/39 | 39/39 |
+| 1v3-normal-small-stress | 36/38 (produce at 60-70 units, as on 2.0) | 34/38 |
+| legacy-units, legacy-units-nosa | 65/65, 65/65 | 65/65, 65/65 |
+
+**The re-acceptance on HEAD 33eb037** (the port f37d073, this package's 5a2cdcc and 552ee2c, m3-ai's 33eb037; Factorio
+2.1.23; `build/m3i-tools/final.sh 33eb037 p21 e2e m2 m1 m1b sl det scene`, outputs `build/m3i-p21-*`): 0 Lua errors in
+every run.
+
+| Criterion | 2.1 (33eb037) | 2.0 (dad7a40, section 4) |
+|---|---|---|
+| 801-805: trade, war, peace, capture, starving | 5 of 5 (wars 4-10, captures 5-10, starving 0) | 5 of 5 |
+| 801-805: speed-1 minutes | 60.0 s in all | 60.0 s |
+| 801-805: debt stage / credit line | 1 of 5 (805 rts-ai-3, stage 1) / nobody | 1 of 5 / nobody |
+| 801-805: three cities linked by 35:00 | 14 of 20 | 10 of 20 |
+| 801-805: operations with phases | 20 of 20 | 19 of 20 |
+| 801-805: fort belts built / air patrols | 5 of 5 / 3 of 5 seeds | 5 of 5 / 3 of 5 |
+| 801-805: Age III by 40:00 | **0 of 5** (leaders 41:37, 40:07, 44:52, 41:50, 43:46) | 2 of 5 |
+| 801-805: tax switches per nation-hour | 1.00-1.50 | 1.00-1.25 |
+| M2 701-705: trade, war, peace, capture | 5 of 5 | 5 of 5 |
+| M2 701-705: starving | **0 of 5** (m3-ai's coal fix and the hauler fuel rule) | 2 of 5 |
+| M1 501 (twice: SPEED 8 and 10, 58,842 lines, 0 differing) | **50/53**: cars_rts-player (no armoured car), age2_rts-ai-1 (20:16, deadline 20:00; on every 2.1 tree), train_items 10,545 (5a2cdcc: 19,397; with the hauler fuel rule 14,949) | 52/52 |
+| Save/load at 20 and 40 (seed 802) | 0 errors in all four halves; both loaded games reach the same minute 60-61 state | the same |
+| Determinism (801, 802; 30 minutes) | 214 and 210 event lines, 0 differing | 214 and 209, 0 |
+| Perf scene | wholeUpdate 1.435 ms (p99 5.68), UPS capacity 697, realtime 60.0 s per minute; AI 0.269 ms/tick (0.067 per nation), M2 0.029, M3 0.018; script ticks over 3 ms: commander.run 18 (worst 5.87), market.ai_step 3 (worst 4.40) | 1.369 ms, 731; commander.run 17, market.ai_step 1 |
+| Heavy mode (10 minutes) | ticks 3,600-4,200, 0 desyncs: PASS | PASS |
+| LAN (two clients) | 0 desyncs; 33 and 25 checksums equal to the server's: PASS | PASS |
+| GUI pass EN / RU | **53/53** / 48/53 (the Russian layout's coordinates: extractor, the air panel's ×, Hire, the Steel works site; the AA ghost placed by the Russian coordinates was not built within 40 s) | 52/53 / 48/53 |
+| Skirmish matrix | the new baseline, section 9.1 above | — |
+
+Open on 2.1 (added to section 7): Age III by 40:00 0 of 5 (the leaders 0:07-4:52 late); M1 501 50/53 (the age2
+deadline by 16 s on the new engine, the player AI's armoured car and train volume); market.ai_step's ledger slice over
+3 ms in 3 ticks of the scene.
