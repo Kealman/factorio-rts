@@ -626,3 +626,15 @@ Open after the round: M1 501 train_items (13,506 of 20,000; the match diverges a
 perf scene, the engine's Steam networking crash on a LAN client connect (once in three 2.1 LAN runs), and the hauler
 fuel rule reading the drop-off's coal at departure, not at arrival (section 10: a hauler can leave on coal the
 drop-off spends before it gets there).
+
+## 11. Findings from the release showcase (2026-10-24, rel-showcase)
+
+Two UX items seen while staging the release screenshots on 2.1, recorded for the next round (no code changed):
+
+1. **Hauler destination lines on the map.** In the map view the engine draws a straight line from every hauler to its
+   next stop, up to 1,000 tiles long; with many haulers the map reads as clutter. The showcase hid them for the two map
+   captures only (autopilot destinations cleared); players see them. Candidate: draw our own short direction marker and
+   suppress the vanilla line, or hide the lines beyond a zoom level.
+2. **Stockpile panel colour.** A count turns yellow when it is below the network's largest Keep, not the selected hub's
+   own Keep, so "809 / Keep 400" shows yellow. Consistent with the code, confusing to read; colour against the hub's own
+   Keep (or say which Keep is meant).
