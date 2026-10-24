@@ -188,6 +188,15 @@ hauler.order = "z[rts]-hauler"
 hauler.map_color = {r = 0.35, g = 0.65, b = 1}
 hauler.friendly_map_color = {r = 0.35, g = 0.65, b = 1}
 hauler.enemy_map_color = {r = 1, g = 0.15, b = 0.1}
+-- Economy 0.1.1 (#9): the engine draws a line on the map from every hauler to its next stop (up to 1,000 tiles); no
+-- prototype or runtime switch hides it on 2.1 (a width of 0 or less is drawn at 1 px, in the vehicle's colour with its
+-- alpha ignored), so the line is as thin as the engine allows (vanilla 2 px) and the destination markers are gone; the
+-- hauler panel draws the way of the selected haulers instead (scripts/hubgui.lua)
+if hauler.graphics_set then
+  hauler.graphics_set.autopilot_path_visualisation_on_map_line_width = 0
+  hauler.graphics_set.autopilot_destination_on_map_visualisation = nil
+  hauler.graphics_set.autopilot_destination_queue_on_map_visualisation = nil
+end
 for _, key in pairs({"minimap_representation", "selected_minimap_representation"}) do
   if hauler[key] then hauler[key].scale = 0.3 end
 end

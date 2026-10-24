@@ -63,8 +63,55 @@ local function wanted(player)
   return "hauler:" .. haulers[1], "hauler", haulers[1], haulers
 end
 
+-- Economy 0.1.1 (#9): the engine's own map line from every hauler to its next stop (up to 1,000 tiles) cannot be hidden
+-- and is drawn as thin as the engine allows (prototypes/logistics.lua: 1 px, no destination markers); while the hauler
+-- panel is open, the way of each selected hauler to its next stop is drawn clearly (2 px), on the map only and for this
+-- player only (at most ROUTE_LINES haulers), refreshed with the panel.
+-- g.routes = {[hauler un] = {obj = LuaRenderObject, x, y}}.
+local ROUTE_LINES = 25
+local ROUTE_COLOR = {r = 0.35, g = 0.65, b = 1, a = 0.9}
+local ROUTE_STATES = {to_pickup = true, to_dropoff = true, to_home = true, parked = true}
+
+local function clear_routes(g)
+  for _, r in pairs(g.routes or {}) do
+    if r.obj and r.obj.valid then r.obj.destroy() end
+  end
+  g.routes = nil
+end
+
+local function draw_routes(player, g)
+  local routes = g.routes or {}
+  g.routes = routes
+  local keep, n = {}, 0
+  for _, un in ipairs(g.haulers or {}) do
+    if n >= ROUTE_LINES then break end
+    local h = logistics.hauler(un)
+    local dest = h and h.entity.valid and ROUTE_STATES[h.state] and h.dest
+    if dest then
+      n = n + 1
+      keep[un] = true
+      local r = routes[un]
+      if not (r and r.obj and r.obj.valid) then
+        routes[un] = {x = dest.x, y = dest.y, obj = rendering.draw_line({color = ROUTE_COLOR, width = 2,
+          from = h.entity, to = {dest.x, dest.y}, surface = h.entity.surface, players = {player.index},
+          render_mode = "chart"})}
+      elseif r.x ~= dest.x or r.y ~= dest.y then
+        r.obj.to = {dest.x, dest.y}
+        r.x, r.y = dest.x, dest.y
+      end
+    end
+  end
+  for un, r in pairs(routes) do
+    if not keep[un] then
+      if r.obj and r.obj.valid then r.obj.destroy() end
+      routes[un] = nil
+    end
+  end
+end
+
 local function destroy(g)
   if g.frame and g.frame.valid then g.frame.destroy() end
+  clear_routes(g)
   g.frame, g.el, g.rows, g.key, g.kind, g.un, g.haulers = nil, nil, nil, nil, nil, nil, nil
 end
 
@@ -340,6 +387,7 @@ local function refresh_hauler(player, g)
   local delivered = items_text(h.delivered)
   el.delivered.caption = {"rts.hauler-delivered", h.trips or 0, delivered or "-"}
   el.resume.enabled = h.state == "parked"
+  draw_routes(player, g)
   return true
 end
 
