@@ -504,7 +504,7 @@ This is a first public version. The lists below come from the acceptance notes o
 - Only macOS (Apple silicon, Steam) has been played. On Linux only the headless autotests have run (in Docker), and Windows is untested. Reports from either are welcome (see [Requirements](#requirements)).
 - The mod is meant to run alone, in a new game. Compatibility with other mods is untested.
 - Performance was measured on one Apple-silicon Mac. There a 4-nation scene with 16 cities, about 600 units and 40 trains runs at 60 UPS, but a few AI ticks take 4-6 ms, which a slower machine may feel as a short stutter.
-- A 4096 world with 6 nations blocks for about 5 seconds at the start while the core of the world is planned and generated. The rest of a 4096 world takes about 6½ minutes to fill in the background.
+- A 4096 world with 6 nations blocks for about 5 seconds at the start while the core of the world is planned and generated. The rest of a 4096 world takes about 4 minutes to fill in the background.
 - Multiplayer with two humans connected at the same time is untested (see [Multiplayer](#multiplayer)). One of three local test sessions on Factorio 2.1 saw a client crash inside the engine's Steam networking start-up before the first game tick; the rerun was clean.
 
 **Nation AI and balance**

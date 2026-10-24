@@ -125,3 +125,36 @@ other mods, single or multiplayer, mode and lobby settings, the seed (`/seed`), 
 `[rts]` log lines and `factorio-current.log`, with its path on Windows, macOS and Linux.
 
 The issue's acceptance includes a confirmation from a Windows tester, which is still open.
+
+## 3. 2.1 baselines (#13)
+
+The details are in the 2.1 sections at the end of `phase5-world3-notes.md` and `phase5-divisions-notes.md`. In short:
+
+| Baseline | 2.0.77 | 2.1.23 |
+|---|---|---|
+| World identity, 20 seeds x 4 nations at 2048 | reference | plans, sites, scores and 260 check lines identical; tile counts identical in 19 of 20 (one more ore entity on one seed) |
+| Other seed matrices: 2048 x 2/3/4, 3072 x 4, 3072 x 5/6, 4096 x 4/5/6 | 117/117, 38/39, 52/52, 78/78 | 117/117, 39/39, 52/52, 78/78; identical plans and sites, differences explained |
+| Background fill, 4096 x 6 | 375-381 s | **244.1 s** (66.4 chunks per game second) |
+| Background fill, 3072 x 4 | 212-214 s | **136.8 s** |
+| Background fill, 2048 x 4 (legacy order) | 84-87 s | **54.0 s** |
+| Save at 2:00 mid-fill and load, 4096 x 6 | 22/22 | 22/22, fill ends at the same 244 s |
+| Group path cost (2,048-tile march, slowest pathfinder ticks) | 12.5, 10.1, 10.0 ms | 12.7, 10.7, 10.5 ms |
+| Mass orders, engine A/B in Docker (mean ms/tick) | 3.46 / 3.54 | 3.33 / 3.69 |
+| Divisions functional test | 25/25 | 25/25 |
+
+The pathfinder budgets stay as they are, so no `balance.lua` hunk follows. The lobby's fill-time estimate went to r2-ux
+as a hunk. The README's Known limitations line now gives about 4 minutes for a 4096 world.
+
+### Running a tool in the Linux image
+
+The image of `tools/linux/Dockerfile` runs any runner that sources `tools/factorio-env.sh` and only needs bash,
+python3 and coreutils. This is how the engine A/B ran `tools/divisions-bench.sh` on 2.0.77 and on 2.1.23. A 2.0.77
+image builds from `build/linux/dl-2.0.77-linux64/` with the same Dockerfile. For 2.0, mount a mod list without
+`recycler` over `/rts/mods`.
+
+```sh
+docker run --rm --platform linux/amd64 --user "$(id -u):$(id -g)" -e KEEP_TREE=/mod -e RTS_BUILD_DIR=/tmp/rts-build \
+  -v "$PWD:/rts:ro" -v "$PWD/build/r2p-tree-ae708bc/mods/factorio-rts:/mod:ro" -v "$PWD/build/linux/ab:/out" \
+  factorio-rts-headless:2.1.23-amd64 bash -c "/rts/tools/divisions-bench.sh ab-mass \
+  '{mode = \"mass\", n = 1000, half = 512, start = 120}' 1800 > /out/ab-mass.txt 2>&1; cp -R /tmp/rts-build/ab-mass-out /out/"
+```

@@ -363,3 +363,48 @@ gives the M2 tree's worlds (20 of 20 seeds checked) and, at seed 501, the M2 tre
 3. **6 AIs on 4096** were only run for the 6-7 minutes of the fill; their game (long marches, 1,300 tiles between
    capitals) is m3-ai's and m3-perf's measurement.
 4. **`cities.lua` and `ai/towns.lua` may pick a site on ungenerated ground** at 4096 (proposed hunk above).
+
+## Factorio 2.1 baseline (release 0.1.1, #13)
+
+Date: 2026-10-24. Factorio 2.1.23 (build 87750, mac-arm64, Steam), Space Age on. Agent: `r2-platform`. Tree: the
+release tree `git archive ae708bc` (`build/r2p-tree-ae708bc/`). Each run below repeats a 2.0.77 run above with the same
+map seed. Load 7-12 from other agents' runs, as in the 2.0 rounds. These numbers are the new reference; the 2.0
+columns stay for comparison.
+
+**Verdict.** Worlds are the same on 2.1: plans, sites, scores and check lines are identical. Tile counts are identical
+too, except that 2.1 places one more ore entity on 3 of 32 worlds of up to 2048 tiles. The engine fills chunks about
+1.55 times faster (66-67 chunks per game second at 60 UPS, against 42-43), so a 4096 x 6 world is complete after
+244 s of game time instead of 375-381 s. Every check passes.
+
+### World 3 probe (`tools/world3-run.sh`, AIs playing, speed 1)
+
+| Run (map seed) | 2.0.77 | 2.1.23 |
+|---|---|---|
+| 4096 x 6, world seed 40967 (`SEED=40966 PERF=1`; `fin-w3-huge` / `w21-huge`) | 21/21; core 486 chunks in 2.78 s; fill 381 s; every feature placed 32 s in; city-states founded 7.7-17.9 s in | **21/21**; core 486 in 2.77 s; fill **244.1 s** at 60.0 UPS (66.4 chunks/s); every feature 21 s in; city-states 5.0-11.6 s; planning 2.14 s |
+| 4096 x 6, save at 2:00 and load (`w3-huge-sl` / `w21-huge-sl`) | 22/22; 5,323 chunks at the save; fill 378.6 s | **22/22**; 8,061 chunks at the save; fill done at 244 s after the load, as without the save; 60.0 UPS before and after |
+| 3072 x 4 Survey, world seed 30725 (`SEED=30724 SURVEY=1`; `fin-w3-3072s` / `w21-3072s`) | 21/21; core 324 in 1.84 s; fill 214 s; features 22 s in; city-states 5.8-13.3 s | **21/21**; core 324 in 1.82 s; fill **136.8 s** (67.1 chunks/s); features 14 s in; city-states 3.8-8.6 s; planning 1.31 s |
+| 2048 x 4, legacy order (`SEED=20481`; 2.0: `w3-2048L`, another seed) | 21/21; core 676 in 2.84 s; fill 84.0 s | **21/21**; core 676 in 2.41 s; fill **54.0 s**; every feature 51 s in; city-states 7.6-8.2 s |
+
+The plan lines (`world: planned`, `world: M2 plan`) of the 4096 and 3072 worlds are identical to 2.0. The 160-chunk
+window now holds about 2.4 s of engine work instead of 4 s, still enough to keep the engine busy.
+
+### Seed matrices (`tools/world-seeds.sh`, forced fill)
+
+| Matrix (map seed; 2.0 / 2.1 run) | 2.0.77 | 2.1.23 | Same as 2.0? |
+|---|---|---|---|
+| 20 seeds x 4 nations, 2048 (`SEED=20261016`; `fin-w3-ident20` / `w21-ident20`) | 260/260; start 3.49 / 4.04 / 4.68 s (min / median / max); forced fill 8.5-8.9 s | **260/260**; start 3.45 / 3.51 / 3.55 s; forced fill 8.6-8.9 s | 40 plan lines, 20 site and score lists and 260 check lines identical. Tile and entity counts are identical in 19 of 20 worlds. Seed 20261026 has 6,071 ore entities instead of 6,070 (every other seed has 6,071). |
+| 3 seeds x 2/3/4 nations, 2048 (`SEED=31337`; `fin-w3-ident` / `w21-m234`) | 117/117; start medians 2.09 / 2.90 / 4.10 s | **117/117**; start medians 1.75 / 2.59 / 3.13 s | 18 plan lines, the sites, scores and 117 check lines identical. Counts identical in 7 of 9; two worlds have one more ore entity (4,576 against 4,575 and 6,071 against 6,070). |
+| 3 seeds x 4 nations, 3072 (`SEED=30724`; `w3-3072m2` / `w21-3072m`) | 38/39 (`world_claimable`, fixed later: deviation 9) | **39/39**; start 3.01 / 3.03 / 4.81 s; forced fill 21.2-29.3 s | Sites and scores identical. The background order follows engine timing, so chunk seams differ: up to 6 marsh tiles, 5 trees and 1 ore entity per world. |
+| 2 seeds x 5/6 nations, 3072 (`SEED=50561`; `w3-56b` / `w21-56b`) | 52/52; start 4.4-13.2 s; forced fill 20.9-25.4 s | **52/52**; start 3.2-4.5 s; forced fill 20.2-21.1 s | Sites, scores and city-states identical (the check lists them in founding order, which changed). Counts within 0.01 %. |
+| 2 seeds x 4/5/6 nations, 4096 (`SEED=40961`; `w3-4096m` / `w21-4096m`) | 78/78; start 5.5-8.2 s; forced fill 38-53 s | **78/78**; start 3.9-5.4 s; forced fill 38.2-41.0 s | 4 nations: sites and city-states identical. 5-6 nations: one more port, so one more site, real-tile target and chart label. Deviation 10 (one port per nation) came after this 2.0 run, so this is the mod, not the engine. Cliffs within 0.14 %, trees within 0.05 %. |
+
+Starts got faster on 2.1 in every matrix. The 2.0 rows ran under heavier load, so part of the gain is the machine.
+
+### Consequences
+
+- **Lobby estimate.** `scripts/lobby.lua` computes the "about N min" line from 42 chunks per second, so it says 7 min
+  for 4096 where the fill takes about 4. A hunk with 64 chunks per second (5 / 3 / 2 min with `math.ceil`) went to
+  r2-ux, who owns the lobby.
+- **README.** The Known limitations line now says the rest of a 4096 world takes about 4 minutes.
+- **Same-seed runs from before the port** still compare only in aggregate (port21 notes, section 5.1): with
+  the faster fill, city-states and features appear at other ticks, so match logs diverge from minute 3.

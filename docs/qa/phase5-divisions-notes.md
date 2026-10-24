@@ -280,3 +280,72 @@ with divisions 1 of 4.
    26). If m1-cities changes the list's frame name or top, `divisiongui.lua`'s `CITY_LIST*` constants must follow.
 7. **The 2,048-tile numbers come from lab tiles with water bands,** not the generated world. Trees, cliffs and
    mountain passes will make paths more expensive.
+
+## Factorio 2.1 baseline (release 0.1.1, #13)
+
+Date: 2026-10-24. Factorio 2.1.23 (build 87750), Space Age on. Agent: `r2-platform`. Tree: the release tree
+`git archive ae708bc`, whose `scripts/divisions.lua` and `scripts/orders.lua` are identical to the last 2.0 tree
+(`build/port21/baseline-factorio-rts`). The benches repeat the 2.0 runs with the same configurations, tick counts and
+map seed 4242 (`build/p5div-*-out`). The 2.0 statistics below are recomputed from those per-tick files with the
+runner's own formulas, and they match the table above.
+
+**Verdict: the pathfinder budgets stay.** A group path costs the same on 2.1. The 2048-tile march's slowest pathfinder
+ticks are 12.7, 10.7 and 10.5 ms, against 12.5, 10.1 and 10.0 ms on 2.0, with 19 ticks over 5 ms on both. The queue
+drains exactly as on 2.0. So `unit_budget` 100, `group_budget` 4 and `group_inflight` 2 need no retuning, and no hunk
+for `balance.lua` follows.
+
+### Native benches (macOS, load 7-12)
+
+| Scenario (`tools/divisions-bench.sh`) | 2.0.77 | 2.1.23 |
+|---|---|---|
+| 4 x 12 x 16 march, 1,024 tiles (half 512), 200-tile legs, burst 3600, 5,400 ticks | mean 1.71 ms, p95 2.06, worst order tick 7.8; pathFinder mean 0.046, max 6.1 | mean **1.76**, p95 2.13, worst order tick **7.99** (PASS); pathFinder mean 0.062, max 6.5 |
+| The same on 2,048 tiles (half 1024), 400-tile legs, 7,200 ticks | mean 1.66, p95 1.96, worst order tick 13.1; pathFinder max 12.5, 19 ticks over 5 ms | mean **1.72**, p95 2.01, worst order tick **13.41** (PASS); pathFinder max 12.7, 19 ticks over 5 ms |
+| `orders.move` of 1,000 loose walkers, 1,800 ticks | mean 2.11, p95 2.65, worst order tick 14.4 | 3 runs: mean 3.5-5.4; worst order tick 15.9-40.7 (FAIL in 2 of 3) |
+| 1,008 walkers in 63 divisions, one router order, 1,800 ticks | mean 2.09, p95 2.50, worst order tick 12.1 | 2 runs: mean 3.4-4.9; worst order tick 25.4-56.7 (FAIL) |
+| Functional test (`MODULE=divisions_func`, 20,000 ticks) | 25/25 | **25/25** |
+
+Identical behaviour in both marches: 48 of 48 arrivals per leg, 0 group failures, no unit more than 25 tiles from its
+division at the end, and the same queue lines ("drained 46 queued commands in 47 ticks", 900 in 10 ticks for the mass
+order, 61 in 63 for the division order).
+
+**The mass rows are machine noise, not a 2.1 regression.** In both mass scenarios on 2.1 the extra time sits in the
+engine's `SpiderUnit` entity update (2.1's benchmark output has per-type columns). It comes in phases of 4-7 ms per
+tick that start at a different tick in each run of the same deterministic save, at tick 600, 750 or 1,200. Seven or
+more Factorio processes of other agents ran on this 6 performance + 6 efficiency core machine, and one GUI client used
+600 % CPU. A thread moved to an efficiency core would show exactly this pattern. The engine comparison below settles
+it.
+
+### Engine A/B in Docker (same machine, same moment)
+
+Both engines run as the x86-64 Linux headless build, emulated on Apple silicon (2.0.77 has no ARM64 Linux build), in
+`tools/linux/Dockerfile` images. The scenarios were interleaved in 4 rounds, so each engine saw the same load.
+Medians of 4 runs:
+
+| Scenario | Engine and tree | Mean ms/tick (each run) | entityUpdate mean | pathFinder mean | Worst order tick |
+|---|---|---|---|---|---|
+| 1,000 loose walkers | 2.0.77, last 2.0 tree | 3.46 (3.41, 3.48, 3.43, 7.62) | 2.88 | 0.135 | 33.1-59.1 |
+| 1,000 loose walkers | 2.1.23, release tree | **3.33** (3.33, 3.31, 3.33, 5.36) | 2.85 | 0.150 | 32.8-41.7 |
+| 1,000 loose walkers | 2.1.23, 2.1 vanilla steering | 3.65 (3.53, 3.41, 3.78, 4.47) | 3.14 | 0.155 | 32.8-37.9 |
+| 63 divisions | 2.0.77, last 2.0 tree | 3.54 (3.41, 3.38, 3.68, 4.11) | 2.99 | 0.033 | 31.4-37.1 |
+| 63 divisions | 2.1.23, release tree | **3.69** (3.54, 3.61, 3.77, 4.15) | 3.25 | 0.046 | 31.3-35.0 |
+| 63 divisions | 2.1.23, 2.1 vanilla steering | 3.91 (3.76, 3.73, 4.06, 4.52) | 3.46 | 0.059 | 31.8-34.3 |
+
+- **Same cost on both engines.** 2.1 is 4 % faster on the loose order and 4 % slower on the division order, inside the
+  run-to-run spread.
+- **The worst tick is the order tick itself** (tick 120), on both engines: about 20 ms of pathfinding and 12 ms of
+  script under emulation, which runs about 2.3 times slower than native. Natively that tick is the 14.4 and 12.1 ms of
+  the 2.0 table.
+- **Steering.** The 2.0 steering that the port restores on RTS units (port21 notes, item 13) costs 6-9 % less than
+  2.1's vanilla steering in these crowds, which is one more reason to keep it.
+
+Rerun:
+
+```sh
+tools/divisions-bench.sh div-march '{mode = "march", forces = 4, divs = 12, half = 1024, leg = 400, start = 120,
+  burst = 3600, comp = {{"rts-walker", 10}, {"rts-walker-heavy", 3}, {"rts-raider", 3}}}' 7200
+# engine A/B in Docker: run tools/divisions-bench.sh inside the images of tools/linux/Dockerfile with
+# KEEP_TREE=/mod RTS_BUILD_DIR=/tmp/rts-build (docs/qa/phase5-r2-platform-notes.md section 3)
+```
+
+On a loaded Apple-silicon machine, read native wall-clock benches as upper bounds, and repeat a surprising one before
+acting on it.
