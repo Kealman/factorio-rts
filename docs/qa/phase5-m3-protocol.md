@@ -217,6 +217,13 @@ complex can take a suggested site: then use the mirror site on the other side of
 
 ### Glossary (English → Russian)
 
+**Russian layout (0.1.1).** A Russian client (`RTS_LOCALE=ru`) has the same coordinates as the English one except the
+build menu's tabs, whose captions are wider: **Экономика** (≈1082, 684), **Производство** (≈1151, 684), **Оборона**
+(≈1214, 684) and the Age II icon tab (≈1249, 684), and the air panel's × (≈1256, 226), because that panel is wider. The
+items of each tab stay where they are in English. `tools/probes/m3_docs_gui.lua` keeps both layouts in its `LAYOUT`
+table; its Russian pass is in `docs/qa/phase5-r2-ux-notes.md` section 4. The terms below follow the glossary of that
+section (держава, ж/д депо, полевой склад, дивизия, казармы, комплект/набор, дроны).
+
 | English | Russian |
 |---|---|
 | Factorio RTS: new match; Mode; Nation; Nations; Map size; World (2048×2048); Start map; Explore; Survey | Factorio RTS: новый матч; Режим; Держава; Держав; Размер карты; Мир (2048×2048); Карта на старте; Разведка; Съёмка |
@@ -224,7 +231,7 @@ complex can take a suggested site: then use the mirror site on the other side of
 | World 2048×2048 (4096 chunks): the land around every capital, city-state and port is ready … | Мир 2048×2048 (чанков: 4096): земля вокруг каждой столицы, города-государства и порта готова к началу матча … |
 | World: 8 % generated | Мир: создано 8 % |
 | How to play; Age III and money; Fronts and fortifications; Air; Keys | Как играть; III эпоха и деньги; Фронты и укрепления; Авиация; Клавиши |
-| Age II; Age III; A new age for your nation: Age III: Modern | Эпоха II; Эпоха III; Новая эпоха для вашей державы: III эпоха: современность |
+| Age II; Age III; A new age for your nation: Age III: Modern | II эпоха; III эпоха; Новая эпоха для вашей державы: III эпоха: современность |
 | Research; Needs Age III; Researching: Chemistry (0 %); Rush; Stop rush (₡ 174/min) | Изучить; Нужна III эпоха; Исследуется: Химия (0 %); Ускорить; Не ускорять (₡ 174/мин) |
 | City ledger; Start the Space Program; Space Program stage 1/3: 42 % delivered from the capital's network.; Stage 1/3 | Городской реестр; Начать Космическую программу; Космическая программа, этап 1/3: доставлено 42 % из сети столицы.; Этап 1/3 |
 | Space Program 1/3: 54 % (label on the map); Space Program stage 1 of 3 complete | Космическая программа 1/3: 54 %; Этап 1 из 3 Космической программы завершён |
@@ -234,7 +241,7 @@ complex can take a suggested site: then use the mirror site on the other side of
 | Steel works; Rare extractor; Airfield; AA turret; Gate; Rail depot; Launch complex; City Center | Сталелитейный комбинат; Экстрактор редких ресурсов; Аэродром; Зенитная турель; Ворота; Ж/д депо; Стартовый комплекс; Городской центр |
 | Diplomacy; War; War on AI 1. Our goal: capture Capital | Дипломатия; Война; Война с ИИ 1, цель: захват города Столица |
 | Front 2 · threat 52 · 85 tiles; Hold line; Holding the line (front 2); Front 2 · threat 52 · held by Division 1 | Фронт 2 · угроза 52 · 85 кл.; Держать линию; Держит линию (фронт 2); Фронт 2 · угроза 52 · держит Дивизия 1 |
-| Fort belt; Points: 2 of 6 · 16 tiles; Bill:; AA turrets; Field depot; Undo point; Build; Cancel; Belt 1: 4 of 19 built; Stop | Оборонительная линия; Точек: 2 из 6 · 16 клеток; Смета:; Зенитки; Полевое депо; Убрать точку; Построить; Отмена; Линия 1: построено 4 из 19; Стоп |
+| Fort belt; Points: 2 of 6 · 16 tiles; Bill:; AA turrets; Field depot; Undo point; Build; Cancel; Belt 1: 4 of 19 built; Stop | Оборонительная линия; Точек: 2 из 6 · 16 клеток; Смета:; Зенитки; Полевой склад; Убрать точку; Построить; Отмена; Линия 1: построено 4 из 19; Стоп |
 | Fort belt 1 is built (19 pieces) | Оборонительная линия 1 построена (19 шт.) |
 | Air force; Airfields: 1; Show; Planes; Scout plane; Patrol; Right-click the patrol point; Return to airfield; Selected: 3 plane(s), supply 100-100 | Авиация; Аэродромы: 1; Показать; Самолёты; Самолёт-разведчик; Патруль; Правый щелчок по точке патруля; На аэродром; Выбрано самолётов: 3, запас 100-100 |
 | Airfield of Capital; Planes within 24 tiles: 3 (0 rearming); Magazines: 20 | Аэродром: Столица; Самолётов в 24 клетках: 3 (на заправке: 0); Магазинов: 20 |

@@ -223,3 +223,80 @@ The showcase scenes must keep it out of the release shots: before the first Star
 ```lua
 require("scripts.objectives").set_pref(player.index, false)
 ```
+
+## 4. Issue #17: Russian localisation review
+
+A full read of `locale/ru` (21 files, 1,886 keys after #16) against the English texts and the vanilla Russian names the
+player sees on items and buildings. Key parity is complete: every English key has a Russian one and the reverse, and
+every string keeps the parameters of its English twin (`__1__`, `__2__`, …). The only identical strings are names and
+rich-text templates ("Factorio RTS", "[img=…] __1__").
+
+### 4.1 Glossary (decided and applied)
+
+| English | Russian | Notes |
+|---|---|---|
+| Nation (the mode, a player's state) | **держава** | "Держава" in the lobby, "держав" for the count; the noun "нация" is gone (the mod description said "Нация"). The national project stays **национальный проект**, the usual Russian phrase |
+| Skirmish | схватка | |
+| Command Center, City Center, capital | командный центр, городской центр, столица | |
+| Hub | хаб | |
+| Rail depot; field depot | **ж/д депо** («Депо N» on the map); **полевой склад** | "депо" is only the rail depot; the fort belt panel called the field depot "полевое депо", the building itself "полевой склад" |
+| Division; units; troops | дивизия; юниты; войска | the division panel said "боевые единицы", the war trains "отряды" |
+| Barracks | казармы (plural noun: «из казарм») | |
+| Kit (unit, train, hauler) / science or automation kit | **комплект** / **набор** | several unit kits were "наборы" (barracks page, army surcharge, treasury stages, Armor I) |
+| Construction and logistic robots; roboport | **дроны** (строительные, логистические); **дронстанция** | as in vanilla 2.x Russian; the hub and the Commander were a "робопорт" with "роботами"; the combat Drone stays «Дрон» |
+| Extractor | экстрактор | Mining I/II and the labor family said "добытчики" |
+| Factory | завод | science kits, laser turret and steam research said "фабрика" |
+| Plates; steel plate; stone brick; copper cable; electronic circuit | плиты; **стальная балка**; **каменный блок**; **медный кабель**; электросхема | vanilla item names; the texts said "пластины", "кирпич", "медный провод", "электронная схема" |
+| Steel beam (Age II item) | стальной двутавр | apart from the vanilla steel plate |
+| Age II | **II эпоха** | the age badge said "Эпоха II" |
+| Town tier names | деревня, посёлок, город | "городок" in three texts |
+| Land cells / tiles | ячейки земли / клетки (кл.) | the score said "клетки земли"; "тайлы" only in comments |
+| Attack-move | атака с ходу | the Nation help said "атака с движением", the division state "движется с атакой" |
+| Railway Charter; Space Program; city ledger | Железнодорожная хартия; Космическая программа; городской реестр | the Nation keys said "реестр городов" |
+| Ceasefire, peace, alliance, contract, city-state | перемирие, мир, союз, контракт, город-государство | a city-state's proper name stays «Вольный город X» |
+
+### 4.2 Other fixes
+
+- Districts and families: the labor family tooltips now use the district names ("металлургический и сталелитейный
+  комбинаты", "комбинат схем", "научный городок", "стройкомбинат"), and "Armoured cars" is «бронеавтомобили», not
+  «броневики».
+- The drone's "bites ignore heavy armour" reads «Укусы пробивают тяжёлую броню».
+- "Rare earths" is «Редкие земли» everywhere (one line said «Редкоземельные металлы»); "8x8" became "8×8".
+- A rival's launch no longer guesses a grammatical gender («__1__: ракета запущена, …»).
+- Mid-sentence «командир» is lower case.
+
+### 4.3 Lengths in the panels
+
+From the Russian screenshots of the M3 GUI pass (`build/shots-m3i-p21b-ru/`) next to the English ones:
+
+| Where | Russian before | Fix |
+|---|---|---|
+| City panel | "Уровень: Посёлок, радиус земли 96 клеток (столица)" and "Следующий уровень: Город с 400 жителей (сейчас 200)" wrapped, so the panel was two lines taller and Hire sat 27 px lower than in English | «Уровень: Посёлок, радиус 96 кл. (столица)», «Далее: Город с 400 жителей (сейчас 200)» |
+| Alert lines | "Космическая программа начата рядом со столицей (этап 1)" was cut | «Космическая программа начата (этап 1)» |
+| Age badge | «Эпоха II» | «II эпоха» |
+
+Everything else fits: the lobby, the help page (a scroll pane), the ledger, the market, the diplomacy panel (long
+city-state names are cut with "…" in English too), the train, depot, air and fort belt panels, the objective strip.
+
+### 4.4 GUI pass with per-layout coordinates
+
+`tools/probes/m3_docs_gui.lua` (the M3 protocol's 53 checks with real clicks and keys) now keeps the coordinates that
+differ between the layouts in a `LAYOUT` table chosen by the client's locale: the build menu's four tabs (wider
+Russian captions push them right) and the air panel's ×. Hire, which was 27 px lower in Russian, needs no own
+coordinate any more: the shorter city panel lines give it the English place. The AA check also holds the Commander's
+fire while the bomber flies in: in the first Russian run the Commander's rockets shot the bomber down before the AA
+turret did, which failed the check by luck of the race.
+
+| Run | Tree | Result |
+|---|---|---|
+| `build/m3i-p21b-ru` (before) | 0.1.0 on 2.1 | 48/53: the tabs (Steel works, rare extractor, AA turret), the air panel's ×, Hire |
+| `build/r2-m3a-ru` | the Russian review, per-layout coordinates | 52/53: every coordinate passes; the AA check lost the race to the Commander |
+| `build/r2-m3b-ru` | + the Commander holds fire for the AA check | **53/53**, 0 Lua errors |
+| `build/r2-m3b-en` | the same tree in English | **53/53**, 0 Lua errors |
+| `build/r2-smoke17` | the Russian review | Skirmish smoke 65/65, 0 errors |
+
+No raw key can show: the two locales have the same keys, and every literal locale key in `scripts/` exists in them (a
+static scan; the keys built from a prefix, such as `rts.results-victory-` and the victory mode, were checked by hand).
+The screenshots looked at (lobby, ledger, city, hub, market, diplomacy, belt, train and air panels, help, menu) show
+none either (`build/shots-r2-m3b-{en,ru}/`, `build/shots-r2-m3b-{en,ru}-window/`). The objective strip of #16 shows in these passes' first (Nation) match and covers
+none of the protocol's coordinates.

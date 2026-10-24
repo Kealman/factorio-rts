@@ -45,12 +45,24 @@ local belts = require("scripts.belts")
 local trainswar = require("scripts.trainswar")
 local worldgen = require("scripts.worldgen")
 local garrison = require("scripts.garrison")
+local commander = require("scripts.commander")
 local dbg = require("scripts.debug")
 local qa = require("scripts.m3_qa_cmds") -- the proposed /rts-front and /rts-deposit
 
 local E = "rts-ai-1"
 -- macOS virtual key codes (tools/gui-input/fdrive.swift)
 local KEY = {F = 3, H = 4, X = 7, B = 11, Q = 12, Y = 16, SPACE = 49, ESC = 53}
+
+-- 0.1.1 (r2-ux, issue #17): the coordinates that differ between the English and the Russian layout (game area of the
+-- 1280x800 window, UI scale 0.75), measured from this probe's screenshots; every other coordinate is the same in both.
+-- The build menu's tab captions are wider in Russian, so the tabs sit further right; the air panel is wider.
+local LAYOUT = {
+  en = {tab_economy = {1077, 684}, tab_production = {1131, 684}, tab_defence = {1183, 684}, tab_age2 = {1216, 684},
+        air_close = {1243, 226}, hire = {837, 588}},
+  ru = {tab_economy = {1082, 684}, tab_production = {1151, 684}, tab_defence = {1214, 684}, tab_age2 = {1249, 684},
+        air_close = {1256, 226}, hire = {837, 588}},
+}
+local L = LAYOUT.en -- set from the player's locale by the runner below
 
 local function note(fmt, ...) util.log("m3d probe: " .. fmt, ...) end
 local function check(name, ok, fmt, ...)
@@ -60,6 +72,7 @@ local function drive(fmt, ...)
   storage.m3d_seq = (storage.m3d_seq or 0) + 1
   util.log("RTS_DRIVE %d " .. fmt, storage.m3d_seq, ...)
 end
+local function click_at(name) drive("click %d %d", L[name][1], L[name][2]) end
 
 local function find(el, name)
   if not (el and el.valid) then return nil end
@@ -322,7 +335,7 @@ step(function(player, P)
   return 30
 end)
 -- Age II tab, Steel works (row 1, 5th), the site 12 left / 6 down (448, 496), Q
-step(function(player, P) drive("click 1216 684") return 30 end)
+step(function(player, P) click_at("tab_age2") return 30 end)
 step(function(player, P) drive("click 1191 711") return 30 end)
 step(function(player, P) drive("click 448 496") return 30 end)
 real("build_steel_works", function() drive("key %d", KEY.Q) end, function(player, P)
@@ -391,7 +404,7 @@ step(function(player, P)
 end)
 snap("c07-deposit")
 -- Age II tab, Rare extractor (row 2, 7th), the deposit, Q
-step(function(player, P) drive("click 1216 684") return 30 end)
+step(function(player, P) click_at("tab_age2") return 30 end)
 step(function(player, P) drive("click 1253 742") return 30 end)
 step(function(player, P)
   local x, y = spx(P, P.deposit)
@@ -555,7 +568,7 @@ step(function(player, P)
   dbg.run_command("rts-give", "rts-airfield 1", player.index)
   return 30
 end)
-step(function(player, P) drive("click 1131 684") return 30 end)
+step(function(player, P) click_at("tab_production") return 30 end)
 step(function(player, P) drive("click 1191 742") return 30 end)
 step(function(player, P) drive("click 832 304") return 30 end)
 real("build_airfield", function() drive("key %d", KEY.Q) end, function(player, P)
@@ -617,7 +630,7 @@ real("air_return", function() drive("click 1047 413") end, function(player, P)
 end, function(player) click(player, find_tag(player.gui.screen.rts_airfield_panel, "rts_air", "return")) end, 60)
 step(function(player, P) return 240 end)
 snap("f05-returned")
-real("air_close", function() drive("click 1243 226") end, function(player)
+real("air_close", function() click_at("air_close") end, function(player)
   return player.gui.screen.rts_airfield_panel == nil, "closed"
 end, function(player)
   local f = player.gui.screen.rts_airfield_panel
@@ -630,7 +643,7 @@ step(function(player, P)
   return 30
 end)
 -- Defence tab, AA turret (row 2, 1st), the site 8 left / 8 down (512, 528), Q
-step(function(player, P) drive("click 1183 684") return 30 end)
+step(function(player, P) click_at("tab_defence") return 30 end)
 step(function(player, P) drive("click 1067 742") return 30 end)
 step(function(player, P) drive("click 512 528") return 30 end)
 real("build_aa", function() drive("key %d", KEY.Q) end, function(player, P)
@@ -648,6 +661,13 @@ end)
 snap("f06-aa-page")
 step(function(player, P)
   selection.clear(player.index)
+  -- 0.1.1 (r2-ux): the Commander's rockets shot the bomber before the turret could (RU pass m3a); it holds fire for
+  -- this check (disabled by script) and is let go after it
+  local cmdr = commander.entity(P.F)
+  if cmdr and cmdr.valid then
+    cmdr.disabled_by_script = true
+    P.cmdr_held = cmdr
+  end
   local before = {}
   for _, rec in units.for_force(E) do before[rec.entity.unit_number] = true end
   -- Phase 5 M3 QA fix (F2): 70 tiles east of the AA turret, sent at it (spawned 11 tiles away it bombed the turret
@@ -673,6 +693,7 @@ step(function(player, P)
   end
   check("aa", not (P.enemy and P.enemy.valid) and by_aa, "bomber %s, killed by the AA turret: %s",
     (P.enemy and P.enemy.valid) and "alive" or "dead", tostring(by_aa))
+  if P.cmdr_held and P.cmdr_held.valid then P.cmdr_held.disabled_by_script = false end
   return 30
 end)
 snap("f08-aa-after")
@@ -690,7 +711,7 @@ step(function(player, P)
   return 30
 end)
 -- Economy tab, Rail depot (row 2, 1st), 22 tiles towards the AI town (east: 992, 400), Q
-step(function(player, P) drive("click 1077 684") return 30 end)
+step(function(player, P) click_at("tab_economy") return 30 end)
 step(function(player, P) drive("click 1067 742") return 30 end)
 step(function(player, P) drive("click 992 400") return 30 end)
 real("build_depot", function() drive("key %d", KEY.Q) end, function(player, P)
@@ -761,7 +782,7 @@ real("select_cc_hire", function() drive("click 640 400") end, function(player)
   return player.gui.screen.rts_citygui_frame ~= nil, "city panel"
 end, function(player, P) selection.select_building(player.index, P.cc.unit_number) end, 60)
 snap("h01-city-panel")
-real("hire", function() drive("click 837 588") end, function(player, P)
+real("hire", function() click_at("hire") end, function(player, P)
   return (garrison.of(P.capital_id).hired or 0) > 0, string.format("%.1f hired", garrison.of(P.capital_id).hired or 0)
 end, function(player) click(player, util.pstorage(player.index).citygui.el.a3_hire) end, 60)
 snap("h02-city-hire")
@@ -923,6 +944,7 @@ events.on_nth_tick(15, function()
     storage.m3d_probe = P
   end
   if P.done or game.tick < P.at then return end
+  L = LAYOUT[player.locale] or LAYOUT.en
   local idx = P.i
   P.i = P.i + 1
   local ok, wait = pcall(STEPS[idx], player, P)
