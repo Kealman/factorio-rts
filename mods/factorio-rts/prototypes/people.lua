@@ -217,10 +217,12 @@ farm_e.fixed_recipe = "rts-grain"
 local bakery_e = machine("rts-bakery", {{"furnace", "stone-furnace", 2}}, {"rts-bakery"},
   {r = 1, g = 0.85, b = 0.7, a = 1}, {r = 0.85, g = 0.6, b = 0.4})
 bakery_e.fixed_recipe = "rts-rations"
+-- 0.1.1 (issue #11): a strong teal stall; the pale blue of before read as the house (the same market stall, 3x3)
+local FISHING_TINT = {r = 0.45, g = 0.85, b = 0.9, a = 1}
 local fishing_e = machine("rts-fishing-hut", {{"assembling-machine", "assembling-machine-1", 3}}, {"rts-fishing"},
-  {r = 0.7, g = 0.85, b = 1, a = 1}, {r = 0.35, g = 0.55, b = 0.8}, "market")
+  FISHING_TINT, {r = 0.35, g = 0.55, b = 0.8}, "market")
 fishing_e.fixed_recipe = "rts-fish-rations"
-fishing_e.icons = icons_of(data.raw.capsule["raw-fish"], {r = 0.7, g = 0.85, b = 1, a = 1})
+fishing_e.icons = icons_of(data.raw.capsule["raw-fish"], FISHING_TINT)
 
 data:extend({house_e, apartment_e, farm_e, bakery_e, fishing_e})
 

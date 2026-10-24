@@ -17,7 +17,8 @@ local balance = require("balance")
 
 local CITY_TINT = {r = 0.78, g = 1.0, b = 0.7, a = 1}
 local ICON_TINT = {r = 0.7, g = 1.0, b = 0.6, a = 1}
-local FORT_TINT = {r = 0.85, g = 0.75, b = 0.55, a = 1}
+-- 0.1.1 (issue #11): a strong earth orange; the pale tan of before left the fort the twin of the gun turret
+local FORT_TINT = {r = 1, g = 0.68, b = 0.4, a = 1}
 local CITY_MAP_COLOR = {r = 0.45, g = 1.0, b = 0.5}
 local FORT_MAP_COLOR = {r = 0.75, g = 0.6, b = 0.35}
 local ENEMY_MAP_COLOR = {r = 0.9, g = 0.2, b = 0.15}

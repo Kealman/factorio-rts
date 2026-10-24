@@ -105,8 +105,10 @@ local SIZE, HALF = 5, 2.5
 local LOOKS = {
   ["rts-district-chemistry"] = {source = {"assembling-machine", "chemical-plant", 3}, tint = {r = 0.7, g = 1, b = 0.8},
                                 map = {r = 0.35, g = 0.65, b = 0.5}, order = "f[11]"},
+  -- 0.1.1 (issue #11): a deeper blue; on 2.1's green assembling machine 3 the pale blue of before read as the teal
+  -- Electronics plant (Age II) of the same machine
   ["rts-district-electronics2"] = {source = {"assembling-machine", "assembling-machine-3", 3},
-                                   tint = {r = 0.7, g = 0.8, b = 1}, map = {r = 0.35, g = 0.45, b = 0.8},
+                                   tint = {r = 0.45, g = 0.6, b = 1}, map = {r = 0.35, g = 0.45, b = 0.8},
                                    order = "f[12]"},
   ["rts-district-concrete"] = {source = {"assembling-machine", "assembling-machine-2", 3},
                                tint = {r = 1, g = 0.9, b = 0.7}, map = {r = 0.65, g = 0.6, b = 0.45}, order = "f[13]"},

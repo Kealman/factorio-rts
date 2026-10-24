@@ -195,6 +195,27 @@ local barracks = rts_assembler({
   raid_target = true, map_color = {r = 0.9, g = 0.8, b = 0.25},
 }, {"rts-units"})
 barracks.is_military_target = true
+-- 0.1.1 (issue #11, docs/qa/phase5-r2-ux-notes.md section 2): the factory and the barracks were both the vanilla
+-- assembling machine 2, pixel for pixel, and so was 2.1's new art: the barracks' machine layers get the khaki of its
+-- map colour (shadows, glows and lights stay), the factory keeps the vanilla blue trim.
+local BARRACKS_TINT = {r = 1, g = 0.82, b = 0.5, a = 1}
+local function tint_machine(t, tint, seen)
+  seen = seen or {}
+  if type(t) ~= "table" or seen[t] then return end
+  seen[t] = true
+  if (t.filename or t.filenames or t.stripes) and not (t.draw_as_shadow or t.draw_as_glow or t.draw_as_light) then
+    t.tint = tint
+  end
+  for key, v in pairs(t) do
+    if type(v) == "table" and key ~= "tint" then tint_machine(v, tint, seen) end
+  end
+end
+if barracks.graphics_set then
+  tint_machine(barracks.graphics_set.animation, BARRACKS_TINT)
+  tint_machine(barracks.graphics_set.idle_animation, BARRACKS_TINT)
+end
+barracks.icons = tinted_icons(data.raw["assembling-machine"]["assembling-machine-2"])
+for _, layer in pairs(barracks.icons) do layer.tint = BARRACKS_TINT end
 
 local turret = clone({
   type = "ammo-turret", source = "gun-turret", name = "rts-turret",

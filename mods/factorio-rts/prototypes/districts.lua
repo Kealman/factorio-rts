@@ -26,9 +26,11 @@ local LOOKS = {
            tint = {r = 0.85, g = 0.85, b = 1}, map = {r = 0.6, g = 0.6, b = 0.7}},
   circuits = {sources = {{"assembling-machine", "electromagnetic-plant", 4}, {"assembling-machine", "assembling-machine-2", 3}},
               tint = {r = 0.75, g = 1, b = 0.75}, map = {r = 0.35, g = 0.7, b = 0.35}},
-  electronics = {sources = {{"assembling-machine", "assembling-machine-3", 3}}, tint = {r = 1, g = 0.75, b = 0.75},
+  -- 0.1.1 (issue #11): on 2.1's assembler and refinery art the electronics plant (pink) read as the orange munitions
+  -- works, and the petrochemical works (pale violet) as the plain refinery next to it: teal and a deep blue-violet now
+  electronics = {sources = {{"assembling-machine", "assembling-machine-3", 3}}, tint = {r = 0.6, g = 1, b = 0.9},
                  map = {r = 0.75, g = 0.3, b = 0.3}},
-  petrochem = {sources = {{"assembling-machine", "oil-refinery", 5}}, tint = {r = 0.85, g = 0.75, b = 1},
+  petrochem = {sources = {{"assembling-machine", "oil-refinery", 5}}, tint = {r = 0.6, g = 0.62, b = 1},
                map = {r = 0.55, g = 0.4, b = 0.75}},
   engines = {sources = {{"assembling-machine", "centrifuge", 3}}, tint = {r = 1, g = 0.9, b = 0.6},
              map = {r = 0.75, g = 0.65, b = 0.3}},

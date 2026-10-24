@@ -18,7 +18,8 @@ local W = balance.nation and balance.nation.war
 assert(W, "factorio-rts: balance.nation.war is missing")
 
 local CRATE_TINT = {r = 0.75, g = 0.85, b = 0.45, a = 1}
-local FIELD_TINT = {r = 0.8, g = 0.9, b = 0.55, a = 1}
+-- 0.1.1 (issue #11): violet; the olive of before read as the City Center's green next to it (both are roboports)
+local FIELD_TINT = {r = 0.88, g = 0.7, b = 1, a = 1}
 local TROOP_TINT = {r = 0.55, g = 0.75, b = 0.4, a = 1}
 local ENEMY_MAP_COLOR = {r = 0.9, g = 0.2, b = 0.15}
 local RAID_MASK

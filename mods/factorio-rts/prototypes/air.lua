@@ -281,7 +281,8 @@ airfield_item.icons = table.deepcopy(airfield.icons)
 -- Anti-air turret
 -------------------------------------------------------------------------------
 local AA = A.aa_turret
-local AA_TINT = {r = 0.6, g = 0.8, b = 1, a = 1}
+-- 0.1.1 (issue #11): a strong cold cyan; the pale blue of before left the AA turret the twin of the gun turret
+local AA_TINT = {r = 0.45, g = 0.85, b = 1, a = 1}
 local tsrc = data.raw["ammo-turret"]["rts-turret"]
 assert(tsrc, "factorio-rts: rts-turret must exist before prototypes/air.lua")
 local aa = table.deepcopy(tsrc)

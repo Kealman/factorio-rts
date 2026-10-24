@@ -76,3 +76,69 @@ clicks empty ground of the lobby first.
 
 Screenshots: `build/shots-r2-i4-{en,ru}/` (game area) and `build/shots-r2-i4-{en,ru}-window/` (with the title bar); the
 game menu after Escape is `r2i-e02-escape.png`.
+
+## 2. Issue #11: the look of the RTS buildings on 2.1
+
+Every RTS building copies a vanilla sprite, and 2.1 shipped new assembling-machine and oil-refinery art. The probe
+`tools/probes/r2_look_gui.lua` starts a Nation match (2048, one AI, Survey), lays a grass yard next to the capital and
+places one of every RTS building prototype (each `rts-*` entity of a building type that is not hidden: 50) and 15
+vanilla sources, then takes a close-up of each at zoom 1 and line-ups at the play zooms 0.5 and 0.25 (the mod's render
+objects, land borders and labels, are hidden for the shots). Nothing is registered or powered, so every building shows
+its idle frame.
+
+Evidence (all under `docs/qa/phase5-screenshots/`, `git add -f`):
+
+- `r2-look-all-1.png`, `r2-look-all-2.png`: the 50 RTS buildings at zoom 1, after the changes below.
+- `r2-look-vanilla-2.1.png`: the 15 vanilla sources on 2.1.
+- `r2-look-lineups.png`: seven line-ups at zoom 0.5 (Age I, factory and barracks next to the vanilla assembling machine
+  2 and the lab, the ten Age II districts, the Age II machines next to their sources, Age III, the Nation buildings,
+  defence and power).
+- `r2-look-changed.png`: the eight changed buildings, 0.1.0 above and 0.1.1 below.
+
+Raw shots: `build/shots-r2-l1-en/` (0.1.0), `build/shots-r2-l4-en/` (0.1.1). Skirmish smoke on the changed tree: 65/65,
+0 errors (`build/r2-smoke11b`).
+
+### 2.1 Verdicts
+
+**The 2.1 art itself reads well.** No layer is misaligned, no shadow detached, and the machines rescaled by
+`age2.rescale` (the 5×5 districts from 3×3 and 4×4 sources) keep their proportions. The problem was telling buildings
+apart: 2.1's assembling machine 3 is green, its assembling machine 2 has a blue trim, and several RTS tints on top of
+them landed on the same hue.
+
+| Building | Look (vanilla source, tint) | On 2.1 | 0.1.1 |
+|---|---|---|---|
+| Factory | assembling machine 2 | reads, but the barracks is the same picture | unchanged (blue trim) |
+| **Barracks** | assembling machine 2, no tint | **identical to the factory** (and to the vanilla machine), pixel for pixel | khaki on the machine layers (its map colour), the icon too |
+| **Electronics plant** (district) | assembling machine 3, pale red | reads as the orange **Munitions works** next to it | teal |
+| **Electronics II plant** (Age III) | assembling machine 3, pale blue | on the green 2.1 machine it reads as the Electronics plant | deep blue |
+| **Petrochemical works** (district) | oil refinery 5×5, pale violet | **the Refinery** next to it, at play zoom | deep blue-violet |
+| Munitions works, Concrete works, Rail works | assembling machine 2 / 2 / 1, orange / tan / grey | read (and are 5×5 against the 3×3 factory and barracks) | unchanged |
+| Refinery, Chemical plant, Oil well | the vanilla oil refinery, chemical plant, pumpjack | read: they are the vanilla machines | unchanged |
+| Smelting, Steel, Circuits, Engines, Construction, Science, Chemistry districts | electric furnace, foundry, electromagnetic plant, centrifuge, cryogenic plant, lab, chemical plant | read: each has its own shape | unchanged |
+| **Field depot** | roboport, olive | **the City Center** (roboport, green) at any zoom | violet |
+| Command Center, hub, rail depot, City Center, trade post | roboport: grey, warm, blue, green, gold | read | unchanged |
+| **Fishing hut** | market stall, pale blue | **the house** (the same stall, 3×3) | strong teal |
+| House, apartment, farm, bakery | market stall warm / 5×5 blue, agricultural tower, stone furnace | read | unchanged |
+| **AA turret** | gun turret, pale blue | **the gun turret**: the force colour on both masks hid the tint | strong cyan |
+| **Fort** | gun turret, pale tan | **the gun turret**, for the same reason | strong earth orange |
+| Gun turret, laser turret, bunker (3×3), wall, gate | vanilla | read | unchanged |
+| Extractor, rare extractor (violet), smelter, stockpile, lab, solar array, accumulator, steam plant, radar | vanilla | read | unchanged |
+| Airfield, nuclear plant, Launch complex (8×8), Railway Charter site (6×6), depot stop | own picture, reactor, rocket silo platform, train stop | read | unchanged |
+
+Only tints changed: no sprite file, size, collision box or behaviour. Every change is a tint of the non-shadow layers
+(shadows, glows and lights keep theirs) and of the icon where the building had its own icon tint.
+
+### 2.2 Release screenshots to regenerate
+
+The changed buildings stand in these release shots of `docs/media/` (scenes in `tools/probes/showcase_*.lua`):
+
+| Shot | What changed in it |
+|---|---|
+| 02-capital, 03-rail-line, 08-space-program, 15-city-panel | the capital's barracks (the AI-baked capital), districts |
+| 05-front-fort-belt | the fort belt's field depots and AA turrets (the scene gives 3 and 8) |
+| 06-air | the AA turret in the middle of the frame |
+| 07-artillery-train | the barracks of the dressed enemy town |
+| 13-commander-abilities, 14-skirmish-base | the Skirmish base's barracks |
+
+01-lobby changes with issue #16 (the lobby's "Guided objectives" switch), and every in-match shot would show the
+objective strip in a fresh save's first match: the showcase scenes must switch it off first (section 3).
