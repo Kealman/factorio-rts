@@ -759,6 +759,19 @@ local function place(player, h)
     px(P4.KILL_WIDTH, s))
 end
 
+--- 0.1.1 (issue #16): the free strip of the top edge between the match strip and the minimap frame, in display
+--- pixels: x, width and the margin (scripts/objectives.lua puts the objective strip there). Mirrors place().
+function hud.top_gap(player)
+  local res, s = player.display_resolution, player.display_scale
+  local m = px(MARGIN, s)
+  local pad = px(MINIMAP_PADDING, s)
+  local mx = res.width - px(MINIMAP_SIZE, s) - pad - m
+  local sw = px(STRIP_WIDTH, s)
+  local sx = math.max(m, math.min(math.floor((res.width - sw) / 2 + 0.5), mx - pad - m - sw))
+  local left = sx + sw + m
+  return left, (mx - pad - m) - left, m
+end
+
 local function add_filler(parent)
   return parent.add({type = "empty-widget", style = "rts_hud_filler"})
 end

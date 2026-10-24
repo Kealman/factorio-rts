@@ -142,3 +142,84 @@ The changed buildings stand in these release shots of `docs/media/` (scenes in `
 
 01-lobby changes with issue #16 (the lobby's "Guided objectives" switch), and every in-match shot would show the
 objective strip in a fresh save's first match: the showcase scenes must switch it off first (section 3).
+
+## 3. Issue #16: guided objectives
+
+`scripts/objectives.lua` (new, registered in `control.lua` after the HUD, the lobby and every module whose events tick a
+step) shows an **objective strip** at the top edge between the match strip and the minimap: "Objectives 2/7", the
+current step in yellow with a hint under it, an arrow that shows or hides the list of all seven steps (remembered per
+player) and a × that hides the strip for the rest of the match. A step done early ticks off at once; the current step is
+the first one not done. When all seven are done the strip says so ("All objectives done" and what wins the match) and
+goes after 45 s.
+
+**The switch.** The lobby has a "Guided objectives" checkbox at the left of its button row, so the dialog keeps its
+size and every lobby coordinate of the protocols holds (`lobby.on_dialog`, a hook of `scripts/lobby.lua`). Until a player
+touches it, the strip is on for that player's first Skirmish match and first Nation match and off afterwards; once
+touched, the choice is remembered in `storage.objectives.players[i].pref`. `objectives.set_pref(i, false)` does the
+same from script (the showcase scenes need it, see below).
+
+| Mode | Step | Ticks when |
+|---|---|---|
+| Skirmish | Select your walkers | the player has a unit selected |
+| | Build an extractor | the force places an extractor (`buildings.on_added`) |
+| | Place the barracks | the force places a barracks |
+| | Train a unit | a barracks of the force turns a kit into a unit (`production.on_spawned`) |
+| | Research a technology | a technology of the force is researched (`on_research_finished`) |
+| | Build a hub at the next ore | the force places a hub |
+| | Destroy an enemy unit or building | the force kills a unit or building of another match force (`on_entity_died`) |
+| Nation | Open your capital's panel | the player's city panel is open |
+| | Feed your people | the force has placed a fishing hut, or a farm and a bakery |
+| | Build a house | the force places a house or an apartment |
+| | Found a town | a city of the force that is not the capital is founded (`rts_city_founded`) |
+| | Open a rail line | a line of the force is open (`rails.lines_of`) |
+| | Reach Age II | the force is in Age II or later |
+| | Sign a treaty or go to war | any diplomatic state of the nation changes, or a contract with it is created |
+
+**Determinism.** The module only reads game state and writes its own storage and GUI. Steps tick from game events,
+script signals and synchronised GUI state (the selection, an open city panel), never from client-side state, and only for
+forces with a player whose strip is on; buildings placed while a match is being set up do not count. The Skirmish smoke
+is unchanged: 65/65, 0 errors (`build/r2-smoke16`), and the module writes no log line without a connected player.
+
+**Help and texts.** The F11 page mentions the strip in both modes (Skirmish "Alerts" paragraph, Nation "Keys"
+paragraph). Texts are in `locale/{en,ru}/objectives.cfg` (`[rts-objectives]`).
+
+**Layout.** At 1280×800 (UI scale 0.75) the strip is x 916–1096 from y 6: about 105 px tall with the hint, about 210
+with the list. It never covers the strip, the minimap, the world generation line or the alerts. The right-hand panels
+(city, depot, hub, train) start at y 183 and open over it when the list is shown. A window narrower than the strip plus
+the minimap puts it under the minimap instead.
+
+### 3.1 GUI probe
+
+`tools/probes/r2_objectives_gui.lua` (27 checks; the lobby switch, the list arrow, the × and the first selection by
+real clicks and drags, the other steps by script the way the game does them, each checked on the strip a moment later):
+
+| Part | Checks |
+|---|---|
+| A, lobby of a fresh save | the switch is on (auto); a real click turns it off, a second one on (remembered) |
+| B, Skirmish | Start; the strip 0/7; a box select ticks "select"; extractor, barracks, a walker from the barracks, a research, a hub, an enemy walker killed; 7/7 and the done text; the arrow shows the list; the × hides the strip |
+| C, Nation | after Restart with the switch back on auto: Skirmish off, Nation on, the Nation dialog's switch on; Start; 0/7; the city panel, a farm and a bakery, a house, a town, an open line (`rails.lines_of` answers one open line for that check: laying a real line takes minutes), Age II, a war; 7/7 |
+| D, Skirmish again | the switch is off (auto), and the second Skirmish match has no strip |
+
+Coordinates per locale are in the probe (`LAYOUT`): the lobby switch (≈499, 513), the arrow (≈1056, 21) and the ×
+(≈1078, 21) in English, (≈1047, 21) and (≈1070, 21) in Russian.
+
+| Run | Result |
+|---|---|
+| `build/r2-o1-en` | 25/27: the kill did not tick (the unit registry drops a dead unit before this module's handler runs; the step now reads the entity's type and force) |
+| `build/r2-o2-ru` | 26/27: the × of the Russian layout sits 8 px further left |
+| `build/r2-o4-en`, `build/r2-o4-ru` | **27/27** and **27/27**, 0 Lua errors |
+| `build/r2-smoke16` | Skirmish smoke 65/65, 0 errors |
+
+Screenshots: `docs/qa/phase5-screenshots/r2-objectives-lobby-en.png` (the switch),
+`r2-objectives-skirmish-en.png` (6/7 with the list), `r2-objectives-nation-ru.png` (7/7 with the list, Russian); all
+shots in `build/shots-r2-o4-{en,ru}/` and `build/shots-r2-o4-{en,ru}-window/`.
+
+### 3.2 Other GUI probes and the showcase
+
+A fresh save's first match of each mode shows the strip, so it appears in the first match of every GUI probe and of the
+showcase. None of the M3 protocol's coordinates lies under it (`docs/qa/phase5-m3-protocol.md` lists it with the HUD).
+The showcase scenes must keep it out of the release shots: before the first Start, call
+
+```lua
+require("scripts.objectives").set_pref(player.index, false)
+```

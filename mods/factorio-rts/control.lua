@@ -92,6 +92,9 @@ local modules = {
   require("scripts.fronts"),
   require("scripts.belts"),
   require("scripts.trainswar"),
+  -- 0.1.1 (issue #16): guided objectives (after the HUD and the lobby: their layout and the lobby switch; after the
+  -- modules whose events and signals tick the steps)
+  require("scripts.objectives"),
   require("scripts.debug"),
 }
 

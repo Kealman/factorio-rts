@@ -108,6 +108,12 @@ local function button_row(frame)
   return row
 end
 
+-- 0.1.1 (issue #16): fn(player, row, pending) adds a control at the left of the start dialog's button row (the guided
+-- objectives switch of scripts/objectives.lua), so the dialog keeps its size and the protocol coordinates hold. Load
+-- time only.
+lobby.dialog_hooks = {}
+function lobby.on_dialog(fn) lobby.dialog_hooks[#lobby.dialog_hooks + 1] = fn end
+
 local function filler(row, frame)
   local f = row.add({type = "empty-widget", style = "draggable_space"})
   f.style.horizontally_stretchable = true
@@ -210,6 +216,7 @@ function lobby.show_lobby(player)
   hint.style.font_color = COLOR.dim
   hint.style.top_margin = 8
   local row = button_row(frame)
+  for _, fn in ipairs(lobby.dialog_hooks) do fn(player, row, p) end -- 0.1.1 (issue #16)
   filler(row, frame)
   local start = row.add({type = "button", name = PREFIX .. "start", style = "confirm_button",
                          caption = {"rts.lobby-start"}, tags = {rts_lobby = "start"}})
