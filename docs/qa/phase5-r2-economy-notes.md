@@ -56,6 +56,21 @@ at home (`small-load`), up to `balance.nation.hauler_batch_wait` (60 s), for a l
 items per coal of the round trip, then take what there is. In M1 501 the player's haulers made 137 deliveries
 instead of HEAD's 353.
 
+Hauler coal by mode in M1 501 (`tools/probes/r2e_coal_by_mode.py`: every arrival leg at ceil(tiles x 1.1 / 40), an
+upper bound since legs inside one network are free):
+
+| M1 501 | auto: coal, deliveries (under 20 items), items, items per coal | manual (AI routes): coal, items per coal |
+|---|---|---|
+| HEAD p21b, rts-player | 1,445, 301 (288), 8,640, 6.0 | 1,928, 4.6 |
+| HEAD p21b, rts-ai-1 | 657, 159 (155), 2,755, 4.2 | 1,484, 2.0 |
+| 9ed9f92's tree, rts-player | 555, 116 (17), 8,671, 15.6 | 2,526, 4.4 |
+| 9ed9f92's tree, rts-ai-1 | 284, 26 (1), 4,146, 14.6 | 1,645, 2.7 |
+
+The player's auto haulers move the same goods on 62 % less coal. The coal now goes to the AI's manual routes (the
+port, town supply and town export routes, up to 1,270 tiles a leg), which still leave with small loads: 46 of the
+player's 77 manual deliveries carried under 20 items. A minimum load there is the next lever. It needs the governor's
+consent, because a town's rations must not wait (sent to r2-ai).
+
 **Results** (61dd208's code; M2 runs `tools/probes/m2_acceptance.lua`, 4 normal AIs, 2048, 60 minutes):
 
 | Run | HEAD p21b: stranded haulers (>= 2 min) | 61dd208: stranded haulers (>= 1 min) | 61dd208: checks |
@@ -105,6 +120,39 @@ title) caused 3-4 ticks: the capital's ledger read with its hints cost 1.5-3.0 m
 The ticks still over 3 ms are mostly army.step (33 in one scene, 15 in the other) and commander.run (5), plus the
 autotest's minute report (5, about 10 ms each). The rest are single ticks. army.step's slicing (r2-ai) is what moves
 the count clear of the 60 limit.
+
+Script time per tick, the paired runs (18,000 ticks each):
+
+| ms | 0-3 | 3-4 | 4-5 | 5-7 | 7-10 | 10-16.67 | over 16.67 |
+|---|---|---|---|---|---|---|---|
+| HEAD f524d8f | 17,613 | 65 | 92 | 168 | 48 | 9 | 5 |
+| e9ba46c | 17,940 | 46 | 8 | 1 | 0 | 5 | 0 |
+
+Per handler, the same runs (`tools/probes/perf_marks.lua` timings; "culprit" = script ticks over 3 ms in which the
+handler was the heaviest timed call; production's 60-tick count halves because its auto-recipe pass moved to period
+15, which the marks do not time):
+
+| handler | HEAD: calls, mean ms, worst ms, culprit | e9ba46c: calls, mean ms, worst ms, culprit |
+|---|---|---|
+| nth60 production | 600, 0.384, 2.61, 129 | 300, 0.124, 0.82, 0 |
+| nth60 strategic | 300, 0.342, 1.28, 115 | 300, 0.343, 2.17, 0 |
+| commander.run (army.step inside) | 3,600, 1.478, 5.78, 86 | 3,600, 1.523, 5.00, 40 |
+| nth60 logistics | 600, 0.223, 3.14, 22 | 600, 0.362, 1.06, 0 |
+| nth300 territory | 60, 0.672, 3.06, 21 | 60, 0.620, 1.68, 0 |
+| nth60 ai/autotest (minute report) | 300, 0.401, 11.50, 5 | 300, 0.406, 10.48, 5 |
+| nth60 perf_scene (test fixture) | 300, 0.095, 4.11, 5 | 300, 0.003, 0.01, 0 |
+| nth300 fog | 60, 0.600, 1.32, 2 | 60, 0.556, 0.90, 0 |
+| nth600 treasury | 30, 0.164, 1.48, 1 | 30, 0.136, 0.38, 0 |
+| nth60 rails, capture, commander, warsupply, sinks, age3, diplomacy; nth120 production | 0.002-0.12 mean, 0 | the same; 15 ticks between them, each with untimed work (periods under 60) |
+
+**Tick arithmetic under the stagger.** A staggered handler gets the nominal tick (a multiple of its period) as
+`event.tick`. game.tick is the real tick, up to one period later. A grep over `scripts/` for `game.tick %`,
+`[e.tick]`, `[game.tick]` and `e.tick ==` found nothing that breaks:
+- `districts.lua` buckets by the real tick.
+- production's exact-tick schedule is read in a plain on_tick handler, and `production.schedule_check` moves a tick
+  in the past to the next one.
+- `debug.lua`'s `e.tick == CHART_PROBE_TICK` runs before the match, where nothing is staggered.
+- sched's minute report uses `e.tick`.
 
 **Determinism of the stagger** (e9ba46c plus #7's rails change, seed 701):
 
@@ -202,10 +250,11 @@ left as it is. For the AI (r2-ai, sent by message): the governor's town export r
 than 1,500 ore and plates (with the trains taking the town's whole offer it now starts rarely), and a line to a town
 that offers nothing runs an idle train.
 
-## 6. Measurement tools (scratch, not in the repository)
+## 6. Measurement tools (`tools/probes/r2e_*`; the commands are in each file's header)
 
-- `strand.py`: no-fuel waits per hauler and hub from a server log (state, arrival, route, home and mode lines),
+- `r2e_strand.py`: no-fuel waits per hauler and hub from a server log (state, arrival, route, home and mode lines),
   interpolated to game minutes from the AI minute lines; "remote" as defined at the top.
+- `r2e_coal_by_mode.py`: hauler legs, coal, deliveries and items per force and mode from a server log.
 - `r2e_prof.lua` (EXTRA_LUA for perf-bench): times market.ai_step and, inside it, the ledger parts.
-- `r2e_map_gui.lua` (GUI probe): the #9 map captures and route-line checks.
-- `hubgui_colour.lua` (EXTRA_LUA, Skirmish): the #10 check with two hubs in one network.
+- `r2e_map_gui.lua` (GUI probe, ask r2-ux for a screen slot): the #9 map captures and route-line checks.
+- `r2e_hubgui_colour.lua` (EXTRA_LUA, Skirmish): the #10 check with two hubs in one network.
