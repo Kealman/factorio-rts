@@ -77,21 +77,21 @@ Start a **new Freeplay game**; the RTS lobby opens as soon as you join. Press **
 
 ### Screenshots (gallery order)
 
-1. The lobby: mode, nations, difficulty, world size, start map, victory and time limit.
-2. A Nation capital with its districts, stockpiles and depots.
-3. A rail line between two depots, laid by a construction train.
-4. Divisions fighting at a border.
-5. A front held by a division behind a fort belt.
-6. An airfield with planes and the air panel.
-7. An artillery train bombarding an enemy town.
-8. The Space Program's launch complex in Age III.
-9. The strategic map: regions, borders, cities, chokes and ports.
-10. The diplomacy panel: relations, wars, treaties and proposals.
-11. The market panel: world prices, trade at your port, tax and contracts.
-12. A 4096×4096 world with six nations.
-13. The Commander and the ability bar in a Skirmish fight.
-14. A Skirmish base with mining lines, factory, barracks and turrets.
-15. The city panel: residents, needs, workforce and labor priorities.
+1. The lobby: a Nation match with 6 nations on a 4096 world, choosing the victory mode.
+2. A capital at City tier in Age III: districts, housing, farms, the Launch complex and rail depots.
+3. A freight train leaves the capital's depot for a town, past the Launch complex.
+4. A division of Mk2 walkers, heavies, armoured cars and artillery attack-moves into an AI army.
+5. A division holds a front behind a fort belt, with a gate where the rail crosses.
+6. Planes over the capital's airfield while its AA turret fires at incoming bombers.
+7. An armoured artillery train bombards an enemy town 67 tiles away.
+8. The city ledger in Age III: Space Program deliveries, rare resources and automation.
+9. The strategic map: your cities and land, a rival town across the front, a city-state, rails and divisions.
+10. The diplomacy panel (F4): a war, a peace, a city-state and an AI's white-peace proposal.
+11. The market panel (M): treasury, tax, prices, city-state trade and a contract.
+12. A fully generated 4096×4096 world with six nations, regions, rivers and mountain ranges.
+13. Skirmish: the Commander's Shield and an Artillery strike, with the ability bar.
+14. Skirmish: a factory base, an army at the rally point and a hub's export policy at the natural.
+15. The city panel of a capital: land, residents, happiness, needs, workforce, draft and make targets.
 
 ### Requirements
 

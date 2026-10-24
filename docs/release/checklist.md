@@ -14,7 +14,7 @@ The exact steps to publish the repository on GitHub and the mod on the Factorio 
 | In-game description | the `[mod-description]` lines in `mods/factorio-rts/locale/en/factorio-rts.cfg` and `locale/ru/factorio-rts.cfg` (they override the `info.json` description in the game's Mods screen); both describe the two modes | the in-game Mods screen |
 | AI-development note | README, Development section: "Most of the code, tests and documents were written by AI coding agents (Claude Code) under the owner's direction" | README |
 | Roadmap | six candidate directions in the README | README |
-| Screenshot captions | written from the file names; check them against the final shots | README gallery, portal description |
+| Screenshot captions | written from the showcase agent's per-shot descriptions (`docs/media/INDEX.md`) | README gallery, portal description |
 
 If the repository name changes, replace `Kealman/factorio-rts` everywhere:
 
@@ -127,7 +127,7 @@ Once the repository is public, its history is public for good, even if it is del
    - **Category:** Overhaul. **Tags:** Combat, Enemies, Logistics, Logistic network, Trains, Manufacturing, Environment.
    - **License:** MIT. **Source URL:** https://github.com/Kealman/factorio-rts.
    - **FAQ:** the FAQ block.
-4. **Gallery:** upload the 15 screenshots from `docs/media/` in file-name order (`01-lobby.png` first). The description's "Screenshots (gallery order)" list matches that order.
+4. **Gallery:** upload the 15 screenshots `docs/media/01-lobby.png` to `docs/media/15-city-panel.png` in file-name order (not `thumbnail-source.png`). The description's "Screenshots (gallery order)" list matches that order.
 5. **Thumbnail:** check that the portal shows `thumbnail.png`; if it does not, upload `mods/factorio-rts/thumbnail.png` on the edit page.
 6. Open https://mods.factorio.com/mod/factorio-rts and check the Information, Changelog and FAQ tabs.
 
