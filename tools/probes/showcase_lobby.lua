@@ -131,19 +131,32 @@ scene("12-world-4096", function()
       end
     end
     if not x1 then return 1 end
-    local m = 170
-    local zoom = math.min((W - 40) / (x2 - x1 + 2 * m), (H - 260) / (y2 - y1 + 2 * m)) / 32
+    -- a capital's marker (circle about 35 px) must stay between the strip (bottom y 103) and the ability bar / unit
+    -- panel (top y 946-985): marker centres within y 138-950; 8 px slack each side. The square world cannot fill the
+    -- 16:9 width at this zoom (black bands remain); alt-12-world-4096-wide fills the width with four capitals.
+    local top, bottom = 138 + 8, 950 - 8
+    local zoom = math.min((W - 120) / (x2 - x1), (bottom - top) / (y2 - y1)) / 32
     local cx, cy = (x1 + x2) / 2, (y1 + y2) / 2
-    lib.log("capitals span (%d, %d)-(%d, %d): zoom %.4f", x1, y1, x2, y2, zoom)
+    lib.log("capitals span (%d, %d)-(%d, %d): zoom %.4f (%.3f px per tile)", x1, y1, x2, y2, zoom, zoom * 32)
     game.speed = 0.01
     player.set_zoom_limits(defines.controllers.remote, {closest = {zoom = 2},
       furthest = {distance = 20000, max_distance = 20000}, furthest_game_view = {zoom = 0.15}})
-    -- the bands: 130 px of HUD above, 140 below; the capitals' box centred in between
-    lib.view(player, {x = cx, y = cy - ((130 + H - 140) / 2 - H / 2) / (32 * zoom)}, zoom)
+    lib.view(player, {x = cx, y = cy - ((top + bottom) / 2 - H / 2) / (32 * zoom)}, zoom)
+    P.cap_c, P.cap_zoom = {x = cx, y = cy}, zoom
     return 1
   end)
   step(function(player, P)
     lib.capture_now(player, "12-world-4096")
+    return 2
+  end)
+  step(function(player, P)
+    -- the alternate: the world fills the width (four of the six capitals between the bands)
+    local zoom = W / (4096 * 32)
+    lib.view(player, {x = 0, y = P.cap_c and P.cap_c.y or 0}, zoom)
+    return 2
+  end)
+  step(function(player, P)
+    lib.capture_now(player, "alt-12-world-4096-wide")
     return 1
   end)
   step(function(player, P)

@@ -536,16 +536,105 @@ step(function(player, P)
 end)
 
 ---------------------------------------------------------------------------
--- 07: an artillery train in Bombard, shells landing on the enemy town
+-- 07: an artillery train in Bombard, shells landing on a compact enemy village
 ---------------------------------------------------------------------------
+-- The front town of 05 is a town (land radius 72), so a depot on our side stands 70+ tiles from its centre and the shot
+-- would be mostly empty ground. This scene founds its own AI 1 village (radius 48) 26-34 tiles beyond the border of one
+-- of our cities, east of it (the train on the left third of the frame, the village on the right), 140+ tiles from the
+-- front town; the depot stands 12 tiles inside our land, level with the village, and the train moves to the platform
+-- end nearest the village.
+local function village_site(P)
+  local s = surface()
+  local best, bs, bcity
+  for _, city in ipairs(cities.for_force(F)) do
+    local R = cities.radius_of(city.tier, city.capital)
+    local c = city.position
+    for _, extra in ipairs({26, 30, 34}) do
+      local d = R + extra
+      for k = -4, 4 do
+        for _, west in ipairs({false, true}) do
+          local a = (west and math.pi or 0) + k * math.pi / 24
+          local p = {x = math.floor(c.x + math.cos(a) * d) + 0.0, y = math.floor(c.y + math.sin(a) * d) + 0.0}
+          local land_ok, why = territory.can_build(E1, cities.CENTER, p)
+          if why == "limit" then land_ok = true end
+          if chunk_ok(s, p) and land_ok and (not P.town or lib.dist(p, P.town.pos) >= 140)
+              and (not P.park or lib.dist(p, P.park) >= 120)
+              and s.can_place_entity({name = cities.CENTER, position = p, force = E1,
+                                      build_check_type = defines.build_check_type.manual_ghost, forced = true}) then
+            local back = norm({x = c.x - p.x, y = c.y - p.y})
+            local score = clutter(s, p, 18) + clutter(s, add(p, back, 40), 18) + extra + math.abs(k) * 6
+              + (west and 200 or 0) + (city.capital and 0 or 40)
+            if not bs or score < bs then best, bs, bcity = p, score, city end
+          end
+        end
+      end
+    end
+  end
+  lib.log("07: village site %s near city %s (score %s)", best and util.pos_str(best) or "-",
+    bcity and tostring(bcity.id) or "-", tostring(bs))
+  return best, bcity
+end
+
+-- a compact village: the centre, six houses around it, two turrets on the side facing us, barracks and a radar
+local function dress_village(c, toward)
+  local s = surface()
+  local side = {x = -toward.y, y = toward.x}
+  local made = 0
+  local function put(name, t, k)
+    local e = lib.place(s, name, add(add(c, toward, t), side, k), E1, 5)
+    if e then
+      made = made + 1
+      if e.type == "ammo-turret" then e.insert({name = "firearm-magazine", count = 30}) end
+    end
+  end
+  put("rts-turret", 7, -6)
+  put("rts-turret", 7, 6)
+  for _, tk in ipairs({{2, 8}, {2, -8}, {-4, 8}, {-4, -8}, {-9, 3}, {-9, -3}}) do put("rts-house", tk[1], tk[2]) end
+  put("rts-barracks", -11, 10)
+  put("rts-radar", -11, -10)
+  return made
+end
+
 scene("07-artillery-train", function()
   step(function(player, P)
-    if not (P.seg and P.town) then lib.log("07: no front") return 1 end
     local s = surface()
     lib.research(F, {"rts-railways", "rts-military-railways"})
-    local want = add(P.seg.mid, P.seg.back, 12)
-    P.adepot = lib.place(s, "rts-depot", want, F, 16)
-    lib.log("07: depot %s", P.adepot and util.pos_str(P.adepot.position) or "FAILED")
+    local site, city = village_site(P)
+    if site then
+      lib.clear(s, site, 26)
+      local id = cities.found(E1, site, {why = "(showcase artillery village)"})
+      territory.flush()
+      if fronts.flush then fronts.flush() end
+      if id then
+        P.village = {id = id, pos = site, near = city.position}
+        local n = dress_village(site, norm({x = city.position.x - site.x, y = city.position.y - site.y}))
+        lib.log("07: village %s of %s at %s, %d buildings", tostring(id), E1, util.pos_str(site), n)
+      end
+    end
+    return 120
+  end)
+  step(function(player, P)
+    if fronts.flush then fronts.flush() end
+    local target = P.village or P.town
+    local seg = target and fronts.nearest(F, target.pos, 400)
+    if not seg then lib.log("07: no front") return 1 end
+    P.aseg, P.atarget = seg, target
+    -- the depot level with the village: on the horizontal line through its centre, 12 tiles inside our land, 7 tiles
+    -- north of the line (the platform is laid 7 tiles south of a depot when it fits there), so the train stands
+    -- level with the village and points at it
+    local want = add(seg.mid, seg.back, 12)
+    local dirx = (target.near and target.near.x < target.pos.x) and -1 or 1
+    for dd = 10, 100, 2 do
+      local q = {x = target.pos.x + dirx * dd, y = target.pos.y}
+      if territory.owner_at(q) == F then
+        want = {x = q.x + dirx * 12, y = q.y - 7}
+        lib.log("07: our land starts %d tiles from the village centre on its line", dd)
+        break
+      end
+    end
+    P.adepot = lib.place(surface(), "rts-depot", want, F, 16)
+    lib.log("07: segment #%d mid %s; depot %s (%.0f tiles from the target)", seg.id, util.pos_str(seg.mid),
+      P.adepot and util.pos_str(P.adepot.position) or "FAILED", P.adepot and lib.dist(P.adepot.position, target.pos) or -1)
     return 120
   end)
   lib.wait_until("depot platform", function(player, P)
@@ -558,28 +647,74 @@ scene("07-artillery-train", function()
     local un = P.adepot.unit_number
     net_insert(logistics.hub_network(un), {[rails.ALOCO_KIT] = 2, [rails.ARTY_KIT] = 1, [trainswar.SHELL] = 40,
                                            coal = 100})
-    local toward = norm({x = P.town.pos.x - P.adepot.position.x, y = P.town.pos.y - P.adepot.position.y})
-    lib.place(s, "rts-radar", add(P.adepot.position, {x = -toward.y, y = toward.x}, 7), F, 5)
+    local toward = norm({x = P.atarget.pos.x - P.adepot.position.x, y = P.atarget.pos.y - P.adepot.position.y})
+    lib.place(s, "rts-radar", add(add(P.adepot.position, toward, -6), {x = -toward.y, y = toward.x}, 6), F, 5)
     local train, why = trainswar.deploy(un, "artillery", true)
     local rec = train and rails.train_record(train)
-    P.atrain = train
-    P.atrain_id = rec and rec.id
-    local ok, why2 = false, nil
-    if P.atrain_id then ok, why2 = trainswar.set_stance(P.atrain_id, "bombard") end
-    lib.log("07: artillery train %s (%s), bombard %s %s", tostring(P.atrain_id), tostring(why), tostring(ok),
-      tostring(why2))
-    lib.clean_hud(player, true)
-    if train and train.valid then
-      selection.select_building(player.index, train.front_stock.unit_number)
-      -- the train and the town inside the free part of the screen (the train panel sits at the top right)
-      fit(player, mid(train.front_stock.position, train.back_stock.position), P.town.pos, {330, 170, 1500, 920}, 0.75)
+    P.atrain, P.atrain_id = train, rec and rec.id
+    -- the platform end nearest the target: the train moves there when it stands at the far end
+    local d = rails.depot(un)
+    local best, bd
+    for _, r in ipairs(d and d.platform and d.platform.rails or {}) do
+      if r.valid then
+        local dist = lib.dist(r.position, P.atarget.pos)
+        if not bd or dist < bd then best, bd = r, dist end
+      end
     end
-    lib.reveal(F, s, P.town.pos, 60)
+    P.arail = nil
+    if train and train.valid and best then
+      local tc = mid(train.front_stock.position, train.back_stock.position)
+      if lib.dist(tc, P.atarget.pos) - bd > 14 then
+        P.arail = best
+        lib.log("07: train %s moves to the platform end %s: %s", tostring(P.atrain_id), util.pos_str(best.position),
+          tostring(trainswar.send_to_rail(P.atrain_id, best)))
+      end
+    end
+    lib.log("07: artillery train %s (%s)", tostring(P.atrain_id), tostring(why))
+    P.a_wait = game.tick
+    return 60
+  end)
+  lib.wait_until("train in position", function(player, P)
+    local t = P.atrain
+    if not (t and t.valid) or not P.arail then return true end
+    local near = math.min(lib.dist(t.front_stock.position, P.arail.position), lib.dist(t.back_stock.position,
+      P.arail.position))
+    return math.abs(t.speed) < 0.005 and near < 8
+  end, 15, 60 * 25)
+  step(function(player, P)
+    local train = P.atrain
+    if not (train and train.valid and P.atrain_id) then return 1 end
+    local s = surface()
+    local ok, why2 = trainswar.set_stance(P.atrain_id, "bombard")
+    lib.log("07: bombard %s %s", tostring(ok), tostring(why2))
+    lib.clean_hud(player, true)
+    selection.select_building(player.index, train.front_stock.unit_number)
+    -- the box of the whole train and the village's buildings fills the HUD-free part of the screen (x 40-1560: the
+    -- train stands level with the village, below the city list; left of the train panel and the build menu; y 150-930:
+    -- under the strip, above the bottom panels); zoom at most 0.66 (the earlier take: 0.47)
+    local T = mid(train.front_stock.position, train.back_stock.position)
+    local C = P.atarget.pos
+    local x1, y1, x2, y2 = math.huge, math.huge, -math.huge, -math.huge
+    local function grow(p, r)
+      x1, y1, x2, y2 = math.min(x1, p.x - r), math.min(y1, p.y - r), math.max(x2, p.x + r), math.max(y2, p.y + r)
+    end
+    for _, w in ipairs(train.carriages) do grow(w.position, 3) end
+    for _, e in ipairs(s.find_entities_filtered({position = C, radius = 26, force = E1})) do
+      if e.valid and buildings.kind_of(e.name) then grow(e.position, 3) end
+    end
+    local rx1, ry1, rx2, ry2 = 40, 150, 1560, 930
+    local zoom = math.max(0.4, math.min(0.66, (rx2 - rx1) / (x2 - x1) / 32, (ry2 - ry1) / (y2 - y1) / 32))
+    local k = 32 * zoom
+    local bc = {x = (x1 + x2) / 2, y = (y1 + y2) / 2}
+    lib.view(player, {x = bc.x - ((rx1 + rx2) / 2 - W / 2) / k, y = bc.y - ((ry1 + ry2) / 2 - H / 2) / k}, zoom)
+    lib.log("07: train %s, village %s, %.0f tiles apart; box %.0f x %.0f tiles: zoom %.2f", util.pos_str(T),
+      util.pos_str(C), lib.dist(T, C), x2 - x1, y2 - y1, zoom)
+    lib.reveal(F, s, C, 50)
     P.shells_live, P.impacts = 0, 0
     P.a_t0 = game.tick
     return 1
   end)
-  -- watch the shells: capture the tick after the second impact
+  -- watch the shells: the second one bursts, the next is fired at once (in the air), the capture follows
   step(function(player, P)
     if not P.atrain_id then return 1 end
     local s = surface()
@@ -589,8 +724,7 @@ scene("07-artillery-train", function()
       lib.log("07: impact %d at tick %d", P.impacts, game.tick)
       if P.impacts >= 2 then
         P.shells_live = live
-        lib.reveal(F, s, P.town.pos, 60)
-        -- the next shell leaves now (the Bombard shot, fired early) and is in the air while this one bursts
+        lib.reveal(F, s, P.atarget.pos, 50)
         local fired = trainswar.fire(P.atrain_id)
         P.speed_before = game.speed
         game.speed = lib.cfg.freeze_speed or 0.1
@@ -613,7 +747,6 @@ scene("07-artillery-train", function()
   step(function(player, P)
     if P.speed_before then lib.unfreeze(P) end
     lib.log("07: %s", trainswar.describe(F))
-    -- the train goes back into kits (Disband): it would stand in the fort belt shot
     if P.atrain and P.atrain.valid then
       selection.clear(player.index)
       lib.log("07: disband %s", tostring(rails.disband_train(P.atrain)))
@@ -707,6 +840,10 @@ end)
 ---------------------------------------------------------------------------
 scene("05-front-fort-belt", function()
   step(function(player, P)
+    if P.town and fronts.flush then
+      fronts.flush()
+      P.seg = fronts.nearest(F, P.town.pos, 400) or P.seg
+    end
     if not P.seg then lib.log("05: no front segment") return 1 end
     lib.research(F, {"rts-fortification"})
     give({["rts-wall"] = 800, ["rts-gate"] = 20, ["rts-turret"] = 40, ["rts-field-depot"] = 3, ["rts-aa-turret"] = 8,
@@ -765,7 +902,7 @@ scene("04-division-battle", function()
         local a = k * math.pi / 8
         local p = {x = math.floor(P.home.x + math.cos(a) * d), y = math.floor(P.home.y + math.sin(a) * d)}
         if chunk_ok(s, p) and (not P.town or lib.dist(p, P.town.pos) > 100)
-            and (not P.park or lib.dist(p, P.park) > 90) then
+            and (not P.park or lib.dist(p, P.park) > 90) and (not P.village or lib.dist(p, P.village.pos) > 90) then
           local sc = clutter(s, p, 30)
           if not bs or sc < bs then best, bs = p, sc end
         end

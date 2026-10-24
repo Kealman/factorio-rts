@@ -73,12 +73,12 @@ current files are listed in `INDEX.md`.
 | 04 battle | Two lines facing each other, heavies spread, armoured cars on both flanks, artillery behind; camera lower; the division selected (its card and stances on the HUD) | – |
 | 05 front | The front town is a tier-2 town (an 80-tile front instead of 41); the wall stands 1 tile behind the border, the division 11 tiles behind it; the artillery train is disbanded before this shot; zoom +60 %, the front in the right third | An approaching enemy group (it would end the hold) |
 | 06 air | The enemy flight spawns 17 tiles out and is caught inside 12; zoom 1.6; the airfield fully in frame; own planes selected; interceptors added | – |
-| 07 artillery | The depot moved 8 tiles nearer the front; a compact town (turrets, houses, barracks, farm, radar within 15 tiles of its centre); captured as the second shell bursts with the next one in the air | The rail cannot be laid closer to the town: the town's land starts at the border |
+| 07 artillery | Second reshoot (lead): the scene founds its own compact AI 1 village (land radius 48) east of one of our cities, the depot stands 12 tiles inside our land level with it, the train moves to the platform end nearest the village; the frame fits the whole train and the village (train left third, village right third, zoom 0.65 instead of 0.47), captured as the second shell bursts at the village's edge with the next one in the air, Bombard and the train panel on | – |
 | 08 space | Zoom +20 %, the complex beside the ledger | – |
 | 09 map | Zoom +45 %, centred between the capital and the front town; the engine's construction alert icons and the haulers' long autopilot lines (drawn by the engine from every hauler to its next stop) are hidden for the capture | Label sizes are the mod's |
 | 10 diplomacy | Every stale alert line removed before the capture (the offer bar stays) | – |
 | 11 market | Ended contracts of the baked match removed; an active steel contract with AI 2 | – |
-| 12 world | All six capitals in frame between the HUD bands (the map view's zoom limit is widened for this capture only) | – |
+| 12 world | All six capitals in frame between the HUD bands (the map view's zoom limit is widened for this capture only); second pass (lead): zoom +11 %, the most that keeps every capital marker between the strip and the ability bar | Filling the 16:9 width: the square world needs +53 % for that, and then only two capitals stay whole (alternate take in build/showcase/alt/) |
 | 13 Commander | Only the Commander selected; parked units disbanded so supply is at or under the cap (80/80, was 111/80); captured as the strike lands | – |
 | 14 Skirmish base | The base's bounding box framed left of the hub policy panel; raid damage repaired; a 12-unit block at the rally point; the natural hub selected | – |
 | 15 city | The city left of the two panels | – |
