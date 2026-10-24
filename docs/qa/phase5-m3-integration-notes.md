@@ -588,7 +588,13 @@ drop-off's network holds less coal than the way back) too conservative, and is i
 
 `base21-m1` and `fuel21-m1` are line-identical up to minute 21, when the rule first held a hauler (rts-ai-1's #2951,
 not the player's); from there the matches diverge (wars, cities), and the train figures follow the divergence. Without
-the rule on HEAD the number does not come back, so the 10 % target (17,457) cannot be met through this rule.
+the rule on HEAD the number does not come back, so the 10 % target (17,457) cannot be met through this rule. HEAD
+and HEAD without the rule are line-identical up to minute 20.8 as well, at the same first hold (#2951); after it the
+outcomes swing both ways (the player's hauler trips 353 with the rule, 459 without, but train trips 16 and 0; rts-ai-1's
+hauler trips 209 and 81): the rule moves the divergence, it costs nothing systematic beyond its holds. Decision: the
+rule stays as committed in 552ee2c; an uncommitted variant that counted the drop-off's coal with a 15 % margin
+(`cal1-m1` above) was reverted: it gave no freight back and is stricter than 552ee2c when the drop-off holds between
+the way back and 1.15 times it.
 
 Stranding the rule does not catch (HEAD): rts-ai-1's #2951 left town 1662 while port 674 held the way back, found it
 spent 61 s later and stood dry at 674 for 22 game minutes; #3186 (city 12's supply hauler) left for a hub built 2 game
