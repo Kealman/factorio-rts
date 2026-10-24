@@ -130,7 +130,7 @@ It is designed to run alone. Other mods are untested, and mods that change the c
 
 ### Windows and Linux?
 
-The mod is pure Lua and uses only the game's own graphics, so it should work everywhere Factorio 2.1 runs. It was developed and tested on macOS; reports from Windows and Linux are very welcome.
+The mod is pure Lua and uses only the game's own graphics, so it should work everywhere Factorio 2.1 runs. It was developed and played on macOS. On Linux, the automated tests pass on the official headless server for x86-64 and ARM64, with and without Space Age, and the matches play out exactly as on macOS; the Linux game client has not been tried yet. Windows is untested. Reports from Windows and Linux players are very welcome.
 
 ### Is it heavy on performance?
 

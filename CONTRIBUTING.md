@@ -26,11 +26,13 @@ A save from just before the bug is the best evidence of all. Please also try the
 
 ## Setting up for development
 
-The development tooling is written for macOS with the Steam build of Factorio; paths are in `tools/factorio-env.sh`. On another system, adapt `FACTORIO_APP`, `FACTORIO_BIN` and the user mods folder there, and expect to replace BSD `sed -i ''` calls.
+The development tooling is written for macOS with the Steam build of Factorio; paths are in `tools/factorio-env.sh`.
 
 - `tools/install.sh` copies the mod into your real mods folder and enables only base, the Space Age mods and factorio-rts (your old mod list is backed up). `tools/uninstall.sh` reverts it.
 - The Factorio API documentation is in the game installation (`doc-html`, on macOS inside `factorio.app/Contents`) and at [lua-api.factorio.com](https://lua-api.factorio.com).
 - Every runner in `tools/` refuses to start when the game binary's major.minor version differs from `factorio_version` in the tree's `info.json`.
+- **Linux.** `tools/autotest-run.sh` runs as is when `FACTORIO_BIN` points at your Factorio binary (`<factorio>/bin/x64/factorio`, or `bin/arm64` on ARM) and `FACTORIO_READ_DATA` at its `<factorio>/data` (tested with the headless build; the standalone and Steam builds use the same layout). `tools/linux/run.sh` runs the Skirmish smoke and the Nation smoke in Docker on the official headless build, which it downloads; no Factorio account is needed. It also checks every `require` and file path for case mismatches, which only a case-sensitive file system shows.
+- **Other runners and systems.** The other runners still use the macOS paths and BSD `sed -i ''`. On another system, adapt `FACTORIO_APP` and the user mods folder in `tools/factorio-env.sh`, and replace those `sed` calls.
 
 ## Running the autotests
 

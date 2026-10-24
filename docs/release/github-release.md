@@ -18,7 +18,7 @@ The full feature list is in [docs/FEATURES.md](https://github.com/Kealman/factor
 
 ## Known issues
 
-- Only macOS has been tested; Windows and Linux should work.
+- Only macOS has been played. On Linux the automated tests pass on the official headless server (x86-64 and ARM64); the Linux game client and Windows are untested.
 - The Nation AI is slower to Age III than designed and rarely uses air units, artillery trains or front holds.
 - The aggressive AI links its cities by rail late, and AI nations seldom go into debt.
 - Two humans in one multiplayer session at the same time have not been tested yet.
