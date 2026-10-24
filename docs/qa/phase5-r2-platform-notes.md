@@ -176,7 +176,7 @@ A rerun with the same `RC_DIR` keeps every finished job.
 | `w3072` | a 3072 x 4 world, map seed 30724 | holds, air and artillery present (#4) |
 | `sl` | save at minutes 20 and 40 (seed 802), load | 0 errors in all four halves; both loaded games log the same rts-player line at the last common minute |
 | `det` | 801 and 802, two runs of 30 minutes | 0 differing event lines |
-| `scene` | `tools/perf-bench.sh scene`, 5 + 5 minutes | 60 UPS at speed 1; mean, p99 and UPS capacity; script ticks over 3 ms (#8, both readings below). It waits up to `SCENE_WAIT` (1 hour) for a machine without other Factorio processes, then runs anyway and marks its times as upper bounds. |
+| `scene` | `tools/perf-bench.sh scene`, 5 + 5 minutes | 60 UPS at speed 1; mean, p99 and UPS capacity; the four #8 criteria below. It waits up to `SCENE_WAIT` (1 hour) for a machine without other Factorio processes, then runs anyway and marks its times as upper bounds. |
 | `lan`, `heavy` | GUI clients, Steam | only with `STAGES="lan heavy"`, when the screen is free |
 
 The GUI pass in English and Russian and the Codex protocol stay outside the script; the report says so. `SERVERS`
@@ -189,10 +189,14 @@ summaries in `build/matrix-m3i-p21/` remain), and the trees behind it (5a2cdcc, 
 repository's history. The script therefore uses `m3i-p21` while its logs exist. Otherwise it runs the matrix of
 `BASE_REV` (default `v0.1.0`, ae708bc, the 2.1 release) once and keeps it as `rcbase-ae708bc`.
 
-**Two readings of #8.** The issue's title is "market.ai_step still exceeds 3 ms". Its acceptance text says "no script
-tick over 3 ms in the scene, autotest minute reports excluded". On the 2.1 reference scene (`final-p21`) the title gives
-3 ticks (worst 4.40 ms). The text gives 335 ticks, mostly the nth60 production, strategic and logistics handlers. The
-report shows both rows, so the issue's owner can pick.
+**#8 criteria (the lead's 0.1.1 reading, recorded on the issue).** In the 5-minute scene:
+
+- market.ai_step is in 0 script ticks over 3 ms;
+- at most 60 script ticks over 3 ms, counted as `tools/perf-bench.sh` counts them;
+- script p99 is at most 3 ms;
+- no whole tick is over 16.67 ms except the autotest minute reports, the ticks with t % 3600 = 3599.
+
+The literal "no script tick over 3 ms" stays an informational row as the long-term target. On the 2.1 reference scene (`final-p21`) the four rows read 3, 340, 4.58 ms and 0, and the informational row reads 335.
 
 **Validation on real logs.** Pointed at the logs of the last 2.1 acceptance (`m3i-p21b-*`, `final-p21/*`), the report
 reproduces section 9.2 of the M3 integration notes exactly:

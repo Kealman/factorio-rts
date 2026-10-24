@@ -550,19 +550,22 @@ def stage_scene():
             if mm:
                 marks.append((mm.group(4), int(mm.group(1)), float(mm.group(3))))
     slow = [(k, n, w) for k, n, w in marks if k not in fixture]
-    # the literal #8 count: script ticks over 3 ms in the per-tick CSV, the autotest minute-report ticks (every 3,600th
-    # benchmark tick, t % 3600 == 3599) left out
-    literal = None
+    # per-tick CSV: the literal #8 count (script ticks over 3 ms) and whole ticks over 16.67 ms, both without the
+    # autotest minute-report ticks (every 3,600th benchmark tick, t % 3600 == 3599)
+    literal, whole_slow = None, None
     csv = os.path.join(BUILD, runs("scene")[0][2] + "-out", "bench.out")
     if os.path.exists(csv):
-        hdr, literal = None, 0
+        hdr, literal, whole_slow = None, 0, 0
         for line in open(csv, errors="replace"):
             if line.startswith("tick,"):
                 hdr = line.strip().strip(",").split(",")
             elif hdr and line.startswith("t") and line[1:2].isdigit():
                 v = line.strip().strip(",").split(",")
-                if int(v[0][1:]) % 3600 != 3599 and int(v[hdr.index("scriptUpdate")]) / 1e6 > 3:
-                    literal += 1
+                if int(v[0][1:]) % 3600 == 3599:
+                    continue
+                literal += int(v[hdr.index("scriptUpdate")]) / 1e6 > 3
+                whole_slow += int(v[hdr.index("wholeUpdate")]) / 1e6 > 16.67
+    sp99 = re.search(r"scriptUpdate\s+mean\s+[0-9.]+\s+p50\s+[0-9.]+\s+p95\s+[0-9.]+\s+p99\s+([0-9.]+)", t)
     if marks:
         out("Script ticks over 3 ms by the marks that ran in them (the test fixtures' ai/autotest minute reports and "
             "perf_scene left out): " + (", ".join(f"{k} {n} (worst {w:.2f} ms)" for k, n, w in slow) or "none") + ".")
@@ -575,14 +578,24 @@ def stage_scene():
             float(m.group(1)) <= 16.67, "M3 notes 9.1")
     else:
         row("scene", "Perf scene output", "a benchmark", "no benchmark output", False)
+    judged = lambda ok, val: ok if not under else f"{val} (under load)"
     if marks:
         mk = [x for x in marks if x[0] == "market.ai_step"]
         n_mk = mk[0][1] if mk else 0
-        row("scene", "Script ticks over 3 ms with market.ai_step", "0", str(n_mk) + (f" (worst {mk[0][2]:.2f} ms)" if mk else ""),
-            (n_mk == 0) if not under else f"{n_mk} (under load)", "#8 (title)")
+        row("scene", "#8: script ticks over 3 ms with market.ai_step", "0", str(n_mk) + (f" (worst {mk[0][2]:.2f} ms)" if mk else ""),
+            judged(n_mk == 0, n_mk), "#8 (lead's 0.1.1 reading)")
+    if over:
+        n3 = int(over.group(2))
+        row("scene", "#8: script ticks over 3 ms (perf-bench count)", "≤ 60", str(n3), judged(n3 <= 60, n3), "#8 (lead's 0.1.1 reading)")
+    if sp99:
+        p99 = float(sp99.group(1))
+        row("scene", "#8: script time p99", "≤ 3 ms", f"{p99:.3f} ms", judged(p99 <= 3, f"{p99:.3f}"), "#8 (lead's 0.1.1 reading)")
+    if whole_slow is not None:
+        row("scene", "#8: whole ticks over 16.67 ms, minute reports left out", "0", str(whole_slow),
+            judged(whole_slow == 0, whole_slow), "#8 (lead's 0.1.1 reading)")
     if literal is not None:
-        row("scene", "Script ticks over 3 ms, minute-report ticks left out", "0", str(literal),
-            (literal == 0) if not under else f"{literal} (under load)", "#8 (acceptance text)")
+        row("scene", "Script ticks over 3 ms, minute reports left out (long-term target 0)", "informational", str(literal),
+            "info", "#8 (acceptance text)")
     if marks:
         row("scene", "Marks in script ticks over 3 ms", "informational",
             ", ".join(f"{k} {n}" for k, n, _ in slow[:8]) or "none", "info", "D9")
