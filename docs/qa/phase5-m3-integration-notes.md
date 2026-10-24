@@ -623,4 +623,6 @@ coal priority narrowing only). 0 Lua errors in every run; 60.0 s per game minute
 
 Open after the round: M1 501 train_items (13,506 of 20,000; the match diverges at minute 21, section 10), Age III by
 40:00 (1 of 5), three cities linked by 35:00 (12 of 20), market.ai_step's ledger slice over 3 ms in 3 ticks of the
-perf scene, and the engine's Steam networking crash on a LAN client connect (once in three 2.1 LAN runs).
+perf scene, the engine's Steam networking crash on a LAN client connect (once in three 2.1 LAN runs), and the hauler
+fuel rule reading the drop-off's coal at departure, not at arrival (section 10: a hauler can leave on coal the
+drop-off spends before it gets there).
