@@ -2076,7 +2076,11 @@ local function cargo_plan(rec, train)
   if src.id == dst.id then return nil, "same-network" end
   local in_res = inbound(rec.force, dst.id, train.id)
   local aboard = cargo_of(train)
-  local feeder = next(dst.keep) == nil
+  -- Economy 0.1.1 (#7): an AI rail program's freight train carries everything its town offers, not only what the
+  -- capital's Keep still lacks: with the capital at its 3,000-ore Keep a trip carried what the capital had used since
+  -- (6-184 ore in M1 501) while the town's surplus went 1,000 tiles to the port by hauler (6,000 copper ore of the
+  -- player's); the capital's port route sells what it holds above its export level
+  local feeder = next(dst.keep) == nil or rec.ai_line ~= nil
   local plan, any = {}, false
   for item, threshold in pairs(src.export) do
     local avail = src.network.get_item_count(item) - threshold
