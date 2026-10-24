@@ -72,7 +72,9 @@ if [ -n "${SAVELOAD:-}" ]; then
   kill "$SPID" 2>/dev/null; wait "$SPID" 2>/dev/null
   [ -f "$WDS/saves/perf-lan-$T.zip" ] || { echo "no save at tick $T"; exit 1; }
   cp "$WDS/saves/perf-lan-$T.zip" "$OUT/at-$T.zip"
-  "$FACTORIO_BIN" -c "$SCFG" --mod-directory "$DIR" --benchmark "$OUT/at-$T.zip" --benchmark-ticks $(( E - T + 60 )) \
+  # Nation on_nth_tick handlers run on phases of their own (e9ba46c): perf_lan's save and its check for nominal tick N
+  # land at N + their phase (< 600), so run B runs one period more to reach the check of nominal tick E
+  "$FACTORIO_BIN" -c "$SCFG" --mod-directory "$DIR" --benchmark "$OUT/at-$T.zip" --benchmark-ticks $(( E - T + 660 )) \
     > "$OUT/run-b.out" 2>&1
   cp "$WDS/factorio-current.log" "$OUT/run-b.log"
   echo "=== save/load equivalence: saved at tick $T (match minute $SAVE_MIN), compared to tick $E ==="
@@ -97,6 +99,15 @@ def after(path):
         out.append(l)
         if m and int(m.group(1)) == E: break  # run B ends a second after tick E
     return out
+def last_check(path):
+    ts = [int(m.group(1)) for line in open(path, errors="replace") for m in [re.search(r"\[rts\] lan check t(\d+):", line)] if m]
+    ts = [t for t in ts if T < t <= E]
+    return max(ts) if ts else None
+# compare up to the last checksum both runs logged (each run's last check line can fall on either side of its end)
+la, lb = last_check(pa), last_check(pb)
+if la is not None and lb is not None and min(la, lb) < E:
+    print(f"  note: run A's last check is t{la}, run B's t{lb}; compared up to t{min(la, lb)} instead of t{E}")
+    E = min(la, lb)
 a, b = after(pa), after(pb)
 ka = [l for l in a if "lan check t" in l]; kb = [l for l in b if "lan check t" in l]
 kdiff = [i for i in range(min(len(ka), len(kb))) if ka[i] != kb[i]]
@@ -109,7 +120,7 @@ print(f"  all [rts] lines after the save: run A {len(a)}, run B {len(b)}, {nd} i
 for tag, i1, i2, j1, j2 in ops[:4]:
     for l in a[i1:min(i2, i1 + 2)]: print(f"    A: {l[:200]}")
     for l in b[j1:min(j2, j1 + 2)]: print(f"    B: {l[:200]}")
-sys.exit(1 if kdiff or not ka or len(ka) != len(kb) or ops else 0)
+sys.exit(1 if kdiff or not ka or len(ka) != len(kb) or ops or E <= T + 600 else 0)
 PYC
   RC=$?
   grep -nE "Error|rror while running|Exception" "$OUT/run-a.log" "$OUT/run-b.log" | grep -v "Got EOF on stdin" | head -5
