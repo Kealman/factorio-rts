@@ -440,6 +440,10 @@ balance.buildings["rts-project-site"] = {kind = "project", health = E.charter.si
 balance.nation = balance.nation or {}
 balance.nation.hauler_slots = 10          -- base cargo slots of a hauler (research adds its bonus on top)
 balance.nation.hauler_tiles_per_coal = 40 -- a hauler takes 1 coal per this many tiles from the hub it departs
+-- Economy 0.1.1 (#6, #7): an auto trip waits at home for a load of at least this many items per coal of its round trip,
+-- at most hauler_batch_wait ticks (scripts/logistics.lua small_load)
+balance.nation.hauler_items_per_coal = 25
+balance.nation.hauler_batch_wait = 60 * 60
 balance.nation.rails = {
   -- factory recipes (category rts-buildings), unlocked by the Railways technology
   depot = {cost = {["iron-plate"] = 40, ["steel-plate"] = 10, ["copper-plate"] = 10}, time = 10, health = 1500,

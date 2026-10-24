@@ -123,6 +123,7 @@ buildings.KIND_BY_NAME[logistics.HUB] = "hub"
 -- Phase 5 M1 (m1-rails): Nation mode (storage.match.config.mode; in the rails autotest only its own test forces)
 -- changes hauler fuel and cargo slots (balance.nation).
 logistics.FUEL_ALERT_TICKS = 2 * 60 * 60 -- a hauler waiting for coal raises its "no fuel" alert at most this often
+logistics.FUEL_RESCUE_TICKS = 30 * 60 -- Economy 0.1.1 (#6): a dry hauler's destination pays its leg after this long
 local function nation_mode(force_name)
   local m = storage.match
   local c = m and m.config
@@ -569,6 +570,7 @@ end
 
 local function set_state(h, state, reason)
   h.state, h.reason = state, reason
+  if reason ~= "no-fuel" then h.dry_since = nil end -- Economy 0.1.1 (#6): the dry wait's start (go(), FUEL_RESCUE_TICKS)
   if h.logged_state ~= state .. (reason or "") then
     h.logged_state = state .. (reason or "")
     util.log("logistics: hauler #%d (%s, %s) %s%s", h.entity.unit_number, h.force, h.mode, state,
@@ -708,6 +710,7 @@ local function go(h, hub_un, state)
   -- the departure network: the hub the hauler stands at, or the network of its last hub when it stands inside it (a
   -- new hauler walks out of a factory in its home's network)
   local net
+  local field = false -- Economy 0.1.1 (#6): between hubs (a new route given on the way), not inside a network
   if per and h.at_hub then
     if near_hub(h, h.at_hub) then
       net = logistics.hub_network(h.at_hub)
@@ -716,39 +719,110 @@ local function go(h, hub_un, state)
       local here = h.entity.surface.find_logistic_network_by_position(h.entity.position, h.force)
       if hn and here and here.valid and here.network_id == hn.network_id then net = hn end
     end
+    field = net == nil
     -- a walk inside one network (a new hauler from its factory to its home hub) burns nothing
     local dest = net and logistics.hub_network(hub_un)
     if dest and dest.valid and dest.network_id == net.network_id then net = nil end
+  end
+  -- Economy 0.1.1 (#6): a leg started between hubs is free as before, but its way back is not: a route hauler sent to
+  -- a drop-off or an auto hauler sent to a source on the way (the AI's town supply and export routes re-route haulers
+  -- that are driving: M1 501, the player's #2900 and #3411 and rts-ai-1's #2951 stood dry at the stop for 26-31 game
+  -- minutes) takes its way back from the destination's network when its tank is short, else refuels first: a route
+  -- hauler at its pickup, an auto hauler at home (both then leave by the rule below).
+  if per and field then
+    local manual = h.mode == "manual"
+    local base = manual and state == "to_dropoff" and h.pickup or (not manual and state == "to_pickup" and h.home)
+    local bp = base and logistics.approach_point(base)
+    if bp then
+      local back = math.ceil(util.distance(point, bp) * 1.1 / per)
+      local tank = h.fuel or 0
+      if tank < back then
+        local dnet = logistics.hub_network(hub_un)
+        local got = (dnet and dnet.valid and dnet.get_item_count("coal") >= back - tank)
+          and dnet.remove_item({name = "coal", count = back - tank}) or 0
+        if got > 0 then
+          h.fuel = tank + got
+          util.log("logistics: hauler #%d takes %d coal for the way back from the network of hub #%d (on the way)",
+            h.entity.unit_number, got, hub_un)
+        elseif base ~= hub_un and logistics.hub_rec(base) then
+          util.log("logistics: hauler #%d has %d of %d coal for the way back from hub #%d: refuels at hub #%d first",
+            h.entity.unit_number, tank, back, hub_un, base)
+          return go(h, base, manual and "to_pickup" or "to_home")
+        end
+      end
+    end
   end
   if per and net then
     local need = math.ceil(util.distance(h.entity.position, point) * 1.1 / per)
     local tank = h.fuel or 0
     local from_tank = math.min(tank, need)
     local need_net = need - from_tank
+    local left = tank - from_tank -- the tank once this leg is paid
     -- the way back is tanked when leaving for a pickup and for a drop-off alike, so a route from the capital to an
     -- outpost without coal runs too (the docs agent's GUI check)
-    local back = (state == "to_pickup" or state == "to_dropoff") and math.max(0, need - (tank - from_tank)) or 0
-    local want = need_net + back
-    -- Phase 5 M3 ai (QA fix 3, in m3-integ's QA fix round): a route hauler leaving its pickup for a drop-off that cannot
-    -- refuel the way back (less
-    -- coal than it in its network) takes the way back too before it leaves; it left with whatever the network spared
-    -- and stood out of fuel at the town (M2 703 on f37d073: three supply haulers of rts-ai-2's town 12 in turn, the town
-    -- starving). Auto haulers keep the old rule (applied to every hauler, the aggressive AI opened no rail line in M2
-    -- 703 and 704)
-    local must = need_net
-    if back > 0 and h.mode == "manual" and state == "to_dropoff" and h.at_hub == h.pickup then
-      local dnet = logistics.hub_network(hub_un)
-      if not (dnet and dnet.valid and dnet.get_item_count("coal") >= back) then must = need_net + back end
+    local back = (state == "to_pickup" or state == "to_dropoff") and need or 0
+    -- Phase 5 M3 ai (QA fix 3, in m3-integ's QA fix round): a route hauler must not stand out of fuel at its drop-off
+    -- (M2 703 on f37d073: three supply haulers of rts-ai-2's town 12 in turn, the town starving).
+    -- Economy 0.1.1 (#6): the way back is checked against the coal the hauler can count on when it gets there, not the
+    -- drop-off's coal at departure (rts-ai-1's #2951 left town 1662 while port 674 held its way back, found it spent
+    -- 61 s later and stood dry there for 22 game minutes). A leg to a stop without a sure refill requires its way back:
+    -- a manual route hauler leaving for its drop-off (the way back to its pickup) and an auto hauler leaving for a
+    -- source (the way home: in M1 501 the player's auto haulers stood dry at outposts and towns for 140 game minutes,
+    -- one of them for 40). That way back is paid now: from the tank, then this hub's network, then the destination's
+    -- network (taken now, so nothing there spends it before the hauler arrives); what none of them covers keeps the
+    -- hauler waiting where it stands. The other legs tank whatever this network spares for the way back, as before.
+    local required = false
+    if h.mode == "manual" and state == "to_dropoff" then
+      required = true
+      if h.at_hub ~= h.pickup then
+        local pp = logistics.approach_point(h.pickup)
+        if pp then back = math.ceil(util.distance(point, pp) * 1.1 / per) end
+      end
+    elseif h.mode ~= "manual" and state == "to_pickup" then
+      required = true
+      local hp = logistics.approach_point(h.home)
+      if hp then back = math.ceil(util.distance(point, hp) * 1.1 / per) end
     end
+    local back_net = math.max(0, back - left)
+    local want = need_net + back_net
     local got = (want > 0 and net) and net.remove_item({name = "coal", count = want}) or 0
-    if got >= must then
-      h.fuel = tank - from_tank + (got - need_net)
-      h.fuel_back = nil
+    local dnet = logistics.hub_network(hub_un)
+    if dnet and not (dnet.valid and dnet.network_id ~= net.network_id) then dnet = nil end
+    -- Economy 0.1.1 (#6): one end of a route with coal is enough, also for a hauler that stands dry at the other end
+    -- (a route given to a hauler at a coal-less town or outpost, or its first trip from there: rts-player's #2481,
+    -- M1 501, stood 18-24 minutes at its town): after FUEL_RESCUE_TICKS of waiting the stop it drives to pays the leg
+    -- (and a required way back) when its network holds the coal.
+    local rescued = 0
+    if got < need_net and dnet and h.dry_since and game.tick - h.dry_since >= logistics.FUEL_RESCUE_TICKS then
+      local miss = need_net - got
+      if dnet.get_item_count("coal") >= miss + (required and back_net or 0) then
+        rescued = dnet.remove_item({name = "coal", count = miss})
+      end
+    end
+    local paid = got + rescued
+    local short = math.max(0, want - paid) -- the part of the way back nothing paid yet (when paid covers this leg)
+    local reserved = 0
+    if required and paid >= need_net and short > 0 and dnet and dnet.get_item_count("coal") >= short then
+      reserved = dnet.remove_item({name = "coal", count = short})
+    end
+    if paid >= need_net and (not required or reserved >= short) then
+      h.fuel = left + (paid - need_net) + reserved
+      h.fuel_back, h.dry_since = nil, nil
+      if rescued > 0 then
+        util.log("logistics: hauler #%d stood out of fuel at hub #%d: hub #%d's network pays the %d coal of the trip",
+          h.entity.unit_number, h.at_hub, hub_un, rescued)
+      end
+      if reserved > 0 then
+        util.log("logistics: hauler #%d takes %d coal for the way back from the network of hub #%d (%d from hub #%d)",
+          h.entity.unit_number, reserved, hub_un, paid - need_net, h.at_hub)
+      end
     else
       if got > 0 then net.insert({name = "coal", count = got}) end
-      -- (it waits at its pickup, never at a hub without coal; h.fuel_back: the hub panel says it waits for the way
+      if rescued + reserved > 0 then dnet.insert({name = "coal", count = rescued + reserved}) end
+      -- (it waits where it stands, never at a stop without coal; h.fuel_back: the hub panel says it waits for the way
       -- back's coal too; the reason stays "no-fuel" for the AI's fuel rules)
-      h.fuel_back = (got >= need_net and must > need_net) or nil
+      h.fuel_back = (paid >= need_net and required) or nil
+      h.dry_since = h.dry_since or game.tick
       set_state(h, "waiting", "no-fuel")
       -- one alert per hauler per FUEL_ALERT_TICKS: "Hauler N: no fuel at <hub>"
       if not h.fuel_alert or game.tick - h.fuel_alert >= logistics.FUEL_ALERT_TICKS then
@@ -1015,6 +1089,28 @@ local function auto_plan(h)
   return best, plan
 end
 
+-- Economy 0.1.1 (#6, #7): Nation-mode trips worth their coal. An auto hauler went for whatever a source offered above its
+-- export level: in M1 501 288 of the player's 301 auto trips carried under 20 items (median 8 plates, 4 coal a round
+-- trip to an outpost 56 tiles away), and once haulers stopped standing dry at outposts (the way back rule above) those
+-- trips burnt the capitals' coal the trains needed (the player's first freight train left a town depot with 2 coal and
+-- stood there out of fuel). A trip now waits at home until its load is worth the round trip's coal
+-- (balance.nation.hauler_items_per_coal items per coal) or for at most hauler_batch_wait ticks since the first small
+-- load was offered, then takes what there is. True while it should wait (h.batch_since: when the wait began).
+local function small_load(h, plan, from_un, to_un)
+  local per = nation_mode(h.force) and balance.nation and balance.nation.hauler_tiles_per_coal
+  if not (per and plan) then return false end
+  local a, b = logistics.approach_point(from_un), logistics.approach_point(to_un)
+  if not (a and b) then return false end
+  local total = 0
+  for _, n in pairs(plan) do total = total + n end
+  local coal = 2 * math.ceil(util.distance(a, b) * 1.1 / per)
+  local want = (balance.nation.hauler_items_per_coal or 25) * coal
+  if total >= want then return false end
+  local now = game.tick
+  if not h.batch_since then h.batch_since = now end
+  return now - h.batch_since < (balance.nation.hauler_batch_wait or 3600)
+end
+
 -- One decision for a hauler that is not travelling (idle / waiting).
 local function plan_next(h)
   local cargo = read_cargo(h)
@@ -1097,6 +1193,13 @@ local function plan_next(h)
     end
   end
   local src_un, plan, reason = auto_plan(h)
+  -- Economy 0.1.1 (#6, #7): in Nation mode an auto trip waits at home (up to batch_wait) for a load worth its coal
+  if src_un and near_hub(h, h.home) and small_load(h, plan, h.home, src_un) then
+    h.plan, h.plan_src = nil, nil
+    set_state(h, "waiting", "small-load")
+    return
+  end
+  h.batch_since = nil
   if src_un then
     h.plan, h.plan_src = plan, src_un
     go(h, src_un, "to_pickup")
