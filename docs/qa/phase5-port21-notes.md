@@ -250,6 +250,9 @@ The restore is a judgment call: delete the block at `data-updates.lua:27-37` to 
      unverified on 2.1).
    - The install's real-config load checksums (m1-ready 3969627748, m2-ready 2375539681), which will change.
    - `docs/research/api-capabilities-2.0.77.md`, which describes 2.0.
+   - Re-baselined in the QA fix round (m3-integ): the M1 acceptance's Age II deadline, 20:00 -> 20:30
+     (`tools/probes/m1_acceptance.lua` sets `autotest.AGE_DEADLINE`). Industrialisation finishes about 16 s later on 2.1;
+     rts-ai-1 reaches Age II at 20:16 in M1 seed 501 on every 2.1 tree (before 20:00 on 2.0).
 7. **GUI protocol coordinates.** `phase5-m3-protocol.md` assumes the 2.0 layout at UI scale 0.75. 2.1 adds side
    buttons such as alerts and pins, so positions need checking in the first GUI pass.
 

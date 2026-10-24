@@ -5,6 +5,9 @@
 local events = require("scripts.events")
 local util = require("scripts.util")
 local autotest = require("scripts.ai.autotest")
+-- Factorio 2.1 re-baseline (QA fix round): Industrialisation finishes ~16 s later on the 2.1 engine (rts-ai-1 Age II at
+-- 20:16 on every 2.1 tree, 2.0: before 20:00); the M1 acceptance's Age II deadline is 20:30
+autotest.AGE_DEADLINE = (20 * 60 + 30) * 60
 
 local FINAL_MINUTES = 5
 

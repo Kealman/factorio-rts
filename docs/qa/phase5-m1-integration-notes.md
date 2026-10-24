@@ -324,3 +324,10 @@ Docs: the protocol's header, location table (item picker row, ledger Start), glo
 15, 33, 37 and 43 follow the fixes (picker coordinates from `build/shots-m1d-qafix/`); the README's make targets name
 the picker. `tools/probes/m1_docs_gui.lua` now sets the step 15 and step 43 targets through the picker and takes
 screenshots of both; `tools/probes/m1_qafix_gui.lua` is new.
+
+## Factorio 2.1 re-baseline (Phase 5 M3 QA fix round, 2026-10-24)
+
+On Factorio 2.1.23 the acceptance's Age II deadline is **20:30** (was 20:00; `tools/probes/m1_acceptance.lua` sets
+`autotest.AGE_DEADLINE`): Industrialisation finishes about 16 s later on the new engine, and rts-ai-1 reaches Age II at
+20:16 in seed 501 on every 2.1 tree. Every other M1 criterion is unchanged; the 2.1 numbers are in
+`phase5-m3-integration-notes.md` section 9.
