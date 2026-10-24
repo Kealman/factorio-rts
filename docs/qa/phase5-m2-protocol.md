@@ -41,7 +41,7 @@ the HUD are unchanged) and `docs/qa/phase5-*-notes.md`.
 ## Launch (lead)
 
 ```sh
-cd /Users/evgeniyivanov/Projects/home/games/factorio_rts
+cd "$(git rev-parse --show-toplevel)"   # the repository root
 rm -rf build/qa-p5m2 && mkdir -p build/qa-p5m2 && cp -R mods/factorio-rts mods/mod-list.json build/qa-p5m2/
 RTS_LOCALE=en tools/gui-run.sh build/qa-p5m2 3600 'RTS_QA_END'
 ```

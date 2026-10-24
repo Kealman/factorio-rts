@@ -12,7 +12,7 @@ Run the session from a frozen copy of the mods dir, so other agents' runs and ed
 after the copy: `build/qa-p2-gui.log`.
 
 ```sh
-cd /Users/evgeniyivanov/Projects/home/games/factorio_rts
+cd "$(git rev-parse --show-toplevel)"   # the repository root
 rm -rf build/qa-p2 && mkdir -p build/qa-p2 && cp -R mods/factorio-rts mods/mod-list.json build/qa-p2/
 tools/gui-run.sh build/qa-p2 3600 'RTS_QA_END'
 ```
@@ -34,7 +34,7 @@ running. The GUI self-test is off by default, so no scripted step moves the came
 - **Reading the log.** Note the line count before each step, then search only the new lines:
 
   ```sh
-  LOG=/Users/evgeniyivanov/Projects/home/games/factorio_rts/build/qa-p2-gui.log
+  LOG=build/qa-p2-gui.log   # relative to the repository root
   wc -l < "$LOG"                                  # before the step: note the number N
   tail -n +$((N+1)) "$LOG" | grep -E 'PATTERN'    # after the step
   ```

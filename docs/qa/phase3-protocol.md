@@ -10,7 +10,7 @@ clicks in a 1280×800 game window and reads the game log with shell commands. Im
 ## Launch (lead)
 
 ```sh
-cd /Users/evgeniyivanov/Projects/home/games/factorio_rts
+cd "$(git rev-parse --show-toplevel)"   # the repository root
 rm -rf build/qa-p3 && mkdir -p build/qa-p3 && cp -R mods/factorio-rts mods/mod-list.json build/qa-p3/
 tools/gui-run.sh build/qa-p3 3600 'RTS_QA_END'
 ```
@@ -31,7 +31,7 @@ GUI self-test is off, so no scripted step clicks anything.
   `[rts]`, and patterns are `grep -E`. Where a step lists several patterns, each must match.
 
   ```sh
-  LOG=/Users/evgeniyivanov/Projects/home/games/factorio_rts/build/qa-p3-gui.log
+  LOG=build/qa-p3-gui.log   # relative to the repository root
   wc -l < "$LOG"                                  # before the step: N
   tail -n +$((N+1)) "$LOG" | grep -E 'PATTERN'    # after the step
   ```

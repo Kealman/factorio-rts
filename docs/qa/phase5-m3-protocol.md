@@ -51,7 +51,7 @@ the HUD are unchanged except the build menu, which is one row taller: see below)
 ## Launch (lead)
 
 ```sh
-cd /Users/evgeniyivanov/Projects/home/games/factorio_rts
+cd "$(git rev-parse --show-toplevel)"   # the repository root
 rm -rf build/qa-p5m3 && mkdir -p build/qa-p5m3 \
   && git archive HEAD mods/factorio-rts | tar -x -C build/qa-p5m3 --strip-components=1 \
   && cp mods/mod-list.json build/qa-p5m3/
