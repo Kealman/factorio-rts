@@ -558,3 +558,39 @@ every run.
 Open on 2.1 (added to section 7): Age III by 40:00 0 of 5 (the leaders 0:07-4:52 late); M1 501 50/53 (the age2
 deadline by 16 s on the new engine, the player AI's armoured car and train volume); market.ai_step's ledger slice over
 3 ms in 3 ticks of the scene.
+
+## 10. The hauler fuel rule's return-leg estimate, measured (m3-fuel, HEAD 6e6cbcb)
+
+The question: is 552ee2c's rule (a manual route hauler at its pickup waits until both legs are in its tank when the
+drop-off's network holds less coal than the way back) too conservative, and is it why M1 501's train_items fell from
+19,397 (5a2cdcc) to 14,949? Answer: no on both counts; the estimate stays as it is.
+
+- **What a hauler burns.** It has no burner: the only coal is the script's charge per leg, ceil(straight distance x 1.1
+  / `hauler_tiles_per_coal` 40), taken from the hub it leaves. Routes are driven straight after the string pulling
+  (driven route / straight distance: median 1.000, max 1.012). Over 321 manual round trips (M1 501 on 5a2cdcc, on HEAD
+  and on HEAD without the rule) the way back was charged exactly what the way out was in 320 (one re-routed hauler 2
+  less); the charge is the driven tiles / 40 x 1.13-1.14.
+- **The estimate.** The rule's `back` is that charge: the measured consumption plus 13-14 %, and the exact amount the
+  drop-off will take. A lower estimate leaves the hauler short there, so there is nothing to calibrate in it.
+- **What it costs on HEAD** (M1 501 with one log line where the rule holds a hauler, otherwise HEAD: 13,506, the same as
+  `m3ai-R8-501`): it held 5 haulers, each for under a game minute. The player's #1617 and #3493 waited 0.9 minutes
+  each at the capital with 53 of the 54 coal for a round trip to port 498, which held none; #2481 waited one retry at
+  town 8; rts-ai-1's #2951 waited 0.7 minutes at town 1662 (its port held 32 of the 35 for the way back) and #3186 the
+  last 0.9 minutes at its capital. About 1.8 game minutes of the player's route haulers in 60.
+
+| M1 501 tree | train_items | rts-player by train |
+|---|---|---|
+| 5a2cdcc, before the rule (`base21-m1`) | 19,397 | 7,910 in 42 trips |
+| 552ee2c, the rule (`fuel21-m1`) | 14,949 | 4,150 in 30 trips |
+| HEAD (`m3f-inst-m1`, = `m3ai-R8-501`) | 13,506 | 4,130 in 16 trips |
+| HEAD with the rule switched off (`m3f-norule-m1`) | 13,111 | 0 |
+| HEAD, the drop-off's coal counted with a 15 % margin (`cal1-m1`) | 12,498 | 0 |
+
+`base21-m1` and `fuel21-m1` are line-identical up to minute 21, when the rule first held a hauler (rts-ai-1's #2951,
+not the player's); from there the matches diverge (wars, cities), and the train figures follow the divergence. Without
+the rule on HEAD the number does not come back, so the 10 % target (17,457) cannot be met through this rule.
+
+Stranding the rule does not catch (HEAD): rts-ai-1's #2951 left town 1662 while port 674 held the way back, found it
+spent 61 s later and stood dry at 674 for 22 game minutes; #3186 (city 12's supply hauler) left for a hub built 2 game
+seconds earlier and stood at it. The rule reads the drop-off's coal at departure, not at arrival. Before the rule
+(5a2cdcc) the player's #2481 stood about 24 game minutes at port 498 and #2951 at 674.
