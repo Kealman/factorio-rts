@@ -1,9 +1,16 @@
 #!/usr/bin/env bash
-# Showcase: regenerates the staged release screenshots in docs/media/ (1920x1080 PNG) and the mod portal thumbnail
-# (mods/factorio-rts/thumbnail.png, 144x144). Every shot is a scripted scene of tools/probes/showcase_*.lua played in a
-# real GUI client (no human input): the probe spawns, gives and positions everything with the QA shortcuts' module
-# calls, moves the camera and logs "RTS_DRIVE <n> capture <name>"; tools/gui-drive.sh grabs the client window and this
-# script crops its 28 px title bar. docs/media/INDEX.md lists which launch and scene makes each file.
+# Showcase: regenerates the staged release screenshots and the mod portal thumbnail (mods/factorio-rts/thumbnail.png,
+# 144x144). Every shot is a scripted scene of tools/probes/showcase_*.lua played in a real GUI client (no human
+# input): the probe spawns, gives and positions everything with the QA shortcuts' module calls, moves the camera and
+# logs "RTS_DRIVE <n> capture <name>"; tools/gui-drive.sh grabs the client window and this script crops its 28 px title
+# bar. docs/media/INDEX.md lists which launch and scene makes each file.
+#
+# Output of every shot (by default):
+#   build/showcase/full/<name>.png   the full-size 1920x1080 original (lossless; for the Mod Portal gallery upload)
+#   docs/media/<name>.png            the web version for the repository: WEB_WIDTH px wide (1600), pngquant at
+#                                    WEB_QUALITY (70-90), then oxipng (when installed: brew install pngquant oxipng)
+#   build/showcase/alt/alt-*.png     alternate takes (other moments and framings), full size, never in the repository
+# WEB_FORMAT=webp writes docs/media/<name>.webp (cwebp -q WEB_WEBP_Q, default 85) instead of the PNG.
 #
 # Usage: tools/showcase.sh <command> [scene...]
 #   all            lobby, bake, nation, skirmish, thumb (about 15 minutes of wall clock; one GUI client at a time)
@@ -12,12 +19,14 @@
 #                  (default 60) at game speed 64; saved to build/showcase/nation-bake.zip
 #   nation [s...]  launch 2b: loads the bake and stages the Nation scenes (02-11, 15), or only the named ones
 #   skirmish [s..] launch 3: a Skirmish match (13-commander-abilities, 14-skirmish-base)
-#   thumb          a shot (THUMB_SHOT) -> docs/media/thumbnail-source.png; a square of it (THUMB_CROP w:h:x:y)
-#                  -> mods/factorio-rts/thumbnail.png, 144x144
-#   crop <launch>  crop the raw window grabs of a launch again (build/showcase/raw/<launch>/) into docs/media/
+#   thumb          a full-size shot (THUMB_SHOT, default 13): its square THUMB_CROP (w:h:x:y) -> the 144x144
+#                  mods/factorio-rts/thumbnail.png; the square itself -> docs/media/thumbnail-source.png (web version)
+#   web [name...]  the web versions again from build/showcase/full/ (all, or the named shots)
+#   full           list the full-size originals (build/showcase/full/)
+#   crop <launch>  crop the raw window grabs of a launch again (build/showcase/raw/<launch>/)
 # Env: SHOW_SEED (nation world seed, default 4242), SKIRMISH_SEED (default 777), BAKE_MIN, SHOTS=1 (also engine
-#      screenshots, build/shots-showcase-*/). Raw window grabs stay in build/showcase/raw/. Steam must be running;
-#      the game is English (RTS_LOCALE=en).
+#      screenshots, build/shots-showcase-*/), WEB_WIDTH, WEB_QUALITY, WEB_FORMAT, WEB_WEBP_Q. Raw window grabs stay in
+#      build/showcase/raw/. Steam must be running; the game is English (RTS_LOCALE=en).
 # The tree is `git archive HEAD mods/factorio-rts` plus the probes, so the shots show the committed mod.
 set -u
 source "$(dirname "$0")/factorio-env.sh"
@@ -27,9 +36,12 @@ W=1920; H=1080
 MEDIA="$RTS_ROOT/docs/media"
 SHOW="$RTS_BUILD_DIR/showcase"
 RAW="$SHOW/raw"
+FULL="$SHOW/full"
 BAKE="$SHOW/nation-bake.zip"
 SHOW_SEED="${SHOW_SEED:-4242}"; SKIRMISH_SEED="${SKIRMISH_SEED:-777}"; BAKE_MIN="${BAKE_MIN:-60}"
-mkdir -p "$MEDIA" "$RAW"
+WEB_WIDTH="${WEB_WIDTH:-1600}"; WEB_QUALITY="${WEB_QUALITY:-70-90}"; WEB_FORMAT="${WEB_FORMAT:-png}"
+WEB_WEBP_Q="${WEB_WEBP_Q:-85}"
+mkdir -p "$MEDIA" "$RAW" "$FULL" "$SHOW/alt"
 
 no_client() {
   if pgrep -f '^/Users/.*/MacOS/factorio .*--window-size' >/dev/null; then
@@ -56,20 +68,44 @@ tree() {
   printf '\n-- test copy (tools/showcase.sh)\nrequire("scripts.showcase_%s")\n' "$2" >> "$dir/factorio-rts/control.lua"
 }
 
-# crop <launch>: raw window grabs (title bar on top) -> docs/media/<name>.png, 1920x1080; the alternate takes
-# (alt-*.png: other moments and framings of a scene) go to build/showcase/alt/ and stay out of the repository
+# web <full-size png> [out name]: the repository version in docs/media/ (see the header)
+web() {
+  local src="$1" name="${2:-$(basename "$1" .png)}" tmp="$SHOW/web-tmp.png" out
+  ffmpeg -v error -y -i "$src" -vf "scale='min($WEB_WIDTH,iw)':-2:flags=lanczos" "$tmp" || return 1
+  if [ "$WEB_FORMAT" = webp ]; then
+    out="$MEDIA/$name.webp"
+    cwebp -quiet -q "$WEB_WEBP_Q" "$tmp" -o "$out" && rm -f "$MEDIA/$name.png"
+  else
+    out="$MEDIA/$name.png"
+    if command -v pngquant >/dev/null; then
+      pngquant --quality "$WEB_QUALITY" --speed 1 --strip --force --output "$out" -- "$tmp" \
+        || { echo "showcase: pngquant could not reach $WEB_QUALITY for $name: kept the scaled PNG"; cp "$tmp" "$out"; }
+    else
+      echo "showcase: pngquant not installed (brew install pngquant oxipng): $name is the scaled PNG only"
+      cp "$tmp" "$out"
+    fi
+    command -v oxipng >/dev/null && oxipng -o 4 --strip safe -q "$out"
+  fi
+  rm -f "$tmp"
+  printf 'showcase: web %-26s %5d KB\n' "$name" $(( $(stat -f %z "$out") / 1024 ))
+}
+
+# crop <launch>: raw window grabs (title bar on top) -> build/showcase/full/<name>.png (1920x1080) and the web version
+# in docs/media/; alternates (alt-*.png) -> build/showcase/alt/ only
 crop() {
-  local f h top out n=0
-  mkdir -p "$SHOW/alt"
+  local f h top n=0 name
   for f in "$RAW/$1"/*.png; do
     [ -f "$f" ] || continue
     h=$(sips -g pixelHeight "$f" | awk '/pixelHeight/{print $2}')
     top=$(( h - H ))
     if [ "$top" -lt 0 ]; then echo "showcase: $f is ${h} px tall, skipped"; continue; fi
-    case "$(basename "$f")" in alt-*) out="$SHOW/alt";; *) out="$MEDIA";; esac
-    ffmpeg -v error -y -i "$f" -vf "crop=$W:$H:0:$top" "$out/$(basename "$f")" && n=$(( n + 1 ))
+    name="$(basename "$f")"
+    case "$name" in
+      alt-*) ffmpeg -v error -y -i "$f" -vf "crop=$W:$H:0:$top" "$SHOW/alt/$name" && n=$(( n + 1 )) ;;
+      *) ffmpeg -v error -y -i "$f" -vf "crop=$W:$H:0:$top" "$FULL/$name" && web "$FULL/$name" && n=$(( n + 1 )) ;;
+    esac
   done
-  echo "showcase: $n shot(s) of $1 cropped (docs/media/, alternates in build/showcase/alt/)"
+  echo "showcase: $n shot(s) of $1 (full size in build/showcase/full/, web versions in docs/media/, alternates in build/showcase/alt/)"
 }
 
 # run <launch> <cap seconds> <marker> [save to load]: one GUI client with gui-drive grabbing its window
@@ -139,14 +175,25 @@ cmd_skirmish() {
 }
 
 cmd_thumb() {
-  # THUMB_SHOT (a docs/media shot) becomes thumbnail-source.png; THUMB_CROP (w:h:x:y, a square of it) is scaled to the
-  # mod portal's 144x144 thumbnail
-  local shot="$MEDIA/${THUMB_SHOT:-13-commander-abilities.png}" src="$MEDIA/thumbnail-source.png"
+  # THUMB_SHOT (a full-size shot) and THUMB_CROP (w:h:x:y, a square of the 1920x1080 frame): the square scaled to the
+  # mod portal's 144x144 thumbnail; the square at full resolution, web-encoded, is docs/media/thumbnail-source.png
+  local shot="$FULL/${THUMB_SHOT:-13-commander-abilities.png}" sq="$SHOW/thumbnail-source.png"
   [ -f "$shot" ] || { echo "showcase: no $shot"; exit 1; }
-  cp "$shot" "$src"
-  ffmpeg -v error -y -i "$src" -vf "crop=${THUMB_CROP:-640:640:560:250},scale=144:144:flags=lanczos" \
-    "$RTS_ROOT/mods/factorio-rts/thumbnail.png"
+  ffmpeg -v error -y -i "$shot" -vf "crop=${THUMB_CROP:-640:640:560:250}" "$sq"
+  ffmpeg -v error -y -i "$sq" -vf "scale=144:144:flags=lanczos" "$RTS_ROOT/mods/factorio-rts/thumbnail.png"
   sips -g pixelWidth -g pixelHeight "$RTS_ROOT/mods/factorio-rts/thumbnail.png" | tail -2
+  web "$sq" thumbnail-source
+}
+
+cmd_web() {
+  local f n=0
+  if [ $# -eq 0 ]; then
+    for f in "$FULL"/*.png; do [ -f "$f" ] && web "$f" && n=$(( n + 1 )); done
+  else
+    for f in "$@"; do web "$FULL/${f%.png}.png" && n=$(( n + 1 )); done
+  fi
+  [ -f "$SHOW/thumbnail-source.png" ] && [ $# -eq 0 ] && web "$SHOW/thumbnail-source.png" thumbnail-source
+  echo "showcase: $n web version(s) in docs/media/ ($(du -sh "$MEDIA" | cut -f1) in all)"
 }
 
 case "${1:-}" in
@@ -156,6 +203,8 @@ case "${1:-}" in
   nation) shift; cmd_nation "$@" ;;
   skirmish) shift; cmd_skirmish "$@" ;;
   thumb) cmd_thumb ;;
+  web) shift; cmd_web "$@" ;;
+  full) ls -l "$FULL" ;;
   crop) crop "${2:?launch}" ;;
-  *) sed -n '2,20p' "$0"; exit 2 ;;
+  *) sed -n '2,30p' "$0"; exit 2 ;;
 esac

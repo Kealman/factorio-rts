@@ -1,7 +1,10 @@
 # Release media
 
-Staged screenshots of Factorio RTS for the README and the Factorio Mod Portal: 1920×1080 PNG, the game area of a real
-English client (Factorio 2.1.23 with Space Age), with the mod's HUD. No human played: `tools/showcase.sh all`
+Staged screenshots of Factorio RTS for the README and the Factorio Mod Portal, the game area of a real English client
+(Factorio 2.1.23 with Space Age), with the mod's HUD. The files here are web versions: 1600×900 PNG, pngquant
+(quality 70-90) and oxipng. The full-size 1920×1080 originals for the Mod Portal gallery are written to
+`build/showcase/full/` (not in git; `tools/showcase.sh full` lists them, `tools/showcase.sh web` re-encodes this folder
+from them). No human played: `tools/showcase.sh all`
 regenerates every file. A scripted scene spawns, gives and positions everything through the module calls behind the QA
 console shortcuts (`/rts-give`, `/rts-spawn`, `/rts-research`, `/rts-age`, `/rts-front`, `/rts-market`), moves the
 camera, waits for the moment and grabs the client window (`tools/gui-drive.sh`). The Nation shots play on a 3-nation
@@ -26,8 +29,8 @@ bake`). Alternate takes land in `build/showcase/alt/`. `REVIEW.md` is the review
 | `13-commander-abilities.png` | Skirmish: the Commander (selected) casts Shield on the army around it and an Artillery strike lands in its target ring; the ability bar shows both cooldowns | `skirmish`, `tools/probes/showcase_skirmish.lua`, scene `13-commander-abilities` |
 | `14-skirmish-base.png` | Skirmish: the factory base built by the AI in 14 minutes, the natural hub (selected) with its stockpile policy (Export above 20) and an army block at the rally point | `skirmish`, `showcase_skirmish.lua`, scene `14-skirmish-base` |
 | `15-city-panel.png` | The capital's city panel (residents, happiness, needs, workforce, draft, make targets, Hire) and its stockpile policy panel | `nation`, `showcase_nation_scenes.lua`, scene `15-city-panel` |
-| `thumbnail-source.png` | The shot the mod portal thumbnail is cut from (a copy of `13-commander-abilities.png`) | `tools/showcase.sh thumb` |
-| `../../mods/factorio-rts/thumbnail.png` | 144×144 thumbnail: the Shield rings around the Commander and the Artillery strike bursting in its ring (a 640×640 square of the source) | `tools/showcase.sh thumb` (`THUMB_SHOT`, `THUMB_CROP`) |
+| `thumbnail-source.png` | The 640×640 square of the full-size `13-commander-abilities.png` that the mod portal thumbnail is scaled from (full resolution, web-encoded) | `tools/showcase.sh thumb` |
+| `../../mods/factorio-rts/thumbnail.png` | 144×144 thumbnail: the Shield rings around the Commander and the Artillery strike bursting in its ring (that square scaled to 144×144) | `tools/showcase.sh thumb` (`THUMB_SHOT`, `THUMB_CROP`) |
 
 Probes: `tools/probes/showcase_lib.lua` (steps, scenes, captures, staging helpers), `showcase_lobby.lua`,
 `showcase_nation.lua` (the bake and the scene launch) with `showcase_nation_scenes.lua`, `showcase_skirmish.lua`. One
