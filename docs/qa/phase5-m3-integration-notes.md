@@ -600,3 +600,27 @@ Stranding the rule does not catch (HEAD): rts-ai-1's #2951 left town 1662 while 
 spent 61 s later and stood dry at 674 for 22 game minutes; #3186 (city 12's supply hauler) left for a hub built 2 game
 seconds earlier and stood at it. The rule reads the drop-off's coal at departure, not at arrival. Before the rule
 (5a2cdcc) the player's #2481 stood about 24 game minutes at port 498 and #2951 at 674.
+
+### 9.2 The final 2.1 HEAD (55cbc46: mods/ = m3-ai's 6af2b07; the M1 Age II deadline 20:30)
+
+`build/m3i-tools/final.sh 55cbc46 p21b e2e m2 m1 m1b` (three servers), then heavy mode, LAN and the GUI pass on the same
+tree; save/load, determinism and the perf scene stand from 33eb037 (section 9.1: the code between differs by the AI's
+coal priority narrowing only). 0 Lua errors in every run; 60.0 s per game minute in every speed-1 minute.
+
+| Criterion | 55cbc46 |
+|---|---|
+| 801-805: trade, war, peace, capture | 5 of 5 (wars 3-12, captures 4-11) |
+| 801-805: starving | 1 seed (803: rts-ai-1's city 14 from 31:00, then the player's after its capture), within the M2 tolerance of 1 |
+| 801-805: debt stage / credit line | 1 of 5 (805 rts-ai-3, stage 3, lowest ₡ -913) / nobody |
+| 801-805: cities ≥ 3 / linked by 35:00 | 19 of 20 (803's rts-ai-1 was conquered) / 12 of 20 |
+| 801-805: operations with phases / belts built / air patrols | 19 of 20 (804's player ran none) / 5 of 5 seeds / 3 of 5 seeds |
+| 801-805: Age III by 40:00 | 1 of 5 (802, 36:24) |
+| M2 701-705: trade, war, peace, capture / starving | 5 of 5 / **0 of 5** (debt in 702) |
+| M1 501 (twice: SPEED 8 and 10, 66,290 lines, 0 differing) | **52/53**: train_items 13,506 (rts-player 4,130 in 16 trips, rts-ai-1 9,376 in 35); Age II (20:30) and the armoured car pass |
+| Heavy mode | ticks 3,600-4,200, 0 desyncs: PASS |
+| LAN | first run: client 1 crashed in the engine's Steam networking init while connecting (`SteamInternal_Init_SteamNetworking` in `SteamSocket recvfrom`, before any game tick; no Lua involved); rerun: 0 desyncs, 33 and 26 checksums equal: PASS |
+| GUI pass EN / RU | **53/53** / 48/53 (the Russian layout's coordinates: Steel works, extractor, AA turret sites, the air panel's ×, Hire) |
+
+Open after the round: M1 501 train_items (13,506 of 20,000; the match diverges at minute 21, section 10), Age III by
+40:00 (1 of 5), three cities linked by 35:00 (12 of 20), market.ai_step's ledger slice over 3 ms in 3 ticks of the
+perf scene, and the engine's Steam networking crash on a LAN client connect (once in three 2.1 LAN runs).
