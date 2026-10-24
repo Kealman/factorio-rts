@@ -44,10 +44,13 @@ assert n == 1 or "AUTOTEST_ENABLED" not in new, "AUTOTEST_ENABLED line not found
 open(path, "w").write(new)
 PY
 if [ -n "${DURATION_MIN:-}" ]; then
-  sed -i '' "s|^autotest.DURATION = .*|autotest.DURATION = ${DURATION_MIN} * 60 * 60|" "$M/scripts/ai/autotest.lua"
+  # -i.bak and rm: in-place edits that BSD (macOS) and GNU (Linux) sed both accept
+  sed -i.bak "s|^autotest.DURATION = .*|autotest.DURATION = ${DURATION_MIN} * 60 * 60|" "$M/scripts/ai/autotest.lua"
+  rm -f "$M/scripts/ai/autotest.lua.bak"
 fi
 if [ -n "${DOCTRINES:-}" ]; then
-  sed -i '' "s|^autotest.DOCTRINES = .*|autotest.DOCTRINES = ${DOCTRINES}|" "$M/scripts/ai/autotest.lua"
+  sed -i.bak "s|^autotest.DOCTRINES = .*|autotest.DOCTRINES = ${DOCTRINES}|" "$M/scripts/ai/autotest.lua"
+  rm -f "$M/scripts/ai/autotest.lua.bak"
 fi
 {
   printf '\n-- test copy (tools/autotest-run.sh)\n'
@@ -90,7 +93,7 @@ fi
 CFG="$(factorio_isolated_config "$NAME")"
 # per-run UDP port: a hash of the name, moved on while another server holds it (parallel batches)
 PORT=$(( 35000 + ( $(cksum <<< "$NAME" | cut -d" " -f1) % 3000 ) ))
-while lsof -nP -iUDP:"$PORT" >/dev/null 2>&1; do PORT=$(( PORT + 1 )); done
+while command -v lsof >/dev/null 2>&1 && lsof -nP -iUDP:"$PORT" >/dev/null 2>&1; do PORT=$(( PORT + 1 )); done # no lsof in Docker
 SAVE="$RTS_BUILD_DIR/$NAME-headless.zip"; LOG="$RTS_BUILD_DIR/$NAME-server.log"; CREATE="$RTS_BUILD_DIR/$NAME-create.log"
 rm -f "$SAVE" "$LOG"
 "$FACTORIO_BIN" -c "$CFG" --mod-directory "$DIR" --create "$SAVE" ${SEED:+--map-gen-seed "$SEED"} > "$CREATE" 2>&1 \

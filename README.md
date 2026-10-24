@@ -38,7 +38,7 @@ Contents: [Gallery](#gallery) · [Highlights](#highlights) · [Requirements](#re
 - **Space Age is optional.** With it, units use the Gleba pentapod graphics, rail lines can cross water on bridges and food spoils. Without it, units are built from the spidertron, and rations keep. Drones use biter graphics either way.
 - **Platforms.** The mod is developed and tested on macOS (Apple silicon, Steam build). It is pure Lua and uses only the game's own graphics, so it should run wherever Factorio 2.1 runs, but:
   - **Windows is untested.** Nobody has played it on Windows yet. If you do, please tell us how it went, whether it works or not: open an issue with the [bug report template](https://github.com/Kealman/factorio-rts/issues/new?template=bug_report.md), which asks for the OS, the Factorio and mod versions and `factorio-current.log`.
-  - **Linux is untested.** Reports are welcome the same way.
+  - **Linux: the headless autotests pass, the GUI client is untested.** On the official Factorio 2.1.23 headless build for Linux, in Docker, the Skirmish smoke test (65/65) and a Nation match (53/53) pass with 0 errors on x86-64 and ARM64, with and without Space Age, and log the same lines as on macOS. No `require` or file path in the mod differs in case from the files on disk. `tools/linux/run.sh` repeats the check in one command. Reports from Linux players are welcome the same way.
   - The development tooling under `tools/` is macOS-shaped.
 - **Play it alone, in a new game.** The mod is designed to run with the base game and, optionally, Space Age. Other mods are untested; mods that change the character, freeplay or map generation are likely to conflict. It takes over the session (no character, its own surfaces), so do not add it to a save you care about.
 
@@ -501,7 +501,7 @@ This is a first public version. The lists below come from the acceptance notes o
 
 **Platform and setup**
 
-- Only macOS (Apple silicon, Steam) has been tested. Windows and Linux are expected to work but are unverified; reports from either are welcome (see [Requirements](#requirements)).
+- Only macOS (Apple silicon, Steam) has been played. On Linux only the headless autotests have run (in Docker), and Windows is untested. Reports from either are welcome (see [Requirements](#requirements)).
 - The mod is meant to run alone, in a new game. Compatibility with other mods is untested.
 - Performance was measured on one Apple-silicon Mac. There a 4-nation scene with 16 cities, about 600 units and 40 trains runs at 60 UPS, but a few AI ticks take 4-6 ms, which a slower machine may feel as a short stutter.
 - A 4096 world with 6 nations blocks for about 5 seconds at the start while the core of the world is planned and generated. The rest of a 4096 world takes about 6½ minutes to fill in the background.
@@ -563,7 +563,7 @@ Inside the mod, `control.lua` loads the modules in `scripts/`, which talk throug
 
 ### Tooling
 
-The tools are bash scripts written for macOS with the Steam build (paths in `tools/factorio-env.sh`, BSD `sed`). Every runner refuses to start when the game binary's version does not match the `factorio_version` in the tree's `info.json`.
+The tools are bash scripts written for macOS with the Steam build (paths in `tools/factorio-env.sh`, BSD `sed`). `tools/autotest-run.sh` also runs on Linux, which `tools/linux/run.sh` uses. Every runner refuses to start when the game binary's version does not match the `factorio_version` in the tree's `info.json`.
 
 - `tools/headless-run.sh <seconds> '\[rts' mods` runs a map with the mod on a headless server and prints the mod's log. The autotests (`[rts] autotest`, `[rts] ai autotest`) run in test copies only (`local AUTOTEST_ENABLED = true` in `scripts/debug.lua`, which `tools/autotest-run.sh`, `perf-bench.sh`, `heavy-mode.sh` and `lan-check.sh` set) when no player is connected. In a test, the AI also plays the player's side.
 - `tools/gui-run.sh mods <seconds> 'RTS_GUI_READY'` launches the real client with an isolated config (its own write dir and port; F9 opens the console). `tools/gui-drive.sh` replays real clicks and keys from a GUI probe's log (needs the macOS Accessibility permission).
@@ -583,6 +583,7 @@ The tools are bash scripts written for macOS with the Steam build (paths in `too
 - `tools/locale-probe/gen.py <mod dir> <out.lua>` generates a probe that makes a GUI client translate every locale key the mod uses and logs the missing ones.
 - Performance and determinism: `tools/perf-bench.sh` (`match`, `scene`, `bench`: per-tick benchmarks and the 4 nations / 16 cities / 600 units / 40 trains budget scene), `tools/perf-log.sh` (the PERF lines of a log), `tools/determinism-compare.sh` (two runs of a seed, or two trees, line by line), `tools/heavy-mode.sh` (a GUI client in heavy mode on a 4-nation save), `tools/lan-check.sh` (a headless server and GUI clients, desync checks), `tools/divisions-bench.sh` (the division pathfinding budget), `tools/world-seeds.sh` and `tools/world3-run.sh` (world generation across seeds, huge worlds and background generation).
 - `tools/probes/*.lua` are test-only modules. Skirmish: `wavec_headless.lua` (a hub at the natural built by the Commander, hauler cargo between two networks, Concede) and `commander_field.lua` (Commander field construction) run headless; `menu_gui.lua` drives the F10 menu, Concede and Results in a GUI client. Nation acceptance: `m1_acceptance.lua` (the last 5 minutes at speed 1 for the UPS lines), `m2_acceptance.lua` (trade, wars, peace, captures, starving), `m3_acceptance.lua` (the M2 criteria plus treasury lows and debt stages, rail line dates, ages and the M3 modules). Nation fixtures: `m2_integ.lua`, `m2_targeting.lua`, `people_m2.lua`, `treasury_fixture.lua`, `diplomacy_accept.lua`, `war_autotest.lua`, `world2_autotest.lua`, `age3_fixture.lua`, `air_autotest.lua`, `war2_autotest.lua`, `perf_sched.lua`, `world3_autotest.lua`, `m3_integ.lua`, `m3_reroute.lua`, `m3_qa_fix.lua`. GUI probes: `m1_docs_gui.lua`, `m3_docs_gui.lua` and the other `*_gui.lua`.
+- `tools/linux/run.sh` is the Linux check. It downloads the official Factorio headless build for Linux, checks its SHA-256 and builds a Docker image with it (`tools/linux/Dockerfile`). Then it runs the Skirmish smoke and the Nation smoke in a container with and without Space Age, and checks every `require` and every file path in `data.raw` for case mismatches (`tools/linux/case-check.py`). `ARCH=amd64|arm64`, `VARIANTS`, `SCENARIOS`, `TREE` and `SEED` select what runs. It needs Docker, `curl` and `python3`, and no Factorio account.
 - `tools/package.sh` builds the release zip (see [Releasing](#releasing)).
 
 A Skirmish smoke test and a Nation run:
