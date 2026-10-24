@@ -66,9 +66,85 @@ local trace_period = nil
 local trace_lap = nil
 function events.trace_nth(min_period) trace_period = min_period end
 
+-- Economy 0.1.1 (#8): in a running Nation match the handlers of every period of at least STAGGER_MIN ticks run on a
+-- phase of their own (tick % n == phase) instead of all on tick % n == 0: about 25 handlers of period 60 (and those of
+-- 30, 15, 10 ...) shared one tick, every 60-tick tick of the perf scene took over 3 ms of script (production, logistics,
+-- strategic, mapgen ...), 340-425 such ticks in 5 minutes. Phases spread the handlers in registration order and keep
+-- off the ticks of the AI commanders' slices (one every 5 ticks: scripts/ai/init.lua, next_tick % 5 of each commander)
+-- where the period is a multiple of 5. A handler gets the nominal tick (the multiple of n it stands for) as event.tick,
+-- so its own "e.tick % 3600 == 0" checks still work; game.tick is the real tick. Skirmish, the lobby and an ending
+-- match keep phase 0 for all, so their order and timing do not change. The phases are rebuilt whenever the commanders'
+-- residues differ from the ones they were built for (checked at every staggered dispatch); they depend on storage and
+-- the load order only, so every peer and every load agrees.
+local STAGGER_MIN = 10
+local STAGGER_STEP = 37
+local by_phase, phase_key = nil, nil -- [n] = {[phase] = {handler, ...}}; the commanders' residues they were built for
+local stagger_periods = {}           -- the staggered periods, ascending (the on_tick loop's order)
+local function nation_running()
+  local m = storage.match
+  return m ~= nil and m.config ~= nil and m.config.mode == "nation" and m.phase == "running"
+end
+local function ai_residues()
+  local used, list = {}, {}
+  for _, C in pairs(storage.ai or {}) do
+    if type(C) == "table" and type(C.next_tick) == "number" then used[C.next_tick % 5] = true end
+  end
+  for r = 0, 4 do if used[r] then list[#list + 1] = r end end
+  return used, table.concat(list, ",")
+end
+local function build_phases()
+  local avoid, key = ai_residues()
+  by_phase, phase_key, stagger_periods = {}, key, {}
+  local periods = {}
+  for n in pairs(nth_handlers) do periods[#periods + 1] = n end
+  table.sort(periods)
+  local k = 0
+  for _, n in ipairs(periods) do
+    if n >= STAGGER_MIN then
+      local allowed = {}
+      for ph = 0, n - 1 do
+        if n % 5 ~= 0 or not avoid[ph % 5] then allowed[#allowed + 1] = ph end
+      end
+      local t = {}
+      for _, h in ipairs(nth_handlers[n]) do
+        k = k + 1
+        local ph = allowed[(k * STAGGER_STEP) % #allowed + 1]
+        t[ph] = t[ph] or {}
+        local slot = t[ph]
+        slot[#slot + 1] = h
+      end
+      by_phase[n] = t
+      stagger_periods[#stagger_periods + 1] = n
+    end
+  end
+end
+-- (checked on every staggered dispatch, so a client that joins or loads mid-match builds the same phases at once)
+local function ensure_phases()
+  local _, key = ai_residues()
+  if not by_phase or key ~= phase_key then build_phases() end
+end
+local function run_one(h, event, n)
+  if trace_period and n >= trace_period then
+    trace_lap = trace_lap or helpers.create_profiler(true)
+    trace_lap.reset()
+    if profile then timed(h, event) else h(event) end
+    trace_lap.stop()
+    log({"", string.format("[rts] perf call t%d d0 nth%d %s: ", game.tick, n, labels[h] or "?"), trace_lap})
+  elseif profile then
+    timed(h, event)
+  else
+    h(event)
+  end
+end
+
 local function nth_dispatcher(list, n)
   local plain = dispatcher(list)
   return function(event)
+    if n >= STAGGER_MIN and nation_running() then
+      ensure_phases()
+      for _, h in ipairs(by_phase[n][0] or {}) do run_one(h, event, n) end
+      return
+    end
     if not (trace_period and n >= trace_period) then return plain(event) end
     trace_lap = trace_lap or helpers.create_profiler(true)
     for i = 1, #list do
@@ -189,6 +265,23 @@ end)
 
 script.on_configuration_changed(function(data)
   for i = 1, #config_handlers do config_handlers[i](data) end
+end)
+
+-- Economy 0.1.1 (#8): the staggered phases of a running Nation match (see nth_dispatcher above)
+events.on(defines.events.on_tick, function(e)
+  if not nation_running() then return end
+  local tick = e.tick
+  ensure_phases()
+  for _, n in ipairs(stagger_periods) do
+    local r = tick % n
+    if r ~= 0 then
+      local list = by_phase[n][r]
+      if list then
+        local ev = {name = defines.events.on_tick, tick = tick - r, nth_tick = n}
+        for i = 1, #list do run_one(list[i], ev, n) end
+      end
+    end
+  end
 end)
 
 return events

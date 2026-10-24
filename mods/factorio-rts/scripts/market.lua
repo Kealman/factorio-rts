@@ -61,6 +61,7 @@ local match = require("scripts.match")
 local world = require("scripts.world")
 local treasury = require("scripts.treasury")
 local deps = require("scripts.ai.deps")
+local sched = require("scripts.sched") -- Economy 0.1.1 (#8): the capital's ledger read as a scheduler job
 local balance = require("balance")
 local research
 do
@@ -1375,6 +1376,60 @@ local function capital_rows(force_name)
   return rows
 end
 
+-- Economy 0.1.1 (#8): the market AI's read of the capital's ledger as a scheduler job (Nation): districts.ledger_rows
+-- in its first step, then the hints of the short rows (each walks the force's factories and the other cities' stocks:
+-- in the perf scene the whole read took 1.5-3.0 ms inside commander.run, the ledger slice of the market pass), as
+-- many per step as the nation's work units allow (LEDGER_UNITS, about 1 unit per microsecond). The job's state ends
+-- as {rows}; ai_step waits for it at the route slice (at most LEDGER_WAIT_RUNS AI runs) and reads it synchronously
+-- where no scheduler runs.
+market.LEDGER_UNITS = {rows = 300, hint = 100, hint_per_city = 150}
+market.LEDGER_WAIT_RUNS = 10
+
+sched.register("market_ledger", function(job, units)
+  local st = job.state
+  local districts = loaded("scripts.districts")
+  if not (districts and type(districts.ledger_rows) == "function") then
+    st.rows = nil
+    return 1, true
+  end
+  local used = 0
+  if not st.rows then
+    local rows, stock, flows = districts.ledger_rows(st.city)
+    st.rows, st.stock, st.flows, st.i = rows, stock, flows, 1
+    st.hint_units = market.LEDGER_UNITS.hint + market.LEDGER_UNITS.hint_per_city * #districts.cities(job.force)
+    used = market.LEDGER_UNITS.rows
+  end
+  local rows = st.rows
+  while used < units do
+    local row = rows[st.i]
+    while row and not row.hint_due do
+      st.i = st.i + 1
+      row = rows[st.i]
+    end
+    if not row then
+      st.stock, st.flows, st.i = nil, nil, nil
+      return math.max(1, used), true
+    end
+    row.hint_due = nil
+    row.hint = districts.hint(st.city, row.item, st.stock, st.flows)
+    st.i = st.i + 1
+    used = used + st.hint_units
+  end
+  return used, false
+end)
+
+-- The capital's ledger rows for this pass: from the job submitted at its first slice when there is one (nil while it
+-- runs), else read now.
+local function pass_rows(A, force_name)
+  local id = A.ledger_job
+  if not id then return capital_rows(force_name), true end
+  local status = sched.status(id)
+  if status == "queued" or status == "running" then return nil, false end
+  A.ledger_job = nil
+  local job = status == "done" and sched.get(id)
+  return job and job.state.rows or nil, true
+end
+
 local function home_count(home, item)
   local net = logistics.hub_network(home)
   return net and net.get_item_count(item) or 0
@@ -1489,25 +1544,50 @@ function market.ai_step(C)
   local k = A.slice
   A.slice = k < 4 and k + 1 or nil
   local m = storage.match
+  local function reset()
+    A.slice, A.rows, A.ledger_wait = nil, nil, nil
+    if A.ledger_job then
+      sched.cancel(A.ledger_job)
+      A.ledger_job = nil
+    end
+  end
   if m.phase ~= "running" then
-    A.slice, A.rows = nil, nil
+    reset()
     return
   end
   local on = market.AI
   if k == 1 then
     if on.taxes then ai_taxes(C, A) end
     if on.envoy then ai_envoy(C, A, S) end
+    -- Economy 0.1.1 (#8): the ledger is read by a scheduler job until the route slice
+    local city = (on.route or on.buy) and capital_city(C.force)
+    if city and not A.ledger_job and #market.ports(C.force) > 0 then
+      A.ledger_job = sched.submit(C.force, "market_ledger", {city = city.id}, sched.NORMAL)
+    end
     return
   end
   local ports = market.ports(C.force)
   if #ports == 0 then
     A.route_port = nil
-    A.slice, A.rows = nil, nil
+    reset()
     return
   end
   local home_port = ports[1]
   if k == 2 then
-    local rows = (on.route or on.buy) and capital_rows(C.force) or nil
+    local rows, ready = nil, true
+    if on.route or on.buy then rows, ready = pass_rows(A, C.force) end
+    if not ready then
+      A.ledger_wait = (A.ledger_wait or 0) + 1
+      if A.ledger_wait <= market.LEDGER_WAIT_RUNS then
+        A.slice = 2 -- the route slice again at the next AI run
+        return
+      end
+      sched.cancel(A.ledger_job)
+      A.ledger_job = nil
+      util.log("market: AI %s: the ledger read took more than %d AI runs: this pass buys nothing", C.force,
+        market.LEDGER_WAIT_RUNS)
+    end
+    A.ledger_wait = nil
     A.rows = rows
     if on.route then
       A.route_port = home_port -- from now on the force wants one more hauler (the port route's)

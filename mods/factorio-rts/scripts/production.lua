@@ -52,6 +52,7 @@ local CRAFTER = {factory = true, district = true}
 -- network like factories; fixed recipes, so never auto)
 production.PRODUCER_KINDS = PRODUCER
 production.AUTO_PERIOD = 60
+production.AUTO_SLICES = 4 -- Economy 0.1.1 (#8): auto_pass in groups of forces, AUTO_PERIOD / AUTO_SLICES ticks apart
 production.AUTO_DWELL = 30 * 60   -- a still-short auto recipe is kept this long ...
 production.AUTO_MARGIN = 0.25     -- ... before a shortfall larger by this share of its target takes over
 production.AUTO_RESUME = 0.1      -- a recipe that is not running starts only below (1 - this) of its target (hysteresis)
@@ -785,11 +786,21 @@ local function target_text(name, targets, stock)
   return table.concat(parts, " ")
 end
 
-local function auto_pass()
+-- Economy 0.1.1 (#8): the pass runs over one group of forces at a time (force index % AUTO_SLICES == slice), every
+-- AUTO_PERIOD / AUTO_SLICES ticks, so every crafter is still chosen for every AUTO_PERIOD ticks: all four nations of
+-- the perf scene in one pass took up to 3.4 ms. A force's networks stay in one slice (their stock is read once).
+local function auto_pass(slice)
   if not storage.buildings then return end
   local cache = {}
+  local idx = {}
   for _, rec in buildings.all() do
-    if CRAFTER[rec.kind] and production.is_auto(rec) then
+    local i = idx[rec.force]
+    if i == nil then
+      local f = game.forces[rec.force]
+      i = f and f.index % production.AUTO_SLICES or -1
+      idx[rec.force] = i
+    end
+    if CRAFTER[rec.kind] and (slice == nil or i == slice) and production.is_auto(rec) then
       local want = auto_choose(rec, cache)
       if want ~= nil then
         local e = rec.entity
@@ -812,8 +823,10 @@ local function auto_pass()
   end
 end
 
-events.on_nth_tick(production.AUTO_PERIOD, function()
-  if production.auto_active and production.auto_active() then auto_pass() end
+events.on_nth_tick(production.AUTO_PERIOD / production.AUTO_SLICES, function(e)
+  if production.auto_active and production.auto_active() then
+    auto_pass(math.floor(e.tick / (production.AUTO_PERIOD / production.AUTO_SLICES)) % production.AUTO_SLICES)
+  end
 end)
 
 return production

@@ -407,8 +407,10 @@ function districts.hint(city_id, item, stock, flows)
   return nil
 end
 
---- Ledger rows of a city: {item, stock, made, used, target, short, hint} for the listed goods.
-function districts.ledger(city_id)
+--- Ledger rows of a city without the hints: {item, stock, made, used, target, short} for the listed goods; a row
+--- that districts.ledger gives a hint (short and made nowhere in the city) carries hint_due = true. Returns rows,
+--- stock, flows (the city's, for districts.hint). Economy 0.1.1 (#8): the market AI reads the hints in scheduler steps.
+function districts.ledger_rows(city_id)
   local stock = districts.stock(city_id)
   local flows = districts.flows(city_id)
   local targets = districts.make_targets(city_id)
@@ -436,8 +438,20 @@ function districts.ledger(city_id)
     local short = t and math.max(0, t - (stock[item] or 0)) or 0
     local row = {item = item, stock = stock[item] or 0, made = flows.made[item] or 0, used = flows.used[item] or 0,
                  target = t, short = short}
-    if short > 0 and (flows.made[item] or 0) == 0 then row.hint = districts.hint(city_id, item, stock, flows) end
+    if short > 0 and (flows.made[item] or 0) == 0 then row.hint_due = true end
     if t or row.stock > 0 or row.made > 0 or row.used > 0 then rows[#rows + 1] = row end
+  end
+  return rows, stock, flows
+end
+
+--- Ledger rows of a city: {item, stock, made, used, target, short, hint} for the listed goods.
+function districts.ledger(city_id)
+  local rows, stock, flows = districts.ledger_rows(city_id)
+  for _, row in ipairs(rows) do
+    if row.hint_due then
+      row.hint_due = nil
+      row.hint = districts.hint(city_id, row.item, stock, flows)
+    end
   end
   return rows
 end

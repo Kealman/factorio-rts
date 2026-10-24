@@ -1497,6 +1497,27 @@ local function top_up_hub_robots()
   end
 end
 
+-- Economy 0.1.1 (#8): the kit sweep in Nation mode reads each hub network's kit count instead of the network cache
+-- (logistics.networks reads every network's whole contents when it is stale: four nations' rebuild every DEPLOY_PERIOD
+-- took up to 3.3 ms in the perf scene). Same networks, same first hub (the lowest unit number) as the cache's entries.
+local function kit_networks(force_name)
+  local hub_list = {}
+  for un, rec in buildings.for_force(force_name) do
+    if HUB_KINDS[rec.kind] then hub_list[#hub_list + 1] = un end
+  end
+  table.sort(hub_list)
+  local out, seen = {}, {}
+  for _, un in ipairs(hub_list) do
+    local rec = buildings.get(un)
+    local net = rec and rec.entity.valid and rec.entity.logistic_network
+    if net and net.valid and not seen[net.network_id] then
+      seen[net.network_id] = true
+      out[#out + 1] = {network = net, hubs = {un}}
+    end
+  end
+  return out
+end
+
 local function deploy_from_networks()
   local forces = {}
   for _, p in pairs(lstate().hubs) do forces[p.force] = true end
@@ -1504,7 +1525,7 @@ local function deploy_from_networks()
   for f in pairs(forces) do names[#names + 1] = f end
   table.sort(names)
   for _, force_name in ipairs(names) do
-    for _, entry in ipairs(logistics.networks(force_name)) do
+    for _, entry in ipairs(nation_mode(force_name) and kit_networks(force_name) or logistics.networks(force_name)) do
       if entry.network.valid and entry.network.get_item_count(logistics.HAULER_KIT) > 0 then
         local un = entry.hubs[1]
         local point = logistics.approach_point(un)
