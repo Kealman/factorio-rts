@@ -4,6 +4,7 @@
 # scenarios run with Space Age, quality and elevated rails disabled. -stress adds 105 units per force at 60 s and logs
 # per-module handler times; -restart restarts the match at 4 minutes and runs the AI autotest again (speed 3).
 # Usage: tools/autotest-matrix.sh <tag> [scenario-name-filter]
+# Env: JOBS=<n> runs at most n scenarios at a time (default: all ten at once); SEED, KEEP_TREE pass through.
 # Output: build/matrix-<tag>/<scenario>.txt and a one-line-per-run table at the end.
 set -uo pipefail
 cd "$(dirname "$0")/.."
@@ -24,6 +25,7 @@ SCENARIOS=(
 for s in "${SCENARIOS[@]}"; do
   IFS='|' read -r name match cap variant extra <<< "$s"
   [ -n "$FILTER" ] && [[ "$name" != *$FILTER* ]] && continue
+  while [ "$(jobs -rp | wc -l | tr -d ' ')" -ge "${JOBS:-99}" ]; do sleep 5; done
   env VARIANT="${variant:-sa}" ${extra:-} tools/autotest-run.sh "mx-$TAG-$name" "$match" "$cap" > "$OUT/$name.txt" 2>&1 &
 done
 wait

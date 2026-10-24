@@ -158,3 +158,73 @@ docker run --rm --platform linux/amd64 --user "$(id -u):$(id -g)" -e KEEP_TREE=/
   factorio-rts-headless:2.1.23-amd64 bash -c "/rts/tools/divisions-bench.sh ab-mass \
   '{mode = \"mass\", n = 1000, half = 512, start = 120}' 1800 > /out/ab-mass.txt 2>&1; cp -R /tmp/rts-build/ab-mass-out /out/"
 ```
+
+## 4. Release check (`tools/release-check.sh`, #18)
+
+One command runs the release's headless acceptance on a `git archive` copy of a revision (default HEAD). It writes
+`build/release-check/<date>/REPORT.md` with a pass/fail table, per-seed tables and the list of logs.
+`tools/release-check.py` builds the report from the logs, so a report can be rebuilt at any time with `STAGES=report`.
+A rerun with the same `RC_DIR` keeps every finished job.
+
+| Stage | Runs | Criteria in the report (source) |
+|---|---|---|
+| `smoke` | Skirmish smoke, seed 9090 | 65/65, 0 errors; a failure stops the check |
+| `matrix` | `tools/autotest-matrix.sh` (new `JOBS` limit), seed 777, on the tree and the baseline | 0 differing lines outside the GUI line classes, which are listed per scenario; 0 errors |
+| `m1` | M1 seed 501, SPEED 8 and 10 | the two runs line-identical; the score; train items ≥ 20,000 in both (#7); 60 UPS in the speed-1 minutes |
+| `m2` | 701-705, `m3_acceptance.lua` | trade, war, peace, capture in every seed; at most 1 seed starving; 0 errors; 60 UPS |
+| `m3` | 801-805, `m3_acceptance.lua` | the M2 criteria plus: Age III by 40:00 in ≥ 3 of 5 (#1); 3 cities linked by 35:00 for ≥ 16 of 20 nations, the aggressive AI's first line before 32:00 in ≥ 4 of 5 seeds (#2); every living nation with ≥ 3 cities; an operation with phases for every nation; a fort belt in every seed; air patrols in ≥ 3 of 5; an interceptor patrol or a bomber strike in ≥ 3 of 5 and artillery bombarding in ≥ 2 of 5 (#4); a debt stage in ≥ 2 of 5 and nobody at the credit line (#5) |
+| `w3072` | a 3072 x 4 world, map seed 30724 | holds, air and artillery present (#4) |
+| `sl` | save at minutes 20 and 40 (seed 802), load | 0 errors in all four halves; both loaded games log the same rts-player line at the last common minute |
+| `det` | 801 and 802, two runs of 30 minutes | 0 differing event lines |
+| `scene` | `tools/perf-bench.sh scene`, 5 + 5 minutes | 60 UPS at speed 1; mean, p99 and UPS capacity; script ticks over 3 ms (#8, both readings below). It waits up to `SCENE_WAIT` (1 hour) for a machine without other Factorio processes, then runs anyway and marks its times as upper bounds. |
+| `lan`, `heavy` | GUI clients, Steam | only with `STAGES="lan heavy"`, when the screen is free |
+
+The GUI pass in English and Russian and the Codex protocol stay outside the script; the report says so. `SERVERS`
+(default 4) caps the servers: the long runs share the slots, the longest first, and the scene runs alone at the end.
+Estimated wall clock with 4 servers: smoke 3 minutes, matrix 30 minutes, the 17 long runs about 70 minutes, the scene
+20 minutes plus its wait. That is about 2 hours, plus 30 minutes the first time the baseline matrix is built.
+
+**Baseline.** The lead asked for the Skirmish matrix tag `m3i-p21`. Its server logs are gone from `build/` (only the
+summaries in `build/matrix-m3i-p21/` remain), and the trees behind it (5a2cdcc, 33eb037, 55cbc46) are not in the public
+repository's history. The script therefore uses `m3i-p21` while its logs exist. Otherwise it runs the matrix of
+`BASE_REV` (default `v0.1.0`, ae708bc, the 2.1 release) once and keeps it as `rcbase-ae708bc`.
+
+**Two readings of #8.** The issue's title is "market.ai_step still exceeds 3 ms". Its acceptance text says "no script
+tick over 3 ms in the scene, autotest minute reports excluded". On the 2.1 reference scene (`final-p21`) the title gives
+3 ticks (worst 4.40 ms). The text gives 335 ticks, mostly the nth60 production, strategic and logistics handlers. The
+report shows both rows, so the issue's owner can pick.
+
+**Validation on real logs.** Pointed at the logs of the last 2.1 acceptance (`m3i-p21b-*`, `final-p21/*`), the report
+reproduces section 9.2 of the M3 integration notes exactly:
+
+- M1: 52/53, 13,506 train items, 66,290 lines with 0 differing.
+- 801-805: Age III by 40:00 in 1 of 5, linked by 35:00 for 12 of 20, starving in 1 seed, debt in 1 of 5, operations
+  for 19 of 20 nations, belts 5 of 5, air patrols 3 of 5.
+- M2: 5 of 5, starving 0.
+- Save/load: 0 errors, the same minute-61 line.
+- Determinism: 214 and 210 lines, 0 differing.
+- Scene: mean 1.435 ms, p99 5.68, UPS capacity 697.
+
+On those logs the 0.1.1 targets of #1, #2, #4, #5 and #7 fail, as the issues say.
+
+**Dry run.** `QUICK=1 SERVERS=2` on HEAD 6b9b341 ran every headless stage in 31 minutes with 6-minute matches, one
+seed per set and two matrix scenarios. Every job finished with exit 0 and every parser read its output:
+
+- The smoke passed 65/65.
+- The legacy matrix scenarios logged the same lines on HEAD as on v0.1.0: 470 and 473 lines, 0 differing.
+- The two M1 runs had 0 of 2,141 lines differing.
+- Save/load at minutes 2 and 4 had 0 errors and the same minute-6 line.
+- Determinism logged 34 event lines on both runs, 0 differing.
+- The scene's realtime minute took 60.0 s. Five other agents' servers were running, so the report marked the bench as
+  under load.
+
+A synthetic diff confirmed the line classes: an inserted `objectives:` line passes as a GUI class, and a changed
+`production:` line fails. Fixed on the way: `git rev-parse` of an annotated tag gave the tag object's hash, so commits
+are now resolved with `^{commit}`.
+
+```sh
+tools/release-check.sh                                   # the full headless acceptance of HEAD, 4 servers
+SERVERS=2 tools/release-check.sh                         # while other agents run tests
+STAGES="lan heavy" RC_DIR=build/release-check/<date> tools/release-check.sh   # the GUI stages, screen free
+STAGES=report RC_DIR=build/release-check/<date> tools/release-check.sh        # rebuild REPORT.md
+```
