@@ -26,7 +26,7 @@
 -- division that patrols the most threatened segment (else the way to the nearest rival); interceptors (Air Force) when
 -- enemy planes were seen.
 -- Money: a city under attack hires garrison points (sinks.hire_garrison, balance above hire_at); mercenaries when the
--- capital is attacked and the idle army is small.
+-- capital is attacked and the idle army is small; (0.1.1) in debt stage 2+ idle units retire (council.debt_step).
 --
 -- State: storage.nations[force].council = K = {next, ops = {[id] = op}, next_op, by_group = {[gid] = op id}, holds =
 --   {[segment id] = {div, since, quiet}}, held = (units are in C.army.held), belts = {[segment id] = plan id},
@@ -1039,6 +1039,71 @@ local function money_step(C, K)
 end
 
 ---------------------------------------------------------------------------
+-- Debt (0.1.1, issue #5): a nation at the credit line kept 160-280 supply of army and its upkeep deepened the debt.
+-- From debt stage `debt.stage` (2: unpaid wages, the barracks refuse kits already) the council retires idle units
+-- (no army group, hold, division or plane; the largest supply first, at most per_pass a pass) until the army's supply
+-- (as the treasury's upkeep counts it: every unit but haulers and the Commander) is down to keep_supply. Retiring is
+-- labor.disband: the recruits go home to their city (they pay tax again). The barracks then make no unit beyond the
+-- army left for `hold` ticks after the debt (ai/mix.lua C.debt_cap), so the upkeep does not come straight back.
+---------------------------------------------------------------------------
+function council.debt_step(C, K)
+  local D = CB.debt
+  local treasury, labor = mod("treasury"), mod("labor")
+  local supply = deps.supply
+  if not (D and treasury and treasury.stage and labor and labor.disband and supply) then return end
+  local stage = treasury.stage(C.force)
+  local Dk = K.debt
+  if stage < D.stage then
+    if Dk and Dk.active then
+      util.log("council: %s out of debt stage %d (stage %d): %d unit(s) retired since %s", C.force, D.stage, stage,
+        Dk.retired, Dk.since_clock or "-")
+      Dk.active = nil
+    end
+    return
+  end
+  local a = C.army or {member = {}}
+  local total, n_units = 0, 0
+  local cand = {}
+  for un, rec in units.for_force(C.force) do
+    if rec.kind ~= "hauler" and rec.kind ~= "commander" and rec.entity.valid then
+      local s = supply.cost(rec.entity.name)
+      total = total + s
+      n_units = n_units + 1
+      if rec.order == units.IDLE and not a.member[un] and not (a.held and a.held[un]) and not army.POOL_SKIP[rec.kind]
+         and not AIR_KIND[rec.kind] and rec.issuer ~= "market" and not divisions.of_unit(un) then
+        cand[#cand + 1] = {un = un, s = s}
+      end
+    end
+  end
+  if not (Dk and Dk.active) then
+    Dk = {active = game.tick, since_clock = clock(), from = total, retired = 0}
+    K.debt = Dk
+    util.log("council: %s in debt stage %d (balance %.0f): army supply %d (%d units, %d idle), retiring idle units "
+      .. "down to %d supply", C.force, stage, balance_of(C.force), total, n_units, #cand, D.keep_supply)
+  end
+  table.sort(cand, function(x, y)
+    if x.s ~= y.s then return x.s > y.s end
+    return x.un < y.un
+  end)
+  local n, freed = 0, 0
+  for _, c in ipairs(cand) do
+    if total <= D.keep_supply or n >= D.per_pass then break end
+    if labor.disband(c.un) then
+      total, freed, n = total - c.s, freed + c.s, n + 1
+    end
+  end
+  n_units = n_units - n
+  -- the barracks make nothing beyond what is left (ai/mix.lua) until `hold` after the debt
+  C.debt_cap = {units = n_units, until_tick = game.tick + D.hold}
+  if n > 0 then
+    Dk.retired = Dk.retired + n
+    K.stats.retired = (K.stats.retired or 0) + n
+    util.log("council: %s retires %d idle unit(s) in debt (%d supply): army supply %d (from %d at %s), %d units left",
+      C.force, n, freed, total, Dk.from, Dk.since_clock, n_units)
+  end
+end
+
+---------------------------------------------------------------------------
 -- Research the council wants
 ---------------------------------------------------------------------------
 --- The council's urgent research (ai/tech.lua tries it before the planner's): Fortification at war (cheap basic kits;
@@ -1108,6 +1173,7 @@ function council.step(C, surface)
   belts_step(C, K)
   air_step(C, K, surface)
   money_step(C, K)
+  council.debt_step(C, K)
 end
 
 --- The hard AI's first city-state (difficulty knob cs_plan; Phase 5 M3 ai, wave B.2): from Age II at peace, before any
@@ -1177,9 +1243,9 @@ function council.describe(force_name)
   end
   local st = K.stats
   return string.format("council: ops %d [%s] (started %d, done %d, aborted %d), holds %d (%d in all), belts %d, air "
-    .. "patrols %d, interceptors %d, bombs %d, artillery %d, hires %d, mercs %d", table_size(K.ops),
+    .. "patrols %d, interceptors %d, bombs %d, artillery %d, hires %d, mercs %d, retired %d", table_size(K.ops),
     table.concat(parts, ", "), st.ops, K.done or 0, st.aborted, table_size(K.holds), st.holds, st.belts, st.patrols,
-    st.interceptors, st.bombs, st.artillery, st.hires, st.mercs)
+    st.interceptors, st.bombs, st.artillery, st.hires, st.mercs, st.retired or 0)
 end
 
 deps.council = council

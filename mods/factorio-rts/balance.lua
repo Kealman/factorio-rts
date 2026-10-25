@@ -1449,6 +1449,11 @@ do
     artillery_range = 110,
     hire_at = 2500, hire_points = 8, merc_at = 2500, merc_army = 12,
     merc_retire = 8, -- (wave B.2) idle walkers retired when a mercenary hire is refused at the supply cap
+    -- (0.1.1, issue #5) from debt stage `stage` the council retires idle units, the largest supply first and at most
+    -- per_pass a pass, until the army's supply is down to keep_supply; the barracks then make nothing beyond the army
+    -- left until `hold` ticks after the debt; and no new unit while the treasury loses money and its balance is below
+    -- `guard` (ai/mix.lua mix.deficit)
+    debt = {stage = 2, keep_supply = 40, per_pass = 12, hold = 5 * 60 * 60, guard = 300},
   }
   -- Division controllers (ai/controller.lua): each AI division every `period` ticks (round robin), at most per_tick
   -- divisions per tick; retreat below the force ratio retreat_ratio (micro basic/full), resupply below `low` supply

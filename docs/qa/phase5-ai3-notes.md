@@ -1043,3 +1043,23 @@ line:
 What the changes did: the crews' "no-kits" waits at the capital end got shorter where the works factory could make the
 kits (805 player: a 28-minute wait in stage 1, 4 minutes with stage 2), and the stage-1 regression of the player's
 linking in 805 is gone (54:00 -> 29:00). The kits wait of a capital without steel (803 rts-ai-1) is not solved.
+
+### 8.3 Issue #5: armies shrink in debt
+
+**Change** (stage 3): `ai/council.lua` `debt_step`: from debt stage 2 (wages unpaid; the barracks already refuse kits)
+the council retires idle units (no army group, hold, division or plane; the largest supply first, at most 12 a pass)
+through `labor.disband` (the recruits go home and pay tax again) until the army's supply, as the treasury's upkeep
+counts it, is down to 40; the barracks then make nothing beyond the army left until 5 minutes after the debt
+(`ai/mix.lua`, `C.debt_cap`). And no new unit while the treasury loses money and its balance is below 300
+(`mix.deficit`; at 800 it held the armies at 11-28 supply in a normal mid-game and one seed had no capture at all).
+
+**Results.**
+- **The probe** (`r2ai_debt_probe.lua`, my scratchpad; sent to r2-platform for `tools/probes`): at minute 22 of seed 801
+  it puts the AI nation with the largest army into debt (balance -300, held below zero for 6 minutes). rts-ai-3 reached
+  stage 2 at 23:08 with 54 supply (40 units, 38 idle) and retired 5 units (15 supply) at once; 3 minutes later its army
+  was at 29 supply, 27 units (checks `debt_stage2`, `debt_retire`, `debt_cap`: PASS). Run on an earlier tree of this
+  round with the same `debt_step` (its deficit guard still at 800); the minute-45 variant on the final tree is in section 8.6.
+- **No bankruptcy in 801-805**: no nation reached debt stage 2 in the batch with every change (before: 805 rts-ai-3
+  reached stage 3).
+- **Wars still happen**: nations' cities captured 19 (before 19), city-states captured 18 (before 16); wars declared
+  21 (before 28).

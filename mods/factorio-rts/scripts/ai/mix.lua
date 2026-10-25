@@ -203,6 +203,20 @@ function mix.research_engines(C)
   return need
 end
 
+--- (0.1.1, issue #5) True while the nation's treasury loses money (net per minute below 0) and its balance is below
+--- balance.nation.ai3.council.debt.guard (Nation mode; read once per tick).
+local DEBT = require("balance").nation.ai3.council.debt
+function mix.deficit(C)
+  if not (DEBT and DEBT.guard) then return false end
+  if C.deficit_tick == game.tick then return C.deficit_on end
+  local l = package.loaded
+  local treasury = l["__" .. script.mod_name .. "__/scripts/treasury.lua"] or l["scripts.treasury"]
+  local t = treasury and treasury.get and treasury.get(C.force)
+  local on = t ~= nil and (t.net or 0) < 0 and (t.balance or 0) < DEBT.guard
+  C.deficit_tick, C.deficit_on = game.tick, on
+  return on
+end
+
 --- True when the force may and can make `kind` now (see the header), else false, reason.
 function mix.available(C, kind)
   local def = mix.KINDS[kind]
@@ -222,6 +236,16 @@ function mix.available(C, kind)
        and production.army_size(C.force) >= mix.NATION_MIN_ARMY then
       return false, "saving" -- ai/age_up.lua; never below the army floor (Phase 5 M1 integration)
     end
+    -- (0.1.1, issue #5: after retiring units in debt, nothing beyond the army left until the cap expires,
+    -- ai/council.lua council.debt_step)
+    local dc = C.debt_cap
+    if dc and game.tick < dc.until_tick and production.army_size(C.force) >= dc.units then
+      return false, "debt"
+    end
+    -- (0.1.1, issue #5: and no new unit while the treasury runs a deficit near the bottom, unless threatened: an
+    -- economic AI in Age III grew its army from 53 to 268 supply while its balance fell from 1,900 to below 0, the
+    -- upkeep at 322 cr a minute, seed 802 rts-ai-2)
+    if not threat and mix.deficit(C) then return false, "deficit" end
     -- (Phase 5 M3 ai, Age III fix: the research's engines first; see mix.research_engines)
     if def.cost[mix.ENGINE] and mix.research_engines(C) > construction.have(C, mix.ENGINE) then
       return false, "research engines"
