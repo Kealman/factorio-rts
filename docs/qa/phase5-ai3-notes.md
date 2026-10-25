@@ -1295,13 +1295,17 @@ against 1,839. Reported to r2-econ and the lead.
 
 | Issue | Result | Commits |
 |---|---|---|
-| #1 | met: 5/5 on the AI commits' tree, 3/5 on e983cb8 (see 8.10) | b502880, 6bd9fe3 |
+| #1 | met: 5/5 on the AI commits' tree, 3/5 on e983cb8 (see 8.10; the tree before fd75b4d) | b502880, 6bd9fe3 |
 | #2 | not met: 9-12 of 20 linked by 35:00, the aggressive AI's first line before 32:00 in 2 of 5 | fa70e82, 6bd9fe3 |
 | #3 | met: hard 20 of 20 | e29d9b8 |
 | #4 | partial: no interceptor, bomber or artillery train in a 60-minute match; every path acts with the technology (war paths 6/6) | a809043, e983cb8, this |
 | #5 | met | 346d9f6 |
 | #7 (AI part) | met: lines before 30:00, freight trains 0-3 minutes after a line opens | 6bd9fe3 |
 | #8 (army.step) | ticks over 3 ms in the scene 45 -> 29-32 | 70ea109 |
+
+Correction: "3/5 on e983cb8" is the tree before r2-econ's fd75b4d (AI rail crafts leave 100 steel and 150 stone;
+stagger phases from stable handler keys). On fd75b4d seeds 801-805 give Age III by 40:00 in 4 of 5 and 8 of 20
+nations linked by 35:00 (docs/qa/phase5-r2-economy-notes.md section 8).
 
 ### 8.12 Open for 0.1.2
 
@@ -1313,3 +1317,10 @@ against 1,839. Reported to r2-econ and the lead.
 - **The artillery train's kits when the siege railway is planned** (section 8.10), not when its line opens.
 - **army.step's own passes over the pool** (about 60 % of its time, section 8.9) on the scheduler's work units, if the
   perf scene needs more margin than 29-32 ticks over 3 ms.
+- **Industrialisation as a wanted technology in Nation Age I** (`ai/planner.lua` research_want), so it takes the labs
+  from a running basic-kit technology as soon as steel flows (its progress kept). Under fd75b4d's phases the aggressive
+  rts-ai-1 missed the autotest's Age II deadline (about 20:00) in 3-4 of 5 seeds (1 of 5 before): in 802 its steel came
+  at 13-14 minutes and the labs took Unlock Heavy, Mining 1, Logistics 1 and Hauler capacity 1 first (Industrialisation
+  done at 21:50); in 801 its supply cap put Supply 2 first and Industrialisation ran 14:05-22:45 with the labs short of
+  advanced kits (the lever would not help there). Accepted for 0.1.1 by the lead as a research-order effect; not
+  measured.
