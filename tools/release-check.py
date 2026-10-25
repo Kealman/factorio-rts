@@ -390,7 +390,8 @@ def stage_acceptance():
         if a["exists"]:
             forces = sorted(set(a["nat"]) | set(a["ai3"]))
             tot = lambda k: sum((last_ai3(a, f) or {}).get(k, 0) or 0 for f in forces)
-            row("w3072", "Front holds", "> 0", str(tot("holds")), tot("holds") > 0, "#4")
+            row("w3072", "Front holds (lands may never touch on 3072x4: capitals about 1,350 tiles apart)", "> 0",
+                str(tot("holds")), "info", "#4")
             air = tot("patrols") + tot("interceptors") + tot("bombs")
             row("w3072", "Air: patrols + interceptor patrols + bomber strikes", "> 0", str(air), air > 0, "#4")
             row("w3072", "Artillery train bombardments", "> 0", str(tot("artillery")), tot("artillery") > 0, "#4")
