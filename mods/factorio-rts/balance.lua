@@ -1232,7 +1232,8 @@ balance.nation.air = {
   techs = {
     {name = "rts-aviation", kit = "rts-science-industrial", count = 30, age = 2, icon = "defender",
      unlock = {"rts-scout-plane", "rts-scout-plane-kit", "rts-airfield", "rts-aa-turret"}},
-    {name = "rts-air-force", kit = "rts-science-industrial", count = 50, age = 3, icon = "destroyer",
+    -- (0.1.1, issue #4: 30 kits, was 50: no nation of the 0.1.0 acceptance researched it within 60 minutes)
+    {name = "rts-air-force", kit = "rts-science-industrial", count = 30, age = 3, icon = "destroyer",
      prerequisites = {"rts-aviation"}, unlock = {"rts-bomber", "rts-bomber-kit", "rts-interceptor", "rts-interceptor-kit"}},
   },
 }
@@ -1295,7 +1296,8 @@ balance.nation.trains_war = {
   gate = {cost = {["rts-wall"] = 1, ["iron-plate"] = 5, ["electronic-circuit"] = 2}, time = 3, health = 700},
   techs = {
     fortification = {count = 15, kit = "rts-science-basic", age = 1},
-    military_railways = {count = 25, kit = "rts-science-industrial", age = 2,
+    -- (0.1.1, issue #4: 17 kits, was 25: 3 of 20 nations had it by 60:00, at 47-59 minutes)
+    military_railways = {count = 17, kit = "rts-science-industrial", age = 2,
                          prerequisites = {"rts-railways", "rts-industrialisation"}},
   },
   -- target order in stance bombard (lower first), then the nearest
@@ -1387,7 +1389,9 @@ do
     -- Age III road: Electrification first in Age II; make targets for the industrial kit's parts and then the running
     -- Space Program stage's goods (capped at stage_cap per good); purchases of what the nation cannot make in time (the
     -- market AI's ai_buy covers ledger shortfalls) at most buy_share of the balance above buy_reserve per buy_period
-    research_first = {"rts-electrification"}, kit_targets = {["engine-unit"] = 20, ["advanced-circuit"] = 20, sulfur = 20},
+    -- (0.1.1, issue #4: and the war technologies with industrial kits, the works factory's engines for their kits)
+    research_first = {"rts-electrification", "rts-military-railways", "rts-aviation", "rts-air-force"},
+    kit_targets = {["engine-unit"] = 20, ["advanced-circuit"] = 20, sulfur = 20},
     stage_cap = 200, buy_reserve = 1500, buy_share = 0.25, buy_period = 60 * 60, buy_max = 100,
     -- a port farther than port_reach tiles from the capital is not used for purchases (a hauler takes minutes each way);
     -- city-states first. Every non-capital city exports export_goods (they reach the capital by haulers and trains)

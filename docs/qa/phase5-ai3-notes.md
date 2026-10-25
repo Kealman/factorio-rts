@@ -1245,3 +1245,60 @@ callers want an answer in the same tick.)
 | script p99 ms | 2.07 | 1.93 / 2.11 |
 
 The machine ran other agents' servers during all three runs; the per-call numbers are the stable part.
+
+### 8.10 Issue #4, second round: the technology's pace (the lead's levers)
+
+**Changes** (approved by the lead): `balance.lua` Air Force 30 industrial kits (was 50), Military railways 17 (was 25);
+`balance.nation.ai3.planner.research_first` adds Military railways, Aviation and Air Force (the works factory's engines
+for their kits, ai/planner.lua engine_focus). `ai/council.lua` `war_research`: the war technology with industrial kits
+the nation researches first at war; while there is one, `ai/planner.lua` science_hold does not hold it back for Space
+Program stage 1 and the planner buys its kits' parts down to 400 cr. No third lab: the two labs stood idle for kits,
+not for lab time.
+
+**Results** (801-805, 4 normal AIs, 60 minutes; HEAD e983cb8 with the levers (`r2ai-w1`) against the same HEAD
+without them (`r2ai-h1`), and the 3072 x 4 world of release-check, seed 30724):
+
+| | HEAD | HEAD + levers | 3072 x 4, seed 30724 (+ levers) |
+|---|---|---|---|
+| interceptor patrols or bomber strikes (seeds) | 0/5 | **0/5** | 0 |
+| artillery train fired (seeds) | 0/5 | **0/5** | 0 |
+| holds (seeds) | 0/5 | 1/5 | 0 |
+| air patrols (scout planes; seeds) | 5/5 | 5/5 | 4 nations |
+| nations with Military railways / Aviation / Air Force by 60:00 | 4 / 8 / 0 of 20 | 13 / 15 / 0 of 20 | 2 / 3 / 0 of 4 |
+| siege railways: forward depots built | 0 | 5 (3 nations) | 0 |
+| first Age III; by 40:00 | 39:12 41:29 41:54 37:33 35:50; 3/5 | 38:46 41:05 42:51 36:50 36:55; 3/5 | 38:16 |
+| nations in Age III by 40:00 / by 60:00 | 4 / 15 of 20 | 4 / 15 of 20 | - |
+| three cities linked by 35:00 | 9/20 | 12/20 | 3/4 |
+| items moved by train | 172,669 | 195,398 | - |
+
+**Not met; closed as partial.** Military railways came in 13 of 20 nations (34-52 minutes), siege railways were planned
+and their forward depots built in 3 nations (5 depots), but no artillery train fired: no siege railway's line opened
+before its operation ended, its target fell or its depot was destroyed (two dropped, two depots lost), and two
+operations found no train at their nearest depot ("no-kits": the artillery wagon kit and two locomotive kits were not
+made in time). Air Force came in no nation even at 30 kits: it needs Age III, Aviation and a war at the same time;
+the nations in Age III spent 0-23 minutes of it at war, most under 8. Interceptors and bombers need Air Force.
+With the technology given, every path acts (`ai3_war_paths.lua` 6/6 since e983cb8). The levers cost no Age III (4 of
+20 nations by 40:00 with and without) and linked more cities (12 against 9), so both stay (the lead's rule: Age III
+by 40:00 at least 3/5 and not more than one seed below the control). The cause, as the lead closes #4 for 0.1.1: Air
+Force is out of reach in a 60-minute match by the design of the tech tree (Age III, Aviation and a war at once), and
+the artillery train needs its kits earlier; requesting them when the siege railway is planned, not when its line
+opens, is a 0.1.2 item. README.md names the new kit counts (Air Force 30, Military railways 17).
+
+**Age III on the current HEAD.** The same seeds gave 5/5 on 346d9f6 plus 6bd9fe3's change (`r2ai-g2`) and 3/5 on
+e983cb8 (`r2ai-h1`; with the levers 3/5 as well). Between them came 7248285 (rails.lua: a crew leaves only with
+min(need, 40) rails) and e29d9b8 (hard only). In 802 rts-ai-3, the nation that reached Age III at 30:52 in `g2`, the
+capital's stone stood at 0-45 from minute 30 (`g2`: 117-951), its Smelting and Steel works districts were not built,
+its steel fell to 4 a minute (`g2`: 72) and stage 1 stood at 68 % to the end; 2,109 rails were loaded into crews
+against 1,839. Reported to r2-econ and the lead.
+
+### 8.11 Summary after the second round
+
+| Issue | Result | Commits |
+|---|---|---|
+| #1 | met: 5/5 on the AI commits' tree, 3/5 on e983cb8 (see 8.10) | b502880, 6bd9fe3 |
+| #2 | not met: 9-12 of 20 linked by 35:00, the aggressive AI's first line before 32:00 in 2 of 5 | fa70e82, 6bd9fe3 |
+| #3 | met: hard 20 of 20 | e29d9b8 |
+| #4 | partial: no interceptor, bomber or artillery train in a 60-minute match; every path acts with the technology (war paths 6/6) | a809043, e983cb8, this |
+| #5 | met | 346d9f6 |
+| #7 (AI part) | met: lines before 30:00, freight trains 0-3 minutes after a line opens | 6bd9fe3 |
+| #8 (army.step) | ticks over 3 ms in the scene 45 -> 29-32 | 70ea109 |

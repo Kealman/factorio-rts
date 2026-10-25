@@ -1085,7 +1085,9 @@ local function buy_step(C, P)
   -- (0.1.1, issue #1) except stage 1's last goods: down to stage1_reserve (a nation with 1,100 cr bought nothing and
   -- stood at 93 % of stage 1 for 25 minutes, seed 801 rts-ai-3)
   local stage1 = missing and age3.project and (age3.project(C.force) or {}).stage == 1
-  if stage1 and PB.stage1_reserve then
+  -- (0.1.1, issue #4) and a war technology's kit parts at war (ai/council.lua war_research; kit_phase wants them)
+  local war = deps.council and deps.council.war_research and deps.council.war_research(C)
+  if (stage1 or war) and PB.stage1_reserve then
     budget = math.max(budget, (treasury_balance(C.force) - PB.stage1_reserve) * PB.buy_share)
   end
   local items = {}
@@ -1153,6 +1155,8 @@ end
 --- AI bought for the stage, and a nation stood at 93 % of stage 1 from minute 37 to the end (seed 801 rts-ai-3).
 function planner.science_hold(C)
   if not nation_mode() then return false end
+  -- (0.1.1, issue #4) not for a war technology at war (ai/council.lua war_research): its kits come first
+  if deps.council and deps.council.war_research and deps.council.war_research(C) then return false end
   local age3 = mod("age3")
   local proj = age3 and age3.project and age3.project(C.force)
   if not (proj and proj.stage == 1) then return false end

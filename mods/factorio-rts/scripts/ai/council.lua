@@ -1441,8 +1441,7 @@ function council.research_urgent(C)
   local out = {}
   if at_war(C.force) and not has_tech(C.force, FORTIFICATION) then out[#out + 1] = FORTIFICATION end
   -- (0.1.1, issue #4) Military railways at war once Electrification is done, before the air techs: an artillery train
-  -- needs only it (25 industrial kits; Air Force alone takes 50), and Air Force put it back in every nation that
-  -- wanted both
+  -- needs only it (17 industrial kits; Air Force takes 30), and Air Force put it back in every nation that wanted both
   if at_war(C.force) and has_tech(C.force, ELECTRIFICATION) and not has_tech(C.force, MILITARY_RAILWAYS) then
     out[#out + 1] = MILITARY_RAILWAYS
   end
@@ -1459,6 +1458,19 @@ function council.research_urgent(C)
     out[#out + 1] = AIR_FORCE
   end
   return next(out) and out or nil
+end
+
+--- (0.1.1, issue #4) The war technology with industrial kits the nation researches first now (at war: Military
+--- railways, Aviation, Air Force; see research_urgent), or nil. While there is one, ai/planner.lua lets its kits take
+--- the parts Space Program stage 1 waits for (science_hold) and buys them: with stage 1 first the two labs stood idle and
+--- Aviation came at 35-59 minutes, Air Force never (801-805).
+local WAR_KIT_TECH = {[MILITARY_RAILWAYS] = true, [AVIATION] = true, [AIR_FORCE] = true}
+function council.war_research(C)
+  if not (nation_mode() and at_war(C.force)) then return nil end
+  for _, name in ipairs(council.research_urgent(C) or {}) do
+    if WAR_KIT_TECH[name] then return name end
+  end
+  return nil
 end
 
 function council.research_want(C)
