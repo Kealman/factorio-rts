@@ -15,8 +15,10 @@
 --          of F inside its land within artillery_range of town C, its network kept stocked with locomotive and
 --          artillery wagon kits, coal and rail shells until the artillery path ran
 --   mercs  waves of 6 walkers of E attack-move at F's capital centre (from the town F side): money_step hires garrison
---          points at the capital (sinks.hire_garrison); mercenaries need a port (the AI's envoy takes one; the probe
---          hands F the nearest free port when it has none 3 minutes in), a small idle army and free supply, so later
+--          points at the capital (sinks.hire_garrison); mercenaries need an own port within the planner's port_reach
+--          (450 tiles) of the capital (0.1.1: the probe places one 120 tiles behind the capital, away from E, and hands
+--          it to F when F has none that near 3 minutes in; else the nearest free port when it has none at all), a small
+--          idle army and free supply, so later
 --          waves only start while F's army is out on an offensive, no defence group stands, F's pool is at most 22 (a
 --          defence takes half of it), the council's merc_next has passed and F has 14 free supply (the probe
 --          researches F's next Supply technology when it has less: the AI's barracks keep it at its cap)
@@ -51,6 +53,7 @@ local rails = require("scripts.rails")
 local trainswar = require("scripts.trainswar")
 local logistics = require("scripts.logistics")
 local market = require("scripts.market")
+local balance = require("balance")
 local treasury = require("scripts.treasury")
 local research = require("scripts.research")
 local ages = require("scripts.ages")
@@ -404,6 +407,29 @@ local function mercs_step(s, tick)
   end
   if (st.hires or 0) >= 1 and not s.hire_t then s.hire_t, s.hire_pool = tick, a and a.pool_size end
   if (st.mercs or 0) >= 1 and not s.merc_t then s.merc_t, s.merc_pool = tick, a and a.pool_size end
+  -- (0.1.1) a port within the council's reach: since wave B.2 (a55d776) the council hires mercenaries only at an own
+  -- port within balance.nation.ai3.planner.port_reach of the capital (far mercenaries joined an attack group); seed
+  -- 811's ports lie 1,000+ tiles out, so the path never ran again (5/6 on 2.1, and the 6/6 of section 4.7 was measured
+  -- before that fix). The probe places a port behind the capital and hands it to F.
+  if tick - s.t0 >= PORT_AFTER and not s.port_near then
+    local reach = balance.nation.ai3.planner.port_reach or 450
+    for _, un in ipairs(market.ports(F)) do
+      local p = market.port(un)
+      if p and p.entity and p.entity.valid and util.distance(p.entity.position, s.home) <= reach then s.port_near = un end
+    end
+    if not s.port_near then
+      local p = market.place_port(surface(), {x = s.home.x - s.u.x * 120, y = s.home.y - s.u.y * 120})
+      if p then
+        market.set_owner(p.un, F)
+        s.port_near = p.un
+        note("mercs: %s has no port within %d tiles of its capital %d s in: the probe places port #%d at %s and hands "
+          .. "it over", F, reach, (tick - s.t0) / 60, p.un, util.pos_str(p.position))
+      else
+        s.port_near = -1
+        note("mercs: no room for a port behind %s's capital", F)
+      end
+    end
+  end
   -- a port: the AI's envoy takes one; the probe hands over the nearest free one when it has none after PORT_AFTER
   if #market.ports(F) == 0 and tick - s.t0 >= PORT_AFTER and not s.port_given and storage.market
      and storage.market.ports then
