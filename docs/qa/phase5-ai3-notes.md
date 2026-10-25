@@ -1302,3 +1302,14 @@ against 1,839. Reported to r2-econ and the lead.
 | #5 | met | 346d9f6 |
 | #7 (AI part) | met: lines before 30:00, freight trains 0-3 minutes after a line opens | 6bd9fe3 |
 | #8 (army.step) | ticks over 3 ms in the scene 45 -> 29-32 | 70ea109 |
+
+### 8.12 Open for 0.1.2
+
+- **A lost trunk line's depot rebuild under the engine focus.** r2-econ's 94977b7 rebuilds a war-destroyed depot of an
+  intact line inside `rails.ai_program` (state "depots" while it waits; the line's state is "lost"). The planner's
+  engine focus holds trunk edges that are not open and have no crew out (`ai/planner.lua` trunk_step), so such a rebuild
+  can wait up to 3 of every 5 minutes. The one-line fix, skipped for 0.1.1 by the lead's decision:
+  `if not (el and (el.builder or el.state == "lost")) then hold = true end` (planner.lua:917).
+- **The artillery train's kits when the siege railway is planned** (section 8.10), not when its line opens.
+- **army.step's own passes over the pool** (about 60 % of its time, section 8.9) on the scheduler's work units, if the
+  perf scene needs more margin than 29-32 ticks over 3 ms.
