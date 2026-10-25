@@ -303,3 +303,25 @@ static scan; the keys built from a prefix, such as `rts.results-victory-` and th
 The screenshots looked at (lobby, ledger, city, hub, market, diplomacy, belt, train and air panels, help, menu) show
 none either (`build/shots-r2-m3b-{en,ru}/`, `build/shots-r2-m3b-{en,ru}-window/`). The objective strip of #16 shows in these passes' first (Nation) match and covers
 none of the protocol's coordinates.
+
+## 5. Final GUI pass on the release tree (issue #18)
+
+On HEAD fd75b4d (the 0.1.1 release tree), one GUI client at a time, the repository's `tools/gui-drive.sh`, a 1280×800
+window at UI scale 0.75:
+
+| Probe | English | Russian |
+|---|---|---|
+| `tools/probes/m3_docs_gui.lua` (the M3 protocol's checks) | **53/53** (`build/r2-f18c-en`) | **53/53** (`build/r2-f18c-ru`) |
+| `tools/probes/r2_inputs_gui.lua` | **29/29** (`build/r2-f18i-en`) | – |
+| `tools/probes/r2_objectives_gui.lua` | **27/27** (`build/r2-f18o-en`) | – |
+
+0 Lua errors in every run. The first passes on this tree had three misses, all from the world of that run rather than
+from the mod, and the probe now handles each:
+
+- **The AA check lost the bomber to other shooters**: the division of part D in English (52/53), the capital's six
+  start walkers in Russian. Every own ground unit (and the Commander) now holds fire (`disabled_by_script`) until the
+  check is done, so only the AA turret can shoot the bomber down.
+- **The Launch complex stood on the airfield's site** (Russian): the airfield goes to the protocol's mirror site
+  (448, 304) when the complex overlaps (832, 304).
+- **A unit stood on the Steel works** (Russian): a click picks an own unit before a building, so own units within 5
+  tiles of the district move 9 tiles away before the click.

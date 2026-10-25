@@ -292,6 +292,7 @@ step(function(player, P)
   if Pj and Pj.position then
     local x, y = spx(P, Pj.position)
     note("Launch complex at %s: start-zoom pixel (%d, %d)", util.pos_str(Pj.position), x, y)
+    P.complex_px = {x, y}
   end
   return 15
 end)
@@ -352,6 +353,20 @@ step(function(player, P)
     note("Steel works at %s: start-zoom pixel (%d, %d)", util.pos_str(P.district.position), x, y)
   end
   return 360 -- the staffing pass
+end)
+step(function(player, P)
+  -- 0.1.1 (r2-ux): a click picks an own unit before a building; one stood on the Steel works in the final RU pass
+  local d = P.district
+  if d and d.valid then
+    local s = match.surface()
+    for _, e in ipairs(s.find_entities_filtered({position = d.position, radius = 5, force = P.F,
+        type = {"spider-unit", "unit", "spider-vehicle"}})) do
+      local to = s.find_non_colliding_position(e.name, {x = d.position.x, y = d.position.y + 9}, 8, 0.5)
+      if to then e.teleport(to) end
+      note("moved %s off the Steel works", e.name)
+    end
+  end
+  return 30
 end)
 real("select_steel_works", function(player, P)
   local x, y = spx(P, P.district.position)
@@ -570,13 +585,22 @@ step(function(player, P)
 end)
 step(function(player, P) click_at("tab_production") return 30 end)
 step(function(player, P) drive("click 1191 742") return 30 end)
-step(function(player, P) drive("click 832 304") return 30 end)
+step(function(player, P)
+  -- 0.1.1 (r2-ux): the protocol's mirror site (448, 304) when the Launch complex (8x8) overlaps the airfield's (6x6)
+  P.af = {832, 304}
+  local c = P.complex_px
+  if c and math.abs(c[1] - 832) < (64 + 48) and math.abs(c[2] - 304) < (64 + 48) then P.af = {448, 304} end
+  note("airfield site (%d, %d)", P.af[1], P.af[2])
+  drive("click %d %d", P.af[1], P.af[2])
+  return 30
+end)
 real("build_airfield", function() drive("key %d", KEY.Q) end, function(player, P)
-  local g = own_entity(P, "entity-ghost", at_px(P, 832, 304), 6) or own_entity(P, "rts-airfield", at_px(P, 832, 304), 6)
-  return g ~= nil, g and (g.name .. " " .. util.pos_str(g.position)) or "nothing at (832, 304)"
-end, function(player, P) place("rts-airfield", at_px(P, 832, 304), P.F) end, 60)
+  local g = own_entity(P, "entity-ghost", at_px(P, P.af[1], P.af[2]), 6)
+    or own_entity(P, "rts-airfield", at_px(P, P.af[1], P.af[2]), 6)
+  return g ~= nil, g and (g.name .. " " .. util.pos_str(g.position)) or string.format("nothing at (%d, %d)", P.af[1], P.af[2])
+end, function(player, P) place("rts-airfield", at_px(P, P.af[1], P.af[2]), P.F) end, 60)
 wait_until("airfield", function(player, P)
-  P.field = own_entity(P, "rts-airfield", at_px(P, 832, 304), 8)
+  P.field = own_entity(P, "rts-airfield", at_px(P, P.af[1], P.af[2]), 8)
   return P.field ~= nil
 end, 60, 60 * 40)
 real("select_airfield", function(player, P)
@@ -668,6 +692,16 @@ step(function(player, P)
     cmdr.disabled_by_script = true
     P.cmdr_held = cmdr
   end
+  -- (and the division of part D: its walkers shot the bomber down in the final EN pass on fd75b4d)
+  -- (and every own ground unit: the division's walkers in the final EN pass, the capital's start walkers in RU)
+  P.held = {}
+  for _, rec in units.for_force(P.F) do
+    local e = rec.entity
+    if e.valid and not air.is_plane(e) and not e.disabled_by_script then
+      e.disabled_by_script = true
+      P.held[#P.held + 1] = e
+    end
+  end
   local before = {}
   for _, rec in units.for_force(E) do before[rec.entity.unit_number] = true end
   -- Phase 5 M3 QA fix (F2): 70 tiles east of the AA turret, sent at it (spawned 11 tiles away it bombed the turret
@@ -694,6 +728,7 @@ step(function(player, P)
   check("aa", not (P.enemy and P.enemy.valid) and by_aa, "bomber %s, killed by the AA turret: %s",
     (P.enemy and P.enemy.valid) and "alive" or "dead", tostring(by_aa))
   if P.cmdr_held and P.cmdr_held.valid then P.cmdr_held.disabled_by_script = false end
+  for _, e in ipairs(P.held or {}) do if e.valid then e.disabled_by_script = false end end
   return 30
 end)
 snap("f08-aa-after")
