@@ -180,7 +180,8 @@ wait
 # --- the perf scene, alone on the machine if it gets quiet within SCENE_WAIT
 if has scene; then
   if [ -f "$RC_DIR/scene.rc" ] && [ -z "${FORCE:-}" ]; then log "scene: kept from before"; else
-    others() { pgrep -f 'MacOS/factorio' | wc -l | tr -d ' '; }
+    # Factorio processes by name (servers and GUI clients); `pgrep -f MacOS/factorio` also matched other agents' shells
+    others() { pgrep -x factorio | wc -l | tr -d ' '; }
     W0=$(date +%s)
     while [ "$(others)" -gt 0 ] && [ $(( $(date +%s) - W0 )) -lt "$SCENE_WAIT" ]; do
       [ $(( ( $(date +%s) - W0 ) % 600 )) -lt 30 ] && log "scene: waiting, $(others) other Factorio processes running"

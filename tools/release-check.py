@@ -352,7 +352,7 @@ def acc_rows(stage, accs, full):
         return last is not None and last in a["ai3"].get(f, {})
     living = [(a, f) for a, f in nations if alive(a, f)]
     cities = sum(1 for a, f in living if ((last_ai3(a, f) or {}).get("cities") or 0) >= 3)
-    row(stage, "Nations alive at the end with ≥ 3 cities", "every nation alive", f"{cities} of {len(living)} alive ({nn - len(living)} conquered)",
+    row(stage, "Nations alive at the end with ≥ 3 cities", "every nation alive", f"{cities} of {len(living)} living nations ({nn - len(living)} conquered)",
         bool(living) and cities == len(living), "M3 contract")
     ops = sum(1 for a, f in nations if ((last_ai3(a, f) or {}).get("ops") or 0) >= 1)
     row(stage, "Nations that ran an operation with phases", "every nation", frac(ops, nn), ops == nn, "M3 contract")
