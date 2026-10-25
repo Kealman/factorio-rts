@@ -283,7 +283,28 @@ function scout.harass_target(C, surface, from, max_dist)
 end
 
 --- Nearest visible enemy unit to `pos` within `range`, or nil.
+-- (0.1.1, issue #8) Nation mode: the last scan of a force answers again for VISIBLE_TTL ticks near the same spot (within
+-- VISIBLE_MOVE tiles, the same range) while its unit lives: the scan reads every unit of the match (600 in the perf
+-- scene, up to 2.5 ms), and the target cache (TARGET_CACHE, 5 s) asked for it again every 5 s per group without a known
+-- building target. Skirmish scans each time.
+scout.VISIBLE_TTL, scout.VISIBLE_MOVE = 600, 16
+local visible_scan
 function scout.visible_enemy_unit(C, surface, pos, range)
+  if not nation_mode() then return visible_scan(C, surface, pos, range) end
+  local px, py = pos.x or pos[1], pos.y or pos[2]
+  local V = C.visible_cache
+  if V and game.tick - V.tick < scout.VISIBLE_TTL and V.range == range
+     and math.abs(V.x - px) <= scout.VISIBLE_MOVE and math.abs(V.y - py) <= scout.VISIBLE_MOVE then
+    local e = V.entity
+    if e == nil then return nil end
+    if e.valid then return e end
+  end
+  local e = visible_scan(C, surface, pos, range)
+  C.visible_cache = {tick = game.tick, x = px, y = py, range = range, entity = e}
+  return e
+end
+
+visible_scan = function(C, surface, pos, range)
   local force = game.forces[C.force]
   local list = {}
   for _, rec in pairs(storage.units) do
@@ -305,7 +326,20 @@ end
 --- An enemy force that still has buildings but no CC and no barracks (it can no longer produce units), or nil. Its
 --- remaining buildings are all targets (the lead's rule: finish a beaten side, so a lone factory or stockpile does
 --- not keep it in the match).
+-- (0.1.1, issue #8) Nation mode: the answer holds for BEATEN_TTL ticks (it walks every building of the match: 1,440
+-- calls in 5 minutes of the perf scene, 22 % of army.step's time). Skirmish computes it each time.
+scout.BEATEN_TTL = 300
+local beaten_scan
 function scout.beaten_enemy(C)
+  if not nation_mode() then return beaten_scan(C) end
+  local B = C.beaten_cache
+  if B and game.tick - B.tick < scout.BEATEN_TTL then return B.name end
+  local name = beaten_scan(C)
+  C.beaten_cache = {tick = game.tick, name = name}
+  return name
+end
+
+beaten_scan = function(C)
   local force = game.forces[C.force]
   if not force then return nil end
   local state = {}

@@ -1220,3 +1220,28 @@ Hand-offs: the debt probe went to r2-platform (`tools/probes/ai3_debt.lua`, eca6
 trains that left with their rails and never finished (804 player and the baseline's 804 rts-ai-3; addressed in
 7248285); the M1 player's coal. To the lead: issue #4 needs a balance decision (industrial research paced for a
 60-minute match or a longer acceptance); `m3_acceptance.lua`'s debt seed criterion contradicts issue #5.
+
+### 8.9 Issue #8: army.step's share of the script ticks over 3 ms
+
+After r2-econ's stagger (e9ba46c) the script ticks still over 3 ms in `tools/perf-bench.sh scene` (seed 701, 5
+benchmarked minutes, PERF=1 and marks) were mostly army.step's. Timed inside army.step
+(`tools/probes/r2a_army_marks.lua`, EXTRA_LUA), over 1,200 calls: 1,329 ms in all, `scout.beaten_enemy` 293 ms (22 %:
+it walks every building of the match, 1,440 calls), `scout.best_target` 168 ms, of it `scout.visible_enemy_unit`
+112 ms (every unit of the match, up to 2.5 ms a call; the 3 worst army.step calls, 3.8-4.4 ms, spent 2.3-2.5 ms in it),
+raids, war supply and the rest under 60 ms; about 800 ms are army.step's own passes over the pool.
+
+**Change** (`ai/scout.lua`, Nation mode only; Skirmish runs the same scans as before): `beaten_enemy`'s answer holds for
+5 s, `visible_enemy_unit`'s for 10 s near the same spot (16 tiles) while its unit lives. Both scans stay whole; they
+run less often. (The scheduler's work units were not needed: the scans are each one pass over a table, and their
+callers want an answer in the same tick.)
+
+| scene, seed 701 (5 minutes) | before | after (two runs) |
+|---|---|---|
+| script ticks over 3 ms (of them the autotest's minute report) | 45 (5) | 29 (6), 32 (5) |
+| army.step: mean ms, worst ms, calls over 3 ms | 1.107, 4.35, 14 | 0.863, 4.01, 4 / 0.914, 3.96, 5 |
+| commander.run calls over 3 ms | 32 | 16 / 12 |
+| scout.beaten_enemy mean ms | 0.203 | 0.034 / 0.038 |
+| scout.visible_enemy_unit mean ms | 0.465 | 0.450 (5 s cache) / 0.223 (10 s) |
+| script p99 ms | 2.07 | 1.93 / 2.11 |
+
+The machine ran other agents' servers during all three runs; the per-call numbers are the stable part.
