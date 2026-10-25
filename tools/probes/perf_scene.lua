@@ -282,7 +282,10 @@ events.on_nth_tick(60, function(e)
     if e.tick - m.tick_started >= AT_MINUTE * 3600 then build() end
     return
   end
-  local age = e.tick - P.built
+  -- game.tick on both sides: since e9ba46c a Nation on_nth_tick handler runs on a phase of its own and gets the
+  -- nominal tick as e.tick, while build() stores the real tick; mixing them left age off the 60-tick grid, so the
+  -- marches, the recycling and the minute lines never ran
+  local age = game.tick - P.built
   if age > 0 and age % LEG_TICKS == 0 then march() end
   if age > 0 and age % RECYCLE_TICKS == 0 then recycle() end
   if not P.saved and age >= SETTLE_TICKS then
