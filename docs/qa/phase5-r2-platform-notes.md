@@ -304,3 +304,30 @@ otherwise quiet machine.
   "founds ≥ 3 cities": the most cities a nation held during the match. The report lists nations that end below 3
   after a conquest.
 - **A report-only rebuild overwrote the run's settings.** It no longer touches the server count or the finish time.
+
+## 6. The 0.1.1 release tree 615854f (2026-10-25)
+
+The lead replaced fd75b4d with 615854f. In it the AI rail-craft keep is 100 stone only, r2-econ's variant B; nothing
+else changed. The run was `REV=615854f SERVERS=3 STAGES="smoke matrix m1 m2 m3 w3072 debt warpaths sl det scene lan
+heavy" tools/release-check.sh`, from 13:05 to 15:13. The report is `build/release-check/2026-10-25_1305/REPORT.md`.
+
+**Verdict: 42 criteria pass, 4 fail, 8 informational.** Every run had 0 Lua errors and 60 UPS in every speed-1 minute.
+
+| Result | fd75b4d (A keep) | **615854f (B keep)** |
+|---|---|---|
+| Smoke, Skirmish matrix against v0.1.0 | 65/65; 0 differing lines | 65/65; **0 differing lines** in 10/10 |
+| M1 501: score, train items, identity | 51/53, 10,047, 0 of 67,292 differing | **51/53, 19,101** (target 20,000), 0 of 68,960 differing; `age2_rts-ai-1` at 32:36 (deadline 20:30) |
+| Age III by 40:00 (#1) | 4 of 5 | **2 of 5** (34:42 and 38:15; the others 41:13-41:36) |
+| 3 cities linked by 35:00 (#2) | 8 of 20 | **9 of 20** |
+| Aggressive AI's first line before 32:00 (#2) | 1 of 5 | **4 of 5** (16:26-31:27; 805: 42:58) |
+| M3 others: M2 criteria, starving, cities, operations, belts, air patrols, credit line | all pass | all pass (starving in 1 seed) |
+| M2 701-705 | 5/5, starving 0 | 5/5, starving 1 seed (701; tolerance 1) |
+| 3072 x 4 air; debt path; war paths | 26; 3/3; 6/6 | 18; 3/3; 6/6 |
+| Save/load 20/40; determinism | pass; 210/211 lines, 0 differing | pass; 215/211 lines, 0 differing |
+| Perf scene: mean, p99, capacity; #8 rows | 1.374 ms, 3.03, 728; 0 / 20 / 1.77 ms / 0 | **1.330 ms, 2.875, 752; 0 / 19 / 1.69 ms / 0** (all pass) |
+| Heavy mode (10 minutes) | not run | **PASS**, 0 desyncs, ticks 3,600-4,200 |
+| LAN, two clients by hand-over | not run | **PASS**, 0 desyncs, 33 and 25 checksums equal to the server's |
+
+The four failures are the M1 score, M1 freight (#7), Age III by 40:00 (#1) and linking by 35:00 (#2). The lead
+expected B to land at Age III 2-3 of 5 and linking 9-12 of 20 with freight at or above 20,000. Freight came in 899
+items short.
