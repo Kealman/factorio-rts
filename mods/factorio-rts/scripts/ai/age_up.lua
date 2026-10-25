@@ -74,9 +74,11 @@ local function factory_modes(C, N)
     local e = plan_entity(C, N.works_key)
     if e then N.works_un = e.unit_number end
   end
+  -- (0.1.1: not while the planner holds it on a recipe of its own, ai/planner.lua planner.holds_works)
+  local held = deps.planner and deps.planner.holds_works and deps.planner.holds_works(C)
   for un, rec in buildings.for_force(C.force, "factory") do
     if un == N.works_un then
-      if rec.recipe_mode ~= "auto" then production.set_auto(rec, true) end
+      if rec.recipe_mode ~= "auto" and not held then production.set_auto(rec, true) end
     elseif rec.recipe_mode == nil then
       rec.recipe_mode = "fixed"
     end
@@ -308,6 +310,24 @@ function age_up.step(C, surface)
         table.insert(N.district_todo, at, name)
         N.planner_insert = at + 1
         util.log("ai %s: age-up: %s added to the district list at %d (planner)", C.force, name, at)
+      end
+    end
+    -- (0.1.1, issue #1) the planner's urgent districts to the front, once each (the Petrochemical works when crude oil
+    -- reaches the capital; behind later districts it found no spot)
+    N.urgent_moved = N.urgent_moved or {}
+    for _, name in ipairs(deps.planner and deps.planner.urgent_districts and deps.planner.urgent_districts(C) or {}) do
+      if not N.urgent_moved[name] then
+        for i, n in ipairs(N.district_todo) do
+          if n == name then
+            N.urgent_moved[name] = true
+            if i > 1 then
+              table.remove(N.district_todo, i)
+              table.insert(N.district_todo, 1, n)
+              util.log("ai %s: age-up: %s moved to the front of the district list (planner)", C.force, name)
+            end
+            break
+          end
+        end
       end
     end
     -- the Rail works first while the rail line still waits for rails (2 rails per steel instead of 1)

@@ -17,8 +17,12 @@
 --                                            Geology for a rare deposit in reach
 --   planner.districts(C) -> {district, ...}  extra districts for the age-up list (the oil chain, Age III districts)
 --   planner.step(C, surface)                 cities, the oil town's pumpjacks, the trunk, the Space Program, rushes,
---                                            automation, rare extractors
+--                                            automation, rare extractors, the concrete chain, the works factory's jobs
 --   planner.describe(force)                  one line for the autotest minute report
+--   (0.1.1) planner.urgent_districts(C)      districts ai/age_up.lua moves to the front once (the Petrochemical works)
+--           planner.engine_focus(C)          the Age III road's research waits for engines (rail programs pause)
+--           planner.science_hold(C)          stage 1 waits for advanced circuits or engines (industrial research waits)
+--           planner.pins(C), holds_works(C)  factories ai/governor.lua pins; the works factory held on a recipe
 --
 -- Cities. The second city stays ai/towns.lua's mining town (cities.ai_step). From the third on the planner founds
 -- them: a City Center ghost in the commander's construction plan (the builder factory makes the charter), the third
@@ -39,7 +43,10 @@
 -- Log lines "[rts] planner: <force> ...".
 local util = require("scripts.util")
 local buildings = require("scripts.buildings")
+local production = require("scripts.production")
 local construction = require("scripts.ai.construction")
+local mix = require("scripts.ai.mix")
+local layout = require("scripts.ai.layout")
 local data = require("scripts.ai.orders_data")
 local deps = require("scripts.ai.deps")
 local difficulty = require("scripts.ai.difficulty")
@@ -53,6 +60,10 @@ local PB = balance.nation.ai3.planner
 local CENTER = "rts-city-center"
 local STEEL_WORKS = "rts-district-steel"
 local SMELTING_WORKS = "rts-district-smelting"
+local PETROCHEM = "rts-district-petrochem"
+local ELECTRONICS_WORKS = "rts-district-electronics"
+local OIL_EXPORT = {}
+for _, item in ipairs(PB.oil.export) do OIL_EXPORT[item] = true end
 local PUMPJACK = "rts-pumpjack"
 local RARE_EXTRACTOR = balance.nation.rare and balance.nation.rare.extractor or "rts-rare-extractor"
 local ELECTRIFICATION = balance.nation.age3 and balance.nation.age3.tech or "rts-electrification"
@@ -443,6 +454,18 @@ function planner.next_city(force_name)
   -- town farther than far_city from the capital (a trade city 543 tiles out starved, M2 seed 702)
   local own = deps.cities and deps.cities.for_force(force_name) or {}
   local capital = capital_of(force_name)
+  -- (0.1.1, issue #1: while the nation has no oil town, no other city within min_city of its home oil field: the
+  -- 250-tile rule put a trade city 80 tiles from it, the oil field then lay inside that city's spacing and the nation
+  -- never got its crude oil, seed 801 rts-ai-2 and rts-ai-3)
+  local oil_site
+  if not P.oil then
+    for _, s in ipairs(list) do
+      if s.kind == "oil" and s.home then
+        oil_site = s
+        break
+      end
+    end
+  end
   local function link_of(s)
     local d = math.huge
     for _, c in ipairs(own) do
@@ -463,6 +486,7 @@ function planner.next_city(force_name)
         ok = false
       end
       if ok and pass == 1 and #own == 2 and PB.third_link and link_of(s) > PB.third_link then ok = false end
+      if ok and oil_site and s ~= oil_site and dist(s.position, oil_site.position) < PB.min_city then ok = false end
       if ok then return s end
     end
   end
@@ -658,6 +682,41 @@ local function goods_policies(C, P, own, capital)
       end
     end
   end
+  -- (0.1.1, issue #1) A city-state purchase arrives in the own city nearest the city-state (scripts/sinks.lua). In a
+  -- town without an open line it waited for that line: the 801 leader's plastic and sulfur, bought at minutes 19-25,
+  -- reached its capital at 32 and its Electrification started 13 minutes after Age II. Such a town (not one with a
+  -- supply hauler: a ration hauler that carried exports starved its town, M2 seed 701) exports the goods the planner
+  -- bought from a city-state in the last forward_ticks, so the auto haulers bring them home.
+  P.fwd = P.fwd or {}
+  local recent = {}
+  for item, t in pairs(P.cs_bought or {}) do
+    if game.tick - t <= (PB.forward_ticks or 10 * 3600) then recent[item] = true end
+  end
+  for _, c in ipairs(own) do
+    if c.id ~= capital.id and c.center then
+      local F = P.fwd[c.id]
+      if not F or F.center ~= c.center then
+        F = {center = c.center, items = {}}
+        P.fwd[c.id] = F
+      end
+      if P.exports[c.id] == c.center then
+        F.items = {} -- the line's export policies cover every good (above)
+      else
+        local hauled = C.gov and C.gov.haulers and C.gov.haulers[c.id] ~= nil
+        local oil_town = P.oil and P.oil.city == c.id
+        for _, item in ipairs(PB.export_goods) do
+          local on = (not hauled and recent[item]) or false
+          if on ~= (F.items[item] or false) then
+            F.items[item] = on or nil
+            -- (the oil town keeps its own crude, plastic and sulfur exports: oil_step)
+            local base = (oil_town and OIL_EXPORT[item]) and 0 or nil
+            L.set_policy(c.center, "export_above", item, on and 0 or base)
+            if on then util.log("planner: %s city %d forwards bought %s to the capital", C.force, c.id, item) end
+          end
+        end
+      end
+    end
+  end
   local want = planner.targets(C) or {}
   P.keeps = P.keeps or {}
   for _, item in ipairs(PB.export_goods) do
@@ -740,9 +799,15 @@ local function edge_policies(C, P, E)
     for _, x in ipairs(items) do if x == item then dup = true end end
     if not dup then items[#items + 1] = item end
   end
+  -- (0.1.1, issue #1) the keep only where the edge ends at the capital: a network exports only above max(export_above,
+  -- keep), so a keep of 3,000 at a town between the oil town and the capital held the crude there and none went on
+  -- (seed 801 rts-ai-3: stage 1 stood at 93 % for 25 minutes without plastic); a drop-off without a keep takes every
+  -- export (scripts/logistics.lua), and the town's own line to the capital exports it onwards
+  local N = storage.nations and storage.nations[C.force]
+  local at_capital = N ~= nil and E.from == N.capital
   for _, item in ipairs(items) do
     L.set_policy(A.depot_b, "export_above", item, item:find("plate") and (deps.rails.AI_EXPORT or 100) or 0)
-    L.set_policy(A.depot_a, "keep", item, deps.rails.AI_KEEP or 3000)
+    if at_capital then L.set_policy(A.depot_a, "keep", item, deps.rails.AI_KEEP or 3000) end
   end
   util.log("planner: %s trunk edge %s -> %s carries %s", C.force, tostring(E.to), tostring(E.from),
     table.concat(items, ", "))
@@ -838,6 +903,8 @@ local function trunk_step(C, P, own, capital)
       -- (and while rails.lua's own line waits for its depots, their plates come first: an edge crafting depots from the
       -- same capital network kept the aggressive AI's town line at one depot for 53 minutes, M1 seed 501)
       if main and main.state == "depots" and not (E and E.A.depot_a and E.A.depot_b) then hold = true end
+      -- (0.1.1, issue #1: and while the research waits for engines, planner.engine_focus)
+      if planner.engine_focus(C) then hold = true end
       if E and not hold then
         rails.ai_program(C.force, E.A)
         if E.A.depot_a and E.A.depot_b then edge_policies(C, P, E) end
@@ -902,6 +969,12 @@ function planner.targets(C)
   if P.oil and crude_flows(C) then
     out["plastic-bar"] = math.max(out["plastic-bar"] or 0, 40)
     out.sulfur = math.max(out.sulfur or 0, 20)
+  end
+  -- (0.1.1, issue #1) stage 1's advanced circuits and their plastic in stock from the start of Electrification, as its
+  -- concrete (concrete_step): with targets of 20 and 40 the Electronics and Petrochemical works stopped while the
+  -- research ran, and stage 1 then waited 10-15 minutes for 60 circuits (seed 805, crude at 3,000)
+  if P.concrete and P.concrete.started and age_of(C.force) < 3 and PB.stage1_prestock then
+    for item, n in pairs(PB.stage1_prestock) do out[item] = math.max(out[item] or 0, n) end
   end
   -- rails in stock while a line is built: the Rail works make 3 rails per steel plate, the rail programs' own crafts 2
   -- (rails.lua takes the rails a depot's network holds before it crafts any)
@@ -997,6 +1070,12 @@ local function buy_step(C, P)
   local treasury = mod("treasury")
   local t = treasury and treasury.get and treasury.get(C.force)
   if t and (t.net or 0) < 0 and treasury_balance(C.force) < PB.buy_reserve * 2 then budget = 0 end
+  -- (0.1.1, issue #1) except stage 1's last goods: down to stage1_reserve (a nation with 1,100 cr bought nothing and
+  -- stood at 93 % of stage 1 for 25 minutes, seed 801 rts-ai-3)
+  local stage1 = missing and age3.project and (age3.project(C.force) or {}).stage == 1
+  if stage1 and PB.stage1_reserve then
+    budget = math.max(budget, (treasury_balance(C.force) - PB.stage1_reserve) * PB.buy_share)
+  end
   local items = {}
   for item in pairs(want) do items[#items + 1] = item end
   table.sort(items)
@@ -1028,6 +1107,8 @@ local function buy_step(C, P)
             P.stats.buys = P.stats.buys + 1
             P.stats.bought_cr = (P.stats.bought_cr or 0) + (cr or 0)
             P.stats.cs_buys = (P.stats.cs_buys or 0) + 1
+            P.cs_bought = P.cs_bought or {}
+            P.cs_bought[item] = game.tick -- goods_policies forwards it from a town without a line
             util.log("planner: %s buys %d %s from city-state %d for %.0f cr", C.force, n, item, e.cs.city_id, cr or 0)
           end
         end
@@ -1052,6 +1133,22 @@ local function buy_step(C, P)
       end
     end
   end
+end
+
+--- (0.1.1, issue #1) True while Space Program stage 1 still lacks advanced circuits or engines the nation does not
+--- hold: research with industrial kits (each takes an engine and an advanced circuit) waits meanwhile (ai/tech.lua).
+--- After Electrification the labs went on to Aviation and the like, their kits took the advanced circuits the market
+--- AI bought for the stage, and a nation stood at 93 % of stage 1 from minute 37 to the end (seed 801 rts-ai-3).
+function planner.science_hold(C)
+  if not nation_mode() then return false end
+  local age3 = mod("age3")
+  local proj = age3 and age3.project and age3.project(C.force)
+  if not (proj and proj.stage == 1) then return false end
+  local missing = age3.missing and age3.missing(C.force)
+  for _, item in ipairs({"advanced-circuit", "engine-unit"}) do
+    if missing and (missing[item] or 0) > construction.have(C, item) then return true end
+  end
+  return false
 end
 
 --- True while one of the planner's trunk lines waits for its depots or is built and three cities are not linked yet
@@ -1081,20 +1178,19 @@ function planner.districts(C)
   -- the Petrochemical works the oil town's crude into plastic and sulfur; crude oil comes by haulers before the town's
   -- line opens, and the districts take minutes to build)
   if age_of(C.force) >= 2 then
-    -- (the second Steel works first while three cities are not linked yet: the lines' rails, depots and kits wait for
-    -- steel)
-    if not P.linked_at then
-      for _, name in ipairs(PB.oil_districts) do
-        if name == STEEL_WORKS then out[#out + 1] = name end
-      end
-    end
-    -- (QA fix: the Smelting works next, when a town's ore comes to the capital: behind the Age III road's districts it
-    -- found no spot, the town's ore filled the capital's keep and its freight train stood idle from minute 38, M1 seed
-    -- 501)
+    -- (0.1.1, issue #1) The capital fits four to eight districts (801-805 on 2.1; two in one seed), so the Age III
+    -- road's come first: the Electronics works (the industrial kits' and stage 1's advanced circuits; no capital of
+    -- seeds 801 and 804 built one, stage 1 then stood at 90 % for want of them), the Smelting works when a town's ore
+    -- comes to the capital (QA fix: behind the Age III road's districts it found no spot, the town's ore filled the
+    -- capital's keep and its freight train stood idle from minute 38, M1 seed 501), the Petrochemical works with an
+    -- oil town, then the second Steel works (it came first while three cities were not linked and took the
+    -- Electronics works' spot). No Construction works: the concrete chain's two factories make the concrete.
+    out[#out + 1] = ELECTRONICS_WORKS
     if C.town and C.town.ore then out[#out + 1] = SMELTING_WORKS end
-    for _, name in ipairs(PB.oil_districts) do
-      if P.linked_at or name ~= STEEL_WORKS then out[#out + 1] = name end
-    end
+    -- (0.1.1, issue #1: the Petrochemical works only with an oil town or crude oil at home: without crude it took one
+    -- of the capital's district spots for nothing)
+    if P.oil or crude_flows(C) then out[#out + 1] = PETROCHEM end
+    out[#out + 1] = STEEL_WORKS
     if P.linked_at then
       for _, name in ipairs(PB.linked_districts or {}) do out[#out + 1] = name end
     end
@@ -1111,13 +1207,44 @@ function planner.districts(C)
   return out
 end
 
+--- Districts ai/age_up.lua moves to the front of its list once (0.1.1, issue #1): the Petrochemical works as soon as
+--- the nation has an oil town (crude piled up to 1,700-3,000 in capitals whose district spots had gone to later
+--- districts, and their plastic and sulfur stayed at 0, seeds 803-805; moved only once the crude came, it found no spot
+--- either, seed 801 rts-ai-3 with 2,620 crude and stage 1 at 96 % for want of plastic).
+function planner.urgent_districts(C)
+  local P = P_of(C.force, false)
+  if not (P and age_of(C.force) >= 2) then return nil end
+  if P.oil or crude_flows(C) then return {PETROCHEM} end
+  return nil
+end
 
-local function space_step(C, P)
+
+local function space_step(C, P, surface)
   local age3 = mod("age3")
   if not (age3 and age3.can_start) then return end
+  -- (0.1.1, issue #1) the Launch complex's spot is reserved from Age II on (layout.find_spot keeps its tiles from every
+  -- later building): the capital's area was full when Electrification came and the Space Program could not start
+  -- ("no-spot", seed 802 rts-player on the 0.1.1 tree with the concrete chain's two factories)
+  local proj0 = age3.project and age3.project(C.force)
+  if age_of(C.force) >= 2 and age3.SITE and not P.space.site and not (proj0 and proj0.site and proj0.site.valid)
+     and game.tick >= (P.space.site_retry or 0) then
+    local pos, _, wait = layout.find_spot(C, surface, age3.SITE, "cc")
+    if pos then
+      P.space.site = {x = pos.x, y = pos.y}
+      util.log("planner: %s reserves the Launch complex's spot at %s", C.force, util.pos_str(pos))
+    elseif not wait then
+      P.space.site_retry = game.tick + 60 * 60
+    end
+  end
   local ok = age3.can_start(C.force)
   if ok then
-    local proj, why = age3.start(C.force)
+    local proj, why = age3.start(C.force, P.space.site)
+    if not proj and P.space.site and why == "blocked" then
+      util.log("planner: %s Launch complex spot %s blocked: the program looks for one itself", C.force,
+        util.pos_str(P.space.site))
+      P.space.site = nil
+      proj, why = age3.start(C.force)
+    end
     if proj then
       P.space.started = P.space.started or game.tick
       util.log("planner: %s starts the Space Program (stage %d) at %s", C.force, proj.stage,
@@ -1317,6 +1444,214 @@ nuclear_ready = function(C, P)
 end
 
 ---------------------------------------------------------------------------
+-- The concrete chain (0.1.1, issue #1): concrete was the last good of Space Program stage 1 in 14 of 16 stage
+-- snapshots of the 2.1 acceptance (801-805, at 2-4 concrete a minute; two nations stood at 81 % and 91 % for 30
+-- minutes). The Construction works rarely found a district spot, and the works factory on Auto lost every tie to the
+-- engines, advanced circuits and beams (recipe order "g"). From Age II the capital gets two factories of its own: on
+-- Auto at first (more capacity for the industrial kit's parts), from the start of Electrification fixed on bricks
+-- (stone) and on concrete (bricks and stone), about 30 concrete a minute, so stage 1's 100 and the airfield's 40 are
+-- in stock when the Space Program starts. Each is fixed only while its good is below its keep (else back on Auto) and
+-- is pinned for workers meanwhile (factories are "services", tenth of eleven in the Age II labor order). The brick
+-- factory leaves stone_floor stone for the rails.
+---------------------------------------------------------------------------
+local CHAIN = {{recipe = "rts-brick", item = "stone-brick"}, {recipe = "rts-concrete", item = "concrete"}}
+
+-- (ai/governor.lua governor.hold_factory: the commander's factory pass leaves a held factory alone)
+local function hold_factory(C, un, on)
+  if deps.governor and deps.governor.hold_factory then deps.governor.hold_factory(C, un, on) end
+end
+
+local function electrification_started(C)
+  if has_tech(C.force, ELECTRIFICATION) then return true end
+  local f = game.forces[C.force]
+  local cur = f and f.current_research
+  return cur ~= nil and cur.name == ELECTRIFICATION
+end
+
+-- Concrete the capital keeps: stage 1's and the airfield's in Age II, the Age III districts' later.
+local function concrete_keep(C)
+  local K = PB.concrete
+  if not K then return 0 end
+  return age_of(C.force) >= 3 and K.keep_age3 or K.keep
+end
+
+local function concrete_step(C, P, surface)
+  local K = PB.concrete
+  if not K or age_of(C.force) < 2 then return end
+  local Q = P.concrete
+  if not Q then
+    -- (the factories from Age II: on Auto, more capacity for the industrial kit's parts, until Electrification starts;
+    -- queued at its start they stood a quarter of an hour later, after the research)
+    Q = {keys = {}, on = {}, since = game.tick}
+    P.concrete = Q
+    util.log("planner: %s builds its concrete chain's factories (Age II; on Auto until Electrification)", C.force)
+  end
+  if not Q.started and electrification_started(C) then
+    Q.started = game.tick
+    util.log("planner: %s starts its concrete chain (Electrification under way, concrete %d, bricks %d)", C.force,
+      construction.have(C, "concrete"), construction.have(C, "stone-brick"))
+  end
+  local keep = concrete_keep(C)
+  local short = Q.started ~= nil and construction.have(C, "concrete") < keep
+  P.pins = P.pins or {}
+  for i, spec in ipairs(CHAIN) do
+    local key = Q.keys[i]
+    local st = key and construction.status(C, key)
+    if key and (st == nil or st == "bad") then
+      Q.keys[i], key, st = nil, nil, nil
+    end
+    if not key and game.tick >= (Q.retry or 0) then
+      local pos, pole, wait = layout.find_spot(C, surface, "rts-factory", "cc")
+      if pos then
+        if pole then construction.queue(C, construction.add(C, {name = layout.POLE, x = pole.x, y = pole.y})) end
+        key = construction.add(C, {name = "rts-factory", x = pos.x, y = pos.y})
+        construction.queue(C, key)
+        Q.keys[i] = key
+        util.log("planner: %s %s works queued at %s (concrete chain)", C.force, spec.recipe, util.pos_str(pos))
+      elseif not wait then
+        Q.retry = game.tick + 60 * 60
+      end
+    elseif key and st == "planned" then
+      construction.queue(C, key)
+    end
+    local e = key and st == "built" and C.plan[key].entity
+    local rec = e and e.valid and buildings.get(e.unit_number)
+    if rec then
+      -- bricks while concrete is short and they are below their keep, above the stone floor; concrete while short
+      local on = short
+      if spec.item == "stone-brick" then
+        on = short and construction.have(C, "stone-brick") < K.brick_keep
+          and construction.have(C, "stone") >= K.stone_floor
+      end
+      local r = e.get_recipe()
+      if on then
+        if rec.recipe_mode ~= "fixed" or not r or r.name ~= spec.recipe then
+          production.set_auto(rec, false)
+          production.set_recipe(e, spec.recipe)
+        end
+        P.pins[e.unit_number] = rec
+        hold_factory(C, e.unit_number, true)
+      elseif rec.recipe_mode ~= "auto" then
+        production.set_auto(rec, true)
+        hold_factory(C, e.unit_number, false)
+      end
+      if (Q.on[i] or false) ~= on then
+        Q.on[i] = on
+        util.log("planner: %s %s works #%d %s (concrete %d of %d, bricks %d, stone %d)", C.force, spec.recipe,
+          e.unit_number, on and "on" or "back on Auto", construction.have(C, "concrete"), keep,
+          construction.have(C, "stone-brick"), construction.have(C, "stone"))
+      end
+    end
+  end
+end
+
+---------------------------------------------------------------------------
+-- The works factory's own jobs (0.1.1): while one of these is wanted and one craft's ingredients are in stock, the
+-- planner fixes the capital's works factory on it and pins it for workers, then gives it back to Auto. Only with the
+-- ingredients in stock: held on a depot it could not make, its goods stopped, the capital's goods fell to 0 %, its
+-- growth stopped and its smelters lost their workers (seed 801 rts-ai-2 on the first 0.1.1 tree).
+---------------------------------------------------------------------------
+local ENGINE, ENGINE_RECIPE = "engine-unit", "rts-engine"
+
+--- (0.1.1, issue #1) True while the Age III road's research (Electrification) waits for engines: its remaining
+--- industrial kits need more engines than the capital holds (ai/mix.lua mix.research_engines). Steel went to the rail
+--- programs' rails, depots and kits meanwhile (engines at 0-6 for 12 minutes while the research waited, seed 802
+--- rts-ai-2), so the works factory makes engines and the rail programs pause (trunk_step, ai/commander.lua) until the
+--- engines are there: about 13 engines, a minute or two of steel. At most engine_focus.max ticks at a stretch, then
+--- engine_focus.rest ticks without (a capital without steel must not stop its rail lines for good).
+function planner.engine_focus(C)
+  local P = P_of(C.force, false)
+  if not (nation_mode() and P) then return false end
+  if P.focus_tick == game.tick then return P.focus_on end
+  local need = mix.research_engines(C)
+  local on = need > 0 and need > construction.have(C, ENGINE)
+  local F = PB.engine_focus or {max = 3 * 3600, rest = 2 * 3600}
+  if on then
+    P.focus_since = P.focus_since or game.tick
+    local t = game.tick - P.focus_since
+    if t > F.max + F.rest then
+      P.focus_since = game.tick
+    elseif t > F.max then
+      on = false
+    end
+  else
+    P.focus_since = nil
+  end
+  P.focus_tick, P.focus_on = game.tick, on
+  return on
+end
+
+-- One craft's ingredients of a recipe are in the nation's networks.
+local function craftable(C, recipe)
+  local r = prototypes.recipe[recipe]
+  if not r then return false end
+  for _, ing in ipairs(r.ingredients) do
+    if construction.have(C, ing.name) < ing.amount then return false end
+  end
+  return true
+end
+
+-- What the works factory should make now, first first: {{recipe, why}, ...}.
+local function works_wants(C, P, capital)
+  local out = {}
+  if planner.engine_focus(C) then out[#out + 1] = {ENGINE_RECIPE, "the research's engines"} end
+  return out
+end
+
+local function works_step(C, P, capital)
+  local N = C.nation
+  local rec = N and N.works_un and buildings.get(N.works_un)
+  if not (rec and rec.entity.valid and capital.center) then return end
+  local e = rec.entity
+  local cur = e.get_recipe()
+  -- a craft of the planner's under way finishes first
+  if P.rail_mode and cur and cur.name == P.rail_mode and e.is_crafting() then
+    P.pins = P.pins or {}
+    P.pins[e.unit_number] = rec
+    return
+  end
+  local frec = game.forces[C.force].recipes
+  local want, why
+  for _, w in ipairs(works_wants(C, P, capital)) do
+    if frec[w[1]] and frec[w[1]].enabled and craftable(C, w[1]) then
+      want, why = w[1], w[2]
+      break
+    end
+  end
+  if want then
+    if rec.recipe_mode ~= "fixed" or not cur or cur.name ~= want then
+      production.set_auto(rec, false)
+      local ok = production.set_recipe(e, want)
+      if P.rail_mode ~= want then
+        util.log("planner: %s works factory #%d makes %s (%s; iron %d, steel %d)%s", C.force, e.unit_number, want, why,
+          construction.have(C, "iron-plate"), construction.have(C, "steel-plate"), ok and "" or " - recipe refused")
+      end
+    end
+    P.rail_mode = want
+    P.pins = P.pins or {}
+    P.pins[e.unit_number] = rec
+    hold_factory(C, e.unit_number, true)
+  elseif P.rail_mode then
+    P.rail_mode = nil
+    production.set_auto(rec, true)
+    hold_factory(C, e.unit_number, false)
+  end
+end
+
+--- True while the planner holds the works factory on a recipe of its own (ai/age_up.lua leaves it fixed then).
+function planner.holds_works(C)
+  local P = P_of(C.force, false)
+  return P ~= nil and P.rail_mode ~= nil
+end
+
+--- Buildings of the planner's that the capital's governor pins for workers ({[unit number] = building record}): the
+--- concrete chain's factories while they run, the works factory while it makes a recipe of the planner's.
+function planner.pins(C)
+  local P = P_of(C.force, false)
+  return P and P.pins or nil
+end
+
+---------------------------------------------------------------------------
 -- The pass
 ---------------------------------------------------------------------------
 function planner.step(C, surface)
@@ -1349,12 +1684,15 @@ function planner.step(C, surface)
   oil_step(C, P, surface)
   goods_policies(C, P, own, capital)
   trunk_step(C, P, own, capital)
-  space_step(C, P)
+  space_step(C, P, surface)
   buy_step(C, P)
   rush_step(C, P)
   automate_step(C, P, capital)
   rare_step(C, P, surface, own)
   uranium_step(C, P, surface, own, capital)
+  P.pins = {} -- (rebuilt every pass: ai/governor.lua pins these for workers)
+  concrete_step(C, P, surface)
+  works_step(C, P, capital)
 end
 
 --- "planner: cities 3/4 (oil town 12, 2 pumps), trunk 2 edges (1 open), sites 14, space stage 1".
@@ -1378,13 +1716,19 @@ function planner.describe(force_name)
       goods[#goods + 1] = g[2] .. " " .. construction.have(C, g[1])
     end
   end
+  local chain = "-"
+  if P.concrete then
+    local on = P.concrete.on or {}
+    chain = string.format("%s/%s", on[1] and "on" or "off", on[2] and "on" or "off")
+  end
   return string.format("planner: cities %d (founded %d, given up %d)%s, oil town %s (%d pumpjacks), trunk %d edges "
-    .. "(%d open), sites %d, space %s, rushes %d, buys %d (%.0f cr) | goods [%s]", #deps.cities.for_force(force_name),
+    .. "(%d open), sites %d, space %s, rushes %d, buys %d (%.0f cr), concrete chain %s | goods [%s]",
+    #deps.cities.for_force(force_name),
     P.stats.founded, P.stats.given_up,
     P.city and string.format(", planning %s at %s", P.city.role, util.pos_str(P.city.site)) or "",
     P.oil and tostring(P.oil.city) or "-", P.stats.pumps, n, open, P.sites and #P.sites or 0,
     proj and string.format("stage %d %s %.0f%%", proj.stage, proj.state, (age3.progress(proj) or 0) * 100) or "-",
-    P.space.rushes, P.stats.buys, P.stats.bought_cr or 0, table.concat(goods, ", "))
+    P.space.rushes, P.stats.buys, P.stats.bought_cr or 0, chain, table.concat(goods, ", "))
 end
 
 deps.planner = planner

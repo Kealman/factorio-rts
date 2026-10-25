@@ -804,9 +804,12 @@ end
 commander.manage_builder, commander.manage_workshop = manage_builder, manage_workshop
 local function manage_factories(C)
   local list = {}
+  local held = C.fixed_works
   for un, rec in buildings.for_force(C.force, "factory") do
     -- Phase 5 E1: a factory on Auto (the Nation-mode works factory, ai/age_up.lua) follows the make targets
-    if rec.recipe_mode ~= "auto" then list[#list + 1] = {un, rec} end
+    -- (0.1.1: and one the governor or the planner holds on a recipe of its own, C.fixed_works: the governor's fixed
+    -- goods works was taken as a workshop here and switched recipes 1,034 times in 60 minutes, seed 801 rts-ai-2)
+    if rec.recipe_mode ~= "auto" and not (held and held[un]) then list[#list + 1] = {un, rec} end
   end
   if #list == 0 then return end
   table.sort(list, function(a, b) return a[1] < b[1] end)
@@ -893,7 +896,11 @@ function commander.run(C, slice)
       construction.repair(C)
     end
     hubs.step(C)
-    if deps.rails then deps.rails.ai_step(C) end -- Phase 5 M1 (m1-rails): a line to a far hub/city, Nation mode only
+    -- Phase 5 M1 (m1-rails): a line to a far hub/city, Nation mode only. (0.1.1, issue #1: not while the Age III road's
+    -- research waits for engines, ai/planner.lua planner.engine_focus: the rail program's crafts took their steel)
+    if deps.rails and not (deps.planner and deps.planner.engine_focus and deps.planner.engine_focus(C)) then
+      deps.rails.ai_step(C)
+    end
     if deps.cities then deps.cities.ai_step(C, surface) end -- Phase 5 M1: Nation mode second city (no-op in Skirmish)
     towns.step(C, surface) -- Phase 5 M1 integration: the town's mining line (Nation mode only)
     start("planner")

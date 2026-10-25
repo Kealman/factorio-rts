@@ -64,6 +64,17 @@ local NEEDS = {{item = RATIONS, keep = PB.needs and PB.needs[RATIONS] and PB.nee
 ---------------------------------------------------------------------------
 -- Plan helpers
 ---------------------------------------------------------------------------
+--- (0.1.1) Mark a factory the governor or the planner holds on a recipe of its own (true) or releases (false): the
+--- commander's factory pass (ai/commander.lua) leaves it alone instead of taking it as a workshop.
+function governor.hold_factory(C, un, on)
+  if on then
+    C.fixed_works = C.fixed_works or {}
+    C.fixed_works[un] = true
+  elseif C.fixed_works then
+    C.fixed_works[un] = nil
+  end
+end
+
 local function plan_state(C, key)
   local e = key and C.plan[key]
   if not e then return "gone" end
@@ -245,6 +256,21 @@ local function capital_labor(C, G, labor)
       end
     end
   end
+  -- (0.1.1, issue #1: the first goods-only works too: goods works are "services", tenth in the Age II labor order, and
+  -- with more jobs than workers they stood empty: goods at 0 %, no growth, the workforce stuck from minute 26 to 44,
+  -- seed 805 on 2.1, baseline and 0.1.1 trees alike)
+  for i, key in ipairs(G.goods or {}) do
+    if i > 1 and plan_state(C, key) == "built" then
+      local e = C.plan[key].entity
+      local rec = e and buildings.get(e.unit_number)
+      if rec then want[e.unit_number] = rec end
+      break
+    end
+  end
+  -- (0.1.1, issue #1: the planner's concrete chain while it runs: ai/planner.lua planner.pins)
+  for un, rec in pairs(deps.planner and deps.planner.pins and deps.planner.pins(C) or {}) do
+    if rec.entity and rec.entity.valid then want[un] = rec end
+  end
   for un in pairs(G.pins) do
     if not want[un] then
       local rec = buildings.get(un)
@@ -322,8 +348,10 @@ local function goods_works(C, G, surface, capital, goods_need, want_more)
           production.set_auto(rec, false)
           production.set_recipe(e, GOODS)
         end
+        governor.hold_factory(C, e.unit_number, true)
       elseif rec and rec.recipe_mode ~= "auto" then
         production.set_auto(rec, true)
+        governor.hold_factory(C, e.unit_number, false)
       end
     end
   end
@@ -378,6 +406,7 @@ local function goods_inputs(C, G, surface)
             production.set_auto(rec, false)
             production.set_recipe(e, spec.recipe)
           end
+          governor.hold_factory(C, e.unit_number, true)
         end
       end
     end

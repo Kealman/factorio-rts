@@ -45,6 +45,8 @@ local function producible(C, name)
   if not t then return false end
   -- Phase 5 E1: industrial kits come from the factory or a science campus only when their Age II parts exist
   if t.kit == INDUSTRIAL then
+    -- (0.1.1, issue #1: not while Space Program stage 1 waits for the same parts, ai/planner.lua science_hold)
+    if deps.planner and deps.planner.science_hold and deps.planner.science_hold(C) then return false end
     if construction.have(C, INDUSTRIAL) > 0 then return true end
     if not (deps.planner and deps.ages and deps.ages.is_nation()) then return false end
     for _, item in ipairs(tech.INDUSTRIAL_PARTS) do
@@ -141,6 +143,17 @@ function tech.step(C)
     return
   end
   local cur = force.current_research
+  -- (0.1.1, issue #1) a running research with industrial kits is put back (its progress kept) while Space Program
+  -- stage 1 waits for their parts (ai/planner.lua science_hold)
+  if cur and deps.planner and deps.planner.science_hold and deps.planner.science_hold(C) then
+    local t = info(cur.name)
+    if t and t.kit == INDUSTRIAL then
+      research.cancel(C.force, cur.name)
+      util.log("ai %s: research %s put back: Space Program stage 1 waits for its advanced circuits and engines",
+        C.force, cur.name)
+      cur = force.current_research
+    end
+  end
   if cur and C.capped and not is_supply(cur.name) then
     -- supply first while capped: queue it, then put the running one back (it keeps its progress)
     for _, name in ipairs(tech.SUPPLY) do

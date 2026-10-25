@@ -1391,6 +1391,19 @@ do
     port_reach = 450,
     -- rails kept at the capital while a line is under way (the Rail works make them; a make target)
     rail_stock = 150,
+    -- (0.1.1, issue #1) the concrete chain: two factories from Age II (on Auto until Electrification starts), then fixed
+    -- on bricks and concrete while the capital holds less than `keep` concrete (keep_age3 in Age III: the Age III
+    -- districts' 20 each); bricks up to brick_keep, never taking stone below stone_floor (the rails' stone)
+    concrete = {keep = 140, keep_age3 = 80, brick_keep = 40, stone_floor = 60},
+    -- (0.1.1, issue #1) a town without an open line forwards goods bought from a city-state for this long
+    forward_ticks = 10 * 60 * 60,
+    -- (0.1.1, issue #1) while Electrification waits for engines the works factory makes them and the rail programs
+    -- pause, at most `max` ticks at a stretch, then `rest` ticks without (ai/planner.lua planner.engine_focus)
+    engine_focus = {max = 3 * 60 * 60, rest = 2 * 60 * 60},
+    -- (0.1.1, issue #1) the planner buys Space Program stage 1's missing goods down to this balance
+    stage1_reserve = 400,
+    -- (0.1.1, issue #1) stage 1's advanced circuits and their plastic kept in stock from the start of Electrification
+    stage1_prestock = {["advanced-circuit"] = 60, ["plastic-bar"] = 120},
     -- Age II on: stone_buy stone when the capital holds less than stone_low (a ford city-state sells it)
     stone_low = 150, stone_buy = 300,
     -- and steel_buy steel when the capital holds less than steel_low (an iron city-state sells it)

@@ -917,3 +917,78 @@ the route rule's return-leg estimate (14,949 with the rule alone), which m3-inte
 | (this) | QA fix 3 narrowed: the tank first only while the town is short of rations (section 4.12) |
 
 Hunks in other owners' files: H1-H5 (section 3, applied by m3-integ in 3edd55b); H6 withdrawn. Nothing pending.
+
+## 8. Release 0.1.1 (r2-ai: GitHub issues #1-#5 and the AI part of #7)
+
+Date: 2026-10-24/25. Factorio 2.1.23 (Steam, mac-arm64). Agent: `r2-ai`. Base: the final 2.1 HEAD of the M3 integration
+(1127c7b; its acceptance runs `m3i-p21b-*` are the "before" of every table below) and the release commits on top.
+
+Method. Every run takes a frozen tree: `git archive HEAD` of `mods/factorio-rts` plus one **stage** of the AI work
+(the AI files and `balance.lua` built from HEAD with the hunks of the issues done so far; stage 1 = #1, 2 = +#2,
+3 = +#5, 4 = +#4, 5 = +#3), so a commit's measurement is exactly the committed code. 4-nation runs: 4 normal AIs,
+2048, 60 minutes, seeds 801-805, `tools/probes/m3_acceptance.lua` at SPEED 8 (as the integration's e2e runs). On 2.1
+the same seed diverges between trees from minute 3, and one seed's outcome turns on small differences (which nation
+reaches a city-state first, which line loses a depot in a war), so the criteria are judged over the five seeds.
+
+### 8.1 Issue #1: Age III by 40:00
+
+**Causes** (the integration's 2.1 runs `m3i-p21b-801..805`; tools in my scratchpad: a per-nation timeline of Age II,
+Electrification, Space Program and Age III, the stage-1 detail every 10 minutes, a capital-area probe):
+- **Concrete** was the last good of Space Program stage 1 in 14 of 16 stage snapshots, arriving at 2-4 a minute; the
+  803 and 804 players stood at 91 % and 81 % from minute 31 to the end. The Construction works rarely got a district
+  spot, and the works factory on Auto loses every tie to engines, advanced circuits and beams (recipe order "g").
+- **District space.** A capital fits 2-9 districts (the CC's 46x46 area holds 600-1,000 tiles of buildings, 15-22
+  houses, ore and belts by minute 30; 8-11 free 7x7 boxes at minute 16, 0-6 at minute 30). The planner's list put the
+  second Steel works first, so the Electronics and Petrochemical works missed out; the Petrochemical works was queued
+  even without crude.
+- **Electrification took 6-31 minutes** (two labs need about 2 minutes for its 25 kits). Engines sat at 0-6 for 12
+  minutes while the rail programs' crafts took the steel; an aggressive or turtle AI put Aviation first.
+- **No oil town** in 3 of 20 nations: the 250-tile third-city rule put a city 80 tiles from the home oil field, which
+  then lay inside that city's 150-tile spacing.
+- **Purchases waited in towns.** A city-state sale arrives in the own city nearest the city-state; without an open line
+  the goods stayed there (the 801 leader's plastic and sulfur bought at 19-25 reached its capital at 32).
+- **A branch line's keep held the oil town's crude** in the town between it and the capital (a network exports only
+  above max(export_above, keep); the trunk set a keep of 3,000 at every line's near end).
+- **After Electrification** the labs went on to Aviation and the like, and their industrial kits took the advanced
+  circuits stage 1 waited for (801 rts-ai-3 at 93 % from minute 37 to the end).
+- **The Launch complex found no spot** in one run ("no-spot", 802 player) once the area was full.
+- **The commander's factory pass took every fixed factory but the builder as a workshop**: the governor's fixed goods
+  works (normal and hard) and hard's goods-chain works switched recipes about 1,000 times per match (801 rts-ai-2
+  #6406: 1,034) and made little. This hit every Nation AI's goods (growth) and the planner's own fixed factories.
+
+**Changes** (stage 1 = commit for #1):
+- `ai/planner.lua`: the **concrete chain** (two factories from Age II, on Auto until Electrification starts, then fixed
+  on bricks and on concrete while the capital holds less than 140 concrete; pinned for workers); the **Age II district
+  order** Electronics, Smelting (town ore), Petrochemical (only with an oil town or crude), the second Steel works; no
+  Construction works; the Petrochemical works moved to the front once the nation has an oil town; the **oil town
+  protected** from the 250-tile rule; **city-state purchases forwarded** from a town without a line and without a
+  supply hauler; **a keep only where a trunk edge ends at the capital**; the **Launch complex spot reserved** from Age
+  II; **engine focus** (while Electrification's remaining kits need more engines than the capital holds, the works
+  factory makes engines and the rail programs pause, at most 3 of every 5 minutes); **science hold** (no research with
+  industrial kits while stage 1 lacks advanced circuits or engines); stage 1's missing goods bought down to 400 cr.
+- `ai/commander.lua`: factories held by the governor or the planner (`C.fixed_works`) are not workshops; the rail step
+  pauses during the engine focus. `ai/governor.lua`: `hold_factory`, the planner's pins. `ai/age_up.lua`: urgent
+  districts, the works factory left fixed while the planner holds it. `ai/tech.lua`: the science hold.
+
+**Results.** First nation in Age III per seed (4 normal AIs, 2048, 60 minutes, `m3_acceptance`, SPEED 8). "Stage 1" is
+this commit's code alone (batch `r2ai-a8`), "all" is stage 5, every 0.1.1 AI change (batch `r2ai-c8`); both on
+a79620e.
+
+| Seed | before (`m3i-p21b`) | stage 1 | all |
+|---|---|---|---|
+| 801 | 42:44 | 38:03 | 38:26 |
+| 802 | 36:24 | 29:55 | 30:48 |
+| 803 | 48:17 | 39:44 | 37:45 |
+| 804 | 42:58 | 31:52 | 36:55 |
+| 805 | 47:08 | 33:50 | 33:31 |
+| **Age III by 40:00** | **1/5** | **5/5** | **5/5** |
+| nations in Age III by 40:00 / by 60:00 | 1 / 14 of 20 | 7 / 19 | 6 / 17 |
+| nations done with Electrification by 60:00 | 18 of 20 | 20 | 19 |
+
+Rail linking (three cities linked by 35:00): before 12/20, stage 1 10/20, all 10/20 (per seed in section 8.2). The
+earlier stage-1 batches of this round (a2, a6, a7 on 2-4 seeds each, with earlier versions of the same changes) linked
+20 of 28, so over all 48 nation-runs 30/48 (62 %) against 60 % before; the misses are mostly lines lost in wars (a
+town captured, a depot destroyed). One miss is this stage's: in 805 the player started Electrification at 20:00, the
+engine focus paused its rail programs, and its first line's crew waited 28 minutes for its kits (opened 50:00). Stage 2
+(issue #2) has the works factory make the kits: in the same seed with every change the line opened at 26:00 and the
+player linked three cities at 29:00.
