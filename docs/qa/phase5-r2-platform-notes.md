@@ -172,12 +172,14 @@ A rerun with the same `RC_DIR` keeps every finished job.
 | `matrix` | `tools/autotest-matrix.sh` (new `JOBS` limit), seed 777, on the tree and the baseline | 0 differing lines outside the GUI line classes, which are listed per scenario; 0 errors |
 | `m1` | M1 seed 501, SPEED 8 and 10 | the two runs line-identical; the score; train items ≥ 20,000 in both (#7); 60 UPS in the speed-1 minutes |
 | `m2` | 701-705, `m3_acceptance.lua` | trade, war, peace, capture in every seed; at most 1 seed starving; 0 errors; 60 UPS |
-| `m3` | 801-805, `m3_acceptance.lua` | the M2 criteria plus: Age III by 40:00 in ≥ 3 of 5 (#1); 3 cities linked by 35:00 for ≥ 16 of 20 nations, the aggressive AI's first line before 32:00 in ≥ 4 of 5 seeds (#2); every living nation with ≥ 3 cities; an operation with phases for every nation; a fort belt in every seed; air patrols in ≥ 3 of 5; an interceptor patrol or a bomber strike in ≥ 3 of 5 and artillery bombarding in ≥ 2 of 5 (#4); a debt stage in ≥ 2 of 5 and nobody at the credit line (#5) |
+| `m3` | 801-805, `m3_acceptance.lua` | the M2 criteria plus: Age III by 40:00 in ≥ 3 of 5 (#1); 3 cities linked by 35:00 for ≥ 16 of 20 nations, the aggressive AI's first line before 32:00 in ≥ 4 of 5 seeds (#2); every living nation with ≥ 3 cities; an operation with phases for every nation; a fort belt in every seed; air patrols in ≥ 3 of 5; an interceptor patrol or a bomber strike in ≥ 3 of 5 and artillery bombarding in ≥ 2 of 5 (#4); nobody at the credit line (#5); debt stage 2 in ≤ 1 of 5 seeds as an informational row (since #5 armies retire at stage 2, so the old "debt in ≥ 2 of 5" no longer applies) |
+| `debt` | `tools/probes/ai3_debt.lua`, seed 801, SPEED 10, 34 minutes | the debt path of #5: the nation held in debt reaches stage 2, its army is down to keep_supply 3 minutes later (or has no idle unit), and it does not grow back during the hold; 0 errors |
 | `w3072` | a 3072 x 4 world, map seed 30724 | holds, air and artillery present (#4) |
 | `sl` | save at minutes 20 and 40 (seed 802), load | 0 errors in all four halves; both loaded games log the same rts-player line at the last common minute |
 | `det` | 801 and 802, two runs of 30 minutes | 0 differing event lines |
 | `scene` | `tools/perf-bench.sh scene`, 5 + 5 minutes | 60 UPS at speed 1; mean, p99 and UPS capacity; the four #8 criteria below. It waits up to `SCENE_WAIT` (1 hour) for a machine without other Factorio processes, then runs anyway and marks its times as upper bounds. |
 | `lan`, `heavy` | GUI clients, Steam | only with `STAGES="lan heavy"`, when the screen is free |
+| (pointer) | none | hard against normal (#3) as an informational row: 20 of 20 in e29d9b8 (`phase5-ai3-notes.md` 8.5). The 20-match set is too long for the script. |
 
 The GUI pass in English and Russian and the Codex protocol stay outside the script; the report says so. `SERVERS`
 (default 4) caps the servers: the long runs share the slots, the longest first, and the scene runs alone at the end.

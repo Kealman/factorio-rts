@@ -365,10 +365,11 @@ def acc_rows(stage, accs, full):
     row(stage, "Seeds with an interceptor patrol or a bomber strike", "≥ 3 of 5", frac(strike, n), strike >= 3 if n >= 5 else frac(strike, n), "#4")
     art = seeds(lambda a: tot(a, "artillery") > 0)
     row(stage, "Seeds with an artillery train bombarding", "≥ 2 of 5", frac(art, n), art >= 2 if n >= 5 else frac(art, n), "#4")
-    debt = seeds(lambda a: any(v["debt"] >= 1 for v in a["nat"].values()))
-    row(stage, "Seeds with a nation in a debt stage", "≥ 2 of 5", frac(debt, n), debt >= 2 if n >= 5 else frac(debt, n), "M3 money target, #5")
     bank = sum(1 for _, a in present for v in a["nat"].values() if v["credit"] != "never")
-    row(stage, "Nations at the credit line (bankrupt)", "0", str(bank), bank == 0, "#5")
+    row(stage, "Nobody at the credit line (no bankruptcy)", "0 nations", str(bank), bank == 0, "#5")
+    debt2 = seeds(lambda a: any(v["debt"] >= 2 for v in a["nat"].values()))
+    row(stage, "Seeds where a nation reached debt stage 2", "≤ 1 of 5 (armies retire at stage 2 since #5)", frac(debt2, n),
+        "info", "#5")
 
 
 def stage_acceptance():
@@ -455,6 +456,28 @@ def stage_m1():
     walls = [w for x in accs for w in speed1(x)]
     row("m1", "Speed-1 minutes (last 5 of each run)", "≤ 60.5 s each (60 UPS)",
         f"{len(walls)} minutes, max {max(walls):.1f} s" if walls else "no wall-clock lines", bool(walls) and max(walls) <= 60.5, "M1 contract")
+
+
+# ---------------------------------------------------------------- the debt path (tools/probes/ai3_debt.lua)
+def stage_debt():
+    rs = runs("debt")
+    if not rs:
+        return
+    for r in rs:
+        log = os.path.join(BUILD, r[2] + "-server.log")
+        checks = {}
+        for l in rts_lines(log):
+            m = re.match(r"\[rts\] r2debt check (\w+): (PASS|FAIL) (.*)", l)
+            if m:
+                checks[m.group(1)] = (m.group(2), m.group(3))
+        for name, label in (("debt_stage2", "the nation held in debt reaches stage 2"),
+                            ("debt_retire", "3 minutes later its army is down to keep_supply (or no idle unit)"),
+                            ("debt_cap", "the army does not grow back during the hold")):
+            c = checks.get(name)
+            row("debt", f"Debt path, {seed_of(r[3])}: {label}", "PASS", (c[1][:120] if c else "no check line"),
+                bool(c) and c[0] == "PASS", "#5 (ai3_debt.lua)")
+        errs = errors_in(log, os.path.join(BUILD, r[2] + "-create.log"))
+        row("debt", f"Debt path, {seed_of(r[3])}: Lua errors", "0", str(len(errs)), not errs)
 
 
 # ---------------------------------------------------------------- save/load
@@ -615,8 +638,11 @@ stage_smoke()
 stage_matrix()
 stage_m1()
 stage_acceptance()
+stage_debt()
 stage_sl()
 stage_det()
+row("ai", "Hard beats normal in swapped 1v1 matches", "≥ 14 of 20",
+    "20 of 20 in e29d9b8 (docs/qa/phase5-ai3-notes.md 8.5); not run here: 20 matches of 60 minutes", "info", "#3")
 stage_scene()
 stage_gui()
 
@@ -655,7 +681,8 @@ print("- **GUI pass in English and Russian** and the **Codex GUI QA protocol** (
 if not runs("lan") or not runs("heavy"):
     print("- **LAN and heavy mode** open GUI clients and need Steam: run `STAGES=\"lan heavy\" RC_DIR=" +
           os.path.relpath(RC, ROOT) + " tools/release-check.sh` when the screen is free; the report is rebuilt with them.")
-print("- Hard against normal in swapped 1v1 matches (#3) has its own method in `docs/qa/phase5-ai3-notes.md`.")
+print("- Hard against normal in swapped 1v1 matches (#3): 20 matches of 60 minutes with `tools/probes/ai3_difficulty.lua`, "
+      "the method of `docs/qa/phase5-ai3-notes.md` section 8.5; the table above points to the last result.")
 print()
 print("## Logs")
 print()
