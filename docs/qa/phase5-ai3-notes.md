@@ -1054,7 +1054,7 @@ counts it, is down to 40; the barracks then make nothing beyond the army left un
 (`mix.deficit`; at 800 it held the armies at 11-28 supply in a normal mid-game and one seed had no capture at all).
 
 **Results.**
-- **The probe** (`r2ai_debt_probe.lua`, my scratchpad; sent to r2-platform for `tools/probes`): at minute 22 of seed 801
+- **The probe** (`tools/probes/ai3_debt.lua`, added by r2-platform in eca692c): at minute 22 of seed 801
   it puts the AI nation with the largest army into debt (balance -300, held below zero for 6 minutes). rts-ai-3 reached
   stage 2 at 23:08 with 54 supply (40 units, 38 idle) and retired 5 units (15 supply) at once; 3 minutes later its army
   was at 29 supply, 27 units (checks `debt_stage2`, `debt_retire`, `debt_cap`: PASS). Run on an earlier tree of this
@@ -1063,3 +1063,43 @@ counts it, is down to 40; the barracks then make nothing beyond the army left un
   reached stage 3).
 - **Wars still happen**: nations' cities captured 19 (before 19), city-states captured 18 (before 16); wars declared
   21 (before 28).
+
+### 8.4 Issue #4: interceptors, bombers, artillery trains and holds in the AI's wars
+
+**Causes.** In the 2.1 acceptance (`m3i-p21b`) no nation flew an interceptor patrol or a bomber strike, fired an
+artillery train or formed a hold. Interceptors only took off after enemy planes had been seen, bombers only flew at
+the target of a capture in its advance or siege phase, and the artillery train needed an own depot within
+`artillery_range` (110 tiles) of the besieged city, which a capture far from the rail network never had; the siege
+asked for its train once and gave up.
+
+**Changes** (stage 4):
+- `ai/council.lua`: **siege railways**. A capture, a war goal or the nearest known enemy city at war without an own
+  depot within `artillery_range` gets a forward depot 56-104 tiles from it (outside other forces' land), a radar beside
+  it for sight, and a rail program from the capital, or from the own city nearest the target when the capital lies
+  beyond 400 tiles (`rails.ai_program` with the far depot set). Once the line is open, the siege's artillery train is
+  deployed at the line's own end and sent to the forward depot. At most one under way, checked every 10 s. Cities the
+  nation owns already are no siege targets.
+- The siege asks for its artillery train every 30 s until one is deployed (was once). **Interceptors** patrol the
+  capital while the nation is at war, not only after enemy planes were seen. **Bombers**: at war without a capture in
+  its advance or siege phase, a strike at the nearest known city of an enemy within 450 tiles of the capital, at most
+  every 3 minutes. **Research**: Fortification, Military railways (at war after Electrification) and Aviation (the
+  air-first doctrine, or at war after Electrification) urgent; Air Force urgent at war in Age III with Aviation.
+- `ai/planner.lua`: the works factory makes the artillery train (wagon kit, two locomotive kits, explosives, 10 shells)
+  while the council wants one; a siege railway's depots and crew kits count among the capital's rail items.
+
+**Results** (801-805, every change, 60 minutes): interceptor patrols or bomber strikes 0 of 5 seeds, artillery trains
+0 of 5, holds 0 of 5 (before: 0, 0, 0). **Not met.** The AI never gets the technology inside a 60-minute match:
+- **Air Force** (interceptors and bombers: Age III, Aviation, 50 industrial kits) was researched by no nation by
+  60:00; one (804 rts-ai-3) was researching it at the end. Aviation itself (30 kits) came at 35:50-59:10 in 14 of 20
+  nations, Age III at 31-60 minutes, and the two labs stood idle for want of industrial kits most of the time (an
+  industrial kit takes an engine, an advanced circuit and sulfur, the same goods as Space Program stage 1 and the
+  Electrification research).
+- **Military railways** (the artillery train) came in 3 of 20 nations, at 47:08, 54:07 and 59:31. One siege railway
+  was planned and its forward depot built (804 rts-ai-2, at about 60:00).
+- Wars inside Age III lasted 130-700 s per nation.
+
+With the technology given, the paths work: `tools/probes/ai3_war_paths.lua` (seed 811, the tree with every change)
+passes 5 of 6 like plain HEAD: interceptors patrol at 6 s, a hold forms at 91 s, bombers strike at 186 s, an artillery
+train deploys at 309 s (depot 98 tiles from the town); mercenaries fail on 2.1 as before. A match long enough for Air
+Force, or industrial research paced for 60 minutes, is a balance decision outside the AI. The holds on a 3072 world
+are in section 8.6.

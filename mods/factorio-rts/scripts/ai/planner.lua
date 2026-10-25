@@ -1621,6 +1621,10 @@ local function rail_wants(C, P, capital)
     local E = P.trunk[id]
     if E.A and not E.held then list[#list + 1] = E.A end
   end
+  -- (0.1.1, issue #4: the council's siege railways)
+  for _, A in ipairs(deps.council and deps.council.rail_programs and deps.council.rail_programs(C) or {}) do
+    list[#list + 1] = A
+  end
   local depots, kits, fuel = 0, false, false
   for _, A in ipairs(list) do
     local paid_here = (A.pay or A.anchor) == capital.center
@@ -1680,6 +1684,24 @@ function planner.rail_hold(C)
   return t <= H.max
 end
 
+-- (0.1.1, issue #4) The artillery train of a siege railway: its wagon kit, two locomotive kits and shells, deployed at
+-- the line's capital end (ai/council.lua); explosives first when they are short.
+local ARTY_KIT, SHELL, EXPLOSIVES = "rts-artillery-wagon-kit", "rts-rail-shell", "rts-explosives"
+local function artillery_items(C)
+  local out = {}
+  if not (deps.council and deps.council.artillery_want and deps.council.artillery_want(C)) then return out end
+  local AR = PB.artillery or {}
+  local why = "a siege railway's artillery train"
+  local need_x = 0
+  if construction.have(C, ARTY_KIT) < 1 then need_x = 10 end
+  if construction.have(C, SHELL) < (AR.shells or 10) then need_x = math.max(need_x, 2) end
+  if need_x > 0 and construction.have(C, EXPLOSIVES) < need_x then out[#out + 1] = {EXPLOSIVES, why} end
+  if construction.have(C, ARTY_KIT) < 1 then out[#out + 1] = {ARTY_KIT, why} end
+  if construction.have(C, "rts-locomotive-kit") < 2 then out[#out + 1] = {"rts-locomotive-kit", why} end
+  if construction.have(C, SHELL) < (AR.shells or 10) then out[#out + 1] = {SHELL, why} end
+  return out
+end
+
 -- One craft's ingredients of a recipe are in the nation's networks.
 local function craftable(C, recipe)
   local r = prototypes.recipe[recipe]
@@ -1695,6 +1717,7 @@ local function works_wants(C, P, capital)
   local out = {}
   if planner.engine_focus(C) then out[#out + 1] = {ENGINE_RECIPE, "the research's engines"} end
   for _, w in ipairs(rail_items(C, P, capital)) do out[#out + 1] = w end
+  for _, w in ipairs(artillery_items(C)) do out[#out + 1] = w end
   return out
 end
 

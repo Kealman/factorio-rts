@@ -8,6 +8,8 @@
 --   council.may_launch(C, target) -> bool   army.lua asks before a new offensive (the difficulty's concurrent `ops`)
 --   council.research_want(C) -> {tech, ...} Fortification at war, Aviation in Age II, Air Force in Age III
 --   council.air_want(C) -> {[kit] = n}      plane kits the barracks should make (ai/mix.lua)
+--   council.rail_programs(C), artillery_want(C)   (0.1.1) the siege railways' rail programs and their artillery train's
+--                                           kits (ai/planner.lua makes their depots, crew kits, artillery kits, shells)
 --   council.describe(force)
 --
 -- Fronts (fronts.lua): every own segment whose enemy strength near it (fronts.STRENGTH, i.e. ai/intel.lua for an AI
@@ -25,6 +27,8 @@
 -- Air: Aviation in Age II (at war or from air_from), an airfield at the capital, `scouts` scout planes in an all-plane
 -- division that patrols the most threatened segment (else the way to the nearest rival); interceptors (Air Force) when
 -- enemy planes were seen.
+-- (0.1.1) Siege railways: a forward depot and a line from the capital towards a capture's target, a war goal or the
+-- nearest enemy city at war, for an artillery train (council.siege_step).
 -- Money: a city under attack hires garrison points (sinks.hire_garrison, balance above hire_at); mercenaries when the
 -- capital is attacked and the idle army is small; (0.1.1) in debt stage 2+ idle units retire (council.debt_step).
 --
@@ -55,6 +59,7 @@ local MILITARY_RAILWAYS = "rts-military-railways"
 local AVIATION = "rts-aviation"
 local AIR_FORCE = "rts-air-force"
 local AIRFIELD = "rts-airfield"
+local ELECTRIFICATION = "rts-electrification"
 local SCOUT_KIT, INTERCEPTOR_KIT, BOMBER_KIT = "rts-scout-plane-kit", "rts-interceptor-kit", "rts-bomber-kit"
 data.FACTORY_RECIPE[AIRFIELD] = AIRFIELD
 
@@ -119,6 +124,11 @@ end
 
 local function at_war(force_name)
   return diplomacy.at_war and diplomacy.at_war(force_name)
+end
+
+local function rails_depot(un)
+  local rails = deps.rails
+  return un and rails and rails.depot and rails.depot(un) or nil
 end
 
 local function balance_of(force_name)
@@ -198,10 +208,13 @@ local function kind_of(G)
   return nil
 end
 
--- Deploy an artillery train at the own depot nearest the siege target (within artillery_range), once per operation.
+-- Deploy an artillery train for a siege: at the own depot nearest the target within artillery_range; else (0.1.1,
+-- issue #4) at the capital end of the siege railway to that target (council.siege_step) once it is open, sent along it
+-- to its forward depot. Tried every 30 s while the operation advances or besieges, until a train is out.
 local function siege_artillery(C, K, op)
-  if op.artillery or not (op.target and op.target.position) then return end
-  op.artillery = "tried"
+  if op.artillery_train or not (op.target and op.target.position) then return end
+  if game.tick < (op.art_next or 0) then return end
+  op.art_next = game.tick + 30 * 60
   local tw = mod("trainswar")
   local R = storage.rails
   if not (tw and tw.deploy and R and has_tech(C.force, MILITARY_RAILWAYS)) then return end
@@ -213,17 +226,34 @@ local function siege_artillery(C, K, op)
       if dd <= CB.artillery_range and (not bd or dd < bd) then best, bd = un, dd end
     end
   end
-  if not best then return end
-  local train, why = tw.deploy(best, tw.KIND or "artillery", false)
+  local S = K.siege and op.target.city and K.siege[op.target.city]
+  if S and S.train then
+    -- the siege railway's train is out already (council.siege_step)
+    op.artillery, op.artillery_train = S.train, S.train
+    op.kind = "siege"
+    return
+  end
+  local via -- the siege railway's forward depot (the train goes there after its deploy at the capital end)
+  local from = best
+  if S and S.state == "open" and S.A and S.A.depot_a and S.A.depot_b and rails_depot(S.A.depot_b) then
+    -- (the forward depot's own network holds no kits: the train comes from the line's capital end)
+    from, via, bd = S.A.depot_a, S.A.depot_b, dist(rails_depot(S.A.depot_b).entity.position, op.target.position)
+  end
+  if not from then return end
+  local train, why = tw.deploy(from, tw.KIND or "artillery", false)
   if train then
     tw.set_stance(train.id, "bombard")
-    op.artillery = train.id
+    if via and tw.send_to_depot then tw.send_to_depot(train.id, via) end
+    op.artillery, op.artillery_train = train.id, train.id
     op.kind = "siege"
+    if S then S.train = train.id end
     K.stats.artillery = K.stats.artillery + 1
-    util.log("council: %s operation #%d: artillery train %d at depot #%d (%.0f tiles from the target) bombards",
-      C.force, op.id, train.id, best, bd)
-  else
-    util.log("council: %s operation #%d: no artillery train at depot #%d (%s)", C.force, op.id, best, tostring(why))
+    util.log("council: %s operation #%d: artillery train %d at depot #%d%s (%.0f tiles from the target) bombards",
+      C.force, op.id, train.id, from, via and string.format(", sent along the siege railway to depot #%d", via) or "",
+      bd or -1)
+  elseif op.art_why ~= why then
+    op.art_why = why
+    util.log("council: %s operation #%d: no artillery train at depot #%d (%s)", C.force, op.id, from, tostring(why))
   end
 end
 
@@ -309,6 +339,7 @@ local function ops_step(C, K)
           set_phase(C, op, (op.kind == "raid") and "strike" or "siege", string.format("%.0f tiles from the target", d))
           if op.kind ~= "raid" then siege_artillery(C, K, op) end
         elseif op.phase == "siege" then
+          siege_artillery(C, K, op) -- (0.1.1: again while the siege lasts, e.g. once its siege railway opens)
           local cap = op.target and op.target.city and storage.capture and storage.capture.cities
             and storage.capture.cities[op.target.city]
           local city = op.target and op.target.city and storage.cities and storage.cities[op.target.city]
@@ -701,6 +732,271 @@ function council.sector_belt(C, K, belts)
 end
 
 ---------------------------------------------------------------------------
+-- Siege railways (0.1.1, issue #4): an artillery train bombards from a depot within artillery_range of its target,
+-- but the 2.1 acceptance's sieges lay 170-850 tiles from the besieger's nearest depot and 170-800 from its nearest
+-- line, so no train ever fired. With Military railways, a capture operation whose target has no own depot in reach
+-- gets a siege railway: a depot of its own (the builder factory makes it) at the first spot outside every other
+-- force's land on the way from the nearest own city (the capital when it is within siege_rail.reach), siege_rail.near..
+-- far tiles from the target, then a rail program from that city to it (rails.ai_program, paid by the capital; its
+-- crew and rails as for a trunk edge). Once the line is open, siege_artillery deploys the train at the line's capital
+-- end and sends it to the forward depot. At most siege_rail.max at a time; one that stops mattering (operation over,
+-- city taken) is dropped after siege_rail.keep.
+---------------------------------------------------------------------------
+data.FACTORY_RECIPE["rts-depot"] = data.FACTORY_RECIPE["rts-depot"] or "rts-depot"
+data.FACTORY_RECIPE["rts-radar"] = data.FACTORY_RECIPE["rts-radar"] or "rts-radar"
+local SIEGE_DEPOT, SIEGE_RADAR = "rts-depot", "rts-radar"
+
+-- Put a plan entry at the front of the construction queue (the forward depot is the siege's first job).
+local function queue_front(C, key)
+  if not construction.queue(C, key) then return end
+  local q = C.queue
+  if q[#q] == key then
+    table.remove(q)
+    table.insert(q, 1, key)
+  end
+end
+
+local function own_depot_near(C, pos, range)
+  local R = storage.rails
+  for _, un in ipairs(sorted_keys(R and R.depots or {})) do
+    local d = R.depots[un]
+    if d.force == C.force and d.entity and d.entity.valid and dist(d.entity.position, pos) <= range then return un end
+  end
+  return nil
+end
+
+-- The forward depot's spot: on the way from `from` to the target, outside every other force's land, a depot and its
+-- platform fit (rails.platform_fits), as near the target as the land allows.
+local function siege_site(C, surface, target, from)
+  local rails, territory = deps.rails, deps.territory
+  if not (rails and rails.platform_fits) then return nil end
+  local SR = CB.siege_rail
+  local dx, dy = from.x - target.x, from.y - target.y
+  local len = math.sqrt(dx * dx + dy * dy)
+  if len < SR.near then return nil end
+  dx, dy = dx / len, dy / len
+  local nx, ny = -dy, dx
+  for d = SR.near, math.min(SR.far, len - 20), 6 do
+    for _, off in ipairs({0, 8, -8, 16, -16, 24, -24}) do
+      local p = {x = math.floor(target.x + dx * d + nx * off + 0.5), y = math.floor(target.y + dy * d + ny * off + 0.5)}
+      if dist(p, target) <= CB.artillery_range - 4
+         and (not territory or territory.can_build(C.force, SIEGE_DEPOT, p))
+         and surface.can_place_entity({name = SIEGE_DEPOT, position = p, force = C.force,
+                                       build_check_type = defines.build_check_type.manual})
+         and rails.platform_fits(surface, C.force, p) ~= nil then
+        return p
+      end
+    end
+  end
+  return nil
+end
+
+-- Deploy the artillery train of an open siege railway: at its capital end (the forward depot's own network holds no
+-- kits), stance bombard, sent along the line to the forward depot; it fires at the hostile buildings it sees within
+-- range from there, whatever operation comes. Returns the train id or nil.
+local function siege_deploy(C, K, S)
+  local tw = mod("trainswar")
+  if not (tw and tw.deploy and S.A and S.A.depot_a and S.A.depot_b) then return nil end
+  local train, why = tw.deploy(S.A.depot_a, tw.KIND or "artillery", false)
+  if not train then
+    if S.deploy_why ~= why then
+      S.deploy_why = why
+      util.log("council: %s siege railway to city %d: no artillery train at depot #%d yet (%s)", C.force, S.city,
+        S.A.depot_a, tostring(why))
+    end
+    return nil
+  end
+  tw.set_stance(train.id, "bombard")
+  if tw.send_to_depot then tw.send_to_depot(train.id, S.A.depot_b) end
+  K.stats.artillery = K.stats.artillery + 1
+  local d = rails_depot(S.A.depot_b)
+  util.log("council: %s artillery train %d at depot #%d, sent along the siege railway to depot #%d (%.0f tiles from "
+    .. "city %d) in bombard stance", C.force, train.id, S.A.depot_a, S.A.depot_b,
+    d and dist(d.entity.position, S.target) or -1, S.city)
+  return train.id
+end
+
+-- The targets of siege railways, first first: the cities of live capture operations, the goal cities of the wars the
+-- nation declared, and at war the known enemy city nearest an own city.
+local function siege_targets(C, K)
+  local out, seen = {}, {}
+  local function add(cid, pos, why)
+    local city = cid and deps.cities.get(cid)
+    if city and city.force == C.force then return end -- ours already (a war goal taken: "0 tiles from city 6")
+    if cid and pos and not seen[cid] then
+      seen[cid] = true
+      out[#out + 1] = {city = cid, position = {x = pos.x, y = pos.y}, why = why}
+    end
+  end
+  for _, id in ipairs(sorted_keys(K.ops)) do
+    local op = K.ops[id]
+    if (op.kind == "capture" or op.kind == "siege") and op.phase ~= "return" and op.phase ~= "done" and op.target then
+      add(op.target.city, op.target.position, "operation")
+    end
+  end
+  if not at_war(C.force) then return out end
+  local wars = mod("wars")
+  for _, t in ipairs(wars and wars.targets and wars.targets(C.force) or {}) do
+    add(t.city_id, t.position, "war goal")
+  end
+  local I = intel.state(C.force)
+  local best, bd
+  for _, id in ipairs(sorted_keys(I and I.cities or {})) do
+    local r = I.cities[id]
+    if r.position and r.force ~= diplomacy.NEUTRAL and diplomacy.state(C.force, r.force) == "war" then
+      for _, c in ipairs(deps.cities.for_force(C.force)) do
+        local d = c.position and dist(c.position, r.position)
+        if d and (not bd or d < bd) then best, bd = r, d end
+      end
+    end
+  end
+  if best then add(best.id, best.position, "at war") end
+  return out
+end
+
+function council.siege_step(C, K, surface)
+  local SR = CB.siege_rail
+  local rails = deps.rails
+  if not (SR and rails and rails.ai_program and rails.depot) or not has_tech(C.force, MILITARY_RAILWAYS) then return end
+  local tick = game.tick
+  if tick < (K.siege_next or 0) then return end
+  K.siege_next = tick + SR.period
+  K.siege = K.siege or {}
+  local capital = capital_of(C.force)
+  if not (capital and capital.center) then return end
+  local targets = siege_targets(C, K)
+  local wanted = {}
+  for _, t in ipairs(targets) do wanted[t.city] = t end
+  local active = 0
+  for _, cid in ipairs(sorted_keys(K.siege)) do
+    local S = K.siege[cid]
+    if not S.failed and not S.over then active = active + 1 end
+  end
+  for _, t in ipairs(targets) do
+    local cid, T = t.city, t.position
+    if not K.siege[cid] and active < SR.max and not own_depot_near(C, T, CB.artillery_range) then
+      -- the origin: the capital when within reach (its depot shares the capital's network: crew kits and the
+      -- artillery train come from there), else the own city nearest the target
+      local O = capital
+      if dist(capital.position, T) > SR.reach then
+        local bd
+        for _, c in ipairs(deps.cities.for_force(C.force)) do
+          if c.center and c.position and buildings.get(c.center) then
+            local d = dist(c.position, T)
+            if not bd or d < bd then O, bd = c, d end
+          end
+        end
+      end
+      local p = dist(O.position, T) <= SR.reach and siege_site(C, surface, T, O.position) or nil
+      if p then
+        local key = construction.add(C, {name = SIEGE_DEPOT, x = p.x, y = p.y, line = "siege"})
+        queue_front(C, key)
+        K.siege[cid] = {city = cid, target = {x = T.x, y = T.y}, key = key, origin = O.id, origin_center = O.center,
+                        site = p, since = tick, state = "depot", why = t.why}
+        active = active + 1
+        K.stats.siege_rails = (K.stats.siege_rails or 0) + 1
+        util.log("council: %s plans a siege railway to city %d (%s): forward depot at %s (%.0f tiles from it), line "
+          .. "from city %d (%.0f tiles)", C.force, cid, t.why, util.pos_str(p), dist(p, T), O.id, dist(O.position, p))
+      elseif dist(O.position, T) <= SR.reach then
+        K.siege[cid] = {city = cid, failed = true, since = tick, target = {x = T.x, y = T.y}}
+        util.log("council: %s finds no siege railway spot towards city %d (%.0f tiles from city %d)", C.force, cid,
+          dist(O.position, T), O.id)
+      end
+    end
+  end
+  for _, cid in ipairs(sorted_keys(K.siege)) do
+    local S = K.siege[cid]
+    local city = storage.cities and storage.cities[cid]
+    if not wanted[cid] or (city and city.force == C.force) then
+      S.over = S.over or tick
+      if tick - S.over >= SR.keep then
+        K.siege[cid] = nil
+        if not S.failed then util.log("council: %s drops its siege railway to city %d", C.force, cid) end
+      end
+    else
+      S.over = nil
+    end
+    if not S.failed and not S.over then
+      if S.state == "depot" then
+        local st = construction.status(C, S.key)
+        if st == "built" then
+          local e = C.plan[S.key].entity
+          if e and e.valid and rails.depot(e.unit_number) and buildings.get(S.origin_center) then
+            S.depot = e.unit_number
+            S.A = {anchor = S.origin_center, far = S.depot, depot_b = S.depot, pay = capital.center, policies = true,
+                   siege = true}
+            S.state = "line"
+            -- a radar beside it (powered by the depot's hub core): the train only fires at what the nation sees, and
+            -- a radar sees 96 tiles where the depot itself sees 48 (trainswar.KNOWN)
+            local rp = surface.find_non_colliding_position(SIEGE_RADAR, {x = e.position.x + 6, y = e.position.y + 6}, 8,
+              1, true)
+            if rp and (not deps.territory or deps.territory.can_build(C.force, SIEGE_RADAR, rp)) then
+              S.radar = construction.add(C, {name = SIEGE_RADAR, x = math.floor(rp.x) + 0.5, y = math.floor(rp.y) + 0.5,
+                                             line = "siege"})
+              queue_front(C, S.radar)
+            end
+            util.log("council: %s siege railway to city %d: forward depot #%d built%s", C.force, cid, S.depot,
+              S.radar and ", a radar beside it" or "")
+          end
+        elseif st == "bad" or st == nil then
+          S.failed, S.state = true, "failed"
+          util.log("council: %s siege railway to city %d: the forward depot could not be built", C.force, cid)
+        elseif st == "planned" then
+          queue_front(C, S.key)
+        end
+      end
+      if S.state == "line" then
+        local R = storage.rails
+        local line = S.A.line and R and R.lines[S.A.line]
+        if not rails.depot(S.depot) then
+          S.failed, S.state = true, "failed"
+          util.log("council: %s siege railway to city %d: its forward depot is gone", C.force, cid)
+        elseif line and line.state == "open" then
+          S.state, S.opened = "open", tick
+          util.log("council: %s siege railway to city %d open after %.0f s", C.force, cid, (tick - S.since) / 60)
+        else
+          rails.ai_program(C.force, S.A) -- (never once open: its freight train would take kits for nothing)
+        end
+      end
+      if S.state == "open" then
+        local tr = S.train and game.train_manager.get_train_by_id(S.train)
+        if S.train and not (tr and tr.valid) then S.train = nil end
+        if not S.train and rails.depot(S.depot) and tick >= (S.deploy_next or 0) then
+          S.deploy_next = tick + 30 * 60
+          S.train = siege_deploy(C, K, S)
+        end
+      end
+    end
+  end
+end
+
+--- The council's rail programs (ai/planner.lua: the works factory makes their depots and crew kits).
+function council.rail_programs(C)
+  local K = K_of(C.force, false)
+  local out = {}
+  for _, cid in ipairs(sorted_keys(K and K.siege or {})) do
+    local S = K.siege[cid]
+    if S.A and S.state == "line" then out[#out + 1] = S.A end
+  end
+  return out
+end
+
+--- True while a siege railway is under way or open for an operation without its artillery train (ai/planner.lua: the
+--- works factory makes the train's kits and shells at the capital).
+function council.artillery_want(C)
+  local K = K_of(C.force, false)
+  if not (K and K.siege) then return false end
+  for _, cid in ipairs(sorted_keys(K.siege)) do
+    local S = K.siege[cid]
+    if (S.state == "line" or S.state == "open") and not S.train and not S.over and not S.failed and S.origin_center then
+      local cap = capital_of(C.force)
+      if cap and S.origin_center == cap.center then return true end
+    end
+  end
+  return false
+end
+
+---------------------------------------------------------------------------
 -- Air
 ---------------------------------------------------------------------------
 --- Retire up to n idle walkers of commander C that are in no group, hold and division (lowest unit numbers first): room
@@ -860,9 +1156,10 @@ local function air_step(C, K, surface)
       end
     end
   end
-  -- interceptors over the city nearest the last enemy planes seen
+  -- interceptors over the capital when enemy planes were seen (0.1.1, issue #4: or while at war: a standing air
+  -- defence; they flew in no nation of the 2.1 acceptance)
   local seen = intel.enemy_planes_seen(C.force)
-  if seen and game.tick - seen <= 5 * 3600 and has_tech(C.force, AIR_FORCE) then
+  if ((seen and game.tick - seen <= 5 * 3600) or at_war(C.force)) and has_tech(C.force, AIR_FORCE) then
     local list = plane_list(C, "interceptor")
     local idiv = Kair.interceptors and divisions.get(Kair.interceptors) and Kair.interceptors or nil
     local free = {}
@@ -880,8 +1177,8 @@ local function air_step(C, K, surface)
       local n = air.order_patrol(idiv, capital.position, CB.patrol_radius)
       if n > 0 then
         K.stats.interceptors = K.stats.interceptors + 1
-        util.log("council: %s interceptors (division #%d, %d planes) patrol the capital: enemy planes seen %.0f s ago",
-          C.force, idiv, n, (game.tick - seen) / 60)
+        util.log("council: %s interceptors (division #%d, %d planes) patrol the capital: %s", C.force, idiv, n,
+          seen and string.format("enemy planes seen %.0f s ago", (game.tick - seen) / 60) or "at war")
       end
     end
   end
@@ -898,6 +1195,22 @@ local function air_step(C, K, surface)
            and op.target and op.target.position then
           target = op.target
           break
+        end
+      end
+      -- (0.1.1, issue #4) at war without such an operation: the nearest known city of a nation at war with us within
+      -- bomb_reach of the capital (bombers only waited for a capture's advance; none flew in the 2.1 acceptance)
+      if not target and at_war(C.force) and game.tick >= (Kair.bomb_next or 0) then
+        Kair.bomb_next = game.tick + (CB.bomb_gap or 3 * 3600)
+        local I = intel.known(C.force)
+        local bd
+        for _, id in ipairs(sorted_keys(I.cities or {})) do
+          local r = I.cities[id]
+          if r.position and r.force ~= diplomacy.NEUTRAL and diplomacy.state(C.force, r.force) == "war" then
+            local d = dist(r.position, capital.position)
+            if d <= (CB.bomb_reach or 600) and (not bd or d < bd) then
+              target, bd = {kind = "city", position = {x = r.position.x, y = r.position.y}, city = id}, d
+            end
+          end
         end
       end
       if target then
@@ -972,7 +1285,9 @@ function council.air_want(C)
   short("scout-plane", SCOUT_KIT, CB.scouts)
   if has_tech(C.force, AIR_FORCE) then
     local seen = intel.enemy_planes_seen(C.force)
-    if seen and game.tick - seen <= 10 * 3600 then short("interceptor", INTERCEPTOR_KIT, CB.interceptors) end
+    if (seen and game.tick - seen <= 10 * 3600) or at_war(C.force) then
+      short("interceptor", INTERCEPTOR_KIT, CB.interceptors)
+    end
     if at_war(C.force) then short("bomber", BOMBER_KIT, CB.bombers) end
   end
   return next(out) and out or nil
@@ -1115,8 +1430,23 @@ function council.research_urgent(C)
   if not nation_mode() then return nil end
   local out = {}
   if at_war(C.force) and not has_tech(C.force, FORTIFICATION) then out[#out + 1] = FORTIFICATION end
+  -- (0.1.1, issue #4) Military railways at war once Electrification is done, before the air techs: an artillery train
+  -- needs only it (25 industrial kits; Air Force alone takes 50), and Air Force put it back in every nation that
+  -- wanted both
+  if at_war(C.force) and has_tech(C.force, ELECTRIFICATION) and not has_tech(C.force, MILITARY_RAILWAYS) then
+    out[#out + 1] = MILITARY_RAILWAYS
+  end
   if council.AIR_FIRST[C.doctrine or ""] and air_wanted(C) and not has_tech(C.force, AVIATION) then
     out[#out + 1] = AVIATION
+  elseif at_war(C.force) and has_tech(C.force, ELECTRIFICATION) and not has_tech(C.force, AVIATION) then
+    -- (0.1.1, issue #4) every doctrine at war once Electrification is done (the Age III road first): an economic nation
+    -- at war researched Geology and Nuclear power before Aviation, and Air Force never came
+    out[#out + 1] = AVIATION
+  end
+  -- (0.1.1, issue #4) Air Force at war in Age III, before the planner's Geology and Nuclear power: behind them it came
+  -- in 1 of 20 nations by 60:00 and no interceptor or bomber flew in the 2.1 acceptance
+  if age_of(C.force) >= 3 and at_war(C.force) and has_tech(C.force, AVIATION) and not has_tech(C.force, AIR_FORCE) then
+    out[#out + 1] = AIR_FORCE
   end
   return next(out) and out or nil
 end
@@ -1125,6 +1455,9 @@ function council.research_want(C)
   if not nation_mode() then return nil end
   local out = {}
   if at_war(C.force) then out[#out + 1] = FORTIFICATION end
+  -- (0.1.1, issue #4) Military railways at war in Age II: artillery trains for sieges (never researched in the 2.1
+  -- acceptance)
+  if at_war(C.force) and age_of(C.force) >= 2 then out[#out + 1] = MILITARY_RAILWAYS end
   if air_wanted(C) then out[#out + 1] = AVIATION end
   if age_of(C.force) >= 3 and at_war(C.force) then out[#out + 1] = AIR_FORCE end
   return out
@@ -1172,6 +1505,7 @@ function council.step(C, surface)
   holds_step(C, K)
   belts_step(C, K)
   air_step(C, K, surface)
+  council.siege_step(C, K, surface)
   money_step(C, K)
   council.debt_step(C, K)
 end

@@ -1407,6 +1407,8 @@ do
     stage1_reserve = 400,
     -- (0.1.1, issue #1) stage 1's advanced circuits and their plastic kept in stock from the start of Electrification
     stage1_prestock = {["advanced-circuit"] = 60, ["plastic-bar"] = 120},
+    -- (0.1.1, issue #4) shells the works factory makes for a siege railway's artillery train
+    artillery = {shells = 10},
     -- Age II on: stone_buy stone when the capital holds less than stone_low (a ford city-state sells it)
     stone_low = 150, stone_buy = 300,
     -- and steel_buy steel when the capital holds less than steel_low (an iron city-state sells it)
@@ -1447,6 +1449,13 @@ do
     push_after = 25 * 60 * 60,
     air_from = 25 * 60 * 60, scouts = 2, interceptors = 3, bombers = 3, patrol_radius = 48,
     artillery_range = 110,
+    -- (0.1.1, issue #4) a capture whose target has no own depot within artillery_range gets a siege railway: a forward
+    -- depot near..far tiles from the target (outside other forces' land) and a line to it from the capital (or the
+    -- nearest own city) when that lies within `reach`; checked every `period`, at most `max` under way, dropped `keep`
+    -- after its operation; at war, bombers strike the nearest known enemy city within bomb_reach of the capital (at most
+    -- every bomb_gap) when no capture is under way (a bomber flies 13.7 tiles/s on 100 s of supply)
+    siege_rail = {period = 600, near = 56, far = 104, reach = 400, max = 1, keep = 5 * 60 * 60},
+    bomb_reach = 450, bomb_gap = 3 * 60 * 60,
     hire_at = 2500, hire_points = 8, merc_at = 2500, merc_army = 12,
     merc_retire = 8, -- (wave B.2) idle walkers retired when a mercenary hire is refused at the supply cap
     -- (0.1.1, issue #5) from debt stage `stage` the council retires idle units, the largest supply first and at most
