@@ -9,7 +9,7 @@
 #        STAGES=report RC_DIR=... tools/release-check.sh            rebuild REPORT.md only
 #        QUICK=1 SERVERS=2 tools/release-check.sh   a dry run with short durations, one seed per set and two matrix
 #                                                   scenarios: it proves the script and the parsers, not the criteria
-# Stages (default: smoke matrix m1 m2 m3 w3072 debt sl det scene):
+# Stages (default: smoke matrix m1 m2 m3 w3072 debt warpaths sl det scene):
 #   smoke    the Skirmish smoke (legacy units, seed 9090): 65/65 and 0 errors; a failure stops the check (CONTINUE=1 goes on)
 #   matrix   tools/autotest-matrix.sh with SEED=777 on the tree and on the baseline, then a line-by-line comparison
 #            (tools/matrix-compare.sh's normalisation). The baseline is the matrix tag BASE_TAG (default m3i-p21) when its
@@ -23,6 +23,7 @@
 #   w3072    one 3072x4 world (map seed SEED_3072, default 30724) with the same probe: holds, air, artillery present (#4)
 #   debt     the debt path (#5): tools/probes/ai3_debt.lua holds the largest army's nation in debt from minute 22
 #            (seed 801, SPEED 10, 34 minutes): stage 2 reached, the army retired to keep_supply, no regrowth
+#   warpaths the council's war paths (#4): tools/probes/ai3_war_paths.lua, 1v1 hard, seed 811, SPEED 10: 6/6
 #   sl       save at minutes 20 and 40 (seed 802), load, play on: 0 errors in both halves, same state after both loads
 #   det      determinism: seeds 801 and 802, two runs of 30 minutes each, event lines compared (0 differing)
 #   scene    the perf scene (tools/perf-bench.sh scene, seed 701, 5 benchmark minutes, 5 realtime minutes). It waits up to
@@ -42,7 +43,7 @@ cd "$(dirname "$0")/.."
 ROOT="$PWD"
 source tools/factorio-env.sh
 REV="${REV:-HEAD}"; SERVERS="${SERVERS:-4}"; QUICK="${QUICK:-}"
-STAGES="${STAGES:-smoke matrix m1 m2 m3 w3072 debt sl det scene}"
+STAGES="${STAGES:-smoke matrix m1 m2 m3 w3072 debt warpaths sl det scene}"
 RC_DIR="${RC_DIR:-build/release-check/$(date +%Y-%m-%d_%H%M)}"
 mkdir -p "$RC_DIR"; RC_DIR="$(cd "$RC_DIR" && pwd)"
 P="rc-$(basename "$RC_DIR" | tr -c 'A-Za-z0-9\n' '-')" # run-name prefix
@@ -164,6 +165,11 @@ fi
 if has debt; then
   job debt-801 debt "$P-debt-801" "seed=801" env KEEP_TREE="$T" EXTRA_LUA=tools/probes/ai3_debt.lua DURATION_MIN=34 SEED=801 \
     SPEED=10 tools/autotest-run.sh "$P-debt-801" "$NATION4" 4000
+fi
+if has warpaths; then
+  job warpaths-811 warpaths "$P-warpaths-811" "seed=811" env KEEP_TREE="$T" EXTRA_LUA=tools/probes/ai3_war_paths.lua \
+    STOP_ON=RTS_WARPATHS_DONE DURATION_MIN=50 SEED=811 SPEED=10 tools/autotest-run.sh "$P-warpaths-811" \
+    '{opponents = 1, difficulty = "hard", mode = "nation", world_size = 2048, enemy_brain = "ai"}' 3000
 fi
 if has m1; then for sp in 8 10; do
   job "m1-s$sp" m1 "$P-m1-s$sp" "speed=$sp" env PERF=1 KEEP_TREE="$T" EXTRA_LUA=tools/probes/m1_acceptance.lua DURATION_MIN="$DUR" \

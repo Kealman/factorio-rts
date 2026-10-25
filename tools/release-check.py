@@ -362,9 +362,9 @@ def acc_rows(stage, accs, full):
     patrols = seeds(lambda a: tot(a, "patrols") > 0)
     row(stage, "Seeds with air patrols", "≥ 3 of 5", frac(patrols, n), patrols >= 3 if n >= 5 else frac(patrols, n), "M3 notes 4.2")
     strike = seeds(lambda a: tot(a, "interceptors") + tot(a, "bombs") > 0)
-    row(stage, "Seeds with an interceptor patrol or a bomber strike", "≥ 3 of 5", frac(strike, n), strike >= 3 if n >= 5 else frac(strike, n), "#4")
+    row(stage, "Seeds with an interceptor patrol or a bomber strike", "≥ 3 of 5 (#4 closed as partial; gated by war paths)", frac(strike, n), "info", "#4")
     art = seeds(lambda a: tot(a, "artillery") > 0)
-    row(stage, "Seeds with an artillery train bombarding", "≥ 2 of 5", frac(art, n), art >= 2 if n >= 5 else frac(art, n), "#4")
+    row(stage, "Seeds with an artillery train bombarding", "≥ 2 of 5 (#4 closed as partial; gated by war paths)", frac(art, n), "info", "#4")
     bank = sum(1 for _, a in present for v in a["nat"].values() if v["credit"] != "never")
     row(stage, "Nobody at the credit line (no bankruptcy)", "0 nations", str(bank), bank == 0, "#5")
     debt2 = seeds(lambda a: any(v["debt"] >= 2 for v in a["nat"].values()))
@@ -394,7 +394,7 @@ def stage_acceptance():
                 str(tot("holds")), "info", "#4")
             air = tot("patrols") + tot("interceptors") + tot("bombs")
             row("w3072", "Air: patrols + interceptor patrols + bomber strikes", "> 0", str(air), air > 0, "#4")
-            row("w3072", "Artillery train bombardments", "> 0", str(tot("artillery")), tot("artillery") > 0, "#4")
+            row("w3072", "Artillery train bombardments (#4 closed as partial)", "> 0", str(tot("artillery")), "info", "#4")
 
 
 # ---------------------------------------------------------------- M1 twice
@@ -479,6 +479,19 @@ def stage_debt():
                 bool(c) and c[0] == "PASS", "#5 (ai3_debt.lua)")
         errs = errors_in(log, os.path.join(BUILD, r[2] + "-create.log"))
         row("debt", f"Debt path, {seed_of(r[3])}: Lua errors", "0", str(len(errs)), not errs)
+
+
+# ---------------------------------------------------------------- the war paths (tools/probes/ai3_war_paths.lua)
+def stage_warpaths():
+    for r in runs("warpaths"):
+        log = os.path.join(BUILD, r[2] + "-server.log")
+        summ = [l for l in rts_lines(log) if "ai3 war paths summary" in l]
+        m = re.search(r"ai3 war paths summary (\d+)/(\d+): (.*)", summ[-1]) if summ else None
+        row("warpaths", f"War paths, seed {seed_of(r[3])}: holds, interceptors, bombers, artillery train, mercenaries, garrisons",
+            "6/6", (f"{m.group(1)}/{m.group(2)}: {m.group(3)[:110]}" if m else "no summary"),
+            bool(m) and m.group(1) == m.group(2), "#4 (ai3_war_paths.lua)")
+        errs = errors_in(log, os.path.join(BUILD, r[2] + "-create.log"))
+        row("warpaths", f"War paths, seed {seed_of(r[3])}: Lua errors", "0", str(len(errs)), not errs)
 
 
 # ---------------------------------------------------------------- save/load
@@ -640,6 +653,7 @@ stage_matrix()
 stage_m1()
 stage_acceptance()
 stage_debt()
+stage_warpaths()
 stage_sl()
 stage_det()
 row("ai", "Hard beats normal in swapped 1v1 matches", "≥ 14 of 20",
