@@ -142,6 +142,14 @@ rails.MAX_PIECE_FAILS = 20          -- a piece that will not revive this many ti
 rails.WAGON_STACKS = 20             -- construction wagon slots
 rails.CARRIAGE = 7                  -- tiles between carriage centres
 rails.CREW_COAL = 50                -- coal a construction wagon takes along for its locomotives
+-- Economy 0.1.1 follow-up (r2-ai's report): a crew that neither moves a tile nor lays a piece for CREW_STUCK_TICKS
+-- goes home; one that cannot get home either is recalled (its kits, rails and coal go back into its depot's network).
+-- Crews of crossing lines jammed into each other at the crossing and stood for the rest of the match (M2 803 on 2.1:
+-- lines #7 and #9 never opened); a crew waiting at a signal of a block such a crew held stood as long.
+rails.CREW_STUCK_TICKS = 2 * 60 * 60
+-- a crew leaves only with rails for at least min(the line's need, CREW_MIN_RAILS): crews with 1-3 rails left a depot
+-- every game second while the rails trickled in (M2 803: 18 crews in 14 s)
+rails.CREW_MIN_RAILS = 40
 
 -- The depot is a hub subtype: kind "hub" (logistics.lua builds the hub composite, keeps its policy, shows the hub
 -- panel), named "Depot n" through logistics.NAME_HOOKS; this module adds the platform and sets its default policy.
@@ -1093,7 +1101,19 @@ local function wall_crossing(job, s, e, px, py)
   return s.count_entities_filtered({area = area, name = RAIL_NAMES, limit = 1}) == 0
 end
 
+-- Economy 0.1.1 follow-up: rts-mountain (prototypes/world.lua) takes no rail, but neither the placement check of a
+-- ghost nor the cliff rule saw it: mountains are rimmed by cliffs, and M2 803's line #12 was surveyed over a rim three
+-- times (pieces 98 and 113 "will not revive" on rts-mountain tiles). A piece within MOUNTAIN_CLEARANCE of one is out.
+rails.MOUNTAIN = "rts-mountain"
+rails.MOUNTAIN_CLEARANCE = 2.5
+local function on_mountain(s, px, py)
+  if not prototypes.tile[rails.MOUNTAIN] then return false end
+  local r = rails.MOUNTAIN_CLEARANCE
+  return s.count_tiles_filtered({area = {{px - r, py - r}, {px + r, py + r}}, name = rails.MOUNTAIN, limit = 1}) > 0
+end
+
 local function check_piece(job, s, e, px, py, ck)
+  if not e.elev and on_mountain(s, px, py) then return false end
   if e.elev then
     return s.can_place_entity({name = e.name, position = {px, py}, direction = e.dir, force = job.force,
                                build_check_type = SCRIPT})
@@ -2363,7 +2383,7 @@ local function dispatch_builder(line)
     elseif d and net then
       local need = rails_needed(line, side.dir, side.from)
       local have = net.get_item_count(rails.RAIL)
-      if have <= 0 then
+      if have <= 0 or have < min(need, rails.CREW_MIN_RAILS) then
         if not why_set then why = "no-rails" end
       else
         local train, reason = rails.create_train(side.depot, "construction")
@@ -2681,9 +2701,39 @@ local function finish_build(rec, train, line)
   go_home(rec, train, "done")
 end
 
+-- True when the crew has neither moved a tile nor laid a piece for CREW_STUCK_TICKS (a crew at a piece that will not
+-- revive is the blocked-line detour's, not this rule's).
+local function crew_stuck(rec, train, line)
+  local fs = train.front_stock
+  if not (fs and fs.valid) then return false end
+  local p, m = fs.position, rec.moved
+  if not m or util.distance(m, p) > 1 or (rec.built or 0) ~= m.built then
+    rec.moved = {x = p.x, y = p.y, tick = game.tick, built = rec.built or 0}
+    return false
+  end
+  if rec.state ~= "returning" and line and line.blocked then return false end
+  return game.tick - m.tick >= rails.CREW_STUCK_TICKS
+end
+
 local function builder_step(rec, train)
   local R = rstate()
   local line = rec.line and R.lines[rec.line]
+  if crew_stuck(rec, train, line) then
+    local secs = (game.tick - rec.moved.tick) / 60
+    local where = util.pos_str(train.front_stock.position)
+    local how = util.define_name(defines.train_state, train.state)
+    rec.moved = nil
+    if rec.state == "returning" then
+      util.log("rails: construction train %d stuck on its way home at %s for %.0f s (%s): recalled to depot #%s",
+        train.id, where, secs, how, tostring(rec.home))
+      despawn(rec, train)
+    else
+      util.log("rails: construction train %d of line #%s stuck at %s for %.0f s (%s): it goes home", train.id,
+        tostring(rec.line), where, secs, how)
+      go_home(rec, train, "stuck")
+    end
+    return
+  end
   if rec.state == "returning" then
     if rec.arrived then despawn(rec, train) end
     return

@@ -250,7 +250,49 @@ left as it is. For the AI (r2-ai, sent by message): the governor's town export r
 than 1,500 ore and plates (with the trains taking the town's whole offer it now starts rarely), and a line to a town
 that offers nothing runs an idle train.
 
-## 6. Measurement tools (`tools/probes/r2e_*`; the commands are in each file's header)
+## 6. Rail crews that never finish (r2-ai's report, Refs #2)
+
+r2-ai found AI construction trains that leave with all their rails, after which their line neither opens nor fails
+(seed 804 on their tree and on p21b; seed 803). On HEAD-era acceptance logs, 0-4 crews per run stood at speed 0 for
+at least four game minutes: "wait_signal", "on_the_path", "wait_station" and once "manual_control".
+`tools/probes/r2e_crew_diag.lua` logs a crew that has not moved for a minute: its state, path, signal, coal, rails, and
+what stands around its ends. On HEAD (eca692c), seed 803, it showed:
+
+1. **Surveys over mountain rims.** `rts-mountain` takes no rail. Mountains are rimmed by cliffs, and the survey's
+   cliff rule (`check_piece`: a piece where only cliffs, trees and rocks are in the way) checked water, buildings and
+   rails but not mountain tiles. All three "will not revive" pieces had rts-mountain tiles in their box (11, 3, 2).
+   Line #12's blocked piece was detoured twice over the same rim, and its crews stood at the blocked piece.
+2. **Crews of crossing lines collide.** Crew 270 of line #9 jammed against crew 258 of line #7 at their crossing near
+   the two depots (collision sparks; both "on_the_path" at speed 0). Nothing recalled a stuck crew, so neither line
+   opened in the match. A crew at a signal whose block such a crew holds would wait as long. That fits the
+   "wait_signal" cases of the p21b logs, which did not recur on HEAD.
+3. **Crews with 1-3 rails.** A depot sent a crew whenever it held any rail, so line #7 sent 18 crews in 14 s while
+   rails trickled in. Each laid nothing and drove back: r2-ai's "no-rails" cycles.
+
+**The change** (`scripts/rails.lua`):
+- `check_piece` rejects a piece within `MOUNTAIN_CLEARANCE` (2.5 tiles) of an rts-mountain tile.
+- A crew that has neither moved a tile nor laid a piece for `CREW_STUCK_TICKS` (2 game minutes) goes home. If it is
+  stuck on the way home too, it is recalled: its kits, rails and coal go back into its depot's network, and the line
+  dispatches a new crew. A crew at a piece that will not revive is left to the blocked-line detour.
+- A crew leaves only with at least min(the line's need, `CREW_MIN_RAILS` = 40) rails.
+
+**Checks** (HEAD eca692c with the change against eca692c):
+
+| | eca692c | with the change |
+|---|---|---|
+| seed 803: crews stuck >= 4 min | 2 (on_the_path, wait_station) | 0 |
+| seed 803: revive failures | 3 | 0 |
+| seed 803: rts-player first line open / cities linked at 35:00 | 41:00 / 1 of 4 | 32:00 / 3 of 4 |
+| seed 804: crews stuck >= 4 min | 0 | 0 |
+| `tools/probes/r2e_crew_block.lua` (M1 501: a crew held still 60 tiles out of its depot) | | 3/3: home after 120 s, recalled 121 s later with 172 rails returned, a new crew dispatched |
+| rails autotest | 12/12 | 12/12 |
+| Skirmish smoke (seed 777) | 65/65 | 65/65, 470 lines identical |
+
+0 Lua errors in every run. Nation totals of a single seed move both ways with the war: on 803 the four nations linked
+10 of 15 and 10 of 19 cities at 35:00. The probe holds the crew still because rolling stock placed on its track does not
+work as a block: the moving crew couples to it and drives on.
+
+## 7. Measurement tools (`tools/probes/r2e_*`; the commands are in each file's header)
 
 - `r2e_strand.py`: no-fuel waits per hauler and hub from a server log (state, arrival, route, home and mode lines),
   interpolated to game minutes from the AI minute lines; "remote" as defined at the top.
@@ -258,3 +300,6 @@ that offers nothing runs an idle train.
 - `r2e_prof.lua` (EXTRA_LUA for perf-bench): times market.ai_step and, inside it, the ledger parts.
 - `r2e_map_gui.lua` (GUI probe, ask r2-ux for a screen slot): the #9 map captures and route-line checks.
 - `r2e_hubgui_colour.lua` (EXTRA_LUA, Skirmish): the #10 check with two hubs in one network.
+- `r2e_crew_diag.lua` (EXTRA_LUA, Nation): a construction train that has not moved for a minute, with everything that
+  could hold it (section 6).
+- `r2e_crew_block.lua` (EXTRA_LUA, M1 501): the stuck-crew rule's check (section 6).
