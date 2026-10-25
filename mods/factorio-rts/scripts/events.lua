@@ -69,15 +69,23 @@ function events.trace_nth(min_period) trace_period = min_period end
 -- Economy 0.1.1 (#8): in a running Nation match the handlers of every period of at least STAGGER_MIN ticks run on a
 -- phase of their own (tick % n == phase) instead of all on tick % n == 0: about 25 handlers of period 60 (and those of
 -- 30, 15, 10 ...) shared one tick, every 60-tick tick of the perf scene took over 3 ms of script (production, logistics,
--- strategic, mapgen ...), 340-425 such ticks in 5 minutes. Phases spread the handlers in registration order and keep
--- off the ticks of the AI commanders' slices (one every 5 ticks: scripts/ai/init.lua, next_tick % 5 of each commander)
--- where the period is a multiple of 5. A handler gets the nominal tick (the multiple of n it stands for) as event.tick,
+-- strategic, mapgen ...), 340-425 such ticks in 5 minutes. A handler's phase comes from a stable key, its module, its
+-- period and its place among that module's handlers of that period ("production@60#2"), hashed: a test probe's
+-- handlers take phases of their own and never move the mod's (with phases by registration order a probe changed the
+-- match it measured). Phases keep off the ticks of the AI commanders' slices (one every 5 ticks: scripts/ai/init.lua,
+-- next_tick % 5 of each commander) where the period is a multiple of 5; they are logged once per build. A handler gets the nominal tick (the multiple of n it stands for) as event.tick,
 -- so its own "e.tick % 3600 == 0" checks still work; game.tick is the real tick. Skirmish, the lobby and an ending
 -- match keep phase 0 for all, so their order and timing do not change. The phases are rebuilt whenever the commanders'
 -- residues differ from the ones they were built for (checked at every staggered dispatch); they depend on storage and
 -- the load order only, so every peer and every load agrees.
 local STAGGER_MIN = 10
-local STAGGER_STEP = 37
+local nth_keys = {}  -- [n] = {stable key of each handler, in list order} (events.on_nth_tick)
+local key_count = {} -- ["module@n"] = handlers that module registered for period n so far
+local function key_hash(key)
+  local h = 0
+  for i = 1, #key do h = (h * 31 + string.byte(key, i)) % 2147483647 end
+  return h
+end
 local by_phase, phase_key = nil, nil -- [n] = {[phase] = {handler, ...}}; the commanders' residues they were built for
 local stagger_periods = {}           -- the staggered periods, ascending (the on_tick loop's order)
 local function nation_running()
@@ -98,23 +106,25 @@ local function build_phases()
   local periods = {}
   for n in pairs(nth_handlers) do periods[#periods + 1] = n end
   table.sort(periods)
-  local k = 0
   for _, n in ipairs(periods) do
     if n >= STAGGER_MIN then
       local allowed = {}
       for ph = 0, n - 1 do
         if n % 5 ~= 0 or not avoid[ph % 5] then allowed[#allowed + 1] = ph end
       end
-      local t = {}
-      for _, h in ipairs(nth_handlers[n]) do
-        k = k + 1
-        local ph = allowed[(k * STAGGER_STEP) % #allowed + 1]
+      local t, parts = {}, {}
+      for i, h in ipairs(nth_handlers[n]) do
+        local key = nth_keys[n][i]
+        local ph = allowed[key_hash(key) % #allowed + 1]
         t[ph] = t[ph] or {}
         local slot = t[ph]
         slot[#slot + 1] = h
+        parts[#parts + 1] = key .. "=" .. ph
       end
       by_phase[n] = t
       stagger_periods[#stagger_periods + 1] = n
+      log(string.format("[rts] events: stagger phases period %d (AI residues %s): %s", n,
+        phase_key ~= "" and phase_key or "-", table.concat(parts, " ")))
     end
   end
 end
@@ -188,6 +198,11 @@ function events.on_nth_tick(n, handler)
   end
   list[#list + 1] = handler
   labels[handler] = labels[handler] or caller_label()
+  -- Economy 0.1.1 (#8): the handler's stable key for the Nation stagger (see nth_dispatcher)
+  local base = labels[handler] .. "@" .. n
+  key_count[base] = (key_count[base] or 0) + 1
+  nth_keys[n] = nth_keys[n] or {}
+  nth_keys[n][#list] = base .. "#" .. key_count[base]
 end
 
 --- Test copies only: time every handler per registering module and log "[rts] perf ..." lines every minute (the

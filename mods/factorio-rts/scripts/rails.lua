@@ -3306,16 +3306,28 @@ rails.AI_RESERVE_EXPANDED = {["iron-plate"] = 150, ["copper-plate"] = 60}
 -- walker and drone kits starve on copper first; 50 steel for the industrial kits: six AI depots paid in two minutes held
 -- Electrification back, seed 802)
 rails.AI_ESCROW_FLOOR = {["iron-plate"] = 60, ["copper-plate"] = 60, ["electronic-circuit"] = 20, ["steel-plate"] = 50}
+-- Economy 0.1.1 (#1, #2, #7): rail crafts (ai_supplies: 1 steel and 1 stone for 2 rails, a line's whole bill ahead of
+-- its crews) leave this much in the capital for the districts, bricks and concrete. Since 7248285 (more lines
+-- finished) seeds 801-805 reached Age III by 40:00 in 3 of 5 instead of 5 of 5; in 802 rts-ai-3's capital held 0-45
+-- stone from 30:00 while its crews loaded 2,109 rails, its Smelting and Steel works were never built and Space Program
+-- stage 1 stood at 68 % (r2-ai's batches h1 and g2). With the name-based stagger phases (events.lua) 100 steel and 150
+-- stone gave Age III by 40:00 in 4 of 5 (nations with three cities linked by 35:00: 8 of 20), 100 stone alone 2 of 5
+-- (9 of 20). A kept item is never paid with its inputs (no stone or steel from elsewhere, ai_bill).
+rails.AI_RAIL_KEEP = {["steel-plate"] = 100, ["stone"] = 150}
 
 -- Raw goods to take from `pay` for `count` of `item` (an intermediate it lacks is paid with its inputs, 3 levels deep;
 -- `taken` holds what earlier parts of the same payment already take). Returns false when the network cannot pay.
-local function ai_bill(pay, item, count, taken, depth)
+-- `keep` (optional, {[item] = n}): more to leave in the network for these items, and no expansion of them into their
+-- inputs (rail crafts: rails.AI_RAIL_KEEP)
+local function ai_bill(pay, item, count, taken, depth, keep)
   local reserve = depth > 0 and rails.AI_RESERVE_EXPANDED[item] or rails.AI_RESERVE[item] or 0
+  if keep and keep[item] then reserve = reserve + keep[item] end
   local have = pay.get_item_count(item) - (taken[item] or 0) - reserve
   local use = math.min(math.max(0, have), count)
   if use > 0 then taken[item] = (taken[item] or 0) + use end
   local rest = count - use
   if rest <= 0 then return true end
+  if keep and keep[item] then return false end
   local per = AI_EXPAND[item]
   if not per or depth >= 3 then return false end
   for ing, amount in pairs(per) do
@@ -3328,7 +3340,7 @@ end
 -- Phase 5 M3 integration: with `escrow` (a table kept by the caller) the craft is paid over several calls: what the
 -- network can spare of each ingredient goes into the escrow until the bill is complete (40 iron, 10 steel and 10 copper
 -- at one check starved the aggressive AI's depot kit while its capital held no copper for 7 minutes).
-local function ai_pay(pay, put, recipe_name, n, escrow, no_floor)
+local function ai_pay(pay, put, recipe_name, n, escrow, no_floor, keep)
   local proto = prototypes.recipe[recipe_name]
   if not (proto and pay and pay.valid and put and put.valid) then return false end
   local taken = {}
@@ -3342,7 +3354,7 @@ local function ai_pay(pay, put, recipe_name, n, escrow, no_floor)
     if need > 0 then
       local try = {}
       for k, v in pairs(taken) do try[k] = v end
-      if ai_bill(pay, ing.name, need, try, 0) then
+      if ai_bill(pay, ing.name, need, try, 0, keep) then
         taken = try
         if held then held[ing.name] = (held[ing.name] or 0) + need end
       elseif held then
@@ -3532,7 +3544,7 @@ local function ai_supplies(depot_un, anchor_un, want_rails)
   local have = net.get_item_count(rails.RAIL)
   if have >= want_rails then return true end
   local crafts = min(25, math.ceil((want_rails - have) / CFG.rail.count))
-  while crafts > 0 and not ai_pay(pay, net, "rts-rail", crafts) do crafts = floor(crafts / 2) end
+  while crafts > 0 and not ai_pay(pay, net, "rts-rail", crafts, nil, nil, rails.AI_RAIL_KEEP) do crafts = floor(crafts / 2) end
   return false
 end
 

@@ -16,6 +16,7 @@ hauler waiting "no-fuel" for at least a game minute at a hub that is neither its
 | #6 | 61dd208 | no hauler strands at a remote hub in M1 501 and M2 701-705; the return coal reserved; rails autotest 12/12 | met (section 2) |
 | #8 | e9ba46c | the lead's 0.1.1 reading: market.ai_step in 0 ticks over 3 ms, at most 60 script ticks over 3 ms, p99 at most 3 ms, no whole tick over 16.67 ms | met (section 3); the count is at 35-60 and its spread is army.step's |
 | #7 | (this notes file's commit) | M1 501 train_items >= 20,000 in two identical runs, lines open before 30:00, the divergence explained | met: 24,225 in two line-identical runs, the player's first line at 24:28 (section 5) |
+| #1 #2 #7 #8 | (the commit adding section 8) | rail crafts keep Age III by 40:00 in at least 3 of 5 (the lead's rule); a test probe does not move the stagger phases | met: Age III by 40:00 in 4 of 5 with a 100 steel and 150 stone keep, 8 of 20 nations linked at 35:00; the phase logs match with and without a probe (section 8) |
 
 Every commit: Skirmish smoke 65/65 with the `[rts]` lines identical to HEAD's (seed 777, `build/m3i-tools/runcmp.py`
 normalisation: 470 lines, 0 differing).
@@ -328,7 +329,62 @@ M1 501 stays under 20,000 on these trees: rts-ai-1's freight moved with the war 
 e9ba46c + #7). The player's freight came back. A rails autotest drawn from the clock seed once failed its hauler stage
 ("waiting (nothing)" at the 20 s check) on both HEAD and this tree; with seed 777 both pass 12/12.
 
-## 8. Measurement tools (`tools/probes/r2e_*`; the commands are in each file's header)
+## 8. Rail crafts leave steel and stone for Age III; stagger phases from stable handler keys (Refs #1 #2 #7 #8)
+
+**Rail crafts and Age III.** r2-ai measured that after 7248285, seeds 801-805 reached Age III by 40:00 in 3 of 5
+instead of 5 of 5. In 802, rts-ai-3's capital held 0-45 stone from 30:00 while its crews loaded 2,109 rails; its
+Smelting and Steel works were never built, and Space Program stage 1 stood at 68 %. The AI's rail crafts
+(`ai_supplies`: 1 steel and 1 stone per 2 rails, a line's whole bill ahead of its crews) kept no steel and 20 stone.
+`rails.AI_RAIL_KEEP` now makes them leave 100 steel and 150 stone in the capital, and a kept item is never paid with
+its inputs. The lead's rule: take the softer keep (B, 100 stone) if it gives Age III by 40:00 in at least 3 of 5 and
+at least 10 of 20 nations linked; if neither keep does, take the full one (A), since Age III matters more to the player
+than a link at 35:00; no keep only if A also drops Age III below 3 of 5.
+
+First Age III in minutes / nations with three or more cities linked at 35:00 (4 nations, 2048, 60 min, m3_acceptance):
+
+| seed | HEAD, registration phases | A, registration phases | B, registration phases | B, name phases | **A, name phases (this commit)** |
+|---|---|---|---|---|---|
+| 801 | 40.6 / 2 | 39.6 / 2 | 40.9 / 3 | 38.2 / 1 | **36.3 / 2** |
+| 802 | 41.2 / 3 | 31.3 / 2 | 36.9 / 3 | 34.7 / 2 | **36.7 / 2** |
+| 803 | 43.1 / 2 | 40.2 / 2 | 40.3 / 2 | 41.3 / 2 | **40.1 / 2** |
+| 804 | 36.8 / 2 | 36.9 / 1 | 35.6 / 3 | 41.6 / 2 | **37.7 / 1** |
+| 805 | 36.9 / 2 | 34.2 / 0 | 35.6 / 1 | 41.2 / 2 | **37.0 / 1** |
+| Age III by 40:00 | 2 of 5 | 4 of 5 | 3 of 5 | 2 of 5 | **4 of 5** |
+| linked, of 20 | 11 | 7 | 12 | 9 | **8** |
+
+B passed the rule under registration-order phases and failed it under the name-based ones, so A went in. The same
+steel and stone feed both the rails and Age III; a seed's first Age III moves by a minute or more whenever the
+match is perturbed (a different phase table is such a perturbation), so 5 seeds separate the keeps only roughly.
+
+**Stagger phases from stable keys.** With phases by registration order (e9ba46c), every on_nth_tick handler a test
+probe registered moved the phases of the handlers after it, so a probe changed the match it measured. A handler's
+phase now comes from a hash of a stable key: its module, its period and its place among that module's handlers of
+that period ("production@60#2"). The phases are logged when they are built ("events: stagger phases period 60 (AI
+residues 1): ..."). Seed 801 with m3_acceptance and PERF profiling against none: all 9 period phase logs match except
+for the probe's own handlers (m3_acceptance@60#1, events@3600#1), and the game is line-identical up to minute 55
+(98,116 lines, 0 differing). The A tree logs the same 9 lines as the B tree.
+
+**Checks on the commit's tree** (HEAD 6d9ea76 with the keep and the name-based phases), 0 Lua errors in all:
+
+| check | result |
+|---|---|
+| Skirmish smoke, seed 777 | 65/65, 470 [rts] lines identical to HEAD |
+| rails_autotest, seed 777 | 12/12 |
+| m3_detour | 2/2 (rails stage 8/8) |
+| M2 acceptance, seed 701 | 5/5 (trade, war, peace, capture, starving); the B tree failed starving here (rts-ai-2's captured capital) |
+| M2 acceptance, seed 703 | 5/5 |
+| perf scene, seed 701, 5 min (`tools/perf-bench.sh scene`) | 22 script ticks over 3 ms (the 5 worst are the autotest's own nth60 handler), script p99 1.76 ms, 0 whole ticks over 16.67 ms, market.ai_step in none (B tree: 24, 1.80 ms, 0, none) |
+
+**Open: rts-ai-1's Age II under the name-based phases.** The autotest's Age II deadline (about 20:00) failed for
+rts-ai-1 in 1 of 5 seeds on HEAD and in 4 of 5 (B) and 3 of 5 (A) with the name-based phases (industrialisation at
+1,100-1,400 s instead of about 800 s). rts-ai-1 is the one aggressive-doctrine nation and finishes Age II at 15-25 min
+in every tree, closest to the deadline; the other three nations kept their times. The runs with the two phase tables
+already differ by minute 8 (different entity ids, then rts-ai-1 picks other research), so the cause could not be
+traced to one handler. It reads as the aggressive doctrine's thin margin rather than a phase that harms rts-ai-1, but
+5 seeds cannot tell. Seed 801's rts-player (the autotest
+governor) misses Age II in every tree, HEAD included.
+
+## 9. Measurement tools (`tools/probes/r2e_*`; the commands are in each file's header)
 
 - `r2e_strand.py`: no-fuel waits per hauler and hub from a server log (state, arrival, route, home and mode lines),
   interpolated to game minutes from the AI minute lines; "remote" as defined at the top.
