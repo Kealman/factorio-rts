@@ -57,6 +57,8 @@ function difficulty.of_level(level)
     goods_per_works = d.goods_per_works,
     goods_works_cap = d.goods_works_cap,
     cs_plan = d.cs_plan == true,
+    cs_max = d.cs_max or 1, -- (0.1.1, issue #3) city-states the council pushes for (ai/council.lua)
+    house_margin = d.house_margin, -- (0.1.1, issue #3) residents of housing planned beyond the jobs (ai/governor.lua)
     goods_chain = d.goods_chain == true,
   }
 end
@@ -82,6 +84,7 @@ function difficulty.apply(C)
   cfg.max_in_progress = math.max(cfg.max_in_progress or 0, k.in_flight)
   cfg.goods_per_works, cfg.goods_works_cap = k.goods_per_works, k.goods_works_cap -- ai/governor.lua goods works
   cfg.goods_chain = k.goods_chain or nil -- ai/governor.lua goods_inputs (hard's economic plan)
+  cfg.house_margin = k.house_margin -- (0.1.1, issue #3) ai/governor.lua houses
   if cfg.first_attack then cfg.first_attack = math.floor(cfg.first_attack * k.first_attack + 0.5) end
   -- capture, do not raze: hubs and rail depots (kind "hub") are last among the buildings an attack group goes for
   -- (an AI razed the player's capital depot in M1 seed 501 and its rail line was lost)

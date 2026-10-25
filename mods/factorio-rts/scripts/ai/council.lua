@@ -410,6 +410,16 @@ local function holds_city_state(force_name)
   return false
 end
 
+-- (0.1.1, issue #3) How many former city-states the nation holds.
+local function city_states_held(force_name)
+  local n = 0
+  for _, id in ipairs(sorted_keys(storage.cities or {})) do
+    local c = storage.cities[id]
+    if c.force == force_name and c.archetype == "city_state" then n = n + 1 end
+  end
+  return n
+end
+
 local function offensive_count(K)
   local n = 0
   for _, op in pairs(K.ops) do
@@ -1490,7 +1500,10 @@ function council.step(C, surface)
   -- (army.lua relaxes its reach and margin while C.army.cs_push is fresh). (Phase 5 M3 ai, wave B.2: was "has run no
   -- operation yet": the loser of a city-state race never tried again and stayed at 4 cities, 1v1 seeds 902-910.)
   local m2 = storage.match
-  if not holds_city_state(C.force) and offensive_count(K) == 0 and C.army and age_of(C.force) >= 2
+  -- (0.1.1, issue #3: up to the difficulty's cs_max city-states; hard goes on to a second one: land is the largest part
+  -- of the score, and the side that took more city-states won 9 of 10 uneven matches)
+  if city_states_held(C.force) < (difficulty.knobs(C.force).cs_max or 1) and offensive_count(K) == 0 and C.army
+     and age_of(C.force) >= 2
      and not at_war(C.force)
      and tick - m2.tick_started >= CB.push_after * difficulty.knobs(C.force).cs_from
      and tick - (K.push_at or -1e9) >= 10 * 3600 then
@@ -1499,8 +1512,8 @@ function council.step(C, surface)
     -- every push reaches further (army.lua: the reach and the clear-of-rivals rule relax with cs_push_level; a
     -- 100-unit army pushed four times and found no city-state on its side of the map in seed 802)
     C.army.cs_push_level = (C.army.cs_push_level or 0) + 1
-    util.log("council: %s holds no city-state: pushes a city-state operation (idle army %d, push %d)", C.force,
-      C.army.pool_size or 0, C.army.cs_push_level)
+    util.log("council: %s holds %d city-state(s): pushes a city-state operation (idle army %d, push %d)", C.force,
+      city_states_held(C.force), C.army.pool_size or 0, C.army.cs_push_level)
   end
   holds_step(C, K)
   belts_step(C, K)
@@ -1518,7 +1531,8 @@ function council.cs_plan_step(C, K)
   local a = C.army
   if not a then return end
   local k = difficulty.knobs(C.force)
-  if not k.cs_plan or holds_city_state(C.force) or offensive_count(K) > 0 or at_war(C.force) or age_of(C.force) < 2 then
+  if not k.cs_plan or city_states_held(C.force) >= (k.cs_max or 1) or offensive_count(K) > 0 or at_war(C.force)
+     or age_of(C.force) < 2 then
     a.cs_plan = nil
     return
   end

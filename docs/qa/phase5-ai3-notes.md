@@ -1103,3 +1103,66 @@ passes 5 of 6 like plain HEAD: interceptors patrol at 6 s, a hold forms at 91 s,
 train deploys at 309 s (depot 98 tiles from the town); mercenaries fail on 2.1 as before. A match long enough for Air
 Force, or industrial research paced for 60 minutes, is a balance decision outside the AI. The holds on a 3072 world
 are in section 8.6.
+
+### 8.5 Issue #3: hard beats normal
+
+**Causes** (sections 4.4 and 4.9: hard won 5 of 10 on the trees it shipped with, the side decided more than the
+level). Two things a skilled nation does better had no knob: housing and a second city-state. A capital's residents
+grow only into free housing, and the governor planned houses for the jobs plus 80 residents, so every capital stood at
+500-700 residents once its jobs were filled; land, the largest part of the score, came from one city-state each.
+And hard's own economic plan (section 4.9, the goods chain's fixed works) did not work: the commander's factory pass
+took those fixed factories as workshops and switched their recipes about 1,000 times a match (fixed in stage 1, for
+every level).
+
+**Changes** (stage 5, hard only; the normal AI's code paths are unchanged): `balance.lua` hard `cs_max = 2` (the
+council pushes for a second city-state: `ai/council.lua` counts the city-states held, was "holds one") and
+`house_margin = 160` (housing planned for the jobs plus 160 residents, `ai/governor.lua` via `ai/difficulty.lua`).
+Both are skill (what to build and where to go), not resources: no bonus, no cost change.
+
+**Results** (1v1 at 2048, 60 minutes, `tools/probes/ai3_difficulty.lua` at SPEED 10, both nations economic, every
+seed played twice with the levels swapped; score = population + treasury / 10 + land cells + army supply; the tree
+with every change of stages 1-5):
+
+| Seed | hard side | winner | population hard / normal | land hard / normal | supply hard / normal |
+|---|---|---|---|---|---|
+| 901 | rts-ai-1 | hard +1896 | 1947 / 1120 | 2100 / 1468 | 194 / 94 |
+| 901 | rts-player | hard +1367 | 1836 / 1180 | 1987 / 1721 | 188 / 114 |
+| 902 | rts-ai-1 | hard +1132 | 1836 / 1280 | 1847 / 1721 | 249 / 95 |
+| 902 | rts-player | hard +1020 | 1839 / 1271 | 1987 / 1721 | 121 / 230 |
+| 903 | rts-ai-1 | hard +1311 | 1760 / 1160 | 1987 / 1721 | 192 / 230 |
+| 903 | rts-player | hard +560 | 1749 / 1260 | 1721 / 1734 | 91 / 151 |
+| 904 | rts-ai-1 | hard +935 | 1764 / 1080 | 1974 / 1721 | 249 / 206 |
+| 904 | rts-player | hard +417 | 1751 / 1180 | 1974 / 1734 | 146 / 85 |
+| 905 | rts-ai-1 | hard +869 | 1723 / 1120 | 1721 / 1721 | 76 / 230 |
+| 905 | rts-player | hard +845 | 1800 / 1280 | 1974 / 1721 | 215 / 208 |
+| 906 | rts-ai-1 | hard +1113 | 1752 / 1220 | 1987 / 1721 | 279 / 95 |
+| 906 | rts-player | hard +676 | 1787 / 1340 | 1974 / 1734 | 219 / 209 |
+| 907 | rts-ai-1 | hard +1698 | 1871 / 1140 | 1987 / 1468 | 205 / 99 |
+| 907 | rts-player | hard +914 | 1715 / 1240 | 1834 / 1721 | 162 / 106 |
+| 908 | rts-ai-1 | hard +1135 | 1486 / 1200 | 1721 / 1721 | 160 / 104 |
+| 908 | rts-player | hard +1004 | 1790 / 1120 | 1721 / 1721 | 228 / 107 |
+| 909 | rts-ai-1 | hard +1231 | 1788 / 1220 | 1987 / 1721 | 228 / 211 |
+| 909 | rts-player | hard +1270 | 1764 / 1180 | 1987 / 1721 | 174 / 95 |
+| 910 | rts-ai-1 | hard +737 | 1724 / 1200 | 1721 / 1734 | 82 / 150 |
+| 910 | rts-player | hard +1126 | 1806 / 1140 | 1987 / 1721 | 135 / 69 |
+| **hard wins** | | **20 of 20** | | | |
+
+**Met** (target 14 of 20; on the trees of sections 4.4 and 4.9 hard won 5 of 10). Population decided every match:
+hard's nations ended at 1,486-1,947 residents, normal's at 1,080-1,340 (the housing margin); hard held more land in 15
+of 20 (the second city-state), as much in 3 and less in 2, and won those by its population. The goods chain works now
+that the commander leaves fixed factories alone (stage 1), which only hard uses. Normal AIs keep the margin of 80 and
+one city-state, so the 4-nation runs of normal AIs are unaffected by this stage.
+
+### 8.6 Other runs on the tree with every change (d1f9dc3 + stages 1-5)
+
+| Run | Result |
+|---|---|
+| M1 seed 501 (`m1_acceptance.lua`, SPEED 6), issue #7's AI part | 52/53. First lines open at 26:32 (player, the economic AI) and 25:39 (rts-ai-1); the player ran freight on its line (10,050 items in 45 trips), rts-ai-1 8,888 in 39. `train_items` 18,938 against the goal of 20,000 (r2-econ's tree without the AI changes: 24,225 and 20,342). rts-ai-1's train stopped at 51:00 (its engine focus paused the rail programs, whose step tops up the town depot's coal); the player's third line waited for coal from 42:00 to the end. Section 8.7 follows up. |
+| 3072 x 4, seed 30725 (`m3_acceptance.lua`, SPEED 8) | 79/82; first Age III 38:32 (rts-ai-2), three cities linked by 35:00 1 of 4, rts-ai-1's first line 30:53, 6 wars, air patrols 31; interceptors, bombers, artillery and holds 0 (Air Force researched by no nation; Military railways by rts-ai-2 at 43:40, after its one capture at 33:06) |
+| `tools/probes/ai3_debt.lua` at minute 45 (seed 801, SPEED 10) | rts-ai-3 in stage 2 at 46:08 with 109 supply (43 units): 23 units retired in two council passes, down to 40 supply; `debt_stage2`, `debt_retire`, `debt_cap` PASS |
+| `tools/probes/ai3_war_paths.lua`, seed 811 | 5/6 as on HEAD (section 8.4) |
+
+`m3_acceptance.lua`'s seed criterion "debt: at least one nation in a debt stage in 2 of 5 seeds" failed before (1 of 5:
+805 rts-ai-3 in stage 3) and fails now (0 of 5): issue #5 keeps the AIs out of debt (the deficit guard), so the debt
+path is exercised by `ai3_debt.lua` instead. Its "lines" criterion (no first line at or after 25:00) fails in every
+seed before and after.

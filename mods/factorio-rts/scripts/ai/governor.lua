@@ -759,7 +759,9 @@ local function houses(C, G, surface, c, P, labor, population, age)
   local short
   if labor and age >= AI.start_after * 60 then
     local st = labor.city_stats(c.id) or {}
-    short = (st.jobs or 0) / PB.workforce + AI.job_margin - housing
+    -- (0.1.1, issue #3: a skilled governor plans more room ahead, C.cfg.house_margin from the difficulty: residents
+    -- grow only into free housing, and population is a third of the score)
+    short = (st.jobs or 0) / PB.workforce + (C.cfg and C.cfg.house_margin or AI.job_margin) - housing
   else
     short = AI.free_housing - free
   end

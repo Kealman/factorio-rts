@@ -1339,7 +1339,7 @@ do
     hard = {intel_age = 10 * 60, ops = 4, sites = 32, astar = 60000, build_period = 120, in_flight = 4, micro = "full",
             opm = 12, budget_factor = 1.5, expand = 0.8, cities = 4, council = 60, first_attack = 0.8,
             cs_from = 0.75, cs_ratio = 1.6, goods_per_works = 10, goods_works_cap = 5, cs_plan = true,
-            goods_chain = true},
+            goods_chain = true, cs_max = 2, house_margin = 160},
   }
   -- Intelligence (ai/intel.lua): every difficulty intel_age ticks per nation, what any own entity sees within `sight` tiles (an own
   -- scout plane within `plane_sight`): rival and city-state cities, divisions, depots, planes and unit clusters (cells of
