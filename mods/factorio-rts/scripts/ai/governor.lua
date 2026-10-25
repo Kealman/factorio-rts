@@ -534,13 +534,15 @@ local function supply_fuel(C, G, capital)
       G.stranded[id] = nil
     end
   end
+  -- (0.1.1, issue #2: and while a rail line's crew waits for coal at the capital, ai/planner.lua planner.fuel_wait)
+  if not waiting and deps.planner and deps.planner.fuel_wait and deps.planner.fuel_wait(C) then waiting = true end
   if waiting then G.fuel_wait = G.fuel_wait or game.tick else G.fuel_wait = nil end
   local buy = G.fuel_wait ~= nil and game.tick - G.fuel_wait >= after
   if buy ~= (G.fuel_buy == true) then
     G.fuel_buy = buy or nil
     set_target(capital.id, COAL, buy and (AI.fuel_buy or 200) or nil)
-    util.log("ai %s: governor: %s", C.force, buy and "a supply hauler waits for fuel: the capital imports coal"
-      or "the supply haulers have fuel again")
+    util.log("ai %s: governor: %s", C.force, buy and "a supply hauler or a rail crew waits for fuel: the capital "
+      .. "imports coal" or "the supply haulers and rail crews have fuel again")
   end
 end
 

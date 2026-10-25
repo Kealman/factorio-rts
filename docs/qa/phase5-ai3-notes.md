@@ -992,3 +992,54 @@ town captured, a depot destroyed). One miss is this stage's: in 805 the player s
 engine focus paused its rail programs, and its first line's crew waited 28 minutes for its kits (opened 50:00). Stage 2
 (issue #2) has the works factory make the kits: in the same seed with every change the line opened at 26:00 and the
 player linked three cities at 29:00.
+
+### 8.2 Issue #2: three cities linked by 35:00, the aggressive AI's first line before 32:00
+
+**Causes.** Per line, the rail module logs why a line waits for its construction train. In the baseline a line's
+crew waited for its kits ("no-kits": two locomotive kits and a construction wagon kit, 110 iron, 30 steel, 20
+circuits) for 8-25 minutes (801 rts-ai-1 17, 805 rts-ai-1 25), and the line opened 1-3 minutes after the crew left.
+`rails.lua` pays depots and kits through an escrow that only takes iron above 100 plates (AI_RESERVE +
+AI_ESCROW_FLOOR); the capitals held 0-60 iron in early Age II, while a district (80 iron, 15 circuits) was queued every
+minute. The aggressive AI's capital smelts about 190 iron a minute (the economic AIs 260-350) and paid its town line's
+and its first trunk edge's crews in turns, so both opened late. In the 0.1.1 runs a third wait appeared: "no-fuel"
+(the crew's coal; two lines never opened in one seed).
+
+**Changes** (stage 2): `ai/planner.lua` **rail items**: a depot or a crew kit already in the capital's network is
+used as it is (rails.lua `ai_depot` / `ai_kits`), so while a line anchored at the capital waits for one, the works
+factory makes it, but only when one craft's ingredients are in stock (held on a depot it could not make, its goods
+stopped and the capital's growth with them); **no new district** while such a line waits for its crew's kits (at most 3
+of every 5 minutes, `ai/age_up.lua`); a trunk edge without a crew waits while the capital-town line waits for its
+crew's kits (the crews in turn, not in parallel); **coal imported** while a crew waits for fuel (`ai/governor.lua`'s
+coal target for supply haulers).
+
+**Results** (stage 2 was not measured alone: "all" is batch `r2ai-c8` with every change, "stage 1" is `r2ai-a8`).
+Three cities linked by rail by 35:00 (player, rts-ai-1, rts-ai-2, rts-ai-3) and the aggressive rts-ai-1's first open
+line:
+
+| Seed | linked, before | linked, stage 1 | linked, all | rts-ai-1's first line: before / stage 1 / all |
+|---|---|---|---|---|
+| 801 | 3/4 (32, 43, 29, 33) | 2/4 (-, 43, 24, 31) | 2/4 (42, -, 25, 35) | 38:57 / 39:07 / never |
+| 802 | 3/4 (32, 37, 32, 34) | 3/4 (34, 44, 29, 34) | 2/4 (40, -, 32, 34) | 35:46 / 30:20 / 30:50 |
+| 803 | 3/4 (32, -, 27, 26) | 2/4 (-, -, 27, 31) | 3/4 (35, 49, 27, 27) | never / 54:01 / 39:35 |
+| 804 | 2/4 (32, 39, 27, -) | 2/4 (30, 53, 33, 39) | 1/4 (48, 37, 23, 51) | 30:13 / 26:34 / 22:49 |
+| 805 | 1/4 (27, -, 37, 42) | 1/4 (54, 41, 30, -) | 2/4 (29, 39, 30, 59) | 51:02 / 29:01 / 27:51 |
+| **total** | **12/20** | **10/20** | **10/20** | **before 32:00: 1/5 / 3/5 / 3/5** |
+
+**Not met** (targets 16/20 and 4/5). The ten misses of the "all" batch:
+- **Lines lost in wars** (4): 801 player (rts-ai-1 took the town at 24:00, both lines to it lost) and rts-ai-1 itself
+  (beaten back: barracks and solar lost around 26:00, no district and no line to the end); 802 player (its first line's
+  depot destroyed at 32:00); 804 player (first line lost at 43:00; its trunk edge's construction train left at 24:00
+  with 122 of 122 rails and the line never opened, no further rail event to 60:00; the baseline has three such lines
+  in 804 rts-ai-3; reported to r2-econ, who owns `rails.lua`).
+- **Crews waiting for kits or coal** (5): 802 rts-ai-1 (coal, 33-39), 804 rts-ai-3 (kits, then coal, 34-41; its first
+  line was also lost at 41:00), 805 rts-ai-1 (kits, 33-37), 805 rts-ai-3 (Electrification ran from 19:00 to 60:10, the
+  engine focus took the works factory for engines 3 minutes in 5, the crews waited for kits at 18-34 and 34-43 and for coal at 43-53),
+  and 803 rts-ai-1: its capital's 10 smelters made 195 iron, 37 copper and 0-19 steel a minute (one steel chain slot,
+  the copper line's planned hub slots unreachable), so its first line's crew waited for its kits from 23:00 to 38:00
+  with 0-4 steel in the network while the treasury held 2,500-5,000 cr; its port lies 780 tiles away (beyond
+  `port_reach`), so the planner could not buy steel. A thin early economy, not the rail program, sets this AI's lines.
+- 804 rts-ai-1 linked at 37:00.
+
+What the changes did: the crews' "no-kits" waits at the capital end got shorter where the works factory could make the
+kits (805 player: a 28-minute wait in stage 1, 4 minutes with stage 2), and the stage-1 regression of the player's
+linking in 805 is gone (54:00 -> 29:00). The kits wait of a capital without steel (803 rts-ai-1) is not solved.

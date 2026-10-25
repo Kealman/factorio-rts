@@ -903,8 +903,16 @@ local function trunk_step(C, P, own, capital)
       -- (and while rails.lua's own line waits for its depots, their plates come first: an edge crafting depots from the
       -- same capital network kept the aggressive AI's town line at one depot for 53 minutes, M1 seed 501)
       if main and main.state == "depots" and not (E and E.A.depot_a and E.A.depot_b) then hold = true end
+      -- (0.1.1, issue #2) and while that line waits for its crew's kits, an edge without a crew of its own waits too:
+      -- both crews' kits (220 iron) were paid in turns and both lines opened late (804 rts-ai-1: 34 and 34)
+      local mline = main and main.line and storage.rails and storage.rails.lines[main.line]
+      if mline and main.state == "building" and not mline.builder and mline.wait == "no-kits" and E then
+        local el = E.A.line and storage.rails.lines[E.A.line]
+        if not (el and el.builder) then hold = true end
+      end
       -- (0.1.1, issue #1: and while the research waits for engines, planner.engine_focus)
       if planner.engine_focus(C) then hold = true end
+      if E then E.held = hold or nil end -- (0.1.1: rail_wants skips a held edge)
       if E and not hold then
         rails.ai_program(C.force, E.A)
         if E.A.depot_a and E.A.depot_b then edge_policies(C, P, E) end
@@ -1581,6 +1589,97 @@ function planner.engine_focus(C)
   return on
 end
 
+-- Rail items (0.1.1, issue #2): the rail programs pay depots and construction kits from the capital through an
+-- escrow that only takes iron above 100 plates (rails.AI_RESERVE + AI_ESCROW_FLOOR). Lines waited 8-25 minutes for
+-- their crew's kits ("no-kits": two locomotive kits and a construction wagon kit, 110 iron) while the capital held
+-- 0-60 iron, and opened 1-3 minutes after the crew left (801-805 on 2.1: the aggressive AI's first line at 38, 51 and
+-- never). A depot or kit already in the capital's network is used as it is, so while a line anchored at the capital
+-- waits for one, the works factory makes it.
+local RAIL_DEPOT, LOCO_KIT, CWAGON_KIT = "rts-depot", "rts-locomotive-kit", "rts-construction-wagon-kit"
+
+local function net_of(un)
+  local rec = un and buildings.get(un)
+  local net = rec and rec.entity.valid and rec.entity.logistic_network
+  return (net and net.valid) and net or nil
+end
+
+-- What the capital-paid rail programs wait for now: depots (count), a crew's kits (true) and its coal (true).
+local function rail_wants(C, P, capital)
+  local R = storage.rails
+  if not R then return 0, false, false end
+  local capnet = net_of(capital.center)
+  local list = {}
+  local main = R.ai and R.ai[C.force]
+  if main then list[#list + 1] = main end
+  for _, A in ipairs(R.ai_more and R.ai_more[C.force] or {}) do list[#list + 1] = A end
+  for _, id in ipairs((function()
+    local ids = {}
+    for k in pairs(P.trunk) do ids[#ids + 1] = k end
+    table.sort(ids)
+    return ids
+  end)()) do
+    local E = P.trunk[id]
+    if E.A and not E.held then list[#list + 1] = E.A end
+  end
+  local depots, kits, fuel = 0, false, false
+  for _, A in ipairs(list) do
+    local paid_here = (A.pay or A.anchor) == capital.center
+    if A.state == "depots" and paid_here then
+      depots = depots + (A.depot_a and 0 or 1) + (A.depot_b and 0 or 1)
+    elseif (A.state == "building" or A.state == "cut") and A.line then
+      local line = R.lines[A.line]
+      local dnet = A.depot_a and deps.logistics and deps.logistics.hub_network(A.depot_a)
+      if line and not line.builder and dnet and capnet and dnet.network_id == capnet.network_id then
+        if line.wait == "no-kits" then kits = true end
+        if line.wait == "no-fuel" then fuel = true end
+      end
+    end
+  end
+  return depots, kits, fuel
+end
+
+-- The rail items wanted now: {{recipe, why}, ...}.
+local function rail_items(C, P, capital)
+  local out = {}
+  local depots, kits, fuel = rail_wants(C, P, capital)
+  P.kits_wait = kits and (construction.have(C, LOCO_KIT) < 2 or construction.have(C, CWAGON_KIT) < 1) or nil
+  P.fuel_wait = fuel or nil -- (ai/governor.lua imports coal then, planner.fuel_wait)
+  if depots > 0 and construction.have(C, RAIL_DEPOT) < depots then
+    out[#out + 1] = {RAIL_DEPOT, "a rail line's depot"}
+  end
+  if kits and construction.have(C, LOCO_KIT) < 2 then out[#out + 1] = {LOCO_KIT, "a rail line's crew"} end
+  if kits and construction.have(C, CWAGON_KIT) < 1 then out[#out + 1] = {CWAGON_KIT, "a rail line's crew"} end
+  return out
+end
+
+--- (0.1.1, issue #2) True while a rail line anchored at the capital waits for its crew's coal ("no-fuel": two lines
+--- never opened in seed 801 on 2.1, the capital's coal went to the haulers): ai/governor.lua imports coal as for a
+--- supply hauler waiting for fuel.
+function planner.fuel_wait(C)
+  local P = P_of(C.force, false)
+  return P ~= nil and P.fuel_wait == true
+end
+
+--- (0.1.1, issue #2) True while a rail line anchored at the capital waits for its crew's kits: ai/age_up.lua queues
+--- no new district meanwhile (a district takes 80 iron and 15 circuits, the kits 110 iron, 30 steel and 20 circuits;
+--- one district a minute in early Age II kept crews waiting 7-20 minutes), at most rail_hold.max ticks at a stretch,
+--- then rail_hold.rest ticks without.
+function planner.rail_hold(C)
+  local P = P_of(C.force, false)
+  if not (P and P.kits_wait) then
+    if P then P.hold_since = nil end
+    return false
+  end
+  local H = PB.rail_hold or {max = 3 * 3600, rest = 2 * 3600}
+  P.hold_since = P.hold_since or game.tick
+  local t = game.tick - P.hold_since
+  if t > H.max + H.rest then
+    P.hold_since = game.tick
+    return true
+  end
+  return t <= H.max
+end
+
 -- One craft's ingredients of a recipe are in the nation's networks.
 local function craftable(C, recipe)
   local r = prototypes.recipe[recipe]
@@ -1595,6 +1694,7 @@ end
 local function works_wants(C, P, capital)
   local out = {}
   if planner.engine_focus(C) then out[#out + 1] = {ENGINE_RECIPE, "the research's engines"} end
+  for _, w in ipairs(rail_items(C, P, capital)) do out[#out + 1] = w end
   return out
 end
 

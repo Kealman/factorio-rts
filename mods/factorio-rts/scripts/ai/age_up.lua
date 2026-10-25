@@ -348,7 +348,10 @@ function age_up.step(C, surface)
     for i, n in ipairs(N.district_todo) do
       if not frec[n] or frec[n].enabled then idx, name = i, n break end
     end
-    if name and game.tick >= (N.district_at or 0) then
+    -- (0.1.1, issue #2) no new district while a rail line anchored at the capital waits for its crew's kits (they take
+    -- the same iron and circuits; ai/planner.lua planner.rail_hold)
+    local rail_hold = deps.planner and deps.planner.rail_hold and deps.planner.rail_hold(C)
+    if name and game.tick >= (N.district_at or 0) and not rail_hold then
       local key, wait = queue_building(C, surface, name)
       if key then
         table.remove(N.district_todo, idx)
