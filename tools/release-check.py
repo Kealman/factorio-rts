@@ -347,13 +347,14 @@ def acc_rows(stage, accs, full):
     ag = seeds(aggr_ok)
     row(stage, "Aggressive AI's first rail line before 32:00", "≥ 4 of 5 seeds", f"{ag} of {ag_seeds} seeds with an aggressive AI",
         ag >= 4 if n >= 5 else f"{ag} of {ag_seeds} (needs 5 seeds)", "#2")
-    def alive(a, f):  # a nation still reporting at the run's last AI minute
-        last = max((m for rows in a["ai3"].values() for m in rows), default=None)
-        return last is not None and last in a["ai3"].get(f, {})
-    living = [(a, f) for a, f in nations if alive(a, f)]
-    cities = sum(1 for a, f in living if ((last_ai3(a, f) or {}).get("cities") or 0) >= 3)
-    row(stage, "Nations alive at the end with ≥ 3 cities", "every nation alive", f"{cities} of {len(living)} living nations ({nn - len(living)} conquered)",
-        bool(living) and cities == len(living), "M3 contract")
+    # the contract's "every nation founds >= 3 cities": the most cities a nation held during the match (a city lost to a
+    # conquest later does not undo the founding)
+    held = lambda a, f: max(((r or {}).get("cities") or 0) for r in a["ai3"].get(f, {}).values()) if a["ai3"].get(f) else 0
+    founded = sum(1 for a, f in nations if held(a, f) >= 3)
+    ends_below = [f"{seed} {f.replace('rts-', '')} ({(last_ai3(a, f) or {}).get('cities')})" for seed, a in present
+                  for f in forces(a) if held(a, f) >= 3 and ((last_ai3(a, f) or {}).get("cities") or 0) < 3]
+    row(stage, "Nations that held ≥ 3 cities (the contract's \"founds ≥ 3 cities\")", "every nation", frac(founded, nn)
+        + (f"; below 3 at the end after conquests: {', '.join(ends_below)}" if ends_below else ""), founded == nn, "M3 contract")
     ops = sum(1 for a, f in nations if ((last_ai3(a, f) or {}).get("ops") or 0) >= 1)
     row(stage, "Nations that ran an operation with phases", "every nation", frac(ops, nn), ops == nn, "M3 contract")
     tot = lambda a, k: sum((last_ai3(a, f) or {}).get(k, 0) or 0 for f in forces(a))

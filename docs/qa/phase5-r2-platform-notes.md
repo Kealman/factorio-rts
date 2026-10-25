@@ -235,3 +235,72 @@ SERVERS=2 tools/release-check.sh                         # while other agents ru
 STAGES="lan heavy" RC_DIR=build/release-check/<date> tools/release-check.sh   # the GUI stages, screen free
 STAGES=report RC_DIR=build/release-check/<date> tools/release-check.sh        # rebuild REPORT.md
 ```
+
+## 5. The 0.1.1 release check of fd75b4d (2026-10-25)
+
+`REV=fd75b4d SERVERS=3 tools/release-check.sh`: the report is `build/release-check/2026-10-25_1029/REPORT.md`, which is
+git-ignored. Factorio 2.1.23. r2-ux's showcase GUI client ran during the headless stages, and the scene ran on an
+otherwise quiet machine.
+
+| Stage | Wall clock |
+|---|---|
+| Smoke | 3 minutes |
+| Baseline matrix of v0.1.0, built once | 24 minutes |
+| The tree's matrix | 24 minutes |
+| The 19 long runs on 3 servers | 71 minutes |
+| Perf scene | 9 minutes |
+
+**Verdict: 40 criteria pass, 4 fail, 8 informational.** Every run had 0 Lua errors and 60 UPS in every speed-1 minute.
+
+**Pass:**
+- Smoke 65/65.
+- Skirmish line-identical to v0.1.0 in all 10 scenarios (470-4,858 lines each). The baseline's 10 summaries equal the
+  surviving `m3i-p21` summaries one for one.
+- M1: the two runs are identical (67,292 lines, 0 differing).
+- M3 801-805:
+  - trade, war, peace and capture 5/5; starving in 1 seed (801);
+  - **Age III by 40:00 in 4 of 5 (#1 met)**;
+  - every nation held 3 or more cities: 20/20 (805's rts-ai-2 ends with 2 after a conquest);
+  - operations 20/20, belts 5/5, air patrols 5/5, nobody at the credit line.
+- M2 701-705: 5/5, starving 0.
+- 3072 x 4: air 26.
+- Debt path 3/3 and war paths 6/6.
+- Save/load at minutes 20 and 40: 0 errors, the same minute-61 line.
+- Determinism: 210 and 211 event lines, 0 differing.
+- Perf scene, alone on the machine:
+  - mean 1.374 ms, p99 3.03, UPS capacity 728, 60.0 s per realtime minute;
+  - #8: market.ai_step in 0 ticks, 20 script ticks over 3 ms, script p99 1.77 ms, 0 whole ticks over 16.67 ms.
+
+**Fail:**
+1. **M1 51/53.** Two checks fail:
+   - `age2_rts-ai-1`: 21:54, deadline 20:30.
+   - `train_items`: 10,047 against ≥ 20,000 (#7); the 2.1 reference had 13,506.
+2. **Three cities linked by rail by 35:00: 8 of 20** against ≥ 16 (#2); the 2.1 reference had 12 of 20. Per seed: 2, 2,
+   2, 1, 1. Every nation logged its minute-35 line, so the count is real.
+3. **The aggressive AI's first line before 32:00: 1 of 5 seeds** (#2). 804 opened at 28:03. The other four opened at
+   42:11, 46:22 and 37:17, and 805 opened none.
+
+**Informational:**
+- Interceptors or bombers 0/5 and artillery 0/5 (#4 partial).
+- Debt stage 2 in 0/5.
+- 3072 holds 0 and artillery 0.
+- Hard against normal 20/20 (e29d9b8).
+
+**Found and fixed during the run.**
+- **The scene fixture had stopped working after the stagger (e9ba46c).**
+  - `tools/probes/perf_scene.lua` stored its build tick from `game.tick`, the real tick, but measured age from `e.tick`,
+    the nominal tick its staggered handler now receives. Age was never on the 60-tick grid, so the divisions never
+    marched, the units never recycled and no minute line was logged: 14 of 602 units moving at the save, against 427
+    in the reference.
+  - Its numbers (1.302 ms, 25 slow ticks) measured an idle scene and were discarded. They are kept in
+    `scene-invalid/` of the run.
+  - The fixture now uses `game.tick` on both sides. The rerun moved 425 units, as the reference did.
+  - The acceptance probes are not affected: they take their base tick from the autotest's start, which is on the grid,
+    and their minute lines fired. `ai3_debt.lua` uses `game.tick` throughout. Other probes that store `game.tick`
+    inside a staggered handler and later test `e.tick` against it would break the same way.
+- **The scene wait counted other agents' shells.** It used `pgrep -f MacOS/factorio`, which also matches any command
+  line that mentions the path, so it waited on a quiet machine. It now uses `pgrep -x factorio`.
+- **The cities row was stricter than the contract.** It checked "≥ 3 cities at the end". It now follows the contract's
+  "founds ≥ 3 cities": the most cities a nation held during the match. The report lists nations that end below 3
+  after a conquest.
+- **A report-only rebuild overwrote the run's settings.** It no longer touches the server count or the finish time.

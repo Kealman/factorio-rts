@@ -101,8 +101,10 @@ fi
 TREE_HASH="$(sed -n 's/^REV_HASH=//p' "$RC_DIR/info.env")" # a resumed check keeps the tree it started with
 [ "$TREE_HASH" != "$REV_HASH" ] && echo "note: resuming the tree of $TREE_HASH; $REV now points at $REV_HASH"
 REV_HASH="$TREE_HASH"
-echo "SERVERS=$SERVERS" > "$RC_DIR/info-run.env"; echo "STAGES=$STAGES" >> "$RC_DIR/info-run.env"
-echo "GUI_CLASSES=$GUI_CLASSES" >> "$RC_DIR/info-run.env"
+if [ "$STAGES" != "report" ]; then # a report-only rebuild keeps the run's settings and finish time
+  echo "SERVERS=$SERVERS" > "$RC_DIR/info-run.env"; echo "STAGES=$STAGES" >> "$RC_DIR/info-run.env"
+  echo "GUI_CLASSES=$GUI_CLASSES" >> "$RC_DIR/info-run.env"
+fi
 log "release check $(basename "$RC_DIR"): $REV = $REV_HASH, stages: $STAGES, servers $SERVERS${QUICK:+, QUICK dry run}"
 
 # --- smoke (a gate)
@@ -210,7 +212,7 @@ if has lan || has heavy; then
     echo $? > "$RC_DIR/lan.rc"; fi
 fi
 
-echo "FINISHED=$(date '+%Y-%m-%d %H:%M')" >> "$RC_DIR/info-run.env"
+[ "$STAGES" != "report" ] && echo "FINISHED=$(date '+%Y-%m-%d %H:%M')" >> "$RC_DIR/info-run.env"
 python3 -I tools/release-check.py "$RC_DIR" > "$RC_DIR/REPORT.md" || { log "report failed"; exit 1; }
 log "report: $RC_DIR/REPORT.md"
 grep -E "^\*\*(PASS|FAIL|NOT JUDGED)\*\*" "$RC_DIR/REPORT.md" || true
