@@ -292,7 +292,43 @@ what stands around its ends. On HEAD (eca692c), seed 803, it showed:
 10 of 15 and 10 of 19 cities at 35:00. The probe holds the crew still because rolling stock placed on its track does not
 work as a block: the moving crew couples to it and drives on.
 
-## 7. Measurement tools (`tools/probes/r2e_*`; the commands are in each file's header)
+## 7. A lost AI depot is rebuilt on its old site (Refs #7 #2)
+
+On r2-ai's 6bd9fe3 and on 70ea109, M1 501 fell to 9,435 items by train: the war destroyed the player's capital-side
+depot #2357 at 29:59, and line #2 stayed lost to the end with all 125 pieces laid. The program never rebuilt the depot
+on its site: `rails.platform_fits` refused the old site because its own platform rails still stood there. A new depot
+went to the first free site of a ring search, and the intact line was given up for new ones (surveyed at 51:00). The
+depot kit also waited for an iron peak: the escrow leaves 100 iron (reserve and floor) for the barracks, and the
+capital held 2-51 iron from 30:00 to 50:00.
+
+**The change** (`scripts/rails.lua`, any AI rail program, the planner's trunk edges included):
+- A depot of a lost line whose pieces still stand is rebuilt on the lost depot's exact site. `setup_depot` takes the
+  old platform layout and the platform rails still standing there.
+- The kit is paid even while enemies are near, and its escrow takes whatever the network holds (no reserve, no
+  floor): a one-off 40 iron, 10 steel and 10 copper that reopens a laid line.
+- The depot is placed once no enemy unit, vehicle or turret is within `RESITE_CLEAR` (40) tiles. The log names the
+  nearest one ("waits to rebuild ... rts-raider of rts-ai-1 12 tiles away").
+- The program then binds the line to the new depot ("binds line #N to its new depot") and routes the line's freight
+  trains to it. Before, a freight train kept its route to the dead stop.
+
+**Checks** (70ea109 with the change):
+
+| | 70ea109 | with the change |
+|---|---|---|
+| M1 501: depot #2357 lost at 29:59 | line #2 lost to the end | rebuilt on its site at about 31:30, line #2 open again, freight train re-routed |
+| M1 501: train_items (rts-player / rts-ai-1) | 9,435 (1,759 in 1 trip / 7,676) | 17,103 (10,235 in 45 trips / 6,868) |
+| M1 501: autotest | 52/53 (train_items) | 52/53 (train_items) |
+| `tools/probes/r2e_depot_loss.lua` (the line's capital depot killed 2 minutes after it opens) | | 3/3: lost, rebuilt on the old site and bound 36 s later, the freight train's next trip 165 s after the rebind |
+| detour fixture | | 2/2, its rails autotest stage 8/8 |
+| rails autotest (seed 777) | 12/12 | 12/12 |
+| M2 701 / 703 | | all five checks PASS, no starving, 0 Lua errors; in 703 rts-ai-2 rebuilt three depots (lines #4, #10, #12) |
+| Skirmish smoke (seed 777) | 65/65 | 65/65, 470 lines identical |
+
+M1 501 stays under 20,000 on these trees: rts-ai-1's freight moved with the war (6,868-7,676 against 13,193 on
+e9ba46c + #7). The player's freight came back. A rails autotest drawn from the clock seed once failed its hauler stage
+("waiting (nothing)" at the 20 s check) on both HEAD and this tree; with seed 777 both pass 12/12.
+
+## 8. Measurement tools (`tools/probes/r2e_*`; the commands are in each file's header)
 
 - `r2e_strand.py`: no-fuel waits per hauler and hub from a server log (state, arrival, route, home and mode lines),
   interpolated to game minutes from the AI minute lines; "remote" as defined at the top.
@@ -303,3 +339,4 @@ work as a block: the moving crew couples to it and drives on.
 - `r2e_crew_diag.lua` (EXTRA_LUA, Nation): a construction train that has not moved for a minute, with everything that
   could hold it (section 6).
 - `r2e_crew_block.lua` (EXTRA_LUA, M1 501): the stuck-crew rule's check (section 6).
+- `r2e_depot_loss.lua` (EXTRA_LUA, M1 501): the lost-depot recovery's check (section 7).

@@ -704,8 +704,18 @@ local function setup_depot(un, rec)
   if d.platform then return d end
   local surface = e.surface
   local spec
+  -- Economy 0.1.1 (#7, #2): a depot rebuilt on a lost depot's site (rails.ai_program, ai_depot) takes the old platform
+  -- layout and the old platform rails that still stand there (spec_fits refuses rails on rails)
+  local reuse = R.reuse_site
+  R.reuse_site = nil
+  if reuse and reuse.force == rec.force and math.abs(reuse.x - e.position.x) < 0.5
+     and math.abs(reuse.y - e.position.y) < 0.5 then
+    for _, s in ipairs(platform_specs(e.position)) do
+      if s.axis == reuse.spec.axis and s.side == reuse.spec.side and s.track == reuse.spec.track then spec = s end
+    end
+  end
   -- (a layout clear of other lines' unlaid pieces first; then any that fits, as before)
-  for _, strict in ipairs({true, false}) do
+  for _, strict in ipairs(spec and {} or {true, false}) do
     for _, s in ipairs(platform_specs(e.position)) do
       if spec_fits(surface, rec.force, s, strict) then
         spec = s
@@ -724,8 +734,11 @@ local function setup_depot(un, rec)
   d.platform = platform
   local idx = index_of(surface.index)
   for _, r in ipairs(spec.rails) do
-    local rail = surface.create_entity({name = "straight-rail", position = {r.x, r.y}, direction = rail_dir(spec),
-                                        force = rec.force})
+    local rail = reuse and surface.find_entity("straight-rail", {r.x, r.y})
+    if not (rail and rail.valid and rail.direction == rail_dir(spec)) then
+      rail = surface.create_entity({name = "straight-rail", position = {r.x, r.y}, direction = rail_dir(spec),
+                                    force = rec.force})
+    end
     platform.rails[#platform.rails + 1] = rail
     if rail then idx[pkey("straight-rail", rail.position.x, rail.position.y, rail.direction)] = -un end
   end
@@ -3315,7 +3328,7 @@ end
 -- Phase 5 M3 integration: with `escrow` (a table kept by the caller) the craft is paid over several calls: what the
 -- network can spare of each ingredient goes into the escrow until the bill is complete (40 iron, 10 steel and 10 copper
 -- at one check starved the aggressive AI's depot kit while its capital held no copper for 7 minutes).
-local function ai_pay(pay, put, recipe_name, n, escrow)
+local function ai_pay(pay, put, recipe_name, n, escrow, no_floor)
   local proto = prototypes.recipe[recipe_name]
   if not (proto and pay and pay.valid and put and put.valid) then return false end
   local taken = {}
@@ -3334,7 +3347,10 @@ local function ai_pay(pay, put, recipe_name, n, escrow)
         if held then held[ing.name] = (held[ing.name] or 0) + need end
       elseif held then
         -- what the network spares of it now (no sub-recipes), the rest at a later call
-        local reserve = (rails.AI_RESERVE[ing.name] or 0) + (rails.AI_ESCROW_FLOOR[ing.name] or 0)
+        -- (no_floor, Economy 0.1.1: a lost line's depot takes what the network holds, reserve and floor included: the
+        -- player's capital held 2-51 iron from 30:00 to 50:00 in M1 501, and with the 40-iron reserve kept the kit had
+        -- 20 of its 40 iron after 20 minutes)
+        local reserve = no_floor and 0 or ((rails.AI_RESERVE[ing.name] or 0) + (rails.AI_ESCROW_FLOOR[ing.name] or 0))
         local have = pay.get_item_count(ing.name) - (taken[ing.name] or 0) - reserve
         local use = math.min(math.max(0, have), need)
         if use > 0 then
@@ -3387,27 +3403,74 @@ local function find_depot_site(surface, force_name, center, reach, prefer)
 end
 
 -- A depot next to `anchor_un`, paid from the capital's network (A.anchor): a new city's network is nearly empty.
+-- Economy 0.1.1 (#7, #2): a depot of an AI line destroyed in a war is rebuilt on its old site (the line's pieces and the
+-- platform rails still stand) once no enemy unit, vehicle or turret is within RESITE_CLEAR tiles of it; the program
+-- then binds the line to it again (rails.ai_program). Before, a new depot went to the first free site of a ring
+-- search (the old one never fitted: its own platform rails stood there), the intact line was given up and a new one
+-- surveyed: M1 501 on 6bd9fe3, the player's 125-piece line #2 lost its capital depot at 28:00 and stayed lost, new
+-- lines were surveyed at 51:00, and train_items fell to 9,435.
+rails.RESITE_CLEAR = 40
+local ENEMY_TYPES = {"unit", "spider-unit", "spider-vehicle", "car", "character", "ammo-turret", "electric-turret",
+                     "fluid-turret", "artillery-turret", "turret"}
+-- The nearest enemy unit, vehicle or turret within r tiles of pos, or nil.
+local function enemies_near(surface, force_name, pos, r)
+  local force = game.forces[force_name]
+  if not force then return nil end
+  local best, bd
+  for _, e in ipairs(surface.find_entities_filtered({position = pos, radius = r, type = ENEMY_TYPES})) do
+    if e.valid and e.force ~= force and force.is_enemy(e.force) then
+      local d = util.distance(e.position, pos)
+      if not bd or d < bd then best, bd = e, d end
+    end
+  end
+  return best, bd
+end
+
 local function ai_depot(force_name, anchor_un, field, A)
   local un = A[field]
   if un and rails.depot(un) then return un end
   local anchor = buildings.get(anchor_un)
   local net = anchor_net(A.pay or A.anchor)
   if not (anchor and net) then return nil end
+  local line = A.line and rstate().lines[A.line]
+  local ld = line and line.state == "lost" and line.lost_depot
+  local site = ld and un and ld.un == un and ld.x and ld.y and ld.spec and {x = ld.x, y = ld.y} or nil
   if net.get_item_count(rails.DEPOT) == 0 then
     if game.tick < (A.next_craft or 0) then return nil end
     A.escrow = A.escrow or {}
-    if not ai_pay(net, net, "rts-depot", 1, A.escrow) then
+    -- (a lost line's depot reopens the whole line: its kit takes the network's spare goods first, ahead of the barracks'
+    -- floor and reserve; the player's capital held 3-45 iron from 30:00 to 50:00 in M1 501 and the kit waited 21
+    -- minutes for a peak)
+    if not ai_pay(net, net, "rts-depot", 1, A.escrow, site ~= nil) then
       A.next_craft = game.tick + rails.AI_CRAFT_TICKS
       return nil
     end
     A.next_craft = game.tick + rails.AI_CRAFT_TICKS
   end
+  -- (the kit is paid while the site waits for the enemies to leave)
+  local foe, fd = nil, nil
+  if site then foe, fd = enemies_near(anchor.entity.surface, force_name, site, rails.RESITE_CLEAR) end
+  if foe then
+    if A.why ~= "enemies" or game.tick >= (A.why_log or 0) then
+      A.why_log = game.tick + 5 * 3600
+      util.log("rails: AI %s waits to rebuild depot #%d of line #%d at %s: %s %s of %s %.0f tiles away", force_name, un,
+        line.id, util.pos_str(site), foe.type, foe.name, foe.force.name, fd)
+    end
+    A.why = "enemies"
+    return nil
+  end
   local surface = anchor.entity.surface
   local radius = anchor.entity.prototype.logistic_radius or 0
   local depot_radius = prototypes.entity[rails.DEPOT].logistic_radius or 14
   local reach = radius > 0 and math.floor(radius + depot_radius - 2) or nil
-  local pos = find_depot_site(surface, force_name, anchor.entity.position, reach,
-    field == "depot_b" and A.far_site or nil)
+  local pos
+  if site and surface.can_place_entity({name = rails.DEPOT, position = site, force = force_name,
+                                        build_check_type = MANUAL_GHOST, forced = true}) then
+    pos = site
+  else
+    pos = find_depot_site(surface, force_name, anchor.entity.position, reach,
+      field == "depot_b" and A.far_site or nil)
+  end
   if not pos then
     if A.why ~= "no-site" then util.log("rails: AI %s finds no depot site near #%d", force_name, anchor_un) end
     A.why = "no-site"
@@ -3421,7 +3484,14 @@ local function ai_depot(force_name, anchor_un, field, A)
   clear_area(surface, {{pos.x - 3, pos.y - 3}, {pos.x + 3, pos.y + 3}})
   net.remove_item({name = rails.DEPOT, count = 1})
   -- the new roboport may merge networks: the old LuaLogisticNetwork object is invalid afterwards
+  -- (on the lost depot's site setup_depot takes the old platform: R.reuse_site, read while the depot registers)
+  if pos == site then rstate().reuse_site = {x = site.x, y = site.y, spec = ld.spec, force = force_name} end
   local e = surface.create_entity({name = rails.DEPOT, position = pos, force = force_name, raise_built = true})
+  rstate().reuse_site = nil
+  if e and pos == site then
+    util.log("rails: AI %s rebuilds depot #%d of line #%d on its old site %s as #%d", force_name, un, line.id,
+      util.pos_str(site), e.unit_number)
+  end
   if not e then
     local back = anchor_net(A.pay or A.anchor)
     if back then back.insert({name = rails.DEPOT, count = 1}) end
@@ -3505,6 +3575,17 @@ function rails.ai_program(force_name, A)
       rails.depot(da).line, rails.depot(db).line = line.id, line.id
       line.state, line.lost_depot, line.wait = line.opened and "cut" or "building", nil, nil
       util.log("rails: AI %s binds line #%d to its new depot #%d", force_name, line.id, rebound)
+      -- Economy 0.1.1 (#7, #2): its freight trains still head for the dead depot's stop: routed to the new one
+      for _, id in ipairs(sorted_keys(R.trains)) do
+        local trec = R.trains[id]
+        if trec and trec.force == force_name and trec.kind == "cargo" and trec.ai_line == line.id then
+          local train = train_of(trec)
+          if train and train.valid and rails.set_route(train, db, da) then
+            util.log("rails: AI %s routes freight train %d on line #%d again (depot #%d)", force_name, train.id, line.id,
+              rebound)
+          end
+        end
+      end
     else
       -- its freight trains stand without a route on the old track and block the new line's crews: scrapped into the
       -- capital-side depot (half of the kits back, like the train panel's Disband)
