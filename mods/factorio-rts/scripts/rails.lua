@@ -3310,10 +3310,11 @@ rails.AI_ESCROW_FLOOR = {["iron-plate"] = 60, ["copper-plate"] = 60, ["electroni
 -- its crews) leave this much in the capital for the districts, bricks and concrete. Since 7248285 (more lines
 -- finished) seeds 801-805 reached Age III by 40:00 in 3 of 5 instead of 5 of 5; in 802 rts-ai-3's capital held 0-45
 -- stone from 30:00 while its crews loaded 2,109 rails, its Smelting and Steel works were never built and Space Program
--- stage 1 stood at 68 % (r2-ai's batches h1 and g2). With the name-based stagger phases (events.lua) 100 steel and 150
--- stone gave Age III by 40:00 in 4 of 5 (nations with three cities linked by 35:00: 8 of 20), 100 stone alone 2 of 5
--- (9 of 20). A kept item is never paid with its inputs (no stone or steel from elsewhere, ai_bill).
-rails.AI_RAIL_KEEP = {["steel-plate"] = 100, ["stone"] = 150}
+-- stage 1 stood at 68 % (r2-ai's batches h1 and g2). Stone only, the shortage seen: 100 stone gave Age III by 40:00 in
+-- 3 of 5 with phases by registration order and 2 of 5 with the name-based ones (events.lua; nations with three cities
+-- linked by 35:00: 12 and 9 of 20). A steel keep too (100 steel, 150 stone) gave 4 of 5 but cost lines (7 and 8 of 20).
+-- Five seeds do not resolve this; carried to 0.1.2 with #1 and #2. A kept item is never paid with its inputs (ai_bill).
+rails.AI_RAIL_KEEP = {["stone"] = 100}
 
 -- Raw goods to take from `pay` for `count` of `item` (an intermediate it lacks is paid with its inputs, 3 levels deep;
 -- `taken` holds what earlier parts of the same payment already take). Returns false when the network cannot pay.
