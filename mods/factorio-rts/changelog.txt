@@ -1,4 +1,44 @@
 ---------------------------------------------------------------------------------------------------
+Version: 0.1.1
+Date: 2026-10-25
+  Features:
+    - Guided objectives: a strip of seven first steps for your first Skirmish and first Nation match,
+      with a "Guided objectives" switch in the lobby.
+    - Escape opens the game menu (save, load, settings, exit) and closes an open RTS panel first.
+    - The selected haulers' routes are drawn on the map while the hauler panel is open.
+  Changes:
+    - Nation AI reaches Age III sooner: a concrete chain, district order, engine focus and science hold
+      (Age III by minute 40 in 2 of 5 test seeds, was 1 of 5; the target of 3 is not met yet). (#1)
+    - Nation AI at war: siege railways for artillery trains, interceptor patrols, bomber strikes and war
+      research first. In 60-minute matches it still fields no interceptors, bombers or artillery trains. (#4)
+    - Nation AI in debt retires idle units and stops recruiting while it loses money. (#5)
+    - Hard Nation AI plans more housing and goes for a second city-state; no resource bonus. (#3)
+    - Nation AI rail programs: kits from the works factory, crews in turn, coal for waiting crews, rebuilt
+      depots after a war, and rail crafts leave 100 stone in the capital. The aggressive AI opens its first
+      line sooner; linking three cities is still slower than designed. (#2, #7)
+    - An AI freight train carries everything its town offers. (#7)
+    - A hauler pays its way back before it leaves, so it no longer strands at a drop-off without coal;
+      auto haulers wait up to a minute for a load worth the trip's coal. (#6)
+    - Rail crews keep clear of mountain rims and go home or are recalled when stuck. (#2)
+    - RTS buildings that looked alike on Factorio 2.1's new art get distinct tints. (#11)
+  Balancing:
+    - Air Force 30 industrial kits (was 50), Military railways 17 (was 25).
+  Optimizations:
+    - Nation periodic handlers run on their own phases, the market AI's ledger read runs on the scheduler
+      and AI target scans are cached: far fewer script ticks over 3 ms. (#8)
+  Bugfixes:
+    - A right click on a pentapod's leg attacks the pentapod. (#12)
+    - Escape no longer leaves the remote view for a tick. (#12)
+    - The stockpile panel colours a count against this hub's own Keep. (#10)
+  Gui:
+    - The engine's hauler lines on the map are drawn at their 1 px minimum without destination markers. (#9)
+    - The Nation lobby's world-generation estimate uses Factorio 2.1's faster rate.
+  Locale:
+    - Russian review: one glossary, the game's own item names and shorter panel lines. (#17)
+  Info:
+    - Linux: the headless autotests pass on x86-64 and ARM64. Windows is untested; reports are welcome. (#14, #15)
+    - Issues: https://github.com/Kealman/factorio-rts/issues
+---------------------------------------------------------------------------------------------------
 Version: 0.1.0
   Major Features:
     - First public release.

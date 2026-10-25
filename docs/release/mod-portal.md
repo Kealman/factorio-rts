@@ -25,6 +25,14 @@ The tag list is the portal's 2.0-era list (Transportation, Logistics, Trains, Co
 Factorio as a StarCraft-style RTS: command armies from a free camera, build them through a real Factorio economy, then grow a nation of cities, rails, trade and war on worlds up to 4096 tiles.
 =====
 
+## What's new in 0.1.1 (top of the long description)
+
+Paste this block at the top of the long description when 0.1.1 is uploaded, and replace it with the next release's block later. The portal's Changelog tab needs nothing: it shows `changelog.txt` from the uploaded zip.
+
+=====
+**New in 0.1.1:** the Nation AI gets to Age III sooner, shrinks its armies in debt and plays hard by skill; haulers no longer strand without coal and AI freight trains carry full loads; far fewer script tick spikes; guided objectives for your first Skirmish and Nation match; Escape opens the game menu; a full review of the Russian text; the headless tests pass on Linux. Air Force now costs 30 industrial kits and Military railways 17. The full list is on the Changelog tab.
+=====
+
 ## Long description (the portal's Markdown)
 
 =====
@@ -78,20 +86,20 @@ Start a **new Freeplay game**; the RTS lobby opens as soon as you join. Press **
 ### Screenshots (gallery order)
 
 1. The lobby: a Nation match with 6 nations on a 4096 world, choosing the victory mode.
-2. A capital at City tier in Age III: districts, housing, farms, the Launch complex and rail depots.
-3. A freight train leaves the capital's depot for a town, past the Launch complex.
+2. A capital at City tier in Age III: districts, hubs, rail depots, stockpiles and haulers on the move.
+3. A freight train leaves the capital's depot on an open line to a town.
 4. A division of Mk2 walkers, heavies, armoured cars and artillery attack-moves into an AI army.
 5. A division holds a front behind a fort belt: a wall with turrets along the border.
 6. Planes over the capital's airfield while its AA turret fires at incoming bombers.
 7. An armoured artillery train in Bombard shells an enemy village 45 tiles away.
-8. The city ledger in Age III: Space Program deliveries, rare resources and automation.
+8. The city ledger in Age III: Space Program stage 2 deliveries, Rush and automation, next to the Launch complex.
 9. The strategic map: your cities and land, a rival town across the front, a city-state, rails and divisions.
 10. The diplomacy panel (F4): a war, a peace, a city-state and an AI's white-peace proposal.
 11. The market panel (M): treasury, tax, prices, city-state trade and a contract.
 12. A fully generated 4096×4096 world with six nations, regions, rivers and mountain ranges.
 13. Skirmish: the Commander's Shield and an Artillery strike, with the ability bar.
 14. Skirmish: a factory base, an army at the rally point and a hub's export policy at the natural.
-15. The city panel of a capital: land, residents, happiness, needs, workforce, draft and make targets.
+15. The capital's city panel: residents, happiness, needs, workforce, draft, make targets and Hire.
 
 ### Requirements
 
@@ -138,16 +146,21 @@ A 4-nation Nation match with 16 cities, about 600 units and 40 trains runs at 60
 
 ### What are the known issues?
 
-* The Nation AI is slower to Age III than designed and rarely uses air units, artillery trains or front holds.
-* The aggressive AI links its cities by rail late.
-* AI nations seldom go into debt, so money pressure on them is light.
+* The Nation AI reaches Age III and links its cities by rail later than designed.
+* The Nation AI fields no interceptors, bombers or artillery trains within a 60-minute match: Air Force needs Age III, Aviation and a war at once.
+* AI nations keep a cash reserve and seldom go into debt, so money pressure on them is light.
+* The engine draws a thin line from every driving hauler to its next stop on the map, which Factorio 2.1 cannot switch off.
 * Map labels crowd around the capital at some zoom levels, and most build-menu buttons are icons with tooltips.
 
 The full list is in the README on GitHub.
 
 ### Which languages?
 
-English and Russian.
+English and Russian. The Russian text had a full review in 0.1.1.
+
+### Is there a tutorial?
+
+Guided objectives (0.1.1) walk your first Skirmish match and your first Nation match through seven steps each, in a strip at the top right. The "Guided objectives" switch in the lobby turns them on or off. F11 has the full rules and keys.
 
 ### Where do I report a bug?
 

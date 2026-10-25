@@ -1,6 +1,6 @@
 # Factorio RTS: complete feature list
 
-Every feature of version 0.1.0, by area. Each line starts with the milestone that introduced it:
+Every feature of version 0.1.1, by area. Each line starts with the milestone that introduced it:
 
 | Tag | Milestone | Tag | Milestone |
 |---|---|---|---|
@@ -8,7 +8,7 @@ Every feature of version 0.1.0, by area. Each line starts with the milestone tha
 | `P1` | Phase 1: control vertical slice | `M2` | Phase 5 M2: "People, money and war goals" |
 | `P2` | Phase 2: economy slice | `M3` | Phase 5 M3: "A state at war" |
 | `P3` | Phase 3: AI opponent and match flow | `2.1` | The port to Factorio 2.1 |
-| `P4` | Phase 4: a real RTS with a Factorio economy | | |
+| `P4` | Phase 4: a real RTS with a Factorio economy | `0.1.1` | The first update after the public release |
 
 Phases 1 to 4 built the Skirmish game; M1 to M3 built Nation mode on top of it. The player guide is the [README](../README.md); the design is in [DESIGN.md](DESIGN.md) and [SCALE-VISION.md](SCALE-VISION.md).
 
@@ -50,6 +50,8 @@ Phases 1 to 4 built the Skirmish game; M1 to M3 built Nation mode on top of it. 
 - `M1` A left click on any carriage selects a train.
 - `M2` Delete with units selected disbands them in Nation mode, and their recruits go home.
 - `M3` H with whole divisions selected and the cursor at a front makes them hold that front.
+- `0.1.1` Escape opens the game menu (save, load, settings, exit) and closes an open RTS panel first, without leaving the remote view.
+- `0.1.1` A right click on a pentapod's leg attacks the pentapod.
 
 ## HUD and feedback
 
@@ -68,6 +70,8 @@ Phases 1 to 4 built the Skirmish game; M1 to M3 built Nation mode on top of it. 
 - `M3` Depots are labelled on the map with their panel names.
 - `M3` "World: N % generated" under the minimap shows the background world generation.
 - `M3` The kill feed names a building killer, such as the AA turret that shot a plane down.
+- `0.1.1` Guided objectives show seven first steps for a first Skirmish and a first Nation match, with a switch in the lobby.
+- `0.1.1` The stockpile panel colours a count against the selected hub's own Keep and names the network's levels in the tooltip.
 
 ## Units and abilities
 
@@ -127,6 +131,9 @@ Phases 1 to 4 built the Skirmish game; M1 to M3 built Nation mode on top of it. 
 - `M1` In Nation mode haulers carry 10 slots and burn 1 coal per 40 tiles, so trains win beyond about 300 tiles.
 - `M1` A hauler fills its tank for the way back too, so one end of a route with coal is enough.
 - `M3` A route hauler waits at its pickup until both legs are in its tank when the drop-off holds too little coal.
+- `0.1.1` A hauler bound for a stop that may lack coal pays its way back before it leaves, from its tank, its network or the destination's, so it does not strand there without coal.
+- `0.1.1` An auto hauler waits at home for up to a minute for a load worth the trip's coal.
+- `0.1.1` The map shows the selected haulers' routes while the hauler panel is open, and the engine's own hauler lines are drawn at their thinnest.
 
 ## Research
 
@@ -288,8 +295,14 @@ Phases 1 to 4 built the Skirmish game; M1 to M3 built Nation mode on top of it. 
 - `M3` An economic planner scores city sites, founds a third and fourth city, links its cities by a rail trunk and takes the road to Age III.
 - `M3` A war council holds threatened fronts, lays fort belts, runs operations with phases and timeouts, flies patrols and sends bombers and artillery trains to sieges.
 - `M3` Division controllers retreat when outnumbered and go back for supply.
+- `0.1.1` The planner runs a concrete chain, an engine focus and a science hold so the AI reaches Age III sooner.
+- `0.1.1` At war the council lays siege railways for artillery trains, patrols the capital with interceptors, sends bombers and researches war technologies first.
+- `0.1.1` In debt the AI retires idle units and stops recruiting while it loses money.
+- `0.1.1` A depot an AI line lost in a war is rebuilt on its old site and the line bound to it again.
+- `0.1.1` An AI freight train carries everything its town offers.
 - `M3` An intelligence layer knows only what the AI's units see.
 - `M3` In Nation mode difficulty changes the freshness of intelligence, the number of operations, the build pace and the division handling, and never resources.
+- `0.1.1` Hard plans more housing and goes for a second city-state, which makes it beat normal by skill.
 - `M3` All AI work runs on a deterministic work-unit scheduler with resumable jobs, at about 0.07 ms per nation per tick.
 
 ## Multiplayer, determinism and performance
@@ -302,10 +315,13 @@ Phases 1 to 4 built the Skirmish game; M1 to M3 built Nation mode on top of it. 
 - `M3` The budget scene of 4 nations, 16 cities, 600 units and 40 trains runs at 60 UPS on the development Mac.
 - `M3` World generation, rail surveys and AI planners are sliced across ticks so no single tick stalls.
 - `2.1` The mod runs on Factorio 2.1 with the 2.0 unit steering restored on every RTS unit.
+- `0.1.1` Nation-mode periodic handlers run on phases of their own, so their work no longer piles onto the same tick.
+- `0.1.1` RTS buildings that looked alike on Factorio 2.1's art have distinct tints.
 
 ## Localisation
 
 - `P2` Every text is translated to English and Russian.
+- `0.1.1` The Russian text follows one glossary and the game's own Russian item names.
 
 ## Development and QA tooling
 
@@ -318,3 +334,5 @@ Phases 1 to 4 built the Skirmish game; M1 to M3 built Nation mode on top of it. 
 - `M3` Performance benches, a determinism comparison, heavy mode and a LAN check with two GUI clients guard the multiplayer and performance budget.
 - `M3` Every runner refuses to start when the game version does not match the mod's `factorio_version`.
 - `M3` A matrix comparison proves Skirmish stays line-identical after Nation changes.
+- `0.1.1` A Docker check runs the headless autotests on the official Linux build for x86-64 and ARM64.
+- `0.1.1` One command runs a release's whole headless acceptance and writes a report.

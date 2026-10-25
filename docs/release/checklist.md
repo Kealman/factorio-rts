@@ -1,6 +1,6 @@
-# Publishing checklist: Factorio RTS 0.1.0
+# Publishing checklist: Factorio RTS
 
-The exact steps to publish the repository on GitHub and the mod on the Factorio Mod Portal. Run the commands from the repository root. The texts to paste are in [mod-portal.md](mod-portal.md), [announce.md](announce.md) and [github-release.md](github-release.md).
+Sections 1 to 7 are the steps of the first publication (0.1.0, done on 2026-10-24: the GitHub release `v0.1.0` and the Mod Portal upload). Section 8 is the 0.1.1 update. The exact steps to publish the repository on GitHub and the mod on the Factorio Mod Portal. Run the commands from the repository root. The texts to paste are in [mod-portal.md](mod-portal.md), [announce.md](announce.md) and [github-release.md](github-release.md).
 
 ## 1. Decisions to confirm first
 
@@ -143,3 +143,39 @@ Once the repository is public, its history is public for good, even if it is del
 2. Commit, then `tools/package.sh`.
 3. Tag `vX.Y.Z`, push it, and `gh release create vX.Y.Z build/release/factorio-rts_X.Y.Z.zip --title "Factorio RTS X.Y.Z" --notes "..."`.
 4. Upload the new zip on the portal: the mod's page, *Downloads* tab, upload a new version (or the edit page's upload field).
+
+## 8. The 0.1.1 update
+
+1. **The go.** Given on 2026-10-25 for the release tree 615854f. Its release check (`build/release-check/2026-10-25_1305/REPORT.md`, summarised in `docs/qa/phase5-r2-platform-notes.md` section 6) passed 42 of 46 criteria, including LAN and heavy mode. The four misses are recorded in `CHANGELOG.md`. The GUI pass reached 53/53 in English and in Russian.
+2. **Screenshots.** The ten shots whose look changed (building tints of #11, the lobby's Guided objectives switch of #16) were re-shot with `tools/showcase.sh`, with the objective strip switched off, and committed in 43dd354:
+
+   `01-lobby.png`, `02-capital.png`, `03-rail-line.png`, `05-front-fort-belt.png`, `06-air.png`, `07-artillery-train.png`, `08-space-program.png`, `13-commander-abilities.png`, `14-skirmish-base.png`, `15-city-panel.png`
+
+   The other five (`04`, `09`, `10`, `11`, `12`) stay. The README and portal captions follow `docs/media/INDEX.md`.
+3. **The version.** `mods/factorio-rts/info.json` says 0.1.1, `mods/factorio-rts/changelog.txt` has the `Version: 0.1.1` section dated 2026-10-25 on top, and `CHANGELOG.md` and the README say 0.1.1 (the "Release 0.1.1" commit).
+4. **Build and test the archive.** It must print no warning:
+
+   ```sh
+   git status --short && tools/package.sh      # build/release/factorio-rts_0.1.1.zip
+   tools/uninstall.sh
+   rm -f ~/Library/Application\ Support/factorio/mods/factorio-rts_*.zip
+   cp build/release/factorio-rts_0.1.1.zip ~/Library/Application\ Support/factorio/mods/
+   ```
+
+   Start Factorio and check that **Mods** shows Factorio RTS 0.1.1 with the 0.1.1 changelog. Start a new Freeplay game and see the lobby with its Guided objectives switch. Then load a Nation save made with 0.1.0, which no test has covered yet, and play a minute of it. Afterwards, remove the zip and run `tools/install.sh`.
+5. **Push, tag and release on GitHub.**
+
+   ```sh
+   git push origin main
+   git tag -a v0.1.1 -m "Factorio RTS 0.1.1"
+   git push origin v0.1.1
+   gh release create v0.1.1 build/release/factorio-rts_0.1.1.zip --repo Kealman/factorio-rts \
+     --title "Factorio RTS 0.1.1" --notes-file docs/release/github-release.md
+   ```
+
+6. **Mod Portal.** Sign in with the account that owns the mod (the portal lists it as SayJay) and open https://mods.factorio.com/mod/factorio-rts:
+   - Upload `build/release/factorio-rts_0.1.1.zip` as a new version (the upload form for a new version is on the mod's Downloads tab or its edit page). The file name must stay `factorio-rts_0.1.1.zip`. The Changelog tab updates itself from the zip.
+   - On the edit page, paste the "What's new in 0.1.1" block of [mod-portal.md](mod-portal.md) at the top of the description, and replace the FAQ with the FAQ block of the same file.
+   - In the gallery, delete the ten old shots of step 2 and upload the new ones, keeping the order `01` to `15`.
+7. **Issues.** Close #18 with the release link and close the 0.1.1 milestone. Move the open #2 (rail linking) and #15 (Windows) to the next milestone, and open the 0.1.2 follow-ups from `docs/qa/phase5-ai3-notes.md` section 8.12 and #4's closing comment.
+8. **Announce (optional).** Reply in the forum thread and on the Reddit post with the "New in 0.1.1" paragraph and the release link.
