@@ -1166,3 +1166,57 @@ one city-state, so the 4-nation runs of normal AIs are unaffected by this stage.
 805 rts-ai-3 in stage 3) and fails now (0 of 5): issue #5 keeps the AIs out of debt (the deficit guard), so the debt
 path is exercised by `ai3_debt.lua` instead. Its "lines" criterion (no first line at or after 25:00) fails in every
 seed before and after.
+
+### 8.7 Follow-up: the rail programs during the engine focus, freight trains' kits (issues #7, #2, #1)
+
+**Cause.** Stage 1's engine focus paused `rails.ai_step` (ai/commander.lua) and every trunk edge's program for up to 3
+of every 5 minutes while Electrification waited for engines, 1-8 times per nation and match. That step also tops up the
+coal of a line's depots, creates an open line's freight train and pays its repairs: in M1 501 rts-ai-1's freight train
+ran dry at 51:00, and the batch with every change moved fewer items by train than before (`train_items` per seed below).
+An open line's freight train also waited 8-23 minutes for its kits in M1 (rails.lua builds it at the town depot from
+kits in the town's network, paid by the escrow from the capital's iron above its floor), and the concrete chain's
+brick works switched between its recipe and Auto every 2-3 s around its keep.
+
+**Changes**: `ai/commander.lua` runs `rails.ai_step` again on every pass; during the engine focus only trunk edges not
+open yet and without a crew out wait (`ai/planner.lua` trunk_step). `ai/planner.lua`: an open capital-paid line without
+its freight train gets the train's kits (two locomotive kits, two cargo wagon kits) from the works factory, moved to
+the town depot's network once all of them are there (as rails.lua moves the depots' coal); the concrete chain's
+factories stay on up to 20 more than their keep.
+
+**Results** (801-805, 4 normal AIs, 60 minutes, `r2ai-g2` = the tree with every change plus this one, against
+`r2ai-c8` without it):
+
+| | before (`m3i-p21b`) | every change (`c8`) | + this (`g2`) |
+|---|---|---|---|
+| first Age III (801-805) | 42:44 36:24 48:17 42:58 47:08 | 38:26 30:48 37:45 36:55 33:31 | 38:34 30:52 39:15 35:59 37:08 |
+| Age III by 40:00 | 1/5 | 5/5 | **5/5** |
+| three cities linked by 35:00 | 12/20 | 10/20 | 10/20 |
+| rts-ai-1's first line before 32:00 | 1/5 | 3/5 | 2/5 |
+| items moved by train (801-805) | 37,755 23,696 17,602 15,617 9,846 | 19,107 15,723 22,265 4,267 19,291 | **40,969 18,144 47,764 40,222 42,162** |
+| `train_items` (20,000 a seed) | 2/5 | 1/5 | **4/5** |
+| median minutes from a line's opening to its freight train | 1-2 | 1-4 | 1-5 |
+
+M1 seed 501 on the same tree: 52/53, first lines at 26:32 (player) and 25:11 (rts-ai-1), freight trains 0-3 minutes
+after each line opened (8-23 without this), `train_items` 14,299 (rts-ai-1 9,930 in 58 trips; the player's train stopped on its way at
+36:00 with the player short of coal: 51 hauler no-fuel alerts, 63 in r2-econ's run that reached 20,342). One seed of M1 swings
+between 13,804 and 24,225 with any change of the tree (three AI trees and two economy trees this round).
+
+### 8.8 Summary, commits, hand-offs
+
+| Issue | Acceptance | Result | Commit |
+|---|---|---|---|
+| #1 | Age III by 40:00 in 3 of 5 seeds, Skirmish identical, no regression in rail linking | **met**: 5 of 5 (before 1 of 5); linking 10/20 against 12/20 within the seed spread (8.1); Skirmish 0 differing lines | b502880 |
+| #2 | 16 of 20 nations linked by 35:00; the aggressive AI's first line before 32:00 in 4 of 5 | **not met**: 10/20 and 2-3 of 5 (before 12/20, 1 of 5); the misses are wars, crews waiting for kits or coal in steel-poor capitals, crews that never finished (8.2) | fa70e82, this |
+| #5 | in debt stage 2+ idle units retire to a minimum within 3 minutes; no AI bankruptcy in 801-805; wars still happen | **met**: probe at minutes 22 and 45 PASS; no nation in debt stage 2; 19 nations' cities captured as before (8.3) | 346d9f6 |
+| #4 | interceptors or bombers in 3 of 5, artillery train in 2 of 5, on a 3072 x 4 seed too | **not met**: 0 of 5 and 0 on 3072; no nation reaches Air Force in 60 minutes, Military railways in 3 of 20 at 47-59; with the technology the war-paths probe acts on every path (8.4) | a809043 |
+| #3 | hard beats normal in 14 of 20 swapped 1v1 matches | **met**: 20 of 20 (8.5) | e29d9b8 |
+| #7 (AI part) | the economic AI opens lines before 30:00 and runs freight (M1 501) | **met**: first line at 26:32, freight trains 0-3 minutes after each line; `train_items` of the seed 14,299-18,938 against 20,000 on the AI trees (8.6, 8.7) | this |
+
+Commits (all `AI 0.1.1: ...`, on main): b502880 (#1), fa70e82 (#2), 346d9f6 (#5), a809043 (#4), e29d9b8 (#3), and the
+follow-up of section 8.7. Each was checked before it was made: `tools/determinism-compare.sh` (WHAT=all, the Skirmish
+AI 1v1, 10 minutes, seed 501) against HEAD at 0 differing lines of 4,363, and the Skirmish smoke 65/65 with 0 errors.
+
+Hand-offs: the debt probe went to r2-platform (`tools/probes/ai3_debt.lua`, eca692c). To r2-econ: AI construction
+trains that left with their rails and never finished (804 player and the baseline's 804 rts-ai-3; addressed in
+7248285); the M1 player's coal. To the lead: issue #4 needs a balance decision (industrial research paced for a
+60-minute match or a longer acceptance); `m3_acceptance.lua`'s debt seed criterion contradicts issue #5.

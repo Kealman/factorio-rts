@@ -896,11 +896,7 @@ function commander.run(C, slice)
       construction.repair(C)
     end
     hubs.step(C)
-    -- Phase 5 M1 (m1-rails): a line to a far hub/city, Nation mode only. (0.1.1, issue #1: not while the Age III road's
-    -- research waits for engines, ai/planner.lua planner.engine_focus: the rail program's crafts took their steel)
-    if deps.rails and not (deps.planner and deps.planner.engine_focus and deps.planner.engine_focus(C)) then
-      deps.rails.ai_step(C)
-    end
+    if deps.rails then deps.rails.ai_step(C) end -- Phase 5 M1 (m1-rails): a line to a far hub/city, Nation mode only
     if deps.cities then deps.cities.ai_step(C, surface) end -- Phase 5 M1: Nation mode second city (no-op in Skirmish)
     towns.step(C, surface) -- Phase 5 M1 integration: the town's mining line (Nation mode only)
     start("planner")

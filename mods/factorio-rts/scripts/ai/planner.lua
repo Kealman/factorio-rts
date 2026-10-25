@@ -20,7 +20,7 @@
 --                                            automation, rare extractors, the concrete chain, the works factory's jobs
 --   planner.describe(force)                  one line for the autotest minute report
 --   (0.1.1) planner.urgent_districts(C)      districts ai/age_up.lua moves to the front once (the Petrochemical works)
---           planner.engine_focus(C)          the Age III road's research waits for engines (rail programs pause)
+--           planner.engine_focus(C)          the Age III road's research waits for engines (new trunk edges wait)
 --           planner.science_hold(C)          stage 1 waits for advanced circuits or engines (industrial research waits)
 --           planner.pins(C), holds_works(C)  factories ai/governor.lua pins; the works factory held on a recipe
 --
@@ -910,8 +910,12 @@ local function trunk_step(C, P, own, capital)
         local el = E.A.line and storage.rails.lines[E.A.line]
         if not (el and el.builder) then hold = true end
       end
-      -- (0.1.1, issue #1: and while the research waits for engines, planner.engine_focus)
-      if planner.engine_focus(C) then hold = true end
+      -- (0.1.1, issue #1: and while the research waits for engines, planner.engine_focus, an edge not open yet whose
+      -- crew has not left: an open edge's program tops up its depots' coal, runs its freight train and repairs)
+      if E and planner.engine_focus(C) and E.A.state ~= "open" then
+        local el = E.A.line and storage.rails and storage.rails.lines[E.A.line]
+        if not (el and el.builder) then hold = true end
+      end
       if E then E.held = hold or nil end -- (0.1.1: rail_wants skips a held edge)
       if E and not hold then
         rails.ai_program(C.force, E.A)
@@ -1500,7 +1504,6 @@ local function concrete_step(C, P, surface)
       construction.have(C, "concrete"), construction.have(C, "stone-brick"))
   end
   local keep = concrete_keep(C)
-  local short = Q.started ~= nil and construction.have(C, "concrete") < keep
   P.pins = P.pins or {}
   for i, spec in ipairs(CHAIN) do
     local key = Q.keys[i]
@@ -1525,10 +1528,12 @@ local function concrete_step(C, P, surface)
     local e = key and st == "built" and C.plan[key].entity
     local rec = e and e.valid and buildings.get(e.unit_number)
     if rec then
-      -- bricks while concrete is short and they are below their keep, above the stone floor; concrete while short
-      local on = short
+      -- bricks while concrete is short and they are below their keep, above the stone floor; concrete while short.
+      -- A factory that is on stays on up to `margin` more (one brick at a time switched it every 2-3 s around the keep)
+      local margin = Q.on[i] and (K.margin or 20) or 0
+      local on = Q.started ~= nil and construction.have(C, "concrete") < keep + margin
       if spec.item == "stone-brick" then
-        on = short and construction.have(C, "stone-brick") < K.brick_keep
+        on = on and construction.have(C, "stone-brick") < K.brick_keep + margin
           and construction.have(C, "stone") >= K.stone_floor
       end
       local r = e.get_recipe()
@@ -1564,9 +1569,10 @@ local ENGINE, ENGINE_RECIPE = "engine-unit", "rts-engine"
 --- (0.1.1, issue #1) True while the Age III road's research (Electrification) waits for engines: its remaining
 --- industrial kits need more engines than the capital holds (ai/mix.lua mix.research_engines). Steel went to the rail
 --- programs' rails, depots and kits meanwhile (engines at 0-6 for 12 minutes while the research waited, seed 802
---- rts-ai-2), so the works factory makes engines and the rail programs pause (trunk_step, ai/commander.lua) until the
---- engines are there: about 13 engines, a minute or two of steel. At most engine_focus.max ticks at a stretch, then
---- engine_focus.rest ticks without (a capital without steel must not stop its rail lines for good).
+--- rts-ai-2), so the works factory makes engines and trunk edges not open yet wait (trunk_step) until the engines are
+--- there: about 13 engines, a minute or two of steel. At most engine_focus.max ticks at a stretch, then
+--- engine_focus.rest ticks without. (rails.lua's own programs run on: paused, their depots got no coal and an open
+--- line's freight train ran dry, M1 seed 501 rts-ai-1 from 51:00.)
 function planner.engine_focus(C)
   local P = P_of(C.force, false)
   if not (nation_mode() and P) then return false end
@@ -1603,10 +1609,11 @@ local function net_of(un)
   return (net and net.valid) and net or nil
 end
 
--- What the capital-paid rail programs wait for now: depots (count), a crew's kits (true) and its coal (true).
+-- What the capital-paid rail programs wait for now: depots (count), a crew's kits (true), its coal (true) and the open
+-- lines without their freight train ({program, ...}).
 local function rail_wants(C, P, capital)
   local R = storage.rails
-  if not R then return 0, false, false end
+  if not R then return 0, false, false, {} end
   local capnet = net_of(capital.center)
   local list = {}
   local main = R.ai and R.ai[C.force]
@@ -1625,11 +1632,20 @@ local function rail_wants(C, P, capital)
   for _, A in ipairs(deps.council and deps.council.rail_programs and deps.council.rail_programs(C) or {}) do
     list[#list + 1] = A
   end
-  local depots, kits, fuel = 0, false, false
+  local depots, kits, fuel, freight = 0, false, false, {}
   for _, A in ipairs(list) do
     local paid_here = (A.pay or A.anchor) == capital.center
     if A.state == "depots" and paid_here then
       depots = depots + (A.depot_a and 0 or 1) + (A.depot_b and 0 or 1)
+    elseif A.state == "open" and paid_here and A.line and A.depot_b then
+      local has = false -- (an existence test: the order of R.trains does not matter)
+      for _, rec in pairs(R.trains or {}) do
+        if rec.kind == "cargo" and rec.force == C.force and rec.ai_line == A.line then
+          has = true
+          break
+        end
+      end
+      if not has then freight[#freight + 1] = A end
     elseif (A.state == "building" or A.state == "cut") and A.line then
       local line = R.lines[A.line]
       local dnet = A.depot_a and deps.logistics and deps.logistics.hub_network(A.depot_a)
@@ -1639,13 +1655,48 @@ local function rail_wants(C, P, capital)
       end
     end
   end
-  return depots, kits, fuel
+  return depots, kits, fuel, freight
+end
+
+-- (0.1.1, issue #7) An open line's freight train is made at its town depot from kits in the town's network, which
+-- rails.lua's escrow pays from the capital's iron above its floor: M1 seed 501's player opened its line at 26:32 and
+-- ran its first freight train at 49:00 (the capital held 0-60 iron). Kits the works factory made at the capital are
+-- moved to the town depot's network (as rails.lua moves the depots' coal), all of one train at once.
+local function freight_kits(C, capital, freight)
+  local rails, L = deps.rails, deps.logistics
+  if not (rails and rails.kit_list and L and L.transfer and L.hub_network) then return {} end
+  local list = rails.kit_list("cargo")
+  local capnet = net_of(capital.center)
+  if not capnet then return {} end
+  for _, A in ipairs(freight) do
+    local dnet = L.hub_network(A.depot_b)
+    if dnet and dnet.network_id ~= capnet.network_id then
+      local ok = true
+      for _, k in ipairs(list) do
+        if dnet.get_item_count(k[1]) + capnet.get_item_count(k[1]) < k[2] then ok = false end
+      end
+      if ok then
+        for _, k in ipairs(list) do
+          local miss = k[2] - dnet.get_item_count(k[1])
+          if miss > 0 then L.transfer(capnet, dnet, k[1], miss) end
+        end
+        util.log("planner: %s sends a freight train's kits to depot #%d (line #%d)", C.force, A.depot_b, A.line)
+      end
+    end
+  end
+  local out = {}
+  if #freight > 0 then
+    for _, k in ipairs(list) do
+      if capnet.get_item_count(k[1]) < k[2] then out[#out + 1] = {k[1], "a rail line's freight train"} end
+    end
+  end
+  return out
 end
 
 -- The rail items wanted now: {{recipe, why}, ...}.
 local function rail_items(C, P, capital)
   local out = {}
-  local depots, kits, fuel = rail_wants(C, P, capital)
+  local depots, kits, fuel, freight = rail_wants(C, P, capital)
   P.kits_wait = kits and (construction.have(C, LOCO_KIT) < 2 or construction.have(C, CWAGON_KIT) < 1) or nil
   P.fuel_wait = fuel or nil -- (ai/governor.lua imports coal then, planner.fuel_wait)
   if depots > 0 and construction.have(C, RAIL_DEPOT) < depots then
@@ -1653,6 +1704,7 @@ local function rail_items(C, P, capital)
   end
   if kits and construction.have(C, LOCO_KIT) < 2 then out[#out + 1] = {LOCO_KIT, "a rail line's crew"} end
   if kits and construction.have(C, CWAGON_KIT) < 1 then out[#out + 1] = {CWAGON_KIT, "a rail line's crew"} end
+  for _, w in ipairs(freight_kits(C, capital, freight)) do out[#out + 1] = w end
   return out
 end
 
