@@ -1291,21 +1291,30 @@ capital's stone stood at 0-45 from minute 30 (`g2`: 117-951), its Smelting and S
 its steel fell to 4 a minute (`g2`: 72) and stage 1 stood at 68 % to the end; 2,109 rails were loaded into crews
 against 1,839. Reported to r2-econ and the lead.
 
-### 8.11 Summary after the second round
+### 8.11 Summary: the measured trees and the shipped tree
 
-| Issue | Result | Commits |
-|---|---|---|
-| #1 | met: 5/5 on the AI commits' tree, 3/5 on e983cb8 (see 8.10; the tree before fd75b4d) | b502880, 6bd9fe3 |
-| #2 | not met: 9-12 of 20 linked by 35:00, the aggressive AI's first line before 32:00 in 2 of 5 | fa70e82, 6bd9fe3 |
-| #3 | met: hard 20 of 20 | e29d9b8 |
-| #4 | partial: no interceptor, bomber or artillery train in a 60-minute match; every path acts with the technology (war paths 6/6) | a809043, e983cb8, this |
-| #5 | met | 346d9f6 |
-| #7 (AI part) | met: lines before 30:00, freight trains 0-3 minutes after a line opens | 6bd9fe3 |
-| #8 (army.step) | ticks over 3 ms in the scene 45 -> 29-32 | 70ea109 |
+The issues were measured on b502880's tree and the AI commits after it (sections 8.1-8.10). The shipped tree is
+615854f: the AI commits plus r2-econ's stone-only rail-craft keep (100 stone) and the stagger phases from stable
+handler keys. Its release check is `build/release-check/2026-10-25_1305/REPORT.md` (seeds 801-805, M1 501, M2 701-705,
+3072, the war-paths, debt and perf stages).
 
-Correction: "3/5 on e983cb8" is the tree before r2-econ's fd75b4d (AI rail crafts leave 100 steel and 150 stone;
-stagger phases from stable handler keys). On fd75b4d seeds 801-805 give Age III by 40:00 in 4 of 5 and 8 of 20
-nations linked by 35:00 (docs/qa/phase5-r2-economy-notes.md section 8).
+| Issue | Measured on b502880's tree and after | Shipped tree 615854f (release check) | Status | Commits |
+|---|---|---|---|---|
+| #1 Age III by 40:00 | 5/5 (b502880's tree, again with 6bd9fe3); 3/5 on e983cb8, 4/5 on fd75b4d | **2/5** (34:42, 38:15, 41:13, 41:16, 41:36) | **partial on the shipped tree** | b502880, 6bd9fe3 |
+| #2 linked by 35:00; the aggressive AI's first line before 32:00 | 9-12 of 20; 2-3 of 5 | 9 of 20; 4 of 5 (31:27, 29:00, 26:14, 16:26; 805 at 42:58) | not met (linking) | fa70e82, 6bd9fe3 |
+| #3 hard beats normal | 20 of 20 | not in the release check | met | e29d9b8 |
+| #4 air and artillery | 0/5 and 0/5; war paths 6/6 | 0/5 and 0/5 (informational); war paths 6/6 | partial | a809043, e983cb8, 16d2395 |
+| #5 armies in debt | debt probes PASS; no nation in stage 2 | debt path 3/3; no nation in stage 2 | met | 346d9f6 |
+| #7 (AI part) | lines before 30:00; freight trains 0-3 minutes after a line opens | M1 501 51/53, two runs identical (age2_rts-ai-1, train_items 19,101) | met | 6bd9fe3 |
+| #8 (army.step) | scene 45 -> 29-32 script ticks over 3 ms | 19 (army.step 5, commander.run 3) | met | 70ea109 |
+
+Also on the shipped tree: M2 5/5, heavy mode and LAN pass.
+
+**#1 on the shipped tree: 2 of 5.** Three seeds land at 41:13-41:36. A seed's first Age III moves by a minute or more
+with any change that perturbs the match (r2-econ's notes section 8: the phase table alone moved it), so five seeds
+around 40:00 separate trees only roughly. And the stone-only keep leaves the capitals' steel to the rail crafts again:
+the steel half of the full keep gave 4 of 5 on fd75b4d, but it halved M1 501's rail freight (10,047) and cut linking
+to 8 of 20, so the lead shipped the stone-only keep. Age III by 40:00 on the shipped tree is a follow-up for 0.1.2.
 
 ### 8.12 Open for 0.1.2
 
