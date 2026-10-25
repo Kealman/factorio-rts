@@ -151,8 +151,12 @@ events.on_nth_tick(60, function(e)
     setup(P)
     return
   end
+  -- game.tick on both sides (as tools/probes/perf_scene.lua, c99c254): since e9ba46c a Nation on_nth_tick handler runs
+  -- on a phase of its own and gets the nominal tick as e.tick, while P.started holds the real tick, so the 40 s belt
+  -- and the minute lines below never came
+  local age = game.tick - P.started
   -- a second belt per nation at 40 s: still being built at minute 1 (the save of tools/saveload-check.sh SAVE_MINUTE=1)
-  if e.tick - P.started == 2400 then
+  if age == 2400 then
     for _, f in ipairs(diplomacy.nations()) do
       local p0 = P.cities[f] and P.cities[f][1] and P.cities[f][1].pos
       if p0 then
@@ -163,11 +167,11 @@ events.on_nth_tick(60, function(e)
       end
     end
   end
-  if (e.tick - P.started) % 3600 == 0 then
+  if age % 3600 == 0 then
     local parts = {}
     for _, f in ipairs(diplomacy.nations()) do
       parts[#parts + 1] = string.format("%s; %s; %s", fronts.describe(f), belts.describe(f), trainswar.describe(f))
     end
-    log("minute %d: %s", (e.tick - P.started) / 3600, table.concat(parts, " | "))
+    log("minute %d: %s", age / 3600, table.concat(parts, " | "))
   end
 end)

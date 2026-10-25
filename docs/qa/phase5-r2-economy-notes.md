@@ -14,9 +14,9 @@ hauler waiting "no-fuel" for at least a game minute at a hub that is neither its
 | #10 | edc680a | colour against the hub's own Keep, or say which Keep; fixture | met: yellow below this hub's Keep, the count's tooltip names the network's levels; the hub panel's self-test logs the colour; a headless check 4/4 |
 | #9 | 9dcbc49 | the vanilla lines suppressed or replaced; toggle if cheap; the map's GUI step passes | engine-limited (section 4): the line cannot be hidden on 2.1; it is drawn at the 1 px minimum without destination markers, and the mod draws the selected haulers' routes; no toggle; the M3 GUI pass's map steps pass |
 | #6 | 61dd208 | no hauler strands at a remote hub in M1 501 and M2 701-705; the return coal reserved; rails autotest 12/12 | met (section 2) |
-| #8 | e9ba46c | the lead's 0.1.1 reading: market.ai_step in 0 ticks over 3 ms, at most 60 script ticks over 3 ms, p99 at most 3 ms, no whole tick over 16.67 ms | met (section 3); the count is at 35-60 and its spread is army.step's |
+| #8 | e9ba46c | the lead's 0.1.1 reading: market.ai_step in 0 ticks over 3 ms, at most 60 script ticks over 3 ms, p99 at most 3 ms, no whole tick over 16.67 ms | met (section 3): 20 script ticks over 3 ms and script p99 1.77 ms on the active scene (release check of fd75b4d); the 35-60 first reported here came from a scene the stagger had left idle |
 | #7 | (this notes file's commit) | M1 501 train_items >= 20,000 in two identical runs, lines open before 30:00, the divergence explained | met: 24,225 in two line-identical runs, the player's first line at 24:28 (section 5) |
-| #1 #2 #7 #8 | (the commit adding section 8) | rail crafts keep Age III by 40:00 in at least 3 of 5 (the lead's rule); a test probe does not move the stagger phases | met: Age III by 40:00 in 4 of 5 with a 100 steel and 150 stone keep, 8 of 20 nations linked at 35:00; the phase logs match with and without a probe (section 8) |
+| #1 #2 #7 #8 | fd75b4d, then 615854f (lead) | rail crafts keep Age III by 40:00 in at least 3 of 5 (the lead's rule); a test probe does not move the stagger phases | fd75b4d shipped a 100 steel and 150 stone keep (Age III by 40:00 in 4 of 5, 8 of 20 linked); after the release check 615854f replaced it with 100 stone only for the rail freight; Age III (2-3 of 5) and linking (9-12 of 20) go to 0.1.2 with #1 and #2; the phase logs match with and without a probe (section 8) |
 
 Every commit: Skirmish smoke 65/65 with the `[rts]` lines identical to HEAD's (seed 777, `build/m3i-tools/runcmp.py`
 normalisation: 470 lines, 0 differing).
@@ -99,39 +99,50 @@ title) caused 3-4 ticks: the capital's ledger read with its hints cost 1.5-3.0 m
 **Changes** (e9ba46c):
 
 - `scripts/events.lua`: in a running Nation match the handlers of each period of at least 10 ticks run on a phase of
-  their own (registration order, step 37). Where the period is a multiple of 5, the phases avoid the AI commanders'
-  slice ticks (`next_tick % 5`). Handlers get the nominal tick as `event.tick`. The phases are re-derived from storage
-  at every staggered dispatch, so joining and loading peers agree. Skirmish and the lobby keep the old dispatch.
+  their own (by registration order, step 37, in e9ba46c; from stable handler keys since fd75b4d, section 8). Where the
+  period is a multiple of 5, the phases avoid the AI commanders' slice ticks (`next_tick % 5`). Handlers get the nominal
+  tick as `event.tick`. The phases are re-derived from storage at every staggered dispatch, so joining and loading peers
+  agree. Skirmish and the lobby keep the old dispatch.
 - `scripts/market.lua`, `districts.lua`: `districts.ledger_rows` plus the hints; the market AI reads the capital's
   ledger in a `market_ledger` scheduler job (about 2,000 units a pass, 8-11 ms a minute per nation, spread over ticks).
 - `scripts/production.lua`: the Nation auto-recipe pass runs one group of forces every 15 ticks.
 - `scripts/logistics.lua`: the Nation hauler-kit sweep asks each hub network for its kits instead of rebuilding the
   network cache.
 
-**Before and after** (seed 701, 5 benchmarked minutes, PERF=1 and marks; the first two columns ran together):
+**Correction (2026-10-25): the e9ba46c figures below came from an idle scene.** The scene probe
+(`tools/probes/perf_scene.lua`) stored its build tick from game.tick inside its own 60-tick handler and took the
+scene's age from e.tick. Under the stagger that handler runs on a phase of its own (33), so the age was never on the
+60-tick grid: the scene's marches, recycling and minute lines never ran, and 14 of 602 units were moving at the save
+instead of about 425. The per-handler table below shows it (nth60 perf_scene: 0.095 ms mean on HEAD, 0.003 ms on
+e9ba46c), and this agent missed it. r2-platform found and fixed it (c99c254: game.tick on both sides). The valid
+after-figure is the release check's scene on fd75b4d (`build/release-check/2026-10-25_1029`, 425 units
+moving), and #8 passes there.
 
-| | HEAD f524d8f | e9ba46c | e9ba46c, an earlier scene |
-|---|---|---|---|
-| script ticks over 3 ms | 387 | 60 | 35 |
-| script p99 / max (ms) | 5.42 / 23.9 | 2.35 / 10.7 | 2.07 / 10.0 |
-| whole ticks over 16.67 ms | 5 | 0 | 0 |
-| market.ai_step worst (ms) / ticks over 3 ms it caused | 2.28 / 3 (4 on 61dd208) | 0.30 / 0 | 0.24 / 0 |
-| UPS capacity at the mean tick | 612 | 649 | 733 |
+**Before and after** (seed 701, 5 benchmarked minutes, PERF=1 and marks; HEAD and the first e9ba46c column ran
+together):
 
-The ticks still over 3 ms are mostly army.step (33 in one scene, 15 in the other) and commander.run (5), plus the
-autotest's minute report (5, about 10 ms each). The rest are single ticks. army.step's slicing (r2-ai) is what moves
-the count clear of the 60 limit.
+| | HEAD f524d8f | fd75b4d, active scene (release check) | e9ba46c, idle scene | e9ba46c, an earlier idle scene |
+|---|---|---|---|---|
+| script ticks over 3 ms | 387 | 20 | 60 | 35 |
+| script p99 / max (ms) | 5.42 / 23.9 | 1.77 / 10.3 | 2.35 / 10.7 | 2.07 / 10.0 |
+| whole ticks over 16.67 ms | 5 | 0 | 0 | 0 |
+| market.ai_step worst (ms) / ticks over 3 ms it caused | 2.28 / 3 (4 on 61dd208) | under the listing / 0 | 0.30 / 0 | 0.24 / 0 |
+| UPS capacity at the mean tick | 612 | 728 | 649 | 733 |
 
-Script time per tick, the paired runs (18,000 ticks each):
+On the active scene, 18 of the 20 ticks remain once the test fixtures' minute reports and perf_scene are left out.
+The marks in them: commander.run 3, nth60 logistics 2, nth60 strategic 2, army.step 2, nth60 rare 1 (10.26 ms),
+mix.manage_barracks 1, nth60 air 1, nth60 research 1; the release check's REPORT.md has the list.
+
+Script time per tick, the paired runs (18,000 ticks each; the e9ba46c row is the idle scene):
 
 | ms | 0-3 | 3-4 | 4-5 | 5-7 | 7-10 | 10-16.67 | over 16.67 |
 |---|---|---|---|---|---|---|---|
 | HEAD f524d8f | 17,613 | 65 | 92 | 168 | 48 | 9 | 5 |
 | e9ba46c | 17,940 | 46 | 8 | 1 | 0 | 5 | 0 |
 
-Per handler, the same runs (`tools/probes/perf_marks.lua` timings; "culprit" = script ticks over 3 ms in which the
-handler was the heaviest timed call; production's 60-tick count halves because its auto-recipe pass moved to period
-15, which the marks do not time):
+Per handler, the same runs (the e9ba46c column is the idle scene; `tools/probes/perf_marks.lua` timings; "culprit" =
+script ticks over 3 ms in which the handler was the heaviest timed call; production's 60-tick count halves because its
+auto-recipe pass moved to period 15, which the marks do not time):
 
 | handler | HEAD: calls, mean ms, worst ms, culprit | e9ba46c: calls, mean ms, worst ms, culprit |
 |---|---|---|
@@ -154,6 +165,14 @@ handler was the heaviest timed call; production's 60-tick count halves because i
   in the past to the next one.
 - `debug.lua`'s `e.tick == CHART_PROBE_TICK` runs before the match, where nothing is staggered.
 - sched's minute report uses `e.tick`.
+
+The grep covered `scripts/` only. Two test probes broke this way: `perf_scene.lua` (above, c99c254) and
+`war2_perf.lua`, whose 40 s second belt and minute lines never came (fixed with the commit adding this paragraph,
+game.tick on both sides; a 4-minute run on seed 802 then logged all four second belts and minutes 1-4). The other probes
+are safe: world3_autotest and air_perf keep the real tick on both sides, m2_rails_retake the nominal one; war2_autotest,
+war_engine_probe, war_autotest, air_autotest and divisions_stress run every tick; commander_field, territory_autotest
+and ai3_debt compare against thresholds or wide windows. Caveat: a real-tick age stays on its handler's grid only while
+the phase table holds, and the table is rebuilt when the AI commanders' tick residues change (a 0.1.2 check, section 8).
 
 **Determinism of the stagger** (e9ba46c plus #7's rails change, seed 701):
 
@@ -329,30 +348,34 @@ M1 501 stays under 20,000 on these trees: rts-ai-1's freight moved with the war 
 e9ba46c + #7). The player's freight came back. A rails autotest drawn from the clock seed once failed its hauler stage
 ("waiting (nothing)" at the 20 s check) on both HEAD and this tree; with seed 777 both pass 12/12.
 
-## 8. Rail crafts leave steel and stone for Age III; stagger phases from stable handler keys (Refs #1 #2 #7 #8)
+## 8. Rail crafts leave stone for Age III; stagger phases from stable handler keys (Refs #1 #2 #7 #8)
 
 **Rail crafts and Age III.** r2-ai measured that after 7248285, seeds 801-805 reached Age III by 40:00 in 3 of 5
 instead of 5 of 5. In 802, rts-ai-3's capital held 0-45 stone from 30:00 while its crews loaded 2,109 rails; its
 Smelting and Steel works were never built, and Space Program stage 1 stood at 68 %. The AI's rail crafts
 (`ai_supplies`: 1 steel and 1 stone per 2 rails, a line's whole bill ahead of its crews) kept no steel and 20 stone.
-`rails.AI_RAIL_KEEP` now makes them leave 100 steel and 150 stone in the capital, and a kept item is never paid with
-its inputs. The lead's rule: take the softer keep (B, 100 stone) if it gives Age III by 40:00 in at least 3 of 5 and
-at least 10 of 20 nations linked; if neither keep does, take the full one (A), since Age III matters more to the player
-than a link at 35:00; no keep only if A also drops Age III below 3 of 5.
+`rails.AI_RAIL_KEEP` makes them leave more in the capital, and a kept item is never paid with its inputs. fd75b4d
+shipped the full keep (A: 100 steel and 150 stone) under the rule below. After the release check, the lead's 615854f
+replaced it with 100 stone only (B): A halved the 1v1 rail freight (M1 501: 10,047 items against 20,789-24,225 with B)
+and linked 8 of 20, and its Age III lead is one seed, inside the run-to-run noise. The lead's rule: take the softer keep
+(B, 100 stone) if it gives Age III by 40:00 in at least 3 of 5 and at least 10 of 20 nations linked; if neither keep
+does, take the full one (A), since Age III matters more to the player than a link at 35:00; no keep only if A also drops
+Age III below 3 of 5.
 
 First Age III in minutes / nations with three or more cities linked at 35:00 (4 nations, 2048, 60 min, m3_acceptance):
 
-| seed | HEAD, registration phases | A, registration phases | B, registration phases | B, name phases | **A, name phases (this commit)** |
+| seed | HEAD, registration phases | A, registration phases | B, registration phases | **B, name phases (shipped, 615854f)** | A, name phases (fd75b4d) |
 |---|---|---|---|---|---|
-| 801 | 40.6 / 2 | 39.6 / 2 | 40.9 / 3 | 38.2 / 1 | **36.3 / 2** |
-| 802 | 41.2 / 3 | 31.3 / 2 | 36.9 / 3 | 34.7 / 2 | **36.7 / 2** |
-| 803 | 43.1 / 2 | 40.2 / 2 | 40.3 / 2 | 41.3 / 2 | **40.1 / 2** |
-| 804 | 36.8 / 2 | 36.9 / 1 | 35.6 / 3 | 41.6 / 2 | **37.7 / 1** |
-| 805 | 36.9 / 2 | 34.2 / 0 | 35.6 / 1 | 41.2 / 2 | **37.0 / 1** |
-| Age III by 40:00 | 2 of 5 | 4 of 5 | 3 of 5 | 2 of 5 | **4 of 5** |
-| linked, of 20 | 11 | 7 | 12 | 9 | **8** |
+| 801 | 40.6 / 2 | 39.6 / 2 | 40.9 / 3 | **38.2 / 1** | 36.3 / 2 |
+| 802 | 41.2 / 3 | 31.3 / 2 | 36.9 / 3 | **34.7 / 2** | 36.7 / 2 |
+| 803 | 43.1 / 2 | 40.2 / 2 | 40.3 / 2 | **41.3 / 2** | 40.1 / 2 |
+| 804 | 36.8 / 2 | 36.9 / 1 | 35.6 / 3 | **41.6 / 2** | 37.7 / 1 |
+| 805 | 36.9 / 2 | 34.2 / 0 | 35.6 / 1 | **41.2 / 2** | 37.0 / 1 |
+| Age III by 40:00 | 2 of 5 | 4 of 5 | 3 of 5 | **2 of 5** | 4 of 5 |
+| linked, of 20 | 11 | 7 | 12 | **9** | 8 |
 
-B passed the rule under registration-order phases and failed it under the name-based ones, so A went in. The same
+B passed the rule under registration-order phases and failed it under the name-based ones, so A went into fd75b4d;
+615854f put B back for the rail freight. The same
 steel and stone feed both the rails and Age III; a seed's first Age III moves by a minute or more whenever the
 match is perturbed (a different phase table is such a perturbation), so 5 seeds separate the keeps only roughly.
 
@@ -364,25 +387,40 @@ residues 1): ..."). Seed 801 with m3_acceptance and PERF profiling against none:
 for the probe's own handlers (m3_acceptance@60#1, events@3600#1), and the game is line-identical up to minute 55
 (98,116 lines, 0 differing). The A tree logs the same 9 lines as the B tree.
 
-**Checks on the commit's tree** (HEAD 6d9ea76 with the keep and the name-based phases), 0 Lua errors in all:
+**Checks on the two trees** (6d9ea76 with the name-based phases and each keep; 615854f's mod code equals the B tree
+apart from comments), 0 Lua errors in all:
 
-| check | result |
-|---|---|
-| Skirmish smoke, seed 777 | 65/65, 470 [rts] lines identical to HEAD |
-| rails_autotest, seed 777 | 12/12 |
-| m3_detour | 2/2 (rails stage 8/8) |
-| M2 acceptance, seed 701 | 5/5 (trade, war, peace, capture, starving); the B tree failed starving here (rts-ai-2's captured capital) |
-| M2 acceptance, seed 703 | 5/5 |
-| perf scene, seed 701, 5 min (`tools/perf-bench.sh scene`) | 22 script ticks over 3 ms (the 5 worst are the autotest's own nth60 handler), script p99 1.76 ms, 0 whole ticks over 16.67 ms, market.ai_step in none (B tree: 24, 1.80 ms, 0, none) |
+| check | A tree (fd75b4d) | B tree (615854f) |
+|---|---|---|
+| Skirmish smoke, seed 777 | 65/65, 470 [rts] lines identical to HEAD | the same |
+| rails_autotest, seed 777 | 12/12 | 12/12 |
+| m3_detour | 2/2 (rails stage 8/8) | 2/2 (8/8) |
+| M2 acceptance, seed 701 | 5/5 | 4/5: starving FAIL, rts-ai-2's city 2 at minute 55 (0 % rations for 4 min), the capital it captured after rts-ai-1 was eliminated |
+| M2 acceptance, seed 703 | 5/5 | 5/5 |
+| perf scene, seed 701 | release check, active scene: 20 script ticks over 3 ms, script p99 1.77 ms, 0 whole ticks over 16.67 ms, market.ai_step in none | not rerun on the active scene |
 
-**Open: rts-ai-1's Age II under the name-based phases.** The autotest's Age II deadline (about 20:00) failed for
+The scene figures first written here (22 ticks on the A tree, 24 on the B tree) came from the idle scene (section 3).
+
+**rts-ai-1's Age II under the name-based phases.** The autotest's Age II deadline (about 20:00) failed for
 rts-ai-1 in 1 of 5 seeds on HEAD and in 4 of 5 (B) and 3 of 5 (A) with the name-based phases (industrialisation at
 1,100-1,400 s instead of about 800 s). rts-ai-1 is the one aggressive-doctrine nation and finishes Age II at 15-25 min
 in every tree, closest to the deadline; the other three nations kept their times. The runs with the two phase tables
-already differ by minute 8 (different entity ids, then rts-ai-1 picks other research), so the cause could not be
-traced to one handler. It reads as the aggressive doctrine's thin margin rather than a phase that harms rts-ai-1, but
-5 seeds cannot tell. Seed 801's rts-player (the autotest
+already differ by minute 8 (different entity ids, then rts-ai-1 picks other research), and no single handler
+is the cause. r2-ai traced it to rts-ai-1's research order, not the keep: in 801 the supply-cap rule queued Supply 2
+at about 6:00 and it ran until 14:05; in 802 steel came at minute 13-14 instead of 10, and Industrialisation cannot
+start before steel flows; 805 followed HEAD's order, which already failed there. Seed 801's rts-player (the autotest
 governor) misses Age II in every tree, HEAD included.
+
+**For 0.1.2.**
+
+- #1 and #2: with the shipped stone keep, Age III by 40:00 is 2-3 of 5 (5 of 5 on r2-ai's measurement tree before
+  7248285) and linking 9-12 of 20, depending on the phase table. More seeds are needed to separate keeps.
+- rts-ai-1's research order: r2-ai's lever, Industrialisation as a wanted technology in Nation Age I
+  (`docs/qa/phase5-ai3-notes.md`).
+- Phase rebuilds: the stagger phases are rebuilt whenever the AI commanders' tick residues change (`events.lua`,
+  `ensure_phases`). A real-tick age kept by a staggered handler (perf_scene, war2_perf, world3_autotest, air_perf)
+  then leaves its grid. The runs here built the phases once per match (9 logs each). Check: count the "stagger phases"
+  logs per match in long, save/load and elimination runs; a handler that stores e.tick on both sides is immune.
 
 ## 9. Measurement tools (`tools/probes/r2e_*`; the commands are in each file's header)
 
