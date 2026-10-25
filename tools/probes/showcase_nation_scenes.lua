@@ -861,6 +861,16 @@ scene("05-front-fort-belt", function()
   step(function(player, P)
     if not P.seg then return 1 end
     lib.log("05: %s", belts.describe(F))
+    -- 0.1.1 re-shoot: the fronts are rebuilt while the belt goes up and the segment's id can change ("hold_line: false
+    -- no-segment" on the fd75b4d bake): look the segment up again before the order
+    if P.town and fronts.flush then
+      fronts.flush()
+      local seg = fronts.nearest(F, P.town.pos, 400)
+      if seg then
+        lib.log("05: segment #%d -> #%d mid %s", P.seg.id, seg.id, util.pos_str(seg.mid))
+        P.seg = seg
+      end
+    end
     local at = add(P.seg.mid, P.seg.back, 40)
     local list = {}
     for _, spec in ipairs({{"rts-walker-mk2", 14}, {"rts-heavy-mk2", 4}, {"rts-armoured-car", 4}}) do

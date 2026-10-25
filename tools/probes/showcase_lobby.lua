@@ -80,6 +80,7 @@ end)
 
 scene("12-world-4096", function()
   step(function(player, P)
+    lib.no_objectives(player) -- after 01-lobby, which shows the switch on (a new player's default)
     gui_click(player, find(player.gui.screen.rts_lobby, "rts_lobby_start"))
     return 120
   end)

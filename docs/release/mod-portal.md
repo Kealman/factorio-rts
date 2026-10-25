@@ -81,9 +81,9 @@ Start a **new Freeplay game**; the RTS lobby opens as soon as you join. Press **
 2. A capital at City tier in Age III: districts, housing, farms, the Launch complex and rail depots.
 3. A freight train leaves the capital's depot for a town, past the Launch complex.
 4. A division of Mk2 walkers, heavies, armoured cars and artillery attack-moves into an AI army.
-5. A division holds a front behind a fort belt, with a gate where the rail crosses.
+5. A division holds a front behind a fort belt: a wall with turrets along the border.
 6. Planes over the capital's airfield while its AA turret fires at incoming bombers.
-7. An armoured artillery train in Bombard shells an enemy village 46 tiles away.
+7. An armoured artillery train in Bombard shells an enemy village 45 tiles away.
 8. The city ledger in Age III: Space Program deliveries, rare resources and automation.
 9. The strategic map: your cities and land, a rival town across the front, a city-state, rails and divisions.
 10. The diplomacy panel (F4): a war, a peace, a city-state and an AI's white-peace proposal.

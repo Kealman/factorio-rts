@@ -74,6 +74,7 @@ step(function(player, P)
   nauvis.map_gen_settings = mgs
   local p = storage.lobby.pending
   p.mode, p.opponents, p.difficulty, p.size, p.map = "skirmish", 1, "normal", "large", "chokes"
+  lib.no_objectives(player)
   lobby.show_lobby(player)
   lib.park_mouse()
   gui_click(player, find(player.gui.screen.rts_lobby, "rts_lobby_start"))

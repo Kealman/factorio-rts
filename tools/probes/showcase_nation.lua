@@ -80,6 +80,7 @@ if cfg.phase == "bake" then
     local p = storage.lobby.pending
     p.mode, p.opponents, p.difficulty = "nation", cfg.nations - 1, cfg.difficulty or "normal"
     p.world_size, p.survey, p.victory, p.time_limit = cfg.world_size or 2048, true, "conquest_space", 0
+    lib.no_objectives(player)
     lobby.show_lobby(player)
     lib.log("lobby: seed %d, %d nations, %d, survey", nauvis.map_gen_settings.seed, cfg.nations, p.world_size)
     gui_click(player, find(player.gui.screen.rts_lobby, "rts_lobby_start"))

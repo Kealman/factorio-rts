@@ -114,7 +114,16 @@ local function close_named(player, name)
 end
 
 --- Close every RTS panel a scene may have opened and clear the selection (the HUD stays).
+--- 0.1.1 (issue #16): the guided objective strip stays out of the release shots: the player's lobby switch off (it would
+--- show in a fresh save's first match of each mode). Before every Start, and in close_panels for the loaded bake.
+function lib.no_objectives(player)
+  local mods = package.loaded
+  local o = mods["__" .. script.mod_name .. "__/scripts/objectives.lua"] or mods["scripts.objectives"]
+  if o and o.set_pref then o.set_pref(player.index, false) end
+end
+
 function lib.close_panels(player)
+  lib.no_objectives(player)
   local mods = package.loaded
   local function m(name) return mods["__" .. script.mod_name .. "__/scripts/" .. name .. ".lua"] or mods["scripts." .. name] end
   local ok, err = pcall(function()
