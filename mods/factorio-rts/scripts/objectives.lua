@@ -211,8 +211,10 @@ local function check(player, ps)
   local F = player.force.name
   local fs = fstate(F)
   local changed = false
+  local mine = {} -- 0.1.2 (#19): only this mode's steps are marked (the other mode's flags made log noise)
+  for _, id in ipairs(objectives.STEPS[ps.mode] or {}) do mine[id] = true end
   for id in pairs(fs.flags) do
-    if mark(player, ps, id) then changed = true end
+    if mine[id] and mark(player, ps, id) then changed = true end
   end
   if ps.mode == "skirmish" then
     if not ps.done.select and selection.count(player.index) > 0 and mark(player, ps, "select") then changed = true end

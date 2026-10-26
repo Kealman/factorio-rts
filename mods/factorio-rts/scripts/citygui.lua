@@ -294,8 +294,10 @@ local function build_panel(player, g, c)
   local row = frame.add({type = "flow", direction = "horizontal", style = "rts_hud_row"})
   el.title = row.add({type = "label", style = "rts_hud_heading_label", caption = "",
                       tooltip = {"rts.citygui-title-tooltip"}})
-  el.title.style.maximal_width = WIDTH - 60
+  el.title.style.maximal_width = WIDTH - 90
   row.add({type = "empty-widget", style = "rts_hud_filler"})
+  row.add({type = "sprite-button", name = PREFIX .. "help_card", style = "frame_action_button", caption = "?", -- 0.1.2 (#30)
+           tooltip = {"rts-help.card-pin-tooltip"}, tags = {rts_help = "rts-city-center"}})
   row.add({type = "sprite-button", name = PREFIX .. "close", sprite = "utility/close", style = "frame_action_button",
            tooltip = {"rts.citygui-close"}, tags = {rts_citygui = "close"}})
   -- Phase 5 M2 integration: "Under attack" (the last 30 s, or the centre subdued / being captured) and a Jump button
