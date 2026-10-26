@@ -168,6 +168,30 @@ local function run()
       end
     end
   end
+  -- #25 recipes: enabled for the force, craftable in the factory, refund of a pair
+  for _, r in ipairs({"rts-underground-belt", "rts-splitter", "rts-long-inserter"}) do
+    local rec = game.forces[F].recipes[r]
+    check(r .. " recipe", rec and rec.enabled, "")
+  end
+  local fac = nil
+  for _, rec in buildings.for_force(F, "factory") do fac = rec.entity break end
+  if fac then
+    for _, r in ipairs({"rts-underground-belt", "rts-splitter", "rts-long-inserter"}) do
+      local ok = pcall(function() fac.set_recipe(r) end)
+      local now = fac.get_recipe()
+      check(r .. " factory", ok and now and now.name == r, "now=%s", now and now.name or "none")
+    end
+    fac.set_recipe(nil)
+  end
+  local u1 = surface.create_entity({name = "underground-belt", position = {bx + 0.5, by + 16.5}, force = F, direction = defines.direction.east, type = "input"})
+  local u2 = surface.create_entity({name = "underground-belt", position = {bx + 3.5, by + 16.5}, force = F, direction = defines.direction.east, type = "output"})
+  local iron1, belt1 = stock("iron-plate"), stock("transport-belt")
+  box(surface, bx - 0.5, by + 15.5, bx + 4.5, by + 17.5)
+  check("underground pair box", #selection.get_pieces(0) == 2, "selected %d", #selection.get_pieces(0))
+  r1, r2 = two_presses()
+  check("underground pair refund", r2 == "done" and not u1.valid and not u2.valid
+    and stock("iron-plate") - iron1 == 5 and stock("transport-belt") - belt1 == 2, "iron %+d (want 5) belts %+d (want 2)",
+    stock("iron-plate") - iron1, stock("transport-belt") - belt1)
   check("registry unchanged", buildings.count(F) == registry0, "%d vs %d", buildings.count(F), registry0)
   util.log("r3 build probe done: %d failure(s)", fails)
 end
