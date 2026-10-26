@@ -1154,11 +1154,13 @@ local function plan_next(h)
       local plan, reason, hold = manual_plan(h)
       -- Release 0.1.2 (#21): a town supply route waits (up to supply_batch_wait) for a load worth its coal while the
       -- town still holds supply_low of its keep; below that the small load goes at once (rations must not wait)
-      if plan and hold and small_load(h, plan, h.pickup, h.dropoff, balance.nation.supply_batch_wait) then
-        set_state(h, "waiting", "small-load")
-        return
+      if plan and hold then
+        if small_load(h, plan, h.pickup, h.dropoff, balance.nation.supply_batch_wait) then
+          set_state(h, "waiting", "small-load")
+          return
+        end
+        h.batch_since = nil
       end
-      h.batch_since = nil
       if plan and load_cargo(h, h.pickup, plan) > 0 then
         go(h, h.dropoff, "to_dropoff")
       else

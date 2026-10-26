@@ -62,6 +62,13 @@ identical when no clear order is given (the only code on that path is one `entit
 
 ## 3. #21 Supply routes burn coal on small loads
 
+**Final scope (lead's decision, effb0ba): the hold applies only to forces without an AI commander**
+(`storage.ai[force_name] == nil`), so every AI-driven force, rts-player in the autotests included, keeps the 0.1.1 pace
+and acceptance runs stay identical. It is the human player's own supply routes (a manual route from a hub to a hub
+that keeps stock levels, set by right clicks) that wait for a fuller load. The measurements below are from the earlier
+versions that also held AI routes; they show what the hold does, not what the AI sees now. The identity of the final tree
+is in section 4.
+
 **What changed.** `scripts/logistics.lua` `manual_plan` now also returns `hold` (true for a route whose drop-off keeps
 stock levels, when every planned item is in `balance.nation.supply_hold_items` = rations, goods, magazines, and every one
 stands at `supply_low` (0.5) of the drop-off's keep or more). `plan_next` then lets a manual hauler at its pickup wait in
@@ -97,6 +104,13 @@ gate, `balance.nation.supply_batch_wait = 0` turns the change off without touchi
 
 * **Skirmish seed 777 identity** (`SEED=777 JOBS=2 tools/autotest-matrix.sh r3orders`, `tools/matrix-compare.sh base0111
   r3orders`) on the merged tree: total differing lines: 0 (all 11 scenarios)
+* **#21 AI identity (final tree, with main 524b733 merged):** M1 seed 501, 60 min, SPEED 8, the final tree against
+  `main` 524b733 (no #21): 57,280 against 57,280 `[rts]` lines, **0 differing** (timing lines dropped, durations
+  normalised). A first version of the change reset `h.batch_since` for every manual hauler, which diverged at line 13,108 (an auto hauler
+  switched to a route kept an old wait mark); the reset now happens only inside the hold. Both trees end 50/53
+  (train_items 7,784 to 8,125 items, rts-player 0 trains): that is main's #26 starter stock on the AI-driven player side
+  (r3-ux is fixing it with the same `storage.ai` predicate), not #21; the comparison against 0.1.1's 19,101 train items /
+  51/53 has to wait for their fix, and this tree has no other reason to leave 0.1.1's lines.
 * **Owner save** (`build/saves/owner-0111-age2.zip`, copy, 130 s, merged tree, `tools/probes/r3_owner_save.lua`): 0 Lua
   errors, 819 `[rts]` lines, no reset or migration lines; the existing factory took a queue of 1 extractor and stopped,
   the barracks took 1 kit (one unit), a walker cleared 3 planted trees in 3 s. New storage (`rec.queue`,
@@ -110,7 +124,7 @@ Features:
 * Units clear trees and rocks: right click on a tree or rock, or Shift + right-drag over an area; rocks pay their stone to the nearest stockpile. A ghost placed over trees marks them for the construction robots.
 
 Balance / fixes:
-* Town supply routes wait for a fuller load of rations, goods and magazines while the town still holds half its stock, which cuts hauler coal on small deliveries; below half they leave at once.
+* Your supply haulers wait for a fuller load of rations, goods and magazines while the town they supply still holds half its stock, which cuts hauler coal on small deliveries; below half they leave at once. AI nations are unchanged.
 
 ## 6. Open items
 
