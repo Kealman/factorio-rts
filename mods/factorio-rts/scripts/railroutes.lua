@@ -803,7 +803,9 @@ events.on(defines.events.on_train_changed_state, function(e)
   if train.state == TS.wait_station then arrive(rec, train) end
 end)
 
-events.on_nth_tick(railroutes.PERIOD, function()
+-- Every rails.TRANSFER_PERIOD ticks, from rails.lua's transfer handler (no handler of its own: a new on_nth_tick
+-- handler would show in the event bus's stagger line, which the Skirmish identity check compares).
+local function tick()
   local R = storage.rails
   if not (R and next(R.trains)) then return end
   for _, id in ipairs(sorted_keys(R.trains)) do
@@ -817,7 +819,7 @@ events.on_nth_tick(railroutes.PERIOD, function()
       end
     end
   end
-end)
+end
 
 -- rails.lua's train step for a train on a stop list (every rails.STEP ticks).
 local function step(rec, train)
@@ -980,7 +982,8 @@ local function click(player_index, position, entities, alt, trec, train, depot_u
   return "train-stop", i and 1 or 0
 end
 
-rails.routes = {step = step, click = click, refresh = refresh, resume = railroutes.resume, serves = serves}
+rails.routes = {step = step, click = click, refresh = refresh, resume = railroutes.resume, serves = serves,
+                tick = tick}
 
 ---------------------------------------------------------------------------
 -- Init: 0.1.1 routes of human players' trains become two-stop lists

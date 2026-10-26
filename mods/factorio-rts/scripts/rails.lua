@@ -3840,6 +3840,7 @@ end)
 
 events.on_nth_tick(rails.TRANSFER_PERIOD, function()
   local R = storage.rails
+  if R and rails.routes then rails.routes.tick() end -- 0.1.2 (#31 part B): trains on a stop list at their stops
   if not (R and next(R.dwelling)) then return end
   for _, id in ipairs(sorted_keys(R.dwelling)) do
     local rec = R.trains[id]
