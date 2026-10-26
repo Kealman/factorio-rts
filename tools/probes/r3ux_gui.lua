@@ -108,6 +108,12 @@ end)
 -- #26: a second city 300 tiles out: starter stock, a ghost that has no item in the network, the panel line and the alert
 step(function(player)
   local c = P.cap.position
+  local capnet = P.cap.entity.logistic_network
+  if capnet then -- the mother city can spare a factory, two houses and a farm (the settlers bring only what it holds)
+    capnet.insert({name = "rts-factory", count = 1})
+    capnet.insert({name = "rts-house", count = 2})
+    capnet.insert({name = "rts-farm", count = 1})
+  end
   local id = cities.found(P.f, {x = c.x + 300, y = c.y}, {})
   P.city = id and cities.get(id)
   check("city_founded", P.city ~= nil, "second city founded: %s", tostring(id))

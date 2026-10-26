@@ -483,7 +483,8 @@ balance.nation.people = {
   -- Food and goods a city starts with in its market network (a new city's settlers bring 10 minutes of rations), so
   -- nobody starves before the first farm and bakery stand
   -- 0.1.2 (#26): a human player's new city also starts with construction stock, so its robots can build the first
-  -- ghosts at once (the settlers bring it from the mother city). The AI's cities start as before (scripts/population.lua).
+  -- ghosts at once: the settlers bring what the mother city's network can spare (moved, never created). The AI's cities
+  -- start as before (scripts/population.lua).
   builder_stock = {["iron-plate"] = 100, ["copper-plate"] = 40, stone = 40, coal = 20, -- raw goods for a factory there
                    ["rts-factory"] = 1, ["rts-house"] = 2, ["rts-farm"] = 1},         -- and the first buildings: robots build items
   start_stock = {capital = {["rts-rations"] = 300, ["rts-goods"] = 100}, city = {["rts-rations"] = 40}},
