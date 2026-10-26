@@ -12,7 +12,8 @@
 --   auto        a machine in Auto: the order overrides it (mode fixed), the end hands it back to Auto
 --   unqueue     removing crafts from the order; at zero the machine stops
 --   barracks    1 kit -> exactly 1 unit and the barracks stops; 5 kits -> 5 units
--- Clear-order checks are appended by scripts/r3_orders_clear.lua when that test module exists (see r3_clear_headless).
+--   clear_*     #24: 4 walkers clear a 20-tree patch (entity-list call); a right click on a tree and a Shift drag over a
+--               patch (handle_reverse_area); a rock pays stone; a hub ghost over 16 trees marks them and gets built
 local events = require("scripts.events")
 local util = require("scripts.util")
 local ai = require("scripts.ai.init")
@@ -20,6 +21,7 @@ local economy = require("scripts.economy")
 local buildings = require("scripts.buildings")
 local production = require("scripts.production")
 local match = require("scripts.match")
+local units = require("scripts.units")
 
 local F = util.PLAYER_FORCE
 local S = {pass = 0, fail = 0, step = 0}
@@ -69,6 +71,7 @@ local WAIT = 90 * 60
 
 step(function(s)
   ai.stop_force(F)
+  storage.match.waves_off, storage.match.enemy_next_wave = true, nil -- no waves: units standing still get drawn off by enemies
   storage.debug.qa_reset_checked = true -- the autotest's own qa-reset stage would tear the match down
   local surface = match.surface()
   local home = match.home(F)
@@ -225,6 +228,7 @@ end)
 local function barracks_step(key, count)
   return function(s, tick)
     if not s[key] then
+      for _, rec in units.for_force(F) do rec.entity.destroy() end -- room under the supply cap
       local rec = buildings.get(s.b)
       s[key] = {from = tick, spawned = rec.spawned or 0}
       production.queue_recipe(s.b, "rts-walker-kit", count)
@@ -247,10 +251,171 @@ end
 step(barracks_step("k1", 1))
 step(barracks_step("k5", 5))
 
-local ok_clear, clear_steps = pcall(require, "scripts.r3_orders_clear")
-if ok_clear and type(clear_steps) == "table" then
-  for _, fn in ipairs(clear_steps) do step(fn) end
+---------------------------------------------------------------------------
+-- #24 clear orders
+---------------------------------------------------------------------------
+local orders = require("scripts.orders")
+local selection = require("scripts.selection")
+
+local function tree_name()
+  local best
+  for name, proto in pairs(prototypes.entity) do
+    if proto.type == "tree" and (not best or name < best) then best = name end
+  end
+  return best
 end
+
+local function plant(surface, center, n, name)
+  local list = {}
+  local side = math.ceil(math.sqrt(n))
+  for i = 0, n - 1 do
+    local pos = {x = center.x + (i % side) * 1.6, y = center.y + math.floor(i / side) * 1.6}
+    local t = surface.create_entity({name = name, position = pos})
+    if t then list[#list + 1] = t end
+  end
+  return list
+end
+
+local function wipe(surface, c, r)
+  for _, o in pairs(surface.find_entities_filtered({area = {{c.x - r, c.y - r}, {c.x + r, c.y + r}},
+                                                     type = {"tree", "simple-entity", "cliff"}})) do o.destroy() end
+end
+
+local function alive(list)
+  local n = 0
+  for _, t in ipairs(list) do if t.valid then n = n + 1 end end
+  return n
+end
+
+local function patch_center()
+  local home = match.home(F)
+  return {x = home.x + 14, y = home.y - 30}
+end
+
+step(function(s, tick) -- clear a 20-tree patch with 4 walkers (an entity-list call, the AI's way)
+  if not s.cl then
+    local surface = match.surface()
+    local c = patch_center()
+    wipe(surface, c, 14)
+    local trees = plant(surface, c, 20, tree_name())
+    local walkers = {}
+    for i = 1, 4 do
+      walkers[#walkers + 1] = units.spawn("rts-walker", {x = c.x - 8, y = c.y + i}, F, "walker", surface)
+    end
+    s.cl = {from = tick, trees = trees, n = #trees}
+    local n = orders.clear(walkers, trees)
+    local neutral = true
+    for _, t in ipairs(trees) do if t.force.name ~= "neutral" then neutral = false end end
+    check("clear_order", n == 4 and #trees == 20 and neutral, "%d walkers took the order for %d trees (all neutral %s)",
+      n, #trees, tostring(neutral))
+  end
+  if alive(s.cl.trees) == 0 then
+    check("clear_patch", (tick - s.cl.from) / 60 <= 25, "20 trees gone in %.1f s", (tick - s.cl.from) / 60)
+    return true
+  end
+  if tick - s.cl.from > 90 * 60 then
+    check("clear_patch", false, "%d of %d trees left after 90 s", alive(s.cl.trees), s.cl.n)
+    return true
+  end
+end)
+
+step(function(s, tick) -- the right-click path: a click on a tree, then a Shift drag over a patch
+  if not s.rc then
+    local surface = match.surface()
+    local c = patch_center()
+    wipe(surface, c, 14)
+    local one = plant(surface, c, 1, tree_name())
+    local w = units.spawn("rts-walker", {x = c.x - 6, y = c.y}, F, "walker", surface)
+    selection.set(0, {w})
+    local p = one[1].position
+    local order, n = orders.handle_reverse_area(0, one, {left_top = p, right_bottom = p}, false)
+    s.rc = {from = tick, one = one, w = w}
+    check("clear_rightclick", order == "clear" and n == 1, "right click on a tree -> %s n=%s", tostring(order), tostring(n))
+  end
+  if not s.rc.box then
+    if alive(s.rc.one) == 0 then
+      local c = patch_center()
+      s.rc.trees = plant(match.surface(), c, 9, tree_name())
+      local area = {left_top = {x = c.x - 2, y = c.y - 2}, right_bottom = {x = c.x + 8, y = c.y + 8}}
+      local order, n = orders.handle_reverse_area(0, {}, area, true)
+      s.rc.box = tick
+      check("clear_box", order == "clear" and n == 1, "shift drag over 9 trees -> %s n=%s", tostring(order), tostring(n))
+    elseif tick - s.rc.from > 30 * 60 then
+      check("clear_rightclick_done", false, "tree still there after 30 s")
+      return true
+    end
+    return
+  end
+  if alive(s.rc.trees) == 0 then
+    check("clear_box_done", true, "9 trees felled by one walker in %.1f s", (tick - s.rc.box) / 60)
+    return true
+  end
+  if tick - s.rc.box > 60 * 60 then
+    check("clear_box_done", false, "%d trees left", alive(s.rc.trees))
+    return true
+  end
+end)
+
+step(function(s, tick) -- a rock pays stone to the nearest own stockpile
+  if not s.rk then
+    local surface = match.surface()
+    local c = patch_center()
+    wipe(surface, c, 14)
+    local name = prototypes.entity["big-rock"] and "big-rock" or "huge-rock"
+    local rock = surface.create_entity({name = name, position = c})
+    local w = units.spawn("rts-walker", {x = c.x - 6, y = c.y}, F, "walker", surface)
+    local function pile()
+      local n = 0
+      for _, rec in buildings.for_force(F, "stockpile") do n = n + rec.entity.get_item_count("stone") end
+      return n
+    end
+    s.rk = {from = tick, rock = rock, pile = pile, before = pile() + stock("stone")}
+    local n = orders.clear({w}, {rock})
+    check("rock_order", rock ~= nil and n == 1, "%s, %d walker", name, n)
+  end
+  if not s.rk.rock.valid then
+    local gained = s.rk.pile() + stock("stone") - s.rk.before
+    check("rock_stone", gained > 0, "rock felled in %.1f s, +%d stone", (tick - s.rk.from) / 60, gained)
+    return true
+  end
+  if tick - s.rk.from > 60 * 60 then
+    check("rock_stone", false, "rock still there")
+    return true
+  end
+end)
+
+step(function(s, tick) -- a hub ghost inside a forest: the ghost marks the trees, robots clear them and build the hub
+  if not s.gh then
+    local surface = match.surface()
+    local home = match.home(F)
+    local c = {x = home.x + 4, y = home.y + 22}
+    wipe(surface, c, 10)
+    economy.give(F, "rts-hub", 1)
+    local trees = plant(surface, {x = c.x - 3, y = c.y - 3}, 16, tree_name())
+    local ghost = surface.create_entity({name = "entity-ghost", inner_name = "rts-hub", position = c, force = F})
+    local n = orders.mark_ghost_site(ghost)
+    local marked = 0
+    for _, t in ipairs(trees) do
+      if t.valid and t.to_be_deconstructed() then marked = marked + 1 end
+    end
+    s.gh = {from = tick, ghost = ghost, trees = trees, c = c}
+    check("ghost_marks", n > 0 and marked == n, "ghost over %d trees marked %d for deconstruction", alive(trees), n)
+  end
+  local hub
+  for _, rec in buildings.for_force(F, "hub") do
+    if util.distance(rec.entity.position, s.gh.c) < 3 then hub = rec.entity end
+  end
+  if hub then
+    check("ghost_built", true, "hub built %.1f s after the ghost, %d of 16 trees left", (tick - s.gh.from) / 60,
+      alive(s.gh.trees))
+    return true
+  end
+  if tick - s.gh.from > 150 * 60 then
+    check("ghost_built", false, "no hub after 150 s, %d trees left, ghost valid %s", alive(s.gh.trees),
+      tostring(s.gh.ghost.valid))
+    return true
+  end
+end)
 
 events.on_nth_tick(30, function()
   local m = storage.match

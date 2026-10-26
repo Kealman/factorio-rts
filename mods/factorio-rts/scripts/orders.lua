@@ -10,6 +10,8 @@
 --   target  LuaEntity?     attack target, or the enemy an attack-move was re-targeted at
 --   issuer  "orders"       set together with order; on_ai_command_completed is handled only for these units
 --   fails   number?        consecutive failed attack / attack-move commands (gives up after MAX_FAILS)
+--   clear   {job, idx, ready, deadline, fails}?   Release 0.1.2 (#24): the clear order (order = "clear"); target is the
+--           tree or rock being walked to, job the shared list of targets of one order (below, "Clearing trees and rocks")
 --   retarget_tick number?  Phase 5: tick of the unit's last search for the next enemy (re-target throttle)
 -- Claim rule (units.lua): a record whose order is not "idle" and whose issuer is not "orders" belongs to
 -- another module (debug.lua's "autotest", match.lua's enemy waves) and is never commanded from here.
@@ -20,6 +22,7 @@
 --   area_tick  {[player_index] = tick}   tick of the last reverse-select event handled
 --   cancel_tick {[player_index] = tick}  tick a right click ended build mode (Phase 2)
 --   stats      counters for the autotest and /rts-dump
+--   clearing   {[unit_number] = true}   units with a clear order (the 15-tick step visits only these)
 --   queue      Phase 5 path-request queue (below): {units = fifo, groups = fifo, keys, inflight, tick, used_u, used_g,
 --              burst, stats}
 --
@@ -481,13 +484,24 @@ function orders.formation(recs, center)
   return slots
 end
 
+-- Release 0.1.2 (#24): a unit leaves its clear job (another order, stop): its target goes back to the job.
+local function drop_clear(rec)
+  local c = rec.clear
+  if not c then return end
+  rec.clear = nil
+  if c.idx then c.job.taken[c.idx] = nil end
+  c.job.active = c.job.active - 1
+end
+
 local function claim(rec, order, dest, target)
+  drop_clear(rec)
   rec.order, rec.dest, rec.target, rec.issuer, rec.fails = order, dest, target, orders.ISSUER, nil
   rec.retarget_tick = nil
 end
 
 -- The order is over: the unit goes back to idle with `stop` (spike decision 3: never leave it commandless).
 local function release(rec)
+  drop_clear(rec)
   rec.order, rec.dest, rec.target, rec.issuer, rec.fails = units.IDLE, nil, nil, nil, nil
   rec.retarget_tick = nil
   orders.cancel_queued(rec.entity)
@@ -714,6 +728,261 @@ local function retarget(rec)
   return true
 end
 
+
+---------------------------------------------------------------------------
+-- Clearing trees and rocks (Release 0.1.2, #24)
+---------------------------------------------------------------------------
+-- A right click on a tree or a rock with units selected, or Shift + right-drag over an area, gives the units a "clear"
+-- order: they walk up to a tree or rock of the job, and the script fells it once the unit is within CLEAR_REACH tiles,
+-- at a limited rate (CLEAR_TICKS per unit; heavies and the Commander are quicker), nearest first. The targets stay on the
+-- neutral force (weapons never fell forests). A rock gives its mining products (stone, coal) to the nearest own
+-- stockpile, else to the force's pool. orders.clear(who, targets) is the call the AI uses as well; units owned by
+-- another module (a moving division, haulers, planes) are left alone.
+orders.CLEAR_REACH = 2.5        -- tiles between the unit and the tree's centre
+orders.CLEAR_DRAG = 3           -- tiles: a Shift + right-drag at least this wide is a box clear
+orders.CLEAR_TICKS = {walker = 60, heavy = 30, commander = 30}
+orders.CLEAR_DEFAULT_TICKS = 60
+local CLEAR_STEP = 15           -- ticks between two looks at the clearing units
+local CLEAR_REISSUE = 120          -- ticks between two walk commands to the same target
+local CLEAR_TARGET_TIMEOUT = 20 * 60 -- ticks a unit spends on one target before it gives the target up
+local CLEAR_TYPES = {"tree", "simple-entity"}
+
+--- True for a tree or a rock (simple-entity that counts as a rock for filtered deconstruction).
+function orders.is_clearable(e)
+  if not (e and e.valid) then return false end
+  if e.type == "tree" then return true end
+  return e.type == "simple-entity" and e.prototype.count_as_rock_for_filtered_deconstruction == true
+end
+
+--- The clearable entity of `entities` nearest to `center`, or nil.
+function orders.nearest_clearable(entities, center)
+  local best, best_d
+  for _, e in pairs(entities) do
+    if orders.is_clearable(e) then
+      local d = util.distance_sq(e, center)
+      if not best or d < best_d then best, best_d = e, d end
+    end
+  end
+  return best
+end
+
+local function clearing_set()
+  local o = ostate()
+  o.clearing = o.clearing or {}
+  return o.clearing
+end
+
+-- The next target of a clearing unit: the nearest live target of its job that nobody else walks to; none = the unit's
+-- part is done and it is released.
+local function clear_assign(rec)
+  local c, entity = rec.clear, rec.entity
+  local job = c.job
+  local best, best_i, best_d
+  for i, t in ipairs(job.targets) do
+    if t and not job.taken[i] then
+      if t.valid then
+        local d = util.distance_sq(entity, t)
+        if not best or d < best_d then best, best_i, best_d = t, i, d end
+      else
+        job.targets[i] = false
+      end
+    end
+  end
+  if not best then
+    job.active = job.active - 1
+    rec.clear = nil
+    clearing_set()[entity.unit_number] = nil
+    if job.active <= 0 then
+      util.log("order clear done: %d trees, %d rocks felled, %d items to stockpiles, %d of %d targets given up, %.1f s",
+        job.trees, job.rocks, job.items, job.left or 0, job.total, (game.tick - job.tick) / 60)
+    end
+    release(rec)
+    return false
+  end
+  job.taken[best_i] = entity.unit_number
+  c.idx, c.fails = best_i, nil
+  c.deadline, c.cmd_tick = game.tick + CLEAR_TARGET_TIMEOUT, game.tick
+  rec.target, rec.dest = best, pos_of(best.position)
+  command(rec, {type = CMD.go_to_location, destination = rec.dest, radius = 1.2, distraction = DISTRACTION.none})
+  return true
+end
+
+-- Rock products to the nearest own stockpile of the force (else its pool). Returns the number of items given.
+local function clear_pay(force_name, target)
+  local proto = target.prototype
+  local products = proto.mineable_properties and proto.mineable_properties.products
+  local pos, given = target.position, 0
+  local best, best_d
+  for _, b in buildings.for_force(force_name, "stockpile") do
+    if b.entity.valid and b.entity.surface == target.surface then
+      local d = util.distance_sq(b.entity, pos)
+      if not best or d < best_d then best, best_d = b.entity, d end
+    end
+  end
+  for _, p in ipairs(products or {}) do
+    if p.type == "item" then
+      local avg = p.amount or (((p.amount_min or 0) + (p.amount_max or 0)) / 2)
+      local n = math.floor(avg * (p.probability or 1) + 0.5)
+      if n > 0 then
+        local put = best and best.insert({name = p.name, count = n}) or 0
+        if put < n then put = put + require("scripts.economy").give(force_name, p.name, n - put) end
+        given = given + put
+      end
+    end
+  end
+  return given
+end
+
+local function clear_fell(rec, target)
+  local job = rec.clear.job
+  local rock = target.type == "simple-entity"
+  if rock then job.items = job.items + clear_pay(rec.force, target) end
+  target.die(game.forces[rec.force])
+  if target.valid then target.destroy({raise_destroy = true}) end
+  if rock then job.rocks = job.rocks + 1 else job.trees = job.trees + 1 end
+  job.targets[rec.clear.idx] = false
+  rec.clear.idx = nil
+  bump(ostate().stats.issued, "clear_felled")
+end
+
+-- One look at every clearing unit (every CLEAR_STEP ticks).
+local function clear_step()
+  local set = storage.orders and storage.orders.clearing
+  if not set or next(set) == nil then return end
+  local tick = game.tick
+  for un in pairs(set) do
+    local rec = storage.units[un]
+    if not (rec and rec.entity.valid and rec.order == "clear" and rec.clear) then
+      set[un] = nil
+    else
+      local c, target = rec.clear, rec.target
+      if not (target and target.valid) then
+        if c.idx then c.job.targets[c.idx] = false end -- felled by someone else
+        clear_assign(rec)
+      elseif tick >= (c.ready or 0) and util.distance(rec.entity, target) <= orders.CLEAR_REACH then
+        clear_fell(rec, target)
+        c.ready = tick + (orders.CLEAR_TICKS[rec.kind] or orders.CLEAR_DEFAULT_TICKS)
+        clear_assign(rec)
+      elseif tick < c.deadline and tick - (c.cmd_tick or 0) >= CLEAR_REISSUE
+             and util.distance(rec.entity, target) > orders.CLEAR_REACH then
+        -- pulled away (an enemy in sight draws a standing unit off) or the walk ended short: go back to the target
+        c.cmd_tick = tick
+        command(rec, {type = CMD.go_to_location, destination = pos_of(target.position), radius = 1.2,
+                      distraction = DISTRACTION.none})
+      elseif tick > c.deadline then
+        c.job.taken[c.idx] = nil
+        c.job.targets[c.idx] = false -- unreachable for this unit: dropped
+        c.job.left = (c.job.left or 0) + 1
+        util.log("order clear: unit #%d gave up %s at %s", un, target.name, util.pos_str(target.position))
+        clear_assign(rec)
+      end
+    end
+  end
+end
+events.on_nth_tick(CLEAR_STEP, clear_step)
+
+--- A clearing unit's command ended: close in again when it stopped short (a failed path counts three times, then the
+--- target is dropped), else stand still until the rate allows the next tree.
+function orders.clear_completed(rec, result)
+  local c, target = rec.clear, rec.target
+  if not (c and target and target.valid) then
+    units.stop(rec.entity)
+    return
+  end
+  if util.distance(rec.entity, target) <= orders.CLEAR_REACH then
+    units.stop(rec.entity)
+    return
+  end
+  if result == defines.behavior_result.fail then
+    c.fails = (c.fails or 0) + 1
+    if c.fails >= MAX_FAILS then
+      c.job.taken[c.idx] = nil
+      c.job.targets[c.idx] = false
+      c.job.left = (c.job.left or 0) + 1
+      util.log("order clear: unit #%d cannot reach %s at %s", rec.entity.unit_number, target.name,
+        util.pos_str(target.position))
+      clear_assign(rec)
+      return
+    end
+  end
+  command(rec, {type = CMD.go_to_location, destination = pos_of(target.position), radius = 1.2,
+                distraction = DISTRACTION.none})
+end
+
+-- Units that may clear: spiders and ground units that no other module drives (haulers are spider-vehicles).
+local function clearers(who)
+  local out = {}
+  for _, rec in ipairs((resolve(who, nil))) do
+    local t = rec.entity.type
+    if t == "spider-unit" or t == "unit" then out[#out + 1] = rec end
+  end
+  return out
+end
+
+--- Clear order: `who` (a player index or entities) fells `targets` (trees and rocks), nearest first. Returns the number of
+--- units that took it. QA log line: "order clear n=<units> targets=<n> first=<name> player=N" and, when the last
+--- unit is done, "order clear done: ...".
+function orders.clear(who, targets)
+  local list = {}
+  for _, t in pairs(targets or {}) do
+    if orders.is_clearable(t) then list[#list + 1] = t end
+  end
+  local recs = clearers(who)
+  if #recs == 0 or #list == 0 then
+    log_order(who, "clear", 0, string.format("targets=%d", #list))
+    return 0
+  end
+  local job = {targets = list, taken = {}, active = #recs, trees = 0, rocks = 0, items = 0, total = #list,
+               tick = game.tick}
+  local set = clearing_set()
+  for _, rec in ipairs(recs) do
+    claim(rec, "clear", nil, nil)
+    rec.clear = {job = job}
+    set[rec.entity.unit_number] = true
+    clear_assign(rec)
+  end
+  bump(ostate().stats.issued, "clear", #recs)
+  log_order(who, "clear", #recs, string.format("targets=%d first=%s", #list, list[1].name))
+  feedback(who, list[1], COLORS.move, list[1].surface)
+  return #recs
+end
+
+--- Box clear: every tree and rock inside `area` (a BoundingBox) for the selected units.
+function orders.clear_area(who, area)
+  local recs = clearers(who)
+  if #recs == 0 then return 0 end
+  local found = {}
+  for _, e in ipairs(recs[1].entity.surface.find_entities_filtered({area = area, type = CLEAR_TYPES})) do
+    if orders.is_clearable(e) then found[#found + 1] = e end
+  end
+  if #found == 0 then return 0 end
+  return orders.clear(who, found)
+end
+
+-- A ghost placed by a player over trees and rocks marks them for deconstruction: the construction robots clear the site
+-- and then build the ghost (this makes it certain for every ghost the RTS cursor places). Trees stay on the neutral force.
+local GHOST_MARK_MAX = 80
+function orders.mark_ghost_site(ghost)
+  if not (ghost and ghost.valid and ghost.type == "entity-ghost") then return 0 end
+  local n = 0
+  for _, e in ipairs(ghost.surface.find_entities_filtered({area = ghost.bounding_box, type = CLEAR_TYPES})) do
+    if n >= GHOST_MARK_MAX then break end
+    if orders.is_clearable(e) and not e.to_be_deconstructed() and e.order_deconstruction(ghost.force) then n = n + 1 end
+  end
+  if n > 0 then
+    util.log("order clear: ghost %s at %s marked %d trees/rocks for deconstruction", ghost.ghost_name,
+      util.pos_str(ghost.position), n)
+  end
+  return n
+end
+
+events.on(defines.events.on_built_entity, function(e)
+  local g = e.entity
+  if g and g.valid and g.type == "entity-ghost" and string.sub(g.force.name, 1, 4) == "rts-" then
+    orders.mark_ghost_site(g)
+  end
+end)
+
 ---------------------------------------------------------------------------
 -- Attack-move arming (F) and right-click handling
 ---------------------------------------------------------------------------
@@ -803,9 +1072,9 @@ local right_click_hooks = {}
 function orders.on_right_click(fn, first)
   if first then table.insert(right_click_hooks, 1, fn) else right_click_hooks[#right_click_hooks + 1] = fn end
 end
-local function run_right_click_hooks(player_index, position, entities, alt)
+local function run_right_click_hooks(player_index, position, entities, alt, area)
   for i = 1, #right_click_hooks do
-    local order, n = right_click_hooks[i](player_index, position, entities, alt)
+    local order, n = right_click_hooks[i](player_index, position, entities, alt, area)
     if order then return order, n end
   end
 end
@@ -821,6 +1090,12 @@ local function right_click_order(player_index, position, entities)
   local force = game.forces[selection.force_name(player_index)]
   local enemy = pick_enemy(force, entities, position)
   if enemy then return "attack", orders.attack(player_index, enemy) end
+  -- Release 0.1.2 (#24): a right click on a tree or a rock is a clear order
+  local target = orders.nearest_clearable(entities, position)
+  if target then
+    local n = orders.clear(player_index, {target})
+    if n > 0 then return "clear", n end
+  end
   -- Phase 5 M2 diplomacy: a right click on a unit or building of a nation at peace is an attack order that is refused
   if diplomacy.nation() then
     for _, e in pairs(entities) do
@@ -893,8 +1168,16 @@ function orders.handle_reverse_area(player_index, entities, area, alt)
   o.stats.area_orders = o.stats.area_orders + 1
   if refuse_locked(player_index, "right click") then return "none", 0 end
   if alt then
-    local hooked, hooked_n = run_right_click_hooks(player_index, center, entities, true)
+    local hooked, hooked_n = run_right_click_hooks(player_index, center, entities, true, area)
     if hooked then return hooked, hooked_n end
+    -- Release 0.1.2 (#24): Shift + right-drag over trees and rocks clears them (a plain Shift + click stays an attack-move)
+    if math.max(rb.x - lt.x, rb.y - lt.y) >= orders.CLEAR_DRAG then
+      local n = orders.clear_area(player_index, area)
+      if n > 0 then
+        disarm(player_index, "shift + right drag clears")
+        return "clear", n
+      end
+    end
     disarm(player_index, "shift + right click")
     return "attack_move", orders.attack_move(player_index, center)
   end
@@ -989,6 +1272,9 @@ events.on(defines.events.on_ai_command_completed, function(e)
     return
   elseif order == "hold" then
     units.stop(rec.entity)
+    return
+  elseif order == "clear" then
+    orders.clear_completed(rec, e.result)
     return
   end
   -- attack / attack_move: distractions end these commands early with result=success (seen in the autotest),
