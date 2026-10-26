@@ -17,6 +17,9 @@ local selection = require("scripts.selection")
 local research = require("scripts.research")
 local buildings = require("scripts.buildings")
 local nw = require("scripts.netwait")
+local units = require("scripts.units")
+local orders = require("scripts.orders")
+local helpgui = require("scripts.helpgui")
 
 local function find(el, name)
   if not (el and el.valid) then return nil end
@@ -144,7 +147,131 @@ step(function(player)
   local hubgui_open = player.gui.screen.rts_hubgui_frame
   check("hub_panel", hubgui_open ~= nil, "hub panel open for the new city centre")
 end)
+-- #30: REAL input (tools/gui-drive.sh): Shift held over the refinery shows its card; Shift+click still adds to the
+-- selection and Shift+right-click still gives an attack-move; the key fallback Shift+F11 shows the card at once.
+local function drive(fmt, ...)
+  P.seq = (P.seq or 0) + 1
+  util.log("RTS_DRIVE %d " .. fmt, P.seq, ...)
+end
+local function spx(player, pos)
+  local k = 32 * player.zoom
+  return math.floor(640 + (pos.x - player.position.x) * k + 0.5), math.floor(400 + (pos.y - player.position.y) * k + 0.5)
+end
+local function card_of(player)
+  local g = util.pstorage(player.index).helpcard
+  return g and g.frame and g.frame.valid and g.name or nil
+end
+step(function(player) -- Shift held over the refinery
+  camera.jump_to(player, P.ref.position)
+  player.zoom = 1
+  selection.clear(player.index)
+  return 90
+end)
+step(function(player)
+  local x, y = spx(player, P.ref.position)
+  drive("click %d %d", 1100, 300) -- a focus click on empty ground
+  drive("move %d %d", x, y)
+  drive("moddown shift")
+  drive("sleep 900")
+  drive("capture help-hover-real")
+  return 480 -- the driver runs a command every few hundred ms: the card must have time to come and be captured
+end)
+step(function(player) -- wait (up to 25 s) for the driver: it runs a command every few hundred ms
+  P.wait = (P.wait or 0) + 1
+  if not card_of(player) and P.wait < 400 then return "retry" end
+  check("help_hover_real", card_of(player) == "rts-refinery", "Shift held over the refinery: card %s (after %d polls)",
+    tostring(card_of(player)), P.wait)
+  return 120
+end)
+step(function(player) -- the capture is taken; release Shift
+  drive("modup shift")
+  drive("sleep 300")
+  drive("click %d %d", 1100, 300)
+  return 240
+end)
+step(function(player) -- Shift+click adds to the selection, no card
+  P.walkers = {}
+  for _, rec in units.for_force(P.f) do
+    if rec.kind == "walker" and rec.entity.valid then P.walkers[#P.walkers + 1] = rec.entity end
+  end
+  table.sort(P.walkers, function(a, b) return a.unit_number < b.unit_number end)
+  if #P.walkers < 2 then check("shift_click", false, "fewer than two walkers") return end
+  camera.jump_to(player, P.walkers[1].position)
+  player.zoom = 1
+  return 60
+end)
+step(function(player)
+  if not P.walkers or #P.walkers < 2 then return end
+  local function pt(e)
+    local b = e.selection_box
+    return spx(player, {x = (b.left_top.x + b.right_bottom.x) / 2, y = (b.left_top.y + b.right_bottom.y) / 2})
+  end
+  local x1, y1 = pt(P.walkers[1])
+  local x2, y2 = pt(P.walkers[2])
+  drive("click %d %d", x1, y1)
+  drive("sleep 400")
+  drive("click %d %d shift", x2, y2)
+  drive("sleep 900")
+  return 150
+end)
+step(function(player)
+  if not P.walkers or #P.walkers < 2 then return end
+  local n = #selection.get(player.index)
+  check("shift_click", n >= 2 and card_of(player) == nil, "Shift+click selected %d units, card %s", n,
+    tostring(card_of(player)))
+  P.am = (orders.stats().issued or {}).attack_move or 0
+  local x, y = spx(player, {x = player.position.x + 8, y = player.position.y + 8})
+  drive("rclick %d %d shift", x, y)
+  drive("sleep 600")
+  return 120
+end)
+step(function(player)
+  local now = (orders.stats().issued or {}).attack_move or 0
+  check("shift_rclick", now > (P.am or 0), "Shift+right-click gave attack_move (%d -> %d), card %s", P.am or 0, now,
+    tostring(card_of(player)))
+end)
+step(function(player) -- the fallback key
+  selection.clear(player.index)
+  camera.jump_to(player, P.ref.position)
+  player.zoom = 1
+  return 90
+end)
+step(function(player)
+  local x, y = spx(player, P.ref.position)
+  drive("move %d %d", x, y)
+  drive("key 103 shift") -- Shift+F11 (macOS virtual key 103)
+  drive("sleep 600")
+  drive("capture help-key-real")
+  return 100
+end)
+step(function(player)
+  check("help_key_real", card_of(player) == "rts-refinery", "Shift+F11 over the refinery: card %s",
+    tostring(card_of(player)))
+  helpgui.close(player)
+end)
+-- the pinned card from the ? button of a building page, and the cards of a unit, a district, a City Center, a ghost
+local function card_shot(name, tag)
+  step(function(player)
+    helpgui.open(player, name, "pinned")
+    return 40
+  end)
+  snap(tag)
+end
+step(function(player)
+  camera.jump_to(player, P.ref.position)
+  selection.select_building(player.index, P.ref.unit_number)
+  return 40
+end)
+card_shot("rts-refinery", "card-refinery")
+card_shot("rts-pumpjack", "card-pumpjack")
+card_shot("rts-extractor", "card-extractor")
+card_shot("rts-city-center", "card-city-center")
+card_shot("rts-walker", "card-walker")
+card_shot("rts-district-steel", "card-district")
+card_shot("rts-depot", "card-depot")
+card_shot("rts-hub", "card-hub")
 step(function()
+  helpgui.close(game.connected_players[1])
   log("RTS_R3UX_DONE")
   return "done"
 end)

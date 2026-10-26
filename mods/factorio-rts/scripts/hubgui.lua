@@ -122,11 +122,15 @@ local function place(player, frame)
   frame.location = {res.width - math.floor((WIDTH + MARGIN) * s + 0.5), math.floor(TOP * s + 0.5)}
 end
 
-local function header(frame, caption, tooltip)
+local function header(frame, caption, tooltip, help_name)
   local row = frame.add({type = "flow", direction = "horizontal", style = "rts_hud_row"})
   local title = row.add({type = "label", caption = caption, style = "rts_hud_heading_label", tooltip = tooltip})
-  title.style.maximal_width = WIDTH - 60
+  title.style.maximal_width = WIDTH - 90
   row.add({type = "empty-widget", style = "rts_hud_filler"})
+  if help_name then -- 0.1.2 (#30): the pinned help card (scripts/helpgui.lua)
+    row.add({type = "sprite-button", name = PREFIX .. "help_card", style = "frame_action_button", caption = "?",
+             tooltip = {"rts-help.card-pin-tooltip"}, tags = {rts_help = help_name}})
+  end
   row.add({type = "sprite-button", name = PREFIX .. "close", sprite = "utility/close", style = "frame_action_button",
            tooltip = {"rts.hubgui-close"}, tags = {rts_hubgui = "close"}})
   return row, title
@@ -190,7 +194,7 @@ local function build_hub(player, g, un)
   local frame = player.gui.screen.add({type = "frame", name = FRAME, direction = "vertical", style = "rts_hud_frame"})
   frame.style.width = WIDTH
   g.frame, g.el, g.rows = frame, {}, {}
-  header(frame, {"rts.hubgui-title", logistics.hub_name(un)}, {"rts.hubgui-title-tooltip"})
+  header(frame, {"rts.hubgui-title", logistics.hub_name(un)}, {"rts.hubgui-title-tooltip"}, rec.entity.name)
   g.el.network = label(frame, "rts_hud_label")
   g.el.haulers = label(frame, "rts_hud_label")
   g.el.waiting = label(frame, "rts_hud_label") -- 0.1.2 (#26): ghosts waiting for items in this network
