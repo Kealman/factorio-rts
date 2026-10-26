@@ -533,7 +533,7 @@ local function build_composer(frame, g, un, player)
   g.preset_keys = keys
   local dd = head.add({type = "drop-down", name = PREFIX .. "builder_preset", items = items, selected_index = 1,
     tooltip = {"rts.builder-preset-tooltip"}, tags = {rts_railgui = "builder_preset", depot = un}})
-  dd.style.width = 170
+  dd.style.width = 200
   -- the composition
   local row = frame.add({type = "flow", direction = "horizontal"})
   row.style.horizontal_spacing = 2

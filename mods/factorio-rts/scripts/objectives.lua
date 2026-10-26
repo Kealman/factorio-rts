@@ -143,8 +143,23 @@ local function place(player, frame)
   return math.min(width, 360)
 end
 
+-- 0.1.2 GUI pass: the expanded list is ~200 px tall and drops over the right-hand panels (the city panel, the hub /
+-- stockpile policy window). While one of them is open the strip shows its header and the current step only; the player's
+-- "list" choice (ps.expanded) is kept and comes back when the panel closes.
+local PANEL_FRAMES = {"rts_citygui_frame", "rts_hubgui_frame"} -- the city panel and the hub / stockpile policy window
+local function squeezed(player)
+  local screen = player.gui.screen
+  for _, name in ipairs(PANEL_FRAMES) do
+    local f = screen[name]
+    if f and f.valid then return true end
+  end
+  return false
+end
+
 local function render(player)
   local ps = pstate(player.index)
+  ps.squeezed = squeezed(player)
+  local show_list = ps.expanded and not ps.squeezed
   destroy(player)
   if not (ps.on and ps.mode) then return end
   local steps = objectives.STEPS[ps.mode]
@@ -162,7 +177,8 @@ local function render(player)
   fill.style.horizontally_stretchable = true
   head.add({type = "sprite-button", name = PREFIX .. "list", style = "frame_action_button",
             sprite = ps.expanded and "utility/collapse" or "utility/expand",
-            tooltip = {ps.expanded and "rts-objectives.list-hide" or "rts-objectives.list-show"},
+            tooltip = {(ps.expanded and ps.squeezed) and "rts-objectives.list-squeezed"
+                       or ps.expanded and "rts-objectives.list-hide" or "rts-objectives.list-show"},
             tags = {rts_objectives = "list"}})
   head.add({type = "sprite-button", name = PREFIX .. "close", style = "frame_action_button", sprite = "utility/close",
             tooltip = {"rts-objectives.close-tooltip"}, tags = {rts_objectives = "close"}})
@@ -174,7 +190,7 @@ local function render(player)
   local hint = frame.add({type = "label", name = PREFIX .. "hint", style = "rts_hud_dim_label", caption = {key .. "-hint"}})
   hint.style.single_line = false
   hint.style.maximal_width = text_w
-  if ps.expanded then
+  if show_list then
     local list = frame.add({type = "flow", name = PREFIX .. "steps", direction = "vertical"})
     list.style.vertical_spacing = 0
     list.style.top_margin = 2
@@ -270,6 +286,7 @@ events.on_nth_tick(POLL, function(e)
     if ps.match ~= m.match_id then
       start_for(player)
     elseif ps.on then
+      if ps.expanded and ps.squeezed ~= squeezed(player) then render(player) end
       if ps.finished and e.tick - ps.finished >= AUTO_CLOSE_TICKS then
         ps.on = false
         util.log("objectives: player %d strip closed after the last step", player.index)
