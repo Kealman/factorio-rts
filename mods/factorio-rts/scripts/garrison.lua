@@ -517,12 +517,22 @@ local function boarding_spot(d, train)
   return {x = off, y = along}
 end
 
+-- 0.1.2 (#31 part B): a depot on a train's stop list (scripts/railroutes.lua) counts like its pickup or drop-off.
+local function routed_through(rec, depot_un)
+  if rec.pickup == depot_un or rec.dropoff == depot_un then return true end
+  if not rec.stops then return false end
+  for _, st in ipairs(rec.stops) do
+    if st.target == depot_un then return true end
+  end
+  return false
+end
+
 -- Phase 5 M2 QA round 1 (step 21): a troop train of `force` that comes to depot `depot_un` (its pickup or drop-off).
 local function troop_train_coming(force, depot_un)
   local R = storage.rails
   for _, id in ipairs(sorted_keys(R and R.trains)) do
     local rec = R.trains[id]
-    if rec.kind == "troop" and rec.force == force and (rec.pickup == depot_un or rec.dropoff == depot_un)
+    if rec.kind == "troop" and rec.force == force and routed_through(rec, depot_un)
        and rails.train_of(rec) then
       return rec
     end
@@ -634,6 +644,10 @@ local function embarking(force, depot_un)
   end
   return list
 end
+
+--- 0.1.2 (#31 part B): how many divisions still walk to board at a depot (scripts/railroutes.lua keeps a train on a
+--- stop list waiting at a "board" stop while some do).
+function garrison.embarking_count(force, depot_un) return #embarking(force, depot_un) end
 
 ---------------------------------------------------------------------------
 -- Troop trains: disembark

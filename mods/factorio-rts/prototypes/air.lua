@@ -217,6 +217,7 @@ local function define_plane(name)
   }
   local recipe = age2.recipe(stats.kit, {category = "rts-units", cost = stats.cost, results = {[stats.kit] = 1},
                                          time = stats.time, order = "i-" .. name}, "rts-units")
+  recipe.localised_name = {"item-name." .. stats.kit}
   data:extend({p, kit, recipe})
 end
 

@@ -481,6 +481,7 @@ local function setup_city(c)
   else
     P = new_record(c, 0, "founded")
     local from = settler_source(c)
+    P.mother = from -- 0.1.2 (#26): the building stock comes from this city's network (population.step)
     local moved = population.settle(from, c.id, PB.settlers)
     if moved < PB.min_pop then
       -- no city could spare enough: a village needs its minimum (the charter's settlers)
@@ -644,6 +645,13 @@ local function check_tier(P, c)
   end
 end
 
+local function is_ai_force(force_name)
+  for _, f in ipairs(match.ai_forces()) do
+    if f == force_name then return true end
+  end
+  return false
+end
+
 --- One growth pass of a city (and its needs when due).
 function population.step(city_id)
   local c = cities.get(city_id)
@@ -659,6 +667,29 @@ function population.step(city_id)
       local kit = c.capital and PB.start_stock.capital or PB.start_stock.city
       for item, n in pairs(kit or {}) do
         if (c.capital and P.settled == 0) or not c.capital then net.insert({name = item, count = n}) end
+      end
+      -- 0.1.2 (#26): the settlers of a human player's new city bring building stock the mother city can spare: each
+      -- item is moved from the mother city's network as far as that network holds it (nothing is created); the AI's
+      -- cities start as before
+      if not c.capital and c.force ~= population.NEUTRAL and not is_ai_force(c.force) then
+        local mother = P.mother and cities.get(P.mother)
+        local mnet = mother and market(mother)
+        local moved, short = {}, {}
+        for item, n in pairs(PB.builder_stock or {}) do
+          local have = (mnet and mnet.network_id ~= net.network_id) and mnet.get_item_count(item) or 0
+          local take = math.min(n, have)
+          if take > 0 then
+            local removed = mnet.remove_item({name = item, count = take})
+            take = removed > 0 and net.insert({name = item, count = removed}) or 0
+            if removed > take then mnet.insert({name = item, count = removed - take}) end -- never lose goods
+          end
+          if take > 0 then moved[#moved + 1] = item .. " " .. take end
+          if take < n then short[#short + 1] = item .. " " .. (n - take) end
+        end
+        table.sort(moved)
+        table.sort(short)
+        util.log("people: city %d building stock from city %s: moved %s; short %s", c.id, tostring(P.mother),
+          #moved > 0 and table.concat(moved, ", ") or "nothing", #short > 0 and table.concat(short, ", ") or "nothing")
       end
     end
   end

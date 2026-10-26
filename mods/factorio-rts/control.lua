@@ -34,6 +34,7 @@ local modules = {
   require("scripts.hubgui"),    -- Phase 4: hub and hauler panels
   require("scripts.rails"),     -- Phase 5 M1: depots, line planner, trains (after logistics: depots are hubs, and
                                 -- after orders: its right-click hook follows the haulers')
+  require("scripts.railroutes"), -- 0.1.2 (#31 part B): multi-stop train schedules (after rails: its hooks)
   require("scripts.railgui"),   -- Phase 5 M1: train and depot rail panels
   require("scripts.demolish"),  -- Phase 5: demolish own buildings (Delete, Demolish buttons)
   require("scripts.commander"), -- Phase 4: Commander hero (after logistics: its right-click hook follows the haulers')
@@ -94,6 +95,7 @@ local modules = {
   require("scripts.trainswar"),
   -- 0.1.1 (issue #16): guided objectives (after the HUD and the lobby: their layout and the lobby switch; after the
   -- modules whose events and signals tick the steps)
+  require("scripts.netwait"),   -- 0.1.2 (#26): ghosts waiting for items in a hub / city network (read-only; panels and alert)
   require("scripts.objectives"),
   require("scripts.debug"),
 }

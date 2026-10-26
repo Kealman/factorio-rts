@@ -9,6 +9,10 @@
 --                                                         exclusive with `selection` (selecting units clears it)
 --   building_render {LuaRenderObject}                     its outline and, for a barracks, the rally line, ring,
 --                                                         flag and "Rally" label (rts.rally-label)
+--   pieces        {LuaEntity}                             release 0.1.2 (#23, #27): the selected own belts, undergrounds,
+--                                                         splitters, inserters, poles and entity ghosts (scripts/pieces.lua);
+--                                                         exclusive with `selection` and `building`
+--   piece_boxes   {LuaRenderObject}                       one rectangle per selected piece
 -- and storage.selection = {dirty = {[player_index] = true}} (HUD refreshes deferred to the next tick).
 --
 -- Input model (spike decision 10): the rts-cursor selection tool raises on_player_selected_area for a left
@@ -17,6 +21,8 @@
 -- list is ignored. A click (an area under CLICK_SIZE) takes the one own unit nearest to the click.
 -- Phase 2: a plain click that finds no own unit selects the own registered building under the cursor
 -- (any kind in buildings.KIND_BY_NAME). Box selection still takes units only.
+-- Release 0.1.2: a click (or a box with no unit inside) can also select own logistics pieces and ghosts, see
+-- selection.select_pieces; a piece wins over a building only when the click is nearer to it.
 --
 -- The player index does not have to belong to a real player: the headless autotest drives index 0, whose
 -- force is rts-player, whose boxes are created invisible and whose changes never reach the HUD.
@@ -32,6 +38,7 @@ local events = require("scripts.events")
 local units = require("scripts.units")
 local camera = require("scripts.camera")
 local buildings = require("scripts.buildings")
+local pieces = require("scripts.pieces")
 
 local selection = {}
 
@@ -308,12 +315,40 @@ local function drop_building(p)
   return true
 end
 
+-- Release 0.1.2: the selected pieces and ghosts (their boxes die with the entities; a stale handle is dropped here).
+local function clear_pieces(p)
+  for _, obj in pairs(p.piece_boxes or {}) do
+    if obj.valid then obj.destroy() end
+  end
+  p.piece_boxes = nil
+  p.pieces = nil
+end
+
+local function draw_piece_boxes(player_index, p)
+  for _, obj in pairs(p.piece_boxes or {}) do
+    if obj.valid then obj.destroy() end
+  end
+  p.piece_boxes = {}
+  local player = real_player(player_index)
+  for _, e in ipairs(p.pieces or {}) do
+    if e.valid then
+      local box, pos = e.selection_box, e.position
+      p.piece_boxes[#p.piece_boxes + 1] = rendering.draw_rectangle({
+        color = box_color(e.force.name), width = BOX_WIDTH, filled = false,
+        left_top = {entity = e, offset = {box.left_top.x - pos.x, box.left_top.y - pos.y}},
+        right_bottom = {entity = e, offset = {box.right_bottom.x - pos.x, box.right_bottom.y - pos.y}},
+        surface = e.surface, players = player and {player_index} or nil, visible = player ~= nil})
+    end
+  end
+end
+
 -- Common tail of every selection change: drop dead units, redraw boxes, refresh the HUD. Any change of the unit
 -- selection also deselects the building, unless keep_building is set.
 local function changed(player_index, keep_building)
   local p = state(player_index)
   prune(p.selection)
   if not keep_building then drop_building(p) end
+  clear_pieces(p)
   sync_boxes(player_index, p)
   selection.notify_hud(player_index)
 end
@@ -325,6 +360,7 @@ function selection.select_building(player_index, unit_number)
   if not rec or rec.force ~= selection.force_name(player_index) then return false end
   local p = state(player_index)
   p.selection = {}
+  clear_pieces(p)
   p.building = unit_number
   sync_boxes(player_index, p)
   draw_building(player_index, p)
@@ -369,7 +405,58 @@ function selection.building_at(player_index, position, surface)
       if d <= pick_radius(e, rec) and (not best_d or d < best_d) then best_un, best_rec, best_d = e.unit_number, rec, d end
     end
   end
-  return best_un, best_rec
+  return best_un, best_rec, best_d
+end
+
+--- Release 0.1.2 (#23, #27): select own belts, undergrounds, splitters, inserters, poles and entity ghosts instead of
+--- units or a building. `list` = array of LuaEntity; add = true keeps the pieces already selected. Entities of another
+--- force and anything pieces.kind refuses are dropped. Returns the number selected.
+--- QA log line: "select pieces n=<n> ghosts=<g> player=N first=<name> at (x, y)".
+function selection.select_pieces(player_index, list, add)
+  local p = state(player_index)
+  local force = selection.force_name(player_index)
+  local seen, out = {}, {}
+  local function take(e)
+    if e.valid and e.force.name == force and pieces.kind(e) then
+      local key = e.surface.index .. ":" .. pieces.key({e})
+      if not seen[key] then
+        seen[key] = true
+        out[#out + 1] = e
+      end
+    end
+  end
+  if add then for _, e in ipairs(p.pieces or {}) do take(e) end end
+  for _, e in ipairs(list) do take(e) end
+  p.selection = {}
+  drop_building(p)
+  sync_boxes(player_index, p)
+  p.pieces = out
+  draw_piece_boxes(player_index, p)
+  selection.notify_hud(player_index)
+  local ghosts = 0
+  for _, e in ipairs(out) do if e.type == "entity-ghost" then ghosts = ghosts + 1 end end
+  if #out > 0 then
+    util.log("select pieces n=%d ghosts=%d player=%d first=%s at %s", #out, ghosts, player_index,
+      pieces.name(out[1]), util.pos_str(out[1].position))
+  end
+  return #out
+end
+
+--- The selected pieces and ghosts as an array of valid LuaEntity (dead ones are dropped on the way).
+function selection.get_pieces(player_index)
+  local p = state(player_index)
+  local list = p.pieces
+  if not list then return {} end
+  local out = {}
+  for _, e in ipairs(list) do
+    if e.valid then out[#out + 1] = e end
+  end
+  if #out ~= #list then
+    p.pieces = #out > 0 and out or nil
+    if #out > 0 then draw_piece_boxes(player_index, p) else clear_pieces(p) end
+    mark_dirty(player_index)
+  end
+  return out
 end
 
 -- Unit numbers of the live, registered units in `entities` that belong to the player's force.
@@ -702,8 +789,21 @@ function selection.handle_area(player_index, entities, area, add, surface)
   end
   if #own == 0 and is_click and not add then
     local center = {x = (lt.x + rb.x) / 2, y = (lt.y + rb.y) / 2}
-    local un = selection.building_at(player_index, center, surface)
+    local un, _, d_building = selection.building_at(player_index, center, surface)
+    -- Release 0.1.2: an own belt, inserter, pole or ghost wins when the click is nearer to it than to the building
+    local piece, d_piece = pieces.at(selection.force_name(player_index), surface or util.surface(), center)
+    if piece and (not un or d_piece < d_building) then
+      selection.select_pieces(player_index, {piece}, false)
+      return 0
+    end
     if un and selection.select_building(player_index, un) then return 0 end
+  elseif #own == 0 and not is_click then
+    -- a box with no unit inside: the own pieces and ghosts in it as a group (a misplaced belt line); Shift adds
+    local found = pieces.in_area(selection.force_name(player_index), surface or util.surface(), area)
+    if #found > 0 then
+      selection.select_pieces(player_index, found, add)
+      return 0
+    end
   end
   if #own > 1 and is_click then
     local center = {x = (lt.x + rb.x) / 2, y = (lt.y + rb.y) / 2}
@@ -756,6 +856,10 @@ function selection.init()
     end
     if p.building then
       if building_rec(p.building) then draw_building(index, p) else drop_building(p) end
+    end
+    if p.pieces then
+      local live = selection.get_pieces(index)
+      if #live > 0 then draw_piece_boxes(index, p) end
     end
   end
 end
@@ -825,7 +929,17 @@ function selection.rotate_at(player_index, position, reverse)
       if inside and (not best_area or area < best_area) then best, best_area = e, area end
     end
   end
-  if not best then return nil end
+  if not best then
+    -- #28: the refinery and the chemical plant have no fluid boxes, so they cannot rotate: say why instead of nothing
+    for _, e in pairs(surface.find_entities_filtered({position = position, radius = 1, force = player.force})) do
+      local name = e.valid and (e.type == "entity-ghost" and e.ghost_name or e.name)
+      if name == "rts-refinery" or name == "rts-chemical-plant" then
+        player.create_local_flying_text({text = {"rts-ux.rotate-oil"}, position = position})
+        break
+      end
+    end
+    return nil
+  end
   local ok = best.rotate({reverse = reverse == true, by_player = player})
   util.log("rotate %s %s at %s ok=%s now %s player=%d", reverse and "reverse" or "forward",
     best.type == "entity-ghost" and ("ghost of " .. best.ghost_name) or best.name, util.pos_str(best.position),

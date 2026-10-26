@@ -61,6 +61,7 @@ local supply = require("scripts.supply")
 local research = require("scripts.research")
 local logistics = require("scripts.logistics")
 local demolish = require("scripts.demolish")
+local pieces = require("scripts.pieces")
 local balance = require("balance")
 
 local hud = {}
@@ -162,11 +163,15 @@ for _, name in ipairs({"rts-supply-crate", "rts-supply-crate-ii", "rts-field-dep
 -- Phase 5 M3 air: the airfield, the AA turret and the plane kits (Aviation, Air Force); the Nation help page's air line
 for _, name in ipairs({"rts-airfield", "rts-aa-turret", "rts-scout-plane-kit", "rts-bomber-kit", "rts-interceptor-kit"}) do
   P4.NATION_ONLY[name] = true end
+table.insert(P4.HELP_NATION, #P4.HELP_NATION, "rts-ux.help-nation-oil") -- #28
 table.insert(P4.HELP_NATION, #P4.HELP_NATION, "rts-air.help-nation-air") -- Phase 5 M3 integration: before the keys
 -- Phase 5 M3 war2: the gate, the artillery wagon, armoured stock and rail shells
 for _, name in ipairs({"rts-gate", "rts-artillery-wagon-kit", "rts-armoured-locomotive-kit", "rts-armoured-wagon-kit",
                        "rts-rail-shell"}) do
   P4.NATION_ONLY[name] = true end
+-- Release 0.1.2 (#25): the long-handed inserter (recipe and build item) is Nation only: the Skirmish factory page holds
+-- 28 buttons (two rows of 14, Pause included) and the underground belt and splitter already fill it.
+for _, name in ipairs({"rts-long-inserter", "long-handed-inserter"}) do P4.NATION_ONLY[name] = true end
 P4.crafter = function(kind) return kind == "factory" or kind == "district" end -- Phase 5 E1: districts are producers
 P4.place_name = require("scripts.world").place_name -- Phase 5 M2 world: region names in alerts (alert_text)
 -- Phase 5 E1: recipes an age locks (research.AGE_LOCKS: Age II goods, buildings, the Armoured car kit) exist in Nation
@@ -183,7 +188,8 @@ P4.FACTORY_TABS = {
   {key = "science", sprite = "item/rts-science-basic", tooltip = "rts.factory-tab-science"},
   {key = "age2", sprite = "item/rts-science-industrial", tooltip = "rts.factory-tab-age2"},
 }
-P4.LOGISTICS_PRODUCTS = {["transport-belt"] = true, ["fast-inserter"] = true, ["medium-electric-pole"] = true,
+P4.LOGISTICS_PRODUCTS = {["transport-belt"] = true, ["fast-inserter"] = true, ["underground-belt"] = true,
+  ["splitter"] = true, ["long-handed-inserter"] = true, ["medium-electric-pole"] = true,
   ["firearm-magazine"] = true, ["rts-hauler-kit"] = true, rail = true, ["rts-locomotive-kit"] = true,
   ["rts-cargo-wagon-kit"] = true, ["rts-construction-wagon-kit"] = true,
   ["rts-supply-crate"] = true, ["rts-troop-wagon-kit"] = true, -- Phase 5 M2 war
@@ -293,7 +299,8 @@ local GROUP_COUNT = 5
 -- tooltip (it can still be placed while the network holds some).
 local BUILD_TABS = {
   {key = "economy", caption = "rts.build-tab-economy", tooltip = "rts.build-tab-economy-tooltip",
-   items = {"rts-extractor", "rts-smelter", "rts-stockpile", "transport-belt", "fast-inserter", "medium-electric-pole",
+   items = {"rts-extractor", "rts-smelter", "rts-stockpile", "transport-belt", "underground-belt", "splitter",
+            "fast-inserter", "long-handed-inserter", "medium-electric-pole",
             "rts-hub", "rts-depot", -- Phase 5 M1: rts-depot is Nation-only (P4.NATION_ONLY)
             "rts-district-rails"}}, -- Phase 5 M2 integration: the Rail works comes with Railways in Age I
   {key = "production", caption = "rts.build-tab-production", tooltip = "rts.build-tab-production-tooltip",
@@ -659,7 +666,10 @@ end
 
 -- Phase 5 M1 QA round 1: an item that places an entity of another name (the City charter places a City Center) says
 -- so in its build and recipe tooltips: {"", tooltip, "\n", "Builds a [entity] City Center."}.
+local OIL_NOTES = {["rts-pumpjack"] = "rts-ux.note-pumpjack", ["rts-refinery"] = "rts-ux.note-refinery",
+                    ["rts-chemical-plant"] = "rts-ux.note-chemical-plant"} -- #28: no pipes
 local function with_places_note(tooltip, item)
+  if OIL_NOTES[item] then tooltip = {"", tooltip, "\n", {OIL_NOTES[item]}} end
   local proto = item and prototypes.item[item]
   local place = proto and proto.place_result
   if not (place and place.name ~= item) then return tooltip end
@@ -865,6 +875,12 @@ local function build_building_page(panel, h)
   el.b_tabs.visible = false
   add_filler(header)
   el.b_hp = header.add({type = "label", style = "rts_hud_mono_label", tooltip = {"rts.health"}})
+  -- Release 0.1.2: Rotate, for the piece page (belts, inserters, ghosts; scripts/pieces.lua)
+  el.b_rotate = header.add({type = "button", name = PREFIX .. "rotate_piece", style = "rts_hud_button",
+                            caption = {"rts.piece-rotate"}, tooltip = {"rts.piece-rotate-tooltip"},
+                            tags = {rts_hud = "rotate_piece"}})
+  el.b_rotate.style.height = P4.DEMOLISH_HEIGHT
+  el.b_rotate.visible = false
   -- Demolish: two presses (first arms, second within 3 s executes); scripts/demolish.lua
   el.b_demolish = header.add({type = "button", name = PREFIX .. "demolish", style = "rts_hud_button",
                               caption = {"rts.demolish"}, tags = {rts_hud = "demolish"}})
@@ -897,6 +913,10 @@ local function build_building_page(panel, h)
   add_filler(foot)
   el.f_line2 = foot.add({type = "label", style = "rts_hud_dim_label"})
   el.f_line2.style.maximal_width = P4.FACTORY_COUNTS_WIDTH
+  -- #28: the refinery / chemical plant say how oil moves (no pipes)
+  el.f_hint = page.add({type = "label", style = "rts_hud_dim_label"})
+  el.f_hint.style.single_line = false
+  el.f_hint.visible = false
 end
 
 -- Width of the building page's text column: next to the recipe grid, or the whole panel without it.
@@ -1359,6 +1379,7 @@ local function rebuild_recipe_buttons(player, h, un, rec)
   h.recipe_buttons = {}
   h.recipe_locks = {}
   h.bld_un = un
+  if el.f_hint and el.f_hint.valid then el.f_hint.visible = false end
   if rec.kind ~= "barracks" and not factory then
     grid.visible = false
     el.b_text.visible = true
@@ -1508,6 +1529,7 @@ local function block_text(un)
   return {"rts.barracks-blocked-other", tostring(b.reason)}, ""
 end
 
+local OIL_HINTS = {["rts-refinery"] = "rts-ux.refinery-hint", ["rts-chemical-plant"] = "rts-ux.chem-hint"}
 local function update_producer(player, h, un, rec)
   local el = h.el
   local factory = P4.crafter(rec.kind) -- Phase 5 E1: districts too
@@ -1571,6 +1593,11 @@ local function update_producer(player, h, un, rec)
     -- this factory's own counters (production.lua rec.made / rec.moved), not the force's totals
     el.f_line2.caption = {"rts.factory-made-short", rec.made or 0, rec.moved or 0}
     el.f_line2.tooltip = {"", {"rts.factory-made", rec.made or 0, rec.moved or 0}, "\n", {"rts.factory-hint"}}
+    local hint = OIL_HINTS[rec.entity.name]
+    if el.f_hint and el.f_hint.valid then
+      el.f_hint.visible = hint ~= nil
+      if hint then el.f_hint.caption = {hint} end
+    end
   end
 end
 
@@ -1618,6 +1645,16 @@ local function update_other(player, h, un, rec)
     el.b_line2.caption = target and {"rts.extractor-mining", "[entity=" .. target.name .. "]", target.localised_name}
       or {"rts.extractor-no-ore"}
     el.b_line3.caption = {"rts.extractor-hint"}
+  elseif rec.kind == "pumpjack" then -- #28: oil travels through the network as items (scripts/districts.lua drain)
+    if rec.pump_state == "no network" then
+      el.b_line1.caption = {"rts.status", {"rts.state-no-network"}}
+      el.b_line1.style.font_color = COLOR.red
+      el.b_line2.caption = {"rts-ux.pump-no-network"}
+      el.b_line2.style.font_color = COLOR.red
+    else
+      el.b_line2.caption = {"rts-ux.pump-line", string.format("%.0f", (rec.pump_rate or 0))}
+    end
+    el.b_line3.caption = {"rts-ux.pump-hint"}
   elseif rec.kind == "smelter" then
     local recipe = e.get_recipe()
     local name = recipe and recipe.name
@@ -1698,9 +1735,78 @@ local function update_demolish_button(player, h, un, rec)
   button.enabled = not blocked -- Phase 5 M1 integration: greyed like the city panel's (the key still explains)
 end
 
+-- Release 0.1.2 (#23, #27): the page of selected own belts, inserters, poles and ghosts. One piece: name, direction
+-- or pickup / drop, Rotate and Demolish (Cancel for a ghost); a group: the count per name.
+local function update_pieces(player, h, list)
+  local el = h.el
+  if h.bld_un or el.b_buttons.visible then
+    el.b_buttons.clear()
+    h.recipe_buttons, h.bld_un = {}, nil
+    el.b_buttons.visible = false
+    el.b_text.visible = true
+    el.b_foot.visible = false
+    set_text_width(el, PANEL_INNER)
+    if el.b_tabs and el.b_tabs.valid then
+      el.b_tabs.clear()
+      el.b_tabs.visible = false
+    end
+  end
+  local ghosts, names, order = 0, {}, {}
+  for _, e in ipairs(list) do
+    if e.type == "entity-ghost" then ghosts = ghosts + 1 end
+    local n = pieces.name(e)
+    if not names[n] then
+      names[n] = 0
+      order[#order + 1] = n
+    end
+    names[n] = names[n] + 1
+  end
+  table.sort(order)
+  el.b_progress.visible = false
+  el.b_hp.caption = ""
+  el.b_line1.style.font_color = COLOR.white
+  el.b_line2.style.font_color = COLOR.white
+  el.b_line1.tooltip, el.b_line2.tooltip, el.b_line3.tooltip = "", "", ""
+  el.b_line3.caption = ""
+  local all_ghosts = ghosts == #list
+  if #list == 1 then
+    local d = pieces.describe(list[1])
+    el.b_name.caption = d.title
+    el.b_line1.caption = d.lines[1]
+    el.b_line2.caption = d.lines[2]
+  else
+    el.b_name.caption = {"rts.piece-group-title", #list}
+    local parts = {""}
+    for i, n in ipairs(order) do
+      parts[#parts + 1] = (i > 1 and ", " or "")
+      parts[#parts + 1] = {"", names[n] .. " x ", prototypes.entity[n].localised_name}
+    end
+    el.b_line1.caption = parts
+    el.b_line2.caption = ghosts > 0 and {"rts.piece-group-ghosts", ghosts} or ""
+  end
+  local rotatable = false
+  for _, e in ipairs(list) do
+    if pieces.describe(e).rotatable then rotatable = true end
+  end
+  el.b_rotate.visible = rotatable
+  local armed = demolish.is_armed(player.index)
+  el.b_demolish.visible = true
+  el.b_demolish.enabled = true
+  set_style(el.b_demolish, armed and "rts_hud_button_armed" or "rts_hud_button")
+  el.b_demolish.style.height = P4.DEMOLISH_HEIGHT
+  if all_ghosts then
+    el.b_demolish.caption = {"rts.piece-cancel"}
+    el.b_demolish.tooltip = {"rts.piece-cancel-tooltip"}
+  else
+    el.b_demolish.caption = armed and {"rts.demolish-confirm"} or {"rts.demolish"}
+    el.b_demolish.tooltip = {"rts.piece-demolish-tooltip"}
+  end
+end
+
 local function update_building(player, h, un, rec)
   local el = h.el
   local e = rec.entity
+  el.b_rotate.visible = false
   update_demolish_button(player, h, un, rec)
   if h.bld_un ~= un then rebuild_recipe_buttons(player, h, un, rec) end
   el.b_name.caption = {"rts.bld-title", e.localised_name, un}
@@ -1720,6 +1826,14 @@ end
 local function update_selection(player, h)
   local un, rec = selected_building(player)
   local el = h.el
+  local sel_pieces = not rec and optional_fn("scripts.selection", {"get_pieces"})
+  local plist = sel_pieces and sel_pieces(player.index) or {}
+  if #plist > 0 then
+    el.unit_page.visible = false
+    el.bld_page.visible = true
+    update_pieces(player, h, plist)
+    return 0
+  end
   if rec then
     el.unit_page.visible = false
     el.bld_page.visible = true
@@ -2422,6 +2536,14 @@ local function on_click(e)
     if toggle then toggle(player) end
   elseif action == "demolish" then
     demolish.click(player)
+  elseif action == "rotate_piece" then -- Release 0.1.2: rotate the selected pieces / ghosts
+    local rotated = 0
+    local get = optional_fn("scripts.selection", {"get_pieces"})
+    for _, ent in ipairs(get and get(player.index) or {}) do
+      local ok = pcall(function() return ent.rotate({by_player = player}) end)
+      if ok then rotated = rotated + 1 end
+    end
+    util.log("hud click rotate pieces player=%d n=%d", player.index, rotated)
   elseif action == "disband" then -- Phase 5 M2 integration: Disband the selected units (Nation mode)
     local result, n = demolish.disband(player.index)
     util.log("disband: click player=%d result=%s n=%d", player.index, result, n)

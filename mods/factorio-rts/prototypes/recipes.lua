@@ -73,8 +73,15 @@ data:extend({
   -- Factory: vanilla logistics items and ammo
   recipe({name = "rts-belt", category = B, subgroup = "rts-economy", order = "g", time = 2,
           cost = {["iron-plate"] = 10}, result = "transport-belt", count = 10}),
+  -- Release 0.1.2 (#25): the vanilla pair, splitter and long-handed inserter (no circuits: Age I has none)
+  recipe({name = "rts-underground-belt", category = B, subgroup = "rts-economy", order = "ga", time = 4,
+          cost = {["iron-plate"] = 10, ["transport-belt"] = 5}, result = "underground-belt", count = 2}),
+  recipe({name = "rts-splitter", category = B, subgroup = "rts-economy", order = "gb", time = 4,
+          cost = {["iron-plate"] = 10, ["copper-plate"] = 5, ["transport-belt"] = 4}, result = "splitter", count = 1}),
   recipe({name = "rts-inserter", category = B, subgroup = "rts-economy", order = "h", time = 2,
           cost = {["iron-plate"] = 10, ["copper-plate"] = 5}, result = "fast-inserter", count = 5}),
+  recipe({name = "rts-long-inserter", category = B, subgroup = "rts-economy", order = "ha", time = 3,
+          cost = {["iron-plate"] = 15, ["copper-plate"] = 5}, result = "long-handed-inserter", count = 5}),
   recipe({name = "rts-pole", category = B, subgroup = "rts-economy", order = "i", time = 2,
           cost = {["copper-plate"] = 5, ["iron-plate"] = 5}, result = "medium-electric-pole", count = 5}),
   recipe({name = "rts-ammo", category = B, subgroup = "rts-defense", order = "b", time = 3,

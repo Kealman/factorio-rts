@@ -44,12 +44,13 @@ local LIST_TOP = 8 + 120       -- under the kill feed (5 lines)
 local POLL_PERIOD = 10
 local REFRESH_PERIOD = 30
 local FIELD_WIDTH = 72
-local COLOR = {white = {1, 1, 1}, dim = {0.72, 0.72, 0.72}, yellow = {1, 0.85, 0.3}, green = {0.5, 1, 0.5}}
+local COLOR = {white = {1, 1, 1}, dim = {0.72, 0.72, 0.72}, yellow = {1, 0.85, 0.3}, green = {0.5, 1, 0.5}, red = {1, 0.42, 0.36}}
 -- Phase 5 M2 people: the panel's people section (residents and housing, growth, happiness and power, one bar per need,
 -- workforce / jobs / free / recruits, the draft drop-down, the nation's labor priorities with up / down buttons) and
 -- the staffing box over the HUD's building page for a selected staffed building (staff %, workers, city, family, Pin).
 -- scripts/population.lua and scripts/labor.lua load after this module and set cities.people / cities.labor.
 local PB = require("balance").nation.people
+local netwait = require("scripts.netwaitline") -- 0.1.2 (#26)
 local STAFF = "rts_citygui_staff"
 local STAFF_WIDTH = 420
 local HUD_PANEL_HEIGHT = 126   -- hud.lua PANEL_HEIGHT: the staffing box sits right above the building page
@@ -326,6 +327,9 @@ local function build_panel(player, g, c)
   el.next = label(frame, "rts_hud_label")
   build_people(frame, el, c) -- Phase 5 M2 people
   el.networks = label(frame, "rts_hud_dim_label")
+  el.waiting = label(frame, "rts_hud_label") -- 0.1.2 (#26): ghosts waiting for items in this city's network
+  el.waiting.style.font_color = COLOR.red
+  el.waiting.visible = false
   label(frame, "rts_hud_heading_label", {"rts.citygui-targets"})
   local tbl = frame.add({type = "table", column_count = 3})
   tbl.style.horizontal_spacing = 8
@@ -407,6 +411,14 @@ local function refresh_panel(player, g)
   local ids = {}
   for _, id in ipairs(c.networks or {}) do ids[#ids + 1] = "#" .. id end
   el.networks.caption = {"rts.citygui-networks", #ids, #ids > 0 and table.concat(ids, " ") or "-"}
+  local waiting = netwait.line(c.center)
+  if el.waiting and el.waiting.valid then
+    el.waiting.visible = waiting ~= nil
+    if waiting then
+      el.waiting.caption = waiting
+      el.waiting.tooltip = {"rts-ux.waiting-tooltip"}
+    end
+  end
   refresh_people(player, g, c) -- Phase 5 M2 people
   if citygui.refresh_hook then citygui.refresh_hook(player, el, c) end -- Phase 5 M3 age3
   local b = el.demolish

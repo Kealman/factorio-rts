@@ -47,6 +47,10 @@
 -- second per wagon and sends it on with go_to_station. Cargo = what the pickup's network exports above its threshold
 -- and the drop-off's network still keeps (logistics.lua policies; a drop-off without keep thresholds takes every
 -- export). Locomotives are topped up with coal from the depot network at every stop.
+-- 0.1.2 (#31 part B): that two-record route is the AI's (rails.set_route, unchanged). A train with a stop list
+-- (rec.stops: the player's trains) runs a native engine schedule instead: scripts/railroutes.lua owns it and sets
+-- rails.routes = {step, click, refresh, resume, serves}; this module's train step, state handler, right click,
+-- depot removal and capture call those hooks for such trains and leave their legacy paths alone.
 --
 -- storage.rails = {
 --   version, test_nation, test_forces, test_bridges = {[force] = true} (autotest only),
@@ -219,6 +223,8 @@ KIT_OF[rails.ARTY], KIT_OF[rails.ALOCO], KIT_OF[rails.AWAGON] = rails.ARTY_KIT, 
 rails.KITS = {} -- Phase 5 M3 war2: every rolling-stock kit -> the carriage it makes (docs/PHASE5-M3.md section 3)
 for stock, kit in pairs(KIT_OF) do rails.KITS[kit] = stock end
 local FREIGHT = {cargo = true, troop = true} -- Phase 5 M2 war: kinds with a pickup -> drop-off route
+rails.FREIGHT = FREIGHT -- 0.1.2 (#31): scripts/railroutes.lua
+rails.KIT_OF = KIT_OF   -- 0.1.2 (#32): the train builder
 -- Entity types that block a coarse cell (with water and void). Trees, rocks and cliffs are cleared by the builder.
 local BLOCKER_TYPES = {"assembling-machine", "furnace", "mining-drill", "roboport", "container", "logistic-container",
   "ammo-turret", "electric-turret", "fluid-turret", "artillery-turret", "wall", "gate", "radar", "lab", "solar-panel",
@@ -788,6 +794,7 @@ buildings.on_removed(function(un, rec)
       ln.lost_depot = {un = un, x = p and p.x, y = p and p.y, spec = spec}
     end
   end
+  if rails.routes then rails.routes.refresh(un) end -- 0.1.2 (#31 part B): stop lists skip the gone depot
 end)
 
 local function platform_free(d)
@@ -1708,6 +1715,7 @@ local function wagons_of(train, name)
   end
   return list
 end
+rails.wagons_of = wagons_of -- 0.1.2 (#31): scripts/railroutes.lua
 
 local function kit_list(kind, n, armoured) -- Phase 5 M2 war: n troop wagons
   if kind == "construction" then return {{rails.LOCO_KIT, 2}, {rails.CWAGON_KIT, 1}} end
@@ -1737,6 +1745,7 @@ local function refuel(train, net)
   end
   return put
 end
+rails.refuel = refuel -- 0.1.2 (#31): scripts/railroutes.lua
 
 -- Phase 5 M2 QA round 1 (step 20): the train layout, the own units that step off the platform track, and why a train
 -- cannot be deployed (rails.deploy_check, the depot panel's reason line). In the QA run a division waiting by the
@@ -2031,6 +2040,9 @@ function rails.set_route(train, pickup, dropoff)
   local rec = rails.train_record(train)
   if not (rec and FREIGHT[rec.kind] and train and train.valid) then return false end -- Phase 5 M2 war
   if not (rails.depot(pickup) and rails.depot(dropoff)) or pickup == dropoff then return false end
+  if rec.stops then -- 0.1.2 (#31 part B): a two-record route replaces a stop list (scripts/railroutes.lua)
+    rec.stops, rec.rmap, rec.written, rec.dwell = nil, nil, nil, nil
+  end
   rec.pickup, rec.dropoff = pickup, dropoff
   rec.lost_pickup, rec.lost_dropoff = nil, nil -- Phase 5 M3 integration: a new route replaces a lost one
   if not schedule_two(train, rec) then return false end
@@ -2063,6 +2075,7 @@ end
 function rails.resume(train)
   local rec = rails.train_record(train)
   if not rec then return false end
+  if rec.stops and rails.routes then return rails.routes.resume(rec, train) end -- 0.1.2 (#31 part B)
   if FREIGHT[rec.kind] and rec.pickup and rec.dropoff then -- Phase 5 M2 war: troop trains too
     schedule_two(train, rec)
     if rec.dwell then
@@ -2100,6 +2113,7 @@ local function inbound(force_name, net_id, except_id)
   end
   return out
 end
+rails.inbound = inbound -- 0.1.2 (#31): scripts/railroutes.lua adds the cargo of trains on stop lists
 
 -- What to load at the pickup for the drop-off (hauler manual-route rule). Returns plan or nil, reason.
 local function cargo_plan(rec, train)
@@ -2325,6 +2339,12 @@ end
 -- train is this line's when its AI line mark or a depot of its route is the line's; a train without a route still counts.
 local function on_line(rec, line)
   if rec.ai_line then return rec.ai_line == line.id end
+  if rec.stops then -- 0.1.2 (#31 part B): a train on a stop list is the line's when one of its stops is a line end
+    for _, st in ipairs(rec.stops) do
+      if st.target and (st.target == line.a or st.target == line.b) then return true end
+    end
+    return next(rec.stops) == nil
+  end
   local p, d = rec.pickup, rec.dropoff
   if not (p or d) then return true end
   return p == line.a or p == line.b or d == line.a or d == line.b
@@ -2900,6 +2920,10 @@ local function train_step(id, rec)
     builder_step(rec, train)
     return
   end
+  if rec.stops then -- 0.1.2 (#31 part B): a train on a stop list (scripts/railroutes.lua)
+    if rails.routes then rails.routes.step(rec, train) end
+    return
+  end
   if rec.dwell then return end
   local st = train.state
   if st == TS.no_path or st == TS.path_lost then
@@ -2958,6 +2982,11 @@ function rails.right_click(player_index, position, entities, alt)
     local trec = rails.train_record(rec.entity)
     local train = trec and train_of(trec)
     local target = pick_depot(player_index, force_name, position, entities)
+    -- 0.1.2 (#31 part B): a right click adds a stop to the train's stop list (scripts/railroutes.lua)
+    if trec and train and rails.routes and rails.routes.click then
+      local order, n = rails.routes.click(player_index, position, entities, alt, trec, train, target)
+      if order then return order, n end
+    end
     -- Phase 5 M3 war2: kinds another module drives (scripts/trainswar.lua: artillery trains go to a depot or a rail)
     local kh = trec and train and rails.KIND_HOOKS[trec.kind]
     if kh and kh.right_click then return kh.right_click(player_index, position, entities, alt, trec, train, target) end
@@ -3120,6 +3149,8 @@ buildings.on_force_changed(function(un, rec, old)
       util.log("rails: AI %s lost #%d of a second rail program", old, un)
     end
   end
+  -- 0.1.2 (#31 part B): stop lists of both owners skip or take up the depot again
+  if d and rails.routes then rails.routes.refresh(un) end
 end)
 
 --- Phase 5 M2 integration: a city came back to a force (rts_city_captured): a rail program it lost with that city as
@@ -3704,6 +3735,8 @@ logistics.served_by_train = function(force_name, src_id, home_id)
       if a and b and a.network_id == src_id and b.network_id == home_id and (not line or line.state == "open") then
         return true
       end
+    elseif rec.stops and rec.force == force_name and rails.routes and rails.routes.serves(rec, src_id, home_id) then
+      return true -- 0.1.2 (#31 part B): a stop list that loads in the source network and unloads at home
     end
   end
   return false
@@ -3807,6 +3840,7 @@ end)
 
 events.on_nth_tick(rails.TRANSFER_PERIOD, function()
   local R = storage.rails
+  if R and rails.routes then rails.routes.tick() end -- 0.1.2 (#31 part B): trains on a stop list at their stops
   if not (R and next(R.dwelling)) then return end
   for _, id in ipairs(sorted_keys(R.dwelling)) do
     local rec = R.trains[id]
@@ -3855,6 +3889,7 @@ events.on(defines.events.on_train_changed_state, function(e)
   local train = e.train
   local rec = R.trains[train.id]
   if not rec then return end
+  if rec.stops then return end -- 0.1.2 (#31 part B): scripts/railroutes.lua handles trains on a stop list
   if e.old_state == TS.wait_station and rec.dwell then
     rec.dwell = nil
     R.dwelling[train.id] = nil

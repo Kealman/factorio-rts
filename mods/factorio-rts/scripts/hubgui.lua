@@ -20,6 +20,7 @@ local orders = require("scripts.orders")
 local camera = require("scripts.camera")
 local logistics = require("scripts.logistics")
 local demolish = require("scripts.demolish")
+local netwait = require("scripts.netwaitline")
 
 local hubgui = {}
 
@@ -192,6 +193,9 @@ local function build_hub(player, g, un)
   header(frame, {"rts.hubgui-title", logistics.hub_name(un)}, {"rts.hubgui-title-tooltip"})
   g.el.network = label(frame, "rts_hud_label")
   g.el.haulers = label(frame, "rts_hud_label")
+  g.el.waiting = label(frame, "rts_hud_label") -- 0.1.2 (#26): ghosts waiting for items in this network
+  g.el.waiting.style.font_color = COLOR.red
+  g.el.waiting.visible = false
   label(frame, "rts_hud_dim_label", {"rts.hubgui-hint"})
   if rec.kind == "hub" then
     -- Demolish (two presses, scripts/demolish.lua); never for the Command Center
@@ -291,6 +295,14 @@ local function refresh_hub(player, g)
     if dest == un and (h.state == "to_dropoff" or h.state == "to_home") and next(h.cargo or {}) then inbound = inbound + 1 end
   end
   el.haulers.caption = {"rts.hubgui-haulers", home, inbound}
+  local waiting = netwait.line(un)
+  if el.waiting and el.waiting.valid then
+    el.waiting.visible = waiting ~= nil
+    if waiting then
+      el.waiting.caption = waiting
+      el.waiting.tooltip = {"rts-ux.waiting-tooltip"}
+    end
+  end
   return true
 end
 
