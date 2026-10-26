@@ -1,4 +1,61 @@
 ---------------------------------------------------------------------------------------------------
+Version: 0.1.2
+Date: 2026-10-26
+  Features:
+    - Factory and barracks recipe buttons order crafts: click = 1, Shift = 5, Ctrl = as many as the network can pay,
+      right click takes crafts off the order. The button and the status line show the crafts left and a finished
+      order stops the machine. A new Endless toggle in the recipe grid keeps the old endless production. (#22)
+    - Belts, underground belts, splitters, inserters and medium poles can be selected (click, or a box with no
+      units in it) and demolished with Delete or the Demolish button: two presses, half the recipe back. (#23)
+    - Placed ghosts can be selected (click or box) and cancelled at once with Delete, Backspace or Cancel. (#27)
+    - The factory crafts underground belts and splitters, and in Nation mode long-handed inserters; the economy
+      build menu has them. (#25)
+    - Units clear trees and rocks: right click a tree or rock, or Shift + right-drag over an area. Rocks pay their
+      stone and coal to the nearest stockpile. A ghost placed over trees marks them for the construction robots. (#24)
+    - A new city's hub and city panels say "N ghosts waiting: nothing to build them with" and raise an alert when
+      its robots have nothing to build with. (#26)
+    - Help cards: hold Shift over a building, unit or ghost (or press Shift+F11) for what it is, how it works, what
+      it takes and makes, its ranges, needs and a tip. A "?" button on building, hub, depot and city panels opens
+      the same card, and build menu tooltips carry a one-line description. (#30)
+    - The refinery, chemical plant and pumpjack panels say that oil travels through the network as items: no pipes,
+      no rotation. A pumpjack outside every network shows "no network" and raises an alert. (#28)
+    - Trains run stop lists: right click depots to add stops, each with its own orders (unload to Keep, everything
+      or chosen items; load exports or chosen items; troops board or get off; bombard here) and the engine's wait
+      conditions. The list loops by itself. (#31)
+    - The train builder composes trains carriage by carriage from presets or up to 5 saved templates: mixed cargo,
+      troop and artillery trains, armoured ones, longer trains on 60- or 80-tile platforms. A standing train
+      couples or drops a carriage at its depot. (#32)
+    - The Rail tool (Economy tab) lays your own track: click waypoints, with curves, branches, a bill per segment
+      and undo. Robots and construction trains build it, and chain signals keep trains on single track apart. (#31)
+    - Rail stations: small depots without a platform that put their stops on your track. Rail signals and chain
+      signals are in the build menu. (#31)
+    - Auto lines run along your own track where it helps, and a depot takes any number of lines. (#31)
+  Changes:
+    - A new city's settlers bring raw goods, a factory, two houses and a farm from the mother city's network, as far
+      as it holds them; nothing is created. AI nations are unchanged. (#26)
+    - Your supply haulers wait for a fuller load of rations, goods and magazines while the town holds at least half
+      its Keep, 4 minutes at most. Below half they leave at once. AI unchanged. (#21)
+    - Trains of 0.1.1 saves load as two-stop lists (their pickup and drop-off), and the Station and the signals are
+      unlocked for nations that already had Railways.
+  Balancing:
+    - New recipes: underground belt (10 iron + 5 belts, makes 2), splitter (10 iron + 5 copper + 4 belts),
+      long-handed inserter (15 iron + 5 copper, makes 5), rail station (20 iron, 4 steel, 4 copper), rail signal and
+      chain signal (5 iron + 1 circuit each).
+  Bugfixes:
+    - Fixed "Unknown key: recipe-name.rts-oil-processing" and nine more recipe names in the refinery, chemical plant
+      and factory panels: every recipe has an explicit English and Russian name. (#29)
+    - The objectives of the other mode no longer log "step done" in a match (log only). (#19)
+  Gui:
+    - The help card from a Shift hover appears about 0.3 s after the press and closes with a click, after 20 s or
+      on the next Shift press; the engine does not report the key release.
+    - R on a refinery or chemical plant says that oil travels through the network. (#28)
+  Info:
+    - Rail limits: two trains that each want the platform the other holds wait for each other (the train panel says
+      "single track needs a passing loop or a second track"), and junctions turn one way, so a branch entered from
+      the other side needs a second segment. (#31)
+    - The pumpjack still shows the vanilla art's baked pipe stub; the panels and tooltips say it has no pipes.
+    - The AI pace items (#2, #20) and Windows (#15) move to 0.1.3.
+---------------------------------------------------------------------------------------------------
 Version: 0.1.1
 Date: 2026-10-25
   Features:

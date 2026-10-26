@@ -179,3 +179,35 @@ Once the repository is public, its history is public for good, even if it is del
    - In the gallery, delete the ten old shots of step 2 and upload the new ones, keeping the order `01` to `15`.
 7. **Issues.** Close #18 with the release link and close the 0.1.1 milestone. Move the open #2 (rail linking) and #15 (Windows) to the next milestone, and open the 0.1.2 follow-ups from `docs/qa/phase5-ai3-notes.md` section 8.12 and #4's closing comment.
 8. **Announce (optional).** Reply in the forum thread and on the Reddit post with the "New in 0.1.1" paragraph and the release link.
+
+## 9. The 0.1.2 update
+
+1. **The go.** Given on 2026-10-26 for the release tree named in `docs/release/0.1.2-summary.md` (fill in the hash). The lead's acceptance (`tools/release-check.sh` on the merged tree, compared with the 0.1.1 report; Skirmish identity against 0.1.1; the owner's save played 10 minutes headless; GUI pass in English and Russian; Linux Docker smoke) is recorded there.
+2. **Screenshots.** The portal gallery is the owner's own selection: do not touch it unless you choose to add shots of the new panels (help card, train builder, Rail tool). The README and portal captions follow `docs/media/INDEX.md`.
+3. **The version.** `mods/factorio-rts/info.json` says 0.1.2, `mods/factorio-rts/changelog.txt` has the `Version: 0.1.2` section on top (check its date), and `CHANGELOG.md` and the README say 0.1.2.
+4. **Build and test the archive.** It must print no warning:
+
+   ```sh
+   git status --short && tools/package.sh      # build/release/factorio-rts_0.1.2.zip
+   tools/uninstall.sh
+   rm -f ~/Library/Application\ Support/factorio/mods/factorio-rts_*.zip
+   cp build/release/factorio-rts_0.1.2.zip ~/Library/Application\ Support/factorio/mods/
+   ```
+
+   Start Factorio and check that **Mods** shows Factorio RTS 0.1.2 with the 0.1.2 changelog. Start a new Freeplay game and see the lobby. Then load a Nation save made with 0.1.1 (the owner's Age II save), play a minute, and check that a train route became a two-stop list, that a Shift hover shows a help card and that a recipe click orders one craft. Afterwards, remove the zip and run `tools/install.sh`.
+5. **Push, tag and release on GitHub.**
+
+   ```sh
+   git push origin main
+   git tag -a v0.1.2 -m "Factorio RTS 0.1.2"
+   git push origin v0.1.2
+   gh release create v0.1.2 build/release/factorio-rts_0.1.2.zip --repo Kealman/factorio-rts \
+     --title "Factorio RTS 0.1.2" --notes-file docs/release/github-release.md
+   ```
+
+6. **Mod Portal.** Sign in with the account that owns the mod and open https://mods.factorio.com/mod/factorio-rts:
+   - Upload `build/release/factorio-rts_0.1.2.zip` as a new version. The file name must stay `factorio-rts_0.1.2.zip`. The Changelog tab updates itself from the zip.
+   - On the edit page, replace the "What's new" block at the top of the description with the "What's new in 0.1.2" block of [mod-portal.md](mod-portal.md), refresh the long description and replace the FAQ with the FAQ block of the same file.
+   - Leave the gallery as it is.
+7. **Issues.** Close #19 and #21 to #32 with the release link (#31 once its open rail items are listed in a follow-up issue), close the 0.1.2 milestone, and move #2, #15 and #20 to 0.1.3 together with the rails open items of `docs/release/0.1.2-summary.md`.
+8. **Announce (optional).** Reply in the forum thread and on the Reddit post with the "0.1.2 update" paragraph of [announce.md](announce.md) and the release link.

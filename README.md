@@ -4,7 +4,7 @@
 
 ![A Nation capital at City tier in Age III: districts, hubs, rail depots, stockpiles and haulers on the move](docs/media/02-capital.png)
 
-**Version 0.1.1** for Factorio 2.1 · Space Age optional · [Mod Portal](https://mods.factorio.com/mod/factorio-rts) · [Full feature list](docs/FEATURES.md) · [Changelog](CHANGELOG.md) · [MIT license](LICENSE)
+**Version 0.1.2** for Factorio 2.1 · Space Age optional · [Mod Portal](https://mods.factorio.com/mod/factorio-rts) · [Full feature list](docs/FEATURES.md) · [Changelog](CHANGELOG.md) · [MIT license](LICENSE)
 
 Contents: [Gallery](#gallery) · [Highlights](#highlights) · [Requirements](#requirements) · [Install](#install) · [Quick start](#quick-start) · [Controls](#controls) · [The economy](#the-economy) · [Your first Skirmish match](#your-first-skirmish-match) · [Units](#units) · [AI and difficulty](#ai-and-difficulty) · [Nation mode](#nation-mode) · [Multiplayer](#multiplayer) · [Known limitations](#known-limitations-and-open-issues) · [Roadmap](#roadmap) · [Development](#development) · [Contributing](#contributing) · [License and credits](#license-and-credits)
 
@@ -26,7 +26,7 @@ Contents: [Gallery](#gallery) · [Highlights](#highlights) · [Requirements](#re
 - **AI commanders that play by the rules.** Each AI draws an economic, aggressive or turtle doctrine, builds a real base, expands, raids your haulers, researches and attacks.
 - **Nation mode: a small state.** Worlds of 2048, 3072 or 4096 tiles with 2 to 6 nations, named regions, mountain ranges, rivers with fords, neutral city-states, trade ports and ruins.
 - **Cities, people and money.** Up to 4 cities per nation claim territory, house and feed residents who staff your buildings and become your recruits, and pay into a treasury that funds upkeep, soldiers and imports on a shared world market.
-- **Railways with a purpose.** Select a depot, right-click another, and the game surveys a route and sends a construction train to lay it. Freight, troop, artillery and armoured trains run on it.
+- **Railways with a purpose.** Select a depot, right-click another, and the game surveys a route and sends a construction train to lay it, or lay your own track with the Rail tool. Compose freight, troop, artillery and armoured trains carriage by carriage and give them stop lists with orders per stop.
 - **Three ages.** The Railway Charter brings Age II (oil as goods, districts, armoured cars, bunkers). The Space Program brings Age III (chemistry, nuclear power, automation) and, on its third stage, a Space victory.
 - **War is logistics.** Divisions burn supply, enemy land bleeds your armies, cities are captured rather than razed, and wars end in treaties. Garrisons, fronts, fort belts, air units with anti-aircraft (AA) defence and artillery trains round it out.
 - **A layered nation AI without cheats.** An economic planner, city governors, a war council, division controllers and an intelligence layer that only knows what its units see. Difficulty changes skill, never resources.
@@ -46,7 +46,7 @@ Contents: [Gallery](#gallery) · [Highlights](#highlights) · [Requirements](#re
 
 **From the Mod Portal.** In the game's main menu open **Mods**, search the online mods for "Factorio RTS", install it and let the game restart. You can also download it from [mods.factorio.com/mod/factorio-rts](https://mods.factorio.com/mod/factorio-rts).
 
-**Manually.** Download `factorio-rts_0.1.1.zip` from the [GitHub releases](https://github.com/Kealman/factorio-rts/releases) and put the zip, unpacked or not, into your mods folder. Then enable the mod in **Mods**.
+**Manually.** Download `factorio-rts_0.1.2.zip` from the [GitHub releases](https://github.com/Kealman/factorio-rts/releases) and put the zip, unpacked or not, into your mods folder. Then enable the mod in **Mods**.
 
 | System | Mods folder |
 |---|---|
@@ -83,13 +83,14 @@ Every side starts with a Command Center (CC), the same stock and 6 walkers. Huma
 | WASD / mouse wheel | Pan / zoom (remote view) |
 | Space | Camera to your CC |
 | Click on the minimap | Camera jumps there |
-| Left click | Select one unit (the whole division if it belongs to one); if no unit is there, select your own building, or a train by any of its carriages |
-| Left drag | Box-select units |
+| Left click | Select one unit (the whole division if it belongs to one); if no unit is there, select your own building, belt, underground belt, splitter, inserter, medium pole or ghost, or a train by any of its carriages |
+| Left drag | Box-select units; a box with no unit inside selects your belts, inserters, poles and ghosts in it |
 | Shift + left click / drag | Add to the selection (only the units hit, even inside a division) |
 | Ctrl+A | Select your army: every combat unit and the Commander, not the haulers |
 | Ctrl+1..5 / 1..5 | Assign / recall a control group (double tap: camera jumps to it) |
 | Click / Shift + click a unit card | Keep only that unit type / drop it from the selection |
-| Right click | Move, or attack the enemy under the cursor |
+| Right click | Move, or attack the enemy under the cursor; on a tree or rock with units selected: clear it |
+| Shift + right-drag (3 tiles or more) over trees or rocks | Clear them all (see [Clearing trees and rocks](#clearing-trees-and-rocks)) |
 | F, then right click | Attack-move (press F or X again to cancel) |
 | Shift + right click | Attack-move |
 | X / H | Stop / hold position |
@@ -99,15 +100,17 @@ Every side starts with a Command Center (CC), the same stock and 6 walkers. Huma
 | Right click the ground with haulers selected | Move there and park (**Resume** in the hauler panel restarts the route) |
 | Z / C / V / G | Stim / Shield / Scanner sweep / Artillery strike (see below) |
 | B | Show or hide the build menu |
+| Left click on a factory or barracks recipe button | Order 1 craft (Shift 5, Ctrl as many as the network can pay); right click takes 1 off the order (Shift 5, Ctrl all); the **Endless** toggle brings back endless production |
 | Left click on the map while placing | Place a ghost (R rotates) |
 | R / Shift + R | Rotate the building or ghost under the cursor (while placing: the ghost on the cursor) |
 | Q or right click | Stop placing |
 | T | Research panel |
-| Delete or Backspace, or the **Demolish** button | Demolish the selected own building (two presses, see [Demolishing](#demolishing)). Nation: with units and no building selected, disband them (two presses) |
+| Delete or Backspace, or the **Demolish** button | Demolish the selected own building, belt, inserter or pole (two presses, see [Demolishing](#demolishing)); cancel selected ghosts (one press). Nation: with units and nothing else selected, disband them (two presses) |
 | F3 | Jump to the newest alert (press again for older ones) |
 | F10 | Match menu: resume, restart, concede (click twice); after the match, the results again |
 | Esc | Game menu: save, load, settings, exit (the RTS panels close first if one is open) |
 | F11 | How to play |
+| Hold Shift over a building, unit or ghost; **?** on a panel; Shift+F11 | A help card: what it is, how it works, what it takes and makes, ranges, needs and a tip (a hover card closes with a click, after 20 s or on the next Shift press) |
 | F1 | Get the RTS cursor back |
 | **Nation mode only** | |
 | L, or a click on the age badge | City ledger (age, national project, goods, make targets) |
@@ -117,7 +120,7 @@ Every side starts with a Command Center (CC), the same stock and 6 walkers. Huma
 | Y | The air panel (airfields, planes, **Patrol**, **Return to airfield**) |
 | Right click another own depot with a depot selected | Lay a rail line between the two depots |
 | Right click a depot or rail station with a train selected | Add it as the train's last stop (Shift: insert it after the stop selected in the train panel) |
-| The Rail button (build menu, Economy tab) | The Rail tool: left-click waypoints to lay track; right click or Backspace takes the last segment back; Q or **Done** ends it |
+| The Rail button (build menu, Economy tab) | The Rail tool: left-click waypoints to lay track (the first on your rail for a branch); right click or Backspace takes the last segment back; Q or **Done** ends it |
 | F with no unit selected, or the gate button in the build menu's header | The fort belt tool (right-click 2–6 points in your land, then **Build**) |
 | B with your train selected | Bombard (an artillery train fires at hostile buildings in range) |
 | H with whole divisions selected and the cursor at a front | They spread along that front and hold it (elsewhere H holds position) |
@@ -144,7 +147,15 @@ After you press V or G, the ability waits for your target. Pressing the key agai
 
 ### Demolishing
 
-Select an own building and press Delete or Backspace, or the **Demolish** button: the first press arms (the button turns red), and a second press within 3 s demolishes it. 50 % of its cost goes back to the nearest other stockpile of its logistic network, else to another own stockpile within 64 tiles, else to your Command Center's network; a refund with no room anywhere spills on the ground with an alert. The building's contents go to another stockpile of its network or spill on the ground. A hub, depot or City Center takes its stockpiles with it. The Command Center, the capital and trains cannot be demolished ("Locomotive cannot be demolished."). In Nation mode, Delete with units and no building selected disbands them the same way (two presses; their recruits go home).
+Select an own building and press Delete or Backspace, or the **Demolish** button: the first press arms (the button turns red), and a second press within 3 s demolishes it. 50 % of its cost goes back to the nearest other stockpile of its logistic network, else to another own stockpile within 64 tiles, else to your Command Center's network; a refund with no room anywhere spills on the ground with an alert. The building's contents go to another stockpile of its network or spill on the ground. A hub, depot or City Center takes its stockpiles with it. The Command Center, the capital and trains cannot be demolished ("Locomotive cannot be demolished."). In Nation mode, Delete with units and nothing else selected disbands them the same way (two presses; their recruits go home).
+
+**Pieces.** Belts, underground belts, splitters, fast and long-handed inserters and medium poles are selected by a click on them or by a box with no unit inside (Shift adds), and follow the same two-press rule. The refund is half the recipe's cost, rounded down over the whole batch: 10 belts give 5 iron plates, a single belt gives nothing ("The refund rounds down to nothing"). Items on a belt or in an inserter's hand go to the network's stockpile like a building's contents. The panel shows the piece (direction, an inserter's From and To, items on the belt) and has Rotate and Demolish buttons. A hub's hidden pole, enemy and neutral entities are never selected.
+
+**Ghosts.** A ghost of yours, selected the same way, is cancelled at once by the first Delete or Backspace press or by the **Cancel** button; nothing was paid for it, so there is no refund. A mixed selection cancels its ghosts and arms its pieces.
+
+### Clearing trees and rocks
+
+Forests block building and parts of the map. Select units and right-click a tree or a rock: the nearest unit that is free to act walks there and fells it. A Shift + right-drag of at least 3 tiles over trees or rocks clears them all; the units share the targets, nearest first, and give up on one they cannot reach. Four walkers cleared a 20-tree patch in 6.5 s in the tests. Rocks pay their stone and coal to the nearest own stockpile, else to your pool. A plain Shift + click or a small drag stays an attack-move. A ghost you place marks the trees and rocks under it for deconstruction, so the construction robots clear the site before they build. Units in a moving division, haulers and trains do not clear.
 
 ## The economy
 
@@ -152,7 +163,7 @@ Both modes share this economy; Nation mode adds the layers in [Nation mode](#nat
 
 **The pool.** Your CC is a roboport with 3,000 HP, 20 construction and 10 logistic robots, 4 stockpiles and a 4 MW power core. Its logistic network covers 25 tiles in every direction, and its robots build up to 40 tiles out; further out, the Commander builds (see below). Stockpiles inside a logistic area belong to that network, and barracks, factories, labs and turrets pull what they need from the network they stand in. A building outside every logistic area gets nothing. Everything you order is a ghost. Construction robots build a ghost from items in the network, but only inside a construction area; the CC's panel shows both ranges.
 
-**Chains.** Extractors mine 1 ore/s from the 5×5 tiles under them. Each one drops its ore onto a belt or straight into a smelter. A smelter makes 0.625 plates/s, so one extractor keeps about 1.6 smelters busy. Smelters also turn stone into bricks and iron plates into steel (2 plates per steel, 3.2 s). A fast inserter moves the output into a stockpile. Stone and coal need no smelting: run them on a belt, then an inserter, into a stockpile. The **factory** repeats the recipe you pick in its panel and sends the output to the network. It makes buildings, belts, inserters, poles, magazines, intermediates (gears, cable, circuits, explosives from coal and iron), science kits and hauler kits. The **barracks** turns plates into unit kits, and each finished kit walks out to the rally point.
+**Chains.** Extractors mine 1 ore/s from the 5×5 tiles under them. Each one drops its ore onto a belt or straight into a smelter. A smelter makes 0.625 plates/s, so one extractor keeps about 1.6 smelters busy. Smelters also turn stone into bricks and iron plates into steel (2 plates per steel, 3.2 s). A fast inserter moves the output into a stockpile. Stone and coal need no smelting: run them on a belt, then an inserter, into a stockpile. The **factory** crafts the recipe you pick in its panel and sends the output to the network: a click orders 1 craft, Shift 5 and Ctrl as many as the network (plus the machine's input) can pay, a right click takes crafts off the order, and the button shows how many are left. The machine stops when the order is done; the **Endless** toggle in the recipe grid makes a click start endless production instead. The factory makes buildings, belts, underground belts, splitters, inserters (in Nation mode also long-handed ones), poles, magazines, intermediates (gears, cable, circuits, explosives from coal and iron), science kits and hauler kits. The **barracks** turns plates into unit kits, takes the same count orders, and each finished kit walks out to the rally point. A misplaced belt, inserter, pole or ghost is selected with a click or a box and removed with Delete (see [Demolishing](#demolishing)).
 
 | Building | Cost | Building | Cost |
 |---|---|---|---|
@@ -300,7 +311,7 @@ Mountain ranges (grey rock that no unit crosses) with passes, rivers with walkab
 
 **The capital.** Your starting CC is your capital: a *town* whose land reaches 96 tiles around it. The HUD adds an **age badge** left of the top strip, a **Land N%** button on the strip (your share of the map) and the **city list** at the top left: one row per city with a button that jumps the camera there and a magnifier that opens its panel. The Land button shows or hides the list.
 
-**Founding a city.** The factory makes a **City charter** (80 iron, 30 copper, 40 stone, 20 s); founding moves 40 settlers from your nearest city that can spare them. Place it from the build menu's Production tab like a hub: at least 96 tiles from every other City Center of any nation, on your own or neutral land, never on enemy land, at most 4 cities per nation (capital included). New sites lie beyond your robots' reach, so walk the Commander next to the ghost; its robots build the City Center from your stock. A **City Center** has 1,800 HP, two stockpiles and its own logistic network (radius 16, 10 construction robots reaching 30 tiles, 6 logistic robots), 1 MW of power, and keeps 50 iron and 20 copper by default like a hub. An alert announces "City founded: <name>".
+**Founding a city.** The factory makes a **City charter** (80 iron, 30 copper, 40 stone, 20 s); founding moves 40 settlers from your nearest city that can spare them. Place it from the build menu's Production tab like a hub: at least 96 tiles from every other City Center of any nation, on your own or neutral land, never on enemy land, at most 4 cities per nation (capital included). New sites lie beyond your robots' reach, so walk the Commander next to the ghost; its robots build the City Center from your stock. A **City Center** has 1,800 HP, two stockpiles and its own logistic network (radius 16, 10 construction robots reaching 30 tiles, 6 logistic robots), 1 MW of power, and keeps 50 iron and 20 copper by default like a hub. The settlers bring building stock from the mother city's network, as far as it holds it: iron 100, copper 40, stone 40, coal 20, a factory, 2 houses and a farm; nothing is created, so a poor mother city sends less, and the log says what was short. Until the new network holds items, its robots have nothing to build with: the hub and city panels then say "N ghosts waiting: nothing to build them with" and an alert "<City>: the robots have nothing to build with" comes, so bring goods by a hauler or a train. An alert announces "City founded: <name>".
 
 **Tiers.** A city grows from village to town to city with its residents (see [People and labor](#people-and-labor)): it goes up at the next growth pass after it reaches the next threshold, and falls back only after two minutes below 80 % of its tier's threshold.
 
@@ -337,7 +348,7 @@ A refused ghost disappears with a flying text such as "Enemy land: nothing can b
 
 ### Haulers in Nation mode
 
-Haulers carry 10 slots instead of 20 (*Hauler capacity I* and *II* add 10 each) and burn coal: a hauler leaving a hub takes 1 coal per 40 tiles of the trip (×1.1, rounded up) from that hub's network. A hauler leaving for a stop that may have no coal (a route hauler for its drop-off, an auto hauler for the network it fetches from) pays its way back before it leaves: from its tank, then the network it leaves, then the destination's network, so nothing there spends that coal first. One end of a route with coal is therefore enough: keep coal at your capital, and outposts need none. A hauler that stands dry at a hub for 30 s gets its trip paid by the stop it drives to, when that network holds the coal. An auto hauler waits at home for up to a minute for a load worth the trip's coal (25 items per coal of the round trip, "gathering a load worth the trip's coal"), then takes what there is. A walk inside one network (a new hauler from its factory to its home hub) burns nothing. The hauler panel shows the tank after the cargo ("Tank: [coal] 4"). Without coal the hauler waits with "no coal for the trip in the hub network", and an alert "Hauler N: no fuel at <hub>" comes at most every 2 minutes per hauler. While the hauler panel is open, the map view draws the way of each selected hauler to its next stop. Beyond about 300 tiles, trains are the better carrier. In Nation mode every inserter also moves 3 items per swing instead of 1, so one inserter into a stockpile keeps up with several extractors.
+Haulers carry 10 slots instead of 20 (*Hauler capacity I* and *II* add 10 each) and burn coal: a hauler leaving a hub takes 1 coal per 40 tiles of the trip (×1.1, rounded up) from that hub's network. A hauler leaving for a stop that may have no coal (a route hauler for its drop-off, an auto hauler for the network it fetches from) pays its way back before it leaves: from its tank, then the network it leaves, then the destination's network, so nothing there spends that coal first. One end of a route with coal is therefore enough: keep coal at your capital, and outposts need none. A hauler that stands dry at a hub for 30 s gets its trip paid by the stop it drives to, when that network holds the coal. An auto hauler waits at home for up to a minute for a load worth the trip's coal (25 items per coal of the round trip, "gathering a load worth the trip's coal"), then takes what there is. Your own manual supply route into a town that keeps stock levels waits longer, up to 4 minutes, for a fuller load of rations, goods and magazines while the town holds at least half its Keep; below half it leaves at once, and fuel, building and export routes never wait (AI haulers are not held). A walk inside one network (a new hauler from its factory to its home hub) burns nothing. The hauler panel shows the tank after the cargo ("Tank: [coal] 4"). Without coal the hauler waits with "no coal for the trip in the hub network", and an alert "Hauler N: no fuel at <hub>" comes at most every 2 minutes per hauler. While the hauler panel is open, the map view draws the way of each selected hauler to its next stop. Beyond about 300 tiles, trains are the better carrier. In Nation mode every inserter also moves 3 items per swing instead of 1, so one inserter into a stockpile keeps up with several extractors.
 
 ### Rails
 
@@ -381,7 +392,7 @@ Every nation starts in **Age I**, the Skirmish game. *Industrialisation* (tier-2
 - **The Mk2 line:** every unit of yours deals 25 % more damage and takes 1/1.4 of the damage it is hit by (the Mk2 numbers for every kind).
 - **The Armoured car** (barracks): 2 engines, 2 steel beams and 10 iron (8 s); 800 HP, 30 % physical resistance, 1.6× a walker's speed, range 18, supply 3; strong against walkers and raiders, weak against heavies and artillery.
 - **The Bunker:** a 3×3 gun emplacement on magazines with 3,000 HP, range 26 (beyond walkers) and about 2.4× a turret's damage; 8 steel beams, 20 concrete, 20 iron.
-- **Oil as goods:** an oil well (30 iron, 5 steel, 5 circuits) on an oil field pumps crude into its network as crude oil items, so haulers and trains carry it and no pipe is needed. The refinery turns crude into petroleum, the chemical plant makes plastic and sulfur.
+- **Oil as goods:** an oil well (30 iron, 5 steel, 5 circuits) on an oil field pumps crude into its network as crude oil items, so haulers and trains carry it and no pipe is needed. The pumpjack panel shows its output per minute, or "no network" in red (with an alert) when it stands outside every hub and city area; the refinery and chemical plant take crude from their network as items and give petroleum back, and cannot rotate. The vanilla art keeps its drawn pipes, so the pictures show pipes that do nothing. The refinery turns crude into petroleum, the chemical plant makes plastic and sulfur.
 - **New goods** in the factory: engines, advanced circuits, steel beams, concrete and the industrial science kit (an engine, an advanced circuit and sulfur).
 - **Research** with industrial kits: Supply III (+15), Mining III (+25 %), Hauler capacity II (+10 slots), Attack IV (+15 %).
 - **Districts** (below) and the build menu's **Age II** tab (the icon tab after Defence).
@@ -511,7 +522,7 @@ The simulation is deterministic, which multiplayer needs. In the 0.1.1 release a
 
 ## Known limitations and open issues
 
-The lists below come from the 0.1.1 release acceptance and notes (`docs/qa/phase5-r2-platform-notes.md`, `docs/qa/phase5-ai3-notes.md` section 8 and the other `docs/qa/phase5-r2-*-notes.md`) and the 0.1.0 acceptance notes (`docs/qa/phase5-m3-integration-notes.md`, `docs/qa/phase5-port21-notes.md`). Open items are tracked in the [issue tracker](https://github.com/Kealman/factorio-rts/issues).
+The lists below come from the 0.1.2 notes (`docs/qa/release-0-1-2-*-notes.md`), the 0.1.1 release acceptance and notes (`docs/qa/phase5-r2-platform-notes.md`, `docs/qa/phase5-ai3-notes.md` section 8 and the other `docs/qa/phase5-r2-*-notes.md`) and the 0.1.0 acceptance notes (`docs/qa/phase5-m3-integration-notes.md`, `docs/qa/phase5-port21-notes.md`). Open items are tracked in the [issue tracker](https://github.com/Kealman/factorio-rts/issues).
 
 **Platform and setup**
 
@@ -538,6 +549,17 @@ The lists below come from the 0.1.1 release acceptance and notes (`docs/qa/phase
 - Most build-menu buttons are icons whose names show only in tooltips.
 - Walkers are large and can hide nearby buildings, while planes are small at normal zoom.
 - Panels can open over other panels.
+- A hover help card closes with a click, after 20 s or on the next Shift press, not when you release Shift: the engine reports key presses only.
+- The pumpjack's picture keeps its drawn pipe stub, and the refinery its drawn piping, though oil travels as items. The panels, tooltips and the R message say so; new art is needed.
+- The Skirmish factory has no room for the long-handed inserter, so it is Nation only. The clear order works for loose units, not for whole divisions, and there is no Clear button in the build menu.
+
+**Rails**
+
+- On single track two trains that each want the platform the other holds wait for each other. The train panel says so after a minute; a passing loop or a second track (both layable with the Rail tool) solves it.
+- A junction turns one way, as in vanilla: a branch that leaves the main track heading east cannot be entered by a train heading west. The stop editor does not yet warn that a stop is unreachable from the stop before it; the train shows "no path".
+- Two auto lines surveyed at the same time can plan over the same ground, and the second one takes a detour after two minutes. A crew that cannot reach its frontier goes home after 120 s and another tries later.
+- A platform counts as busy while a train of yours has a path ending on it, so a depot with many trains through it deploys rarely.
+- The Rail tool undoes only while it is open; afterwards cancel the ghosts like any ghosts.
 
 **Out of scope for now**: naval units, vassals, tariffs and embargoes, razing cities (cities are always captured), Space Age planets and content beyond the graphics swap, and player-versus-player.
 
