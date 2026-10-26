@@ -140,7 +140,7 @@ local P4 = {
   DEMOLISH_HEIGHT = 22, -- the building page's Demolish button (header row)
   -- Phase 5 E1: the factory / district Auto button (recipe tag) and the Nation-only Age II build tab (two rows when it
   -- holds more than BUILD_COLUMNS items; the frame grows upwards by BUILD_ROW per extra row)
-  AUTO = "*auto*", BUILD_ROW = 42, AGE2_TAB_WIDTH = 26, TAB_PADDING_NATION = 5, -- (the text tabs narrow a little)
+  AUTO = "*auto*", ENDLESS = "*endless*", BUILD_ROW = 42, AGE2_TAB_WIDTH = 26, TAB_PADDING_NATION = 5, -- (the text tabs narrow a little)
 }
 P4.CARDS_WIDTH = P4.CARD_MAX * P4.CARD_SIZE + (P4.CARD_MAX - 1) * P4.CARD_SPACING -- 190
 -- Phase 5 M1 (scripts/cities.lua, scripts/territory.lua): build items and factory recipes shown in Nation mode only;
@@ -687,7 +687,7 @@ local function recipe_tooltip(recipe, lock)
   local product = recipe.products and recipe.products[1]
   if product and product.type == "item" then base = with_places_note(base, product.name) end
   if lock then return {"rts.recipe-locked-tooltip", base, tech_name(lock)} end
-  return base
+  return {"", base, "\n", {"rts.recipe-queue-hint"}} -- Release 0.1.2 (#22)
 end
 
 ---------------------------------------------------------------------------
@@ -1385,6 +1385,11 @@ local function rebuild_recipe_buttons(player, h, un, rec)
       style = "rts_hud_recipe_button", sprite = "utility/refresh", tooltip = {"rts.recipe-auto-tooltip"},
       tags = {rts_hud = "recipe", recipe = P4.AUTO}})
   end
+  -- Release 0.1.2 (#22): the Endless toggle (a click on a recipe makes endless production, as before 0.1.2, instead
+  -- of a counted order). After Pause and Auto so those never move.
+  h.recipe_buttons[P4.ENDLESS] = grid.add({type = "sprite-button", name = PREFIX .. "recipe_endless",
+    style = "rts_hud_recipe_button", sprite = "utility/status_working", tooltip = {"rts.recipe-endless-tooltip"},
+    tags = {rts_hud = "recipe", recipe = P4.ENDLESS}})
   -- Phase 5 E1: a factory in Nation mode shows one category tab at a time
   local tabs = rec.kind == "factory" and P4.nation() and el.b_tabs ~= nil and el.b_tabs.valid
   local tab = tabs and (prefs(player.index).factory_tab or "buildings") or nil
@@ -1429,11 +1434,12 @@ local function update_recipe_buttons(player, h, rec, active)
   local changed
   for name, button in pairs(h.recipe_buttons or {}) do
     if button.valid then
-      local lock = name ~= "" and name ~= P4.AUTO and recipe_lock(force, name) or false
+      local special = name == "" or name == P4.AUTO or name == P4.ENDLESS
+      local lock = not special and recipe_lock(force, name) or false
       local style = name == active and "rts_hud_recipe_button_active"
         or (lock and "rts_hud_recipe_button_locked" or "rts_hud_recipe_button")
       set_style(button, style)
-      if name ~= "" and name ~= P4.AUTO and h.recipe_locks[name] ~= lock then
+      if not special and h.recipe_locks[name] ~= lock then
         h.recipe_locks[name] = lock
         button.enabled = not lock or name == active
         button.tooltip = recipe_tooltip(prototypes.recipe[name], lock)
@@ -1515,10 +1521,23 @@ local function update_producer(player, h, un, rec)
     line1.caption = {"rts.paused"}
     line1.style.font_color = COLOR.dim
   end
+  if st.queue then -- Release 0.1.2 (#22): "Extractor 2 / 5" (crafts left of the order)
+    line1.caption = {"rts.recipe-queue-line", line1.caption, st.queue.remaining, st.queue.total}
+  end
   if st.auto then line1.caption = {"rts.recipe-auto-line", line1.caption} end -- Phase 5 E1
   progress.visible = recipe ~= nil
   progress.value = math.max(0, math.min(1, st.progress or 0))
   update_recipe_buttons(player, h, rec, st.recipe or "")
+  for name, button in pairs(h.recipe_buttons or {}) do -- the remaining count on the ordered recipe's button
+    if button.valid and name ~= "" and name ~= P4.AUTO and name ~= P4.ENDLESS then
+      local n = st.queue and st.queue.recipe == name and st.queue.remaining or nil
+      if button.number ~= n then button.number = n end
+    end
+  end
+  local endless_button = h.recipe_buttons and h.recipe_buttons[P4.ENDLESS]
+  if endless_button and endless_button.valid then
+    set_style(endless_button, prefs(player.index).endless and "rts_hud_recipe_button_active" or "rts_hud_recipe_button")
+  end
   local auto_button = h.recipe_buttons and h.recipe_buttons[P4.AUTO]
   if auto_button and auto_button.valid then
     set_style(auto_button, st.auto and "rts_hud_recipe_button_active" or "rts_hud_recipe_button")
@@ -2201,12 +2220,17 @@ function hud.build_click(player, item)
   return ok
 end
 
---- Recipe button of the building panel: set (recipe name) or clear ("" = pause) the selected barracks' or
---- factory's recipe through production.set_recipe, which reads it back (a wrong-category recipe stays unset).
---- QA log line: "recipe set <kind>#<unit> <recipe|none> ok=true|false now=<recipe|none> player=N".
-function hud.recipe_click(player, recipe)
+--- Recipe button of the building panel. Pause ("") clears the recipe; Auto toggles Auto; the Endless button toggles
+--- the player's endless mode; a recipe button orders crafts like vanilla handcrafting (Release 0.1.2, #22): click = 1,
+--- Shift = 5, Ctrl = as many as the network can pay, right click = take 1 / 5 / all off the order. With Endless on a
+--- recipe click is endless production (production.set_recipe), as before 0.1.2. `mods` = {shift, control, right,
+--- endless = true for this call only}.
+--- QA log lines: "recipe set <kind>#<unit> <recipe|none> ok=true|false now=<recipe|none> player=N" (endless / pause),
+--- "recipe queue <kind>#<unit> <recipe> +<n> ok=... player=N", "recipe unqueue <kind>#<unit> -<n> left=<n> player=N".
+function hud.recipe_click(player, recipe, mods)
   local un, rec = selected_building(player)
   if not rec then return false end
+  mods = mods or {}
   if recipe == P4.AUTO then -- Phase 5 E1: toggle Auto
     local on = not production.is_auto(rec)
     local done = production.set_auto(un, on)
@@ -2214,7 +2238,25 @@ function hud.recipe_click(player, recipe)
       player.index)
     return done
   end
+  if recipe == P4.ENDLESS then
+    local p = prefs(player.index)
+    p.endless = not p.endless or nil
+    util.log("recipe endless %s player=%d", p.endless and "on" or "off", player.index)
+    return true
+  end
   local name = (recipe ~= nil and recipe ~= "") and recipe or nil
+  if name and mods.right then -- take crafts off the order
+    local n = mods.control and rec.queue and rec.queue.remaining or (mods.shift and 5 or 1)
+    local left = production.unqueue(un, n)
+    util.log("recipe unqueue %s#%d -%d left=%s player=%d", rec.kind, un, n, tostring(left), player.index)
+    return left ~= nil
+  end
+  if name and not (mods.endless or prefs(player.index).endless) then
+    local n = mods.control and production.affordable(un, name) or (mods.shift and 5 or 1)
+    local ok = production.queue_recipe(un, name, n)
+    util.log("recipe queue %s#%d %s +%d ok=%s player=%d", rec.kind, un, name, n, tostring(ok), player.index)
+    return ok
+  end
   local ok = production.set_recipe(un, name)
   local now = rec.entity.valid and rec.entity.get_recipe()
   util.log("recipe set %s#%d %s ok=%s now=%s player=%d", rec.kind, un, name or "none", tostring(ok),
@@ -2351,7 +2393,8 @@ local function on_click(e)
   elseif action == "build" then
     hud.build_click(player, element.tags.item)
   elseif action == "recipe" then
-    hud.recipe_click(player, element.tags.recipe)
+    hud.recipe_click(player, element.tags.recipe, {shift = e.shift, control = e.control,
+      right = e.button == defines.mouse_button_type.right})
   elseif action == "menu" then
     local toggle = optional_fn("scripts.lobby", {"toggle_menu"})
     util.log("hud click menu player=%d%s", player.index, toggle and "" or " (lobby.toggle_menu missing)")
@@ -2780,7 +2823,7 @@ do -- dev-only locals stay out of the main chunk (Lua allows 200 locals there)
       return
     end
     handle_area(player.index, {}, zero_area(rec.entity.position), false, player.surface)
-    hud.recipe_click(player, "rts-walker-kit")
+    hud.recipe_click(player, "rts-walker-kit", {endless = true})
     local home = match.home(player.force.name)
     local rally = {x = home.x + SELFTEST_RALLY_OFFSET.x, y = home.y + SELFTEST_RALLY_OFFSET.y}
     local order, n = "none", 0
@@ -2795,7 +2838,7 @@ do -- dev-only locals stay out of the main chunk (Lua allows 200 locals there)
     local handle_area = optional_fn("scripts.selection", {"handle_area"})
     for un, rec in buildings.for_force(player.force.name, "factory") do
       if handle_area then handle_area(player.index, {}, zero_area(rec.entity.position), false, player.surface) end
-      hud.recipe_click(player, "rts-extractor")
+      hud.recipe_click(player, "rts-extractor", {endless = true})
       hud.refresh(player.index)
       util.log("hud: selftest factory #%d selected=%s", un, tostring(selected_building(player) == un))
       screenshot(player)
@@ -2910,7 +2953,7 @@ do -- dev-only locals stay out of the main chunk (Lua allows 200 locals there)
       hud.set_build_tab(player, "economy")
       for un, rec in buildings.for_force(player.force.name, "factory") do
         if handle_area then handle_area(player.index, {}, zero_area(rec.entity.position), false, player.surface) end
-        hud.recipe_click(player, "rts-laser-turret") -- refused: locked
+        hud.recipe_click(player, "rts-laser-turret", {endless = true}) -- refused: locked
         hud.refresh(player.index)
         local h = get_hud(player)
         local locked = {}
