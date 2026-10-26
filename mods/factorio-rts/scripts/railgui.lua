@@ -7,9 +7,14 @@
 -- stop (up / down / remove / clear; unload and load policies with item lists from scripts/itempicker.lua; troops,
 -- bombard; the wait condition) and the line "Stop 3 of 4: Depot 2, loading iron 120 / 400". The stop rows are rebuilt
 -- only when the list's structure changes (railgui sig), so a count being typed keeps its focus.
--- Depot panel: shown left of the hub panel while a depot is selected: platform, kits / rails / coal in its network,
--- its line (state, length, bill, missing pieces), a "Deploy freight train" button, the force's line list and the
--- hint for laying a line (right-click another depot).
+-- Depot panel: shown left of the hub panel while a depot is selected: platform (tiles and carriages it holds) and the
+-- platform length of new depots, rails / coal in its network, its line (state, length, bill, missing pieces), the
+-- force's line list and the hint for laying a line (right-click another depot). 0.1.2 (#32): the train builder: a
+-- preset / template drop-down, the composition (click: select, right click: remove; Left / Right / Remove / Reverse
+-- for the selected carriage; a carriage whose kit the network lacks shows red), the palette of carriage kinds with the
+-- network's kit counts (click: add at the end, Shift: after the selected one), the rule lines and Deploy, a template
+-- name with Save / Delete. The train panel of a train standing on an own depot platform gets a carriage row: couple a
+-- carriage at the rear, Remove rear.
 -- Follows the selection by polling every POLL_PERIOD ticks, refreshes every REFRESH_PERIOD ticks, like hubgui.lua.
 -- Owns storage.players[i].railgui = {key, frame, el = {...}, closed = key?}. Element names start with "rts_railgui_".
 local util = require("scripts.util")
@@ -113,6 +118,8 @@ end
 ---------------------------------------------------------------------------
 -- Train panel
 ---------------------------------------------------------------------------
+local build_carriages, refresh_carriages -- 0.1.2 (#32): the train panel's carriage row (below)
+
 -- 0.1.2 (#31 part B): the stop list and the selected stop's editor
 local STOP_LIST_HEIGHT = 150
 local DROP_WIDTH = 170
@@ -373,6 +380,10 @@ local function build_train(player, g, id)
   if listed then
     g.el.route.visible = false
     build_stops(frame, g, rec, train)
+    -- 0.1.2 (#32): on an own depot platform, carriages are coupled at the rear or taken off
+    local why = rails.edit_check(train, "remove")
+    g.cmode = why ~= "not-on-platform" and why ~= "moving" and why ~= "no-train"
+    if g.cmode then build_carriages(frame, g, rec, train) end
   end
   local buttons = frame.add({type = "flow", direction = "horizontal", style = "rts_hud_row"})
   g.el.resume = buttons.add({type = "button", name = PREFIX .. "resume", caption = {"rts.railgui-resume"},
@@ -404,6 +415,13 @@ local function refresh_train(player, g)
   local el = g.el
   -- 0.1.2 (#31 part B): the stop list's structure changed (a stop added by a right click, a policy): rebuild
   if el.rows and stops_sig(rec, train, g.sel and g.sel[rec.id]) ~= g.sig then return "rebuild" end
+  -- 0.1.2 (#32): the train came to or left a depot platform, or a carriage was coupled or taken off
+  if el.rows then
+    local why = rails.edit_check(train, "remove")
+    local mode = why ~= "not-on-platform" and why ~= "moving" and why ~= "no-train"
+    if mode ~= g.cmode then return "rebuild" end
+    if mode and refresh_carriages(g, rec, train) == "rebuild" then return "rebuild" end
+  end
   local loco = train.front_stock
   local hp, max = loco and loco.health or 0, loco and loco.max_health or 0
   el.hp.caption = {"rts.railgui-hp-fuel", math.floor(hp + 0.5), math.floor(max + 0.5), rails.fuel_left(train)}
@@ -456,29 +474,214 @@ end
 ---------------------------------------------------------------------------
 -- Depot panel
 ---------------------------------------------------------------------------
+-- 0.1.2 (#32): the train builder in the depot panel. The composition being built is per player and depot
+-- (g.compose[depot] = {cars, sel, preset}); it starts as the Freight preset.
+local SLOT = 28
+local function kit_of(name)
+  for kit, stock in pairs(rails.KITS) do
+    if stock == name then return kit end
+  end
+  return nil
+end
+
+local function compose_state(g, un)
+  g.compose = g.compose or {}
+  local c = g.compose[un]
+  if not c then
+    c = {cars = {}, preset = "freight"}
+    for i, car in ipairs(rails.PRESETS[1].cars) do c.cars[i] = {name = car.name, reversed = car.reversed} end
+    g.compose[un] = c
+  end
+  return c
+end
+
+local function compose_sig(c)
+  local parts = {tostring(c.sel or 0)}
+  for _, car in ipairs(c.cars) do parts[#parts + 1] = car.name .. (car.reversed and "r" or "") end
+  return table.concat(parts, ",")
+end
+
+local function car_tooltip(car)
+  local proto = prototypes.entity[car.name]
+  return {"", proto and proto.localised_name or car.name, car.reversed and {"", " ", {"rts.builder-reversed"}} or "",
+          "\n", {"rts.builder-slot-tooltip"}}
+end
+
+local function preset_items(force_name)
+  local items, keys = {{"rts.builder-preset-choose"}}, {false}
+  for _, p in ipairs(rails.PRESETS) do
+    items[#items + 1] = {"rts.builder-preset-" .. p.key}
+    keys[#keys + 1] = "preset:" .. p.key
+  end
+  for i, t in ipairs(rails.templates(force_name)) do
+    items[#items + 1] = {"rts.builder-template", t.name}
+    keys[#keys + 1] = "template:" .. i
+  end
+  return items, keys
+end
+
+local function build_composer(frame, g, un, player)
+  local el = g.el
+  local c = compose_state(g, un)
+  local head = frame.add({type = "flow", direction = "horizontal", style = "rts_hud_row"})
+  head.add({type = "label", style = "rts_hud_heading_label", caption = {"rts.builder-title"}})
+  head.add({type = "empty-widget", style = "rts_hud_filler"})
+  local items, keys = preset_items(player.force.name)
+  g.preset_keys = keys
+  local dd = head.add({type = "drop-down", name = PREFIX .. "builder_preset", items = items, selected_index = 1,
+    tooltip = {"rts.builder-preset-tooltip"}, tags = {rts_railgui = "builder_preset", depot = un}})
+  dd.style.width = 170
+  -- the composition
+  local row = frame.add({type = "flow", direction = "horizontal"})
+  row.style.horizontal_spacing = 2
+  el.cars = {}
+  for i, car in ipairs(c.cars) do
+    local kit = kit_of(car.name)
+    local b = row.add({type = "sprite-button", name = PREFIX .. "car_" .. i, sprite = "item/" .. (kit or "rail"),
+      style = c.sel == i and "yellow_slot_button" or "slot_button", tooltip = car_tooltip(car),
+      tags = {rts_railgui = "builder_car", depot = un, index = i}})
+    b.style.size = SLOT
+    el.cars[i] = b
+  end
+  if #c.cars == 0 then label(row, "rts_hud_dim_label", {"rts.builder-empty"}) end
+  -- which way each carriage faces (locomotives facing back make the train double-headed)
+  if #c.cars > 0 then
+    local arrows = {}
+    for i, car in ipairs(c.cars) do
+      arrows[i] = rails.LOCOS[car.name] and (car.reversed and "←" or "→") or "·"
+    end
+    label(frame, "rts_hud_dim_label", {"rts.builder-facing", table.concat(arrows, " ")})
+  end
+  -- the selected carriage
+  if c.sel and c.cars[c.sel] then
+    local ed = frame.add({type = "flow", direction = "horizontal", style = "rts_hud_row"})
+    local function button(name, caption, tip, enabled)
+      local b = ed.add({type = "button", name = PREFIX .. name, caption = {caption}, style = "rts_hud_button",
+        tooltip = {tip}, tags = {rts_railgui = name, depot = un, index = c.sel}})
+      b.enabled = enabled ~= false
+    end
+    button("builder_left", "rts.builder-left", "rts.builder-left-tooltip", c.sel > 1)
+    button("builder_right", "rts.builder-right", "rts.builder-right-tooltip", c.sel < #c.cars)
+    button("builder_remove", "rts.builder-remove", "rts.builder-remove-tooltip")
+    if rails.LOCOS[c.cars[c.sel].name] then
+      button("builder_reverse", "rts.builder-reverse", "rts.builder-reverse-tooltip")
+    end
+  end
+  -- the palette: one button per carriage kind, the kit count of the depot network on it
+  local pal = frame.add({type = "flow", direction = "horizontal"})
+  pal.style.horizontal_spacing = 2
+  el.palette = {}
+  for _, name in ipairs(rails.CARRIAGES) do
+    local kit = kit_of(name)
+    local proto = prototypes.entity[name]
+    if kit and proto and prototypes.item[kit] then
+      local b = pal.add({type = "sprite-button", name = PREFIX .. "pal_" .. name, sprite = "item/" .. kit,
+        style = "slot_button", tooltip = {"rts.builder-palette-tooltip", proto.localised_name,
+        prototypes.item[kit].localised_name}, tags = {rts_railgui = "builder_add", depot = un, car = name}})
+      b.style.size = SLOT + 4
+      el.palette[name] = {button = b, kit = kit}
+    end
+  end
+  el.builder_info = label(frame, "rts_hud_dim_label")
+  el.builder_why = label(frame)
+  local brow = frame.add({type = "flow", direction = "horizontal", style = "rts_hud_row"})
+  el.deploy = brow.add({type = "button", name = PREFIX .. "deploy", caption = {"rts.builder-deploy"},
+    style = "rts_hud_button", tooltip = {"rts.builder-deploy-tooltip"}, tags = {rts_railgui = "deploy", depot = un}})
+  local trow = frame.add({type = "flow", direction = "horizontal", style = "rts_hud_row"})
+  local tf = trow.add({type = "textfield", name = PREFIX .. "builder_name", text = g.tname or "",
+    tooltip = {"rts.builder-name-tooltip"}, tags = {rts_railgui = "builder_name"}, lose_focus_on_confirm = true})
+  tf.style.width = 110
+  trow.add({type = "button", name = PREFIX .. "builder_save", caption = {"rts.builder-save"}, style = "rts_hud_button",
+    tooltip = {"rts.builder-save-tooltip", rails.MAX_TEMPLATES}, tags = {rts_railgui = "builder_save", depot = un}})
+  local del = trow.add({type = "button", name = PREFIX .. "builder_delete", caption = {"rts.builder-delete"},
+    style = "rts_hud_button", tooltip = {"rts.builder-delete-tooltip"},
+    tags = {rts_railgui = "builder_delete", depot = un}})
+  del.enabled = g.template_pick ~= nil
+  label(frame, "rts_hud_dim_label", {"rts.builder-hint"})
+  g.csig = compose_sig(c)
+end
+
+local function refresh_composer(player, g)
+  local el = g.el
+  local c = compose_state(g, g.id)
+  if compose_sig(c) ~= g.csig then return "rebuild" end
+  local net = logistics.hub_network(g.id)
+  local why, info = rails.compose_check(g.id, c.cars)
+  for name, p in pairs(el.palette or {}) do
+    if p.button.valid then p.button.number = net and net.get_item_count(p.kit) or 0 end
+  end
+  -- a carriage whose kit the network lacks shows red
+  local need = {}
+  for i, car in ipairs(c.cars) do
+    local kit = kit_of(car.name)
+    need[kit] = (need[kit] or 0) + 1
+    local b = el.cars[i]
+    if b and b.valid and c.sel ~= i then
+      b.style = (net and kit and net.get_item_count(kit) >= need[kit]) and "slot_button" or "red_slot_button"
+      b.style.size = SLOT
+    end
+  end
+  local tiles = info.tiles
+  local text = {"", {"rts.builder-info", #c.cars, info.max, tiles, info.locos, info.coal}}
+  if info.troop_capacity and info.troop_capacity > 0 then
+    text[#text + 1] = {"", "  ", {"rts.builder-troops", info.troop_capacity}}
+  end
+  el.builder_info.caption = text
+  local lines = {""}
+  if why then
+    local reason = {"rts.rails-why-" .. why}
+    if why == "no-kits" then
+      local parts = {""}
+      local kits = {}
+      for kit in pairs(info.missing) do kits[#kits + 1] = kit end
+      table.sort(kits)
+      for _, kit in ipairs(kits) do
+        if #parts > 1 then parts[#parts + 1] = ", " end
+        parts[#parts + 1] = {"rts.builder-missing", info.missing[kit], prototypes.item[kit].localised_name}
+      end
+      reason = {"rts.builder-why-no-kits", parts}
+    elseif why == "too-long" then
+      reason = {"rts.builder-why-too-long", #c.cars, info.max, tiles}
+    elseif why == "no-front-loco" or why == "empty" or why == "no-fuel" then
+      reason = {"rts.builder-why-" .. why, info.coal}
+    end
+    lines[#lines + 1] = reason
+  end
+  if info.forwards_only and #c.cars > 0 then
+    if #lines > 1 then lines[#lines + 1] = "\n" end
+    lines[#lines + 1] = {"rts.builder-forwards-only"}
+  end
+  el.builder_why.caption = lines
+  el.builder_why.style.font_color = why and COLOR.red or COLOR.yellow
+  el.builder_why.visible = #lines > 1
+  el.deploy.enabled = why == nil
+  return true
+end
+
 local function build_depot(player, g, un)
   local frame = player.gui.screen.add({type = "frame", name = FRAME, direction = "vertical", style = "rts_hud_frame"})
   frame.style.width = WIDTH
   g.frame, g.el = frame, {}
   header(frame, {"rts.railgui-depot-title", depot_name(un)})
   g.el.platform = label(frame)
-  g.el.stock = label(frame)
+  local prow = frame.add({type = "flow", direction = "horizontal", style = "rts_hud_row"})
+  prow.add({type = "label", style = "rts_hud_dim_label", caption = {"rts.builder-new-depots"},
+    tooltip = {"rts.builder-platform-length-tooltip"}})
+  prow.add({type = "empty-widget", style = "rts_hud_filler"})
+  local lens = {}
+  local cur = 2 * rails.platform_pieces(player.force.name)
+  local sel = 1
+  for i, t in ipairs(rails.PLATFORM_LENGTHS) do
+    lens[i] = {"rts.builder-platform-length", t}
+    if t == cur then sel = i end
+  end
+  local pl = prow.add({type = "drop-down", name = PREFIX .. "platform_len", items = lens, selected_index = sel,
+    tooltip = {"rts.builder-platform-length-tooltip"}, tags = {rts_railgui = "platform_len"}})
+  pl.style.width = 120
+  g.el.stock = label(frame, "rts_hud_dim_label")
   g.el.line = label(frame)
   g.el.detail = label(frame, "rts_hud_dim_label")
-  local buttons = frame.add({type = "flow", direction = "horizontal", style = "rts_hud_row"})
-  g.el.deploy = buttons.add({type = "button", name = PREFIX .. "deploy", caption = {"rts.railgui-deploy"},
-    style = "rts_hud_button", tooltip = {"rts.railgui-deploy-tooltip"}, tags = {rts_railgui = "deploy", depot = un}})
-  -- Phase 5 M2 war: a troop train (2 locomotive kits and 1-3 troop wagon kits)
-  local troop_row = frame.add({type = "flow", direction = "horizontal", style = "rts_hud_row"})
-  g.el.deploy_troop = troop_row.add({type = "button", name = PREFIX .. "deploy_troop",
-    caption = {"rts-war.deploy-troop-train"}, style = "rts_hud_button", tooltip = {"rts-war.deploy-troop-train-tooltip"},
-    tags = {rts_railgui = "deploy_troop", depot = un}})
-  -- Phase 5 M2 QA round 1: why a Deploy button is greyed, on the panel (it was only in chat after a click)
-  g.el.deploy_why = label(frame, "rts_hud_label")
-  g.el.deploy_why.style.font_color = COLOR.yellow
-  g.el.deploy_why.visible = false
-  local tw = trainswar() -- Phase 5 M3 war2: artillery train and armoured stock
-  g.el.war = tw and tw.panel_depot(frame, un, player.index, WIDTH) or nil
+  build_composer(frame, g, un, player)
   label(frame, "rts_hud_dim_label", {"rts.railgui-depot-hint"})
   label(frame, "rts_hud_heading_label", {"rts.railgui-lines"})
   g.el.lines = frame.add({type = "flow", direction = "vertical"})
@@ -490,20 +693,15 @@ local function refresh_depot(player, g)
   if not d then return false end
   local el = g.el
   if d.platform then
-    el.platform.caption = {"rts.railgui-platform", #d.platform.rails * 2, #d.platform.stops}
+    local tiles = rails.platform_tiles(d)
+    el.platform.caption = {"rts.builder-platform", tiles, rails.max_carriages(tiles), #d.platform.stops}
     el.platform.style.font_color = COLOR.white
   else
     el.platform.caption = {"rts.railgui-no-platform"}
     el.platform.style.font_color = COLOR.red
   end
-  local st = rails.depot_stock(g.id) or {loco = 0, wagon = 0, cwagon = 0, rails = 0, coal = 0}
-  local stock = {"rts.railgui-stock", st.loco, st.wagon, st.cwagon, st.rails, st.coal}
-  -- Phase 5 M2 integration: the troop wagon kits too (the troop train's Deploy needs one)
-  local tnet = rails.TWAGON_KIT and logistics.hub_network(g.id)
-  if tnet and tnet.valid then
-    stock = {"", stock, " | ", {"rts-war.troop-kits", tnet.get_item_count(rails.TWAGON_KIT)}}
-  end
-  el.stock.caption = stock
+  local st = rails.depot_stock(g.id) or {rails = 0, coal = 0}
+  el.stock.caption = {"rts.builder-stock", st.rails or 0, st.coal or 0}
   local line = d.line and rails.lines[d.line]
   el.line.caption = line_caption(line)
   el.line.style.font_color = line and LINE_COLOR[line.state] or COLOR.white
@@ -513,31 +711,8 @@ local function refresh_depot(player, g)
   else
     el.detail.caption = ""
   end
-  -- Phase 5 M2 QA round 1: a button is enabled only when its train can be deployed now (rails.deploy_check: kits, coal,
-  -- a free and whole platform track; own units on it step aside), and the panel says why not
-  local tw0 = trainswar() -- Phase 5 M3 war2: the Armoured checkbox counts the armoured kits
-  local dopts = tw0 and tw0.deploy_opts(player.index) or nil
-  local why_cargo = rails.deploy_check(g.id, "cargo", dopts)
-  local why_troop = rails.deploy_check(g.id, "troop", dopts)
-  el.deploy.enabled = why_cargo == nil
-  if el.deploy_troop and el.deploy_troop.valid then el.deploy_troop.enabled = why_troop == nil end -- Phase 5 M2 war
-  if el.deploy_why and el.deploy_why.valid then
-    local why_lines = {""}
-    if why_cargo and why_cargo == why_troop then
-      -- Phase 5 M3 integration: "Cannot deploy a train" read as if it covered Deploy artillery train under it
-      why_lines[2] = {"rts.railgui-deploy-why-both", {"rts.rails-why-" .. why_cargo}}
-    else
-      if why_cargo then why_lines[#why_lines + 1] = {"rts.railgui-deploy-why", {"rts.rails-why-" .. why_cargo}} end
-      if why_troop then
-        if #why_lines > 1 then why_lines[#why_lines + 1] = "\n" end
-        why_lines[#why_lines + 1] = {"rts-war.deploy-troop-why", {"rts.rails-why-" .. why_troop}}
-      end
-    end
-    el.deploy_why.visible = #why_lines > 1
-    el.deploy_why.caption = why_lines
-  end
-  local tw = trainswar() -- Phase 5 M3 war2
-  if tw and el.war then tw.panel_depot_update(el.war, g.id, player.index) end
+  local r = refresh_composer(player, g)
+  if r == "rebuild" then return r end
   local lines = rails.lines_of(d.force)
   el.lines.clear()
   if #lines == 0 then
@@ -569,14 +744,12 @@ local function show(player, force_rebuild)
     util.log("railgui: %s panel for %d player=%d", kind, id, player.index)
   end
   local ok = (kind == "train") and refresh_train(player, g) or refresh_depot(player, g)
-  if ok == "rebuild" then -- 0.1.2 (#31 part B): the stop list changed its structure
-    local loc = g.frame and g.frame.valid and g.frame.location
+  if ok == "rebuild" then -- 0.1.2 (#31 part B, #32): the stop list or the composition changed its structure
     destroy(g)
-    build_train(player, g, id)
+    if kind == "train" then build_train(player, g, id) else build_depot(player, g, id) end
     if not g.frame then return end
-    if loc then g.frame.location = loc end
     g.key, g.kind, g.id = key, kind, id
-    ok = refresh_train(player, g)
+    ok = (kind == "train") and refresh_train(player, g) or refresh_depot(player, g)
   end
   if not ok or ok == "rebuild" then destroy(g) end
 end
@@ -614,13 +787,8 @@ events.on(defines.events.on_gui_click, function(e)
     local train = rec and rails.train_of(rec)
     local ok = train and rails.resume(train)
     util.log("railgui click resume train=%s ok=%s player=%d", tostring(g.id), tostring(ok), e.player_index)
-  elseif action == "deploy" or action == "deploy_troop" then -- Phase 5 M2 war: troop trains too
-    local tw = trainswar() -- Phase 5 M3 war2: the depot panel's Armoured checkbox
-    local train, why = rails.create_train(element.tags.depot, action == "deploy_troop" and "troop" or "cargo",
-      tw and tw.deploy_opts(e.player_index) or nil)
-    util.log("railgui click %s depot=#%s train=%s (%s) player=%d", action, tostring(element.tags.depot),
-      tostring(train and train.id), tostring(why), e.player_index)
-    if not train and player then player.print({"rts.railgui-deploy-failed", {"rts.rails-why-" .. tostring(why)}}) end
+  elseif player and railgui.builder_click(player, g, action, element, e) then -- 0.1.2 (#32): the train builder
+    -- (show below)
   elseif railgui.route_click(player, g, action, element) then -- 0.1.2 (#31 part B): the stop list
     -- (show below)
   elseif action == "disband" then -- Phase 5 M2 war
@@ -840,6 +1008,200 @@ events.on(defines.events.on_gui_checked_state_changed, function(e)
     tostring(ok), e.player_index)
   railgui.refresh(player.index)
 end)
+
+---------------------------------------------------------------------------
+-- 0.1.2 (#32): train builder events (depot panel) and carriage edits (train panel)
+---------------------------------------------------------------------------
+local function own_depot(player, un)
+  local d = un and rails.depot(un)
+  return d ~= nil and d.force == player.force.name
+end
+
+--- Clicks of the train builder and the train panel's carriage row. Returns true when the action was one of them.
+function railgui.builder_click(player, g, action, element, e)
+  if type(action) ~= "string" then return false end
+  local tags = element.tags
+  if string.sub(action, 1, 8) == "builder_" or action == "deploy" then
+    local un = tags.depot
+    if not own_depot(player, un) then return true end
+    local c = compose_state(g, un)
+    local i = tags.index
+    local note
+    if action == "builder_car" then
+      if e.button == defines.mouse_button_type.right then
+        table.remove(c.cars, i)
+        c.sel = nil
+        note = "removed " .. i
+      else
+        c.sel = (c.sel ~= i) and i or nil
+      end
+    elseif action == "builder_add" then
+      local car = {name = tags.car}
+      local at = (e.shift and c.sel) and c.sel + 1 or #c.cars + 1
+      -- a locomotive added at the end of a train that has one already faces back (double-headed)
+      if rails.LOCOS[car.name] and at == #c.cars + 1 and #c.cars > 0 then car.reversed = true end
+      if at == #c.cars + 1 and #c.cars > 0 then
+        local last = c.cars[#c.cars]
+        if rails.LOCOS[last.name] and last.reversed and not rails.LOCOS[car.name] then
+          at = #c.cars -- a wagon goes in front of the rear locomotive
+        end
+      end
+      table.insert(c.cars, at, car)
+      if e.shift and c.sel then c.sel = at end
+      note = "added " .. car.name .. " at " .. at
+    elseif action == "builder_left" or action == "builder_right" then
+      local j = i + (action == "builder_left" and -1 or 1)
+      if c.cars[i] and c.cars[j] then
+        c.cars[i], c.cars[j] = c.cars[j], c.cars[i]
+        c.sel = j
+      end
+    elseif action == "builder_remove" then
+      if c.cars[i] then table.remove(c.cars, i) end
+      c.sel = nil
+    elseif action == "builder_reverse" then
+      local car = c.cars[i]
+      if car and rails.LOCOS[car.name] then car.reversed = (not car.reversed) or nil end
+    elseif action == "builder_save" then
+      local idx, why = rails.save_template(player.force.name, g.tname, c.cars)
+      if not idx then
+        player.create_local_flying_text({text = {"rts.builder-save-refused-" .. tostring(why), rails.MAX_TEMPLATES},
+          create_at_cursor = true})
+      end
+      note = "template " .. tostring(idx) .. " " .. tostring(why or "")
+      g.csig = nil -- the preset drop-down lists the templates: rebuild
+    elseif action == "builder_delete" then
+      if g.template_pick then rails.delete_template(player.force.name, g.template_pick) end
+      g.template_pick = nil
+      g.csig = nil
+    elseif action == "deploy" then
+      local train, why = rails.create_composed(un, c.cars, {preset = c.preset})
+      util.log("railgui click deploy depot=#%d cars=%d train=%s (%s) player=%d", un, #c.cars,
+        tostring(train and train.id), tostring(why), player.index)
+      if not train then player.print({"rts.railgui-deploy-failed", {"rts.rails-why-" .. tostring(why)}}) end
+      return true
+    else
+      return false
+    end
+    if action ~= "builder_car" or note then c.preset = nil end
+    util.log("railgui click %s depot=#%d index=%s %s player=%d", action, un, tostring(i), note or "", player.index)
+    return true
+  end
+  if action == "train_add" or action == "train_remove" then
+    local rec = g.id and rails.train_record(g.id)
+    local train = rec and rails.train_of(rec)
+    if not (train and rec.force == player.force.name) then return true end
+    local ok, why
+    if action == "train_add" then ok, why = rails.add_carriage(train, tags.car, rails.LOCOS[tags.car] and true or nil)
+    else ok, why = rails.remove_carriage(train) end
+    util.log("railgui click %s train=%d car=%s ok=%s (%s) player=%d", action, rec.id, tostring(tags.car), tostring(ok),
+      tostring(why), player.index)
+    if not ok then
+      player.create_local_flying_text({text = {"rts.builder-edit-refused", {"rts.builder-edit-why-" .. tostring(why)}},
+        create_at_cursor = true})
+    end
+    return true
+  end
+  return false
+end
+
+events.on(defines.events.on_gui_selection_state_changed, function(e)
+  local element = e.element
+  if not (element and element.valid) or string.sub(element.name, 1, #PREFIX) ~= PREFIX then return end
+  local tags = element.tags
+  local player = game.get_player(e.player_index)
+  if not player then return end
+  local g = pstate(e.player_index)
+  if tags.rts_railgui == "platform_len" then
+    local t = rails.PLATFORM_LENGTHS[element.selected_index]
+    local ok = t and rails.set_platform_length(player.force.name, t)
+    util.log("railgui select platform_len=%s ok=%s player=%d", tostring(t), tostring(ok), e.player_index)
+  elseif tags.rts_railgui == "builder_preset" then
+    if not own_depot(player, tags.depot) then return end
+    local key = g.preset_keys and g.preset_keys[element.selected_index]
+    if not key then return end
+    local c = compose_state(g, tags.depot)
+    local kind, which = string.match(key, "^(%a+):(.+)$")
+    local src
+    g.template_pick = nil
+    if kind == "preset" then
+      for _, p in ipairs(rails.PRESETS) do
+        if p.key == which then src = p.cars end
+      end
+    else
+      local t = rails.templates(player.force.name)[tonumber(which)]
+      src = t and t.cars
+      if t then
+        g.template_pick = tonumber(which)
+        g.tname = t.name
+      end
+    end
+    if not src then return end
+    c.cars, c.sel, c.preset = {}, nil, which
+    for i, car in ipairs(src) do c.cars[i] = {name = car.name, reversed = car.reversed} end
+    util.log("railgui select %s depot=#%d (%d carriages) player=%d", key, tags.depot, #c.cars, e.player_index)
+  else
+    return
+  end
+  railgui.refresh(player.index, true)
+end)
+
+events.on(defines.events.on_gui_text_changed, function(e)
+  local element = e.element
+  if not (element and element.valid) or element.name ~= PREFIX .. "builder_name" then return end
+  pstate(e.player_index).tname = element.text
+end)
+
+-- The train panel's carriage row: the carriages front to back, the palette to couple one at the rear (on an own
+-- depot platform), Remove rear.
+build_carriages = function(frame, g, rec, train)
+  local el = g.el
+  local head = frame.add({type = "flow", direction = "horizontal", style = "rts_hud_row"})
+  head.add({type = "label", style = "rts_hud_heading_label", caption = {"rts.builder-carriages"}})
+  head.add({type = "empty-widget", style = "rts_hud_filler"})
+  el.train_remove = head.add({type = "button", name = PREFIX .. "train_remove", caption = {"rts.builder-remove-rear"},
+    style = "rts_hud_button", tooltip = {"rts.builder-remove-rear-tooltip"}, tags = {rts_railgui = "train_remove"}})
+  local row = frame.add({type = "flow", direction = "horizontal"})
+  row.style.horizontal_spacing = 2
+  for _, c in ipairs(train.carriages) do
+    local kit = kit_of(c.name)
+    local b = row.add({type = "sprite-button", sprite = "item/" .. (kit or "rail"), style = "slot_button",
+      tooltip = c.localised_name, ignored_by_interaction = true})
+    b.style.size = SLOT - 4
+  end
+  local pal = frame.add({type = "flow", direction = "horizontal"})
+  pal.style.horizontal_spacing = 2
+  el.train_palette = {}
+  for _, name in ipairs(rails.CARRIAGES) do
+    local kit = kit_of(name)
+    local proto = prototypes.entity[name]
+    if kit and proto and prototypes.item[kit] then
+      local b = pal.add({type = "sprite-button", name = PREFIX .. "tpal_" .. name, sprite = "item/" .. kit,
+        style = "slot_button", tooltip = {"rts.builder-couple-tooltip", proto.localised_name},
+        tags = {rts_railgui = "train_add", car = name}})
+      b.style.size = SLOT - 4
+      el.train_palette[name] = b
+    end
+  end
+  el.edit_why = label(frame, "rts_hud_dim_label")
+  g.ncars = #train.carriages
+end
+
+refresh_carriages = function(g, rec, train)
+  local el = g.el
+  if not el.edit_why then return true end
+  if #train.carriages ~= g.ncars then return "rebuild" end
+  local why = rails.edit_check(train, "remove")
+  if el.train_remove.valid then el.train_remove.enabled = why == nil end
+  local add_why = rails.edit_check(train, "add", rails.WAGON)
+  local base = (add_why == "no-kits") and nil or add_why
+  for _, b in pairs(el.train_palette) do
+    if b.valid then b.enabled = base == nil end
+  end
+  if el.edit_why.valid then
+    el.edit_why.caption = base and {"rts.builder-edit-why", {"rts.builder-edit-why-" .. base}} or {"rts.builder-edit-hint"}
+  end
+  return true
+end
 
 local function reposition(e)
   local player = game.get_player(e.player_index)

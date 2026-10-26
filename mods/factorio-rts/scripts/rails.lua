@@ -522,10 +522,12 @@ events.on(defines.events.on_player_joined_game, function(e)
   station_names(game.get_player(e.player_index), not rails.nation())
 end)
 
--- Platform layouts around a depot at p: {axis, track coordinate, rail centres, ends, stop specs}.
-local function platform_specs(p)
+-- Platform layouts around a depot at p: {axis, track coordinate, rail centres, ends, stop specs}. 0.1.2 (#32):
+-- `pieces` straight rails (default PLATFORM_PIECES: 40 tiles; a force's new depots may take 30 or 40: 60 or 80 tiles).
+local function platform_specs(p, pieces)
   local cx, cy = 2 * floor(p.x / 2), 2 * floor(p.y / 2)
-  local half = rails.PLATFORM_PIECES -- tiles from the platform centre to an end
+  pieces = pieces or rails.PLATFORM_PIECES
+  local half = pieces -- tiles from the platform centre to an end
   local specs = {}
   for _, side in ipairs({{"x", 1}, {"x", -1}, {"y", 1}, {"y", -1}}) do
     local axis, sign = side[1], side[2]
@@ -533,7 +535,7 @@ local function platform_specs(p)
     if axis == "x" then
       local ty = 2 * floor((p.y + sign * rails.PLATFORM_GAP) / 2) + 1
       spec.track = ty
-      for i = 0, rails.PLATFORM_PIECES - 1 do spec.rails[#spec.rails + 1] = {x = cx - half + 1 + 2 * i, y = ty} end
+      for i = 0, pieces - 1 do spec.rails[#spec.rails + 1] = {x = cx - half + 1 + 2 * i, y = ty} end
       spec.ends = {{x = cx - half, y = ty, d = D.west, l = 0}, {x = cx + half, y = ty, d = D.east, l = 0}}
       -- a train coming in through the east end runs west and stops near the west end (stop north of the track)
       spec.stops = {{x = cx - half + 3, y = ty - 2, d = D.west}, {x = cx + half - 3, y = ty + 2, d = D.east}}
@@ -541,7 +543,7 @@ local function platform_specs(p)
     else
       local tx = 2 * floor((p.x + sign * rails.PLATFORM_GAP) / 2) + 1
       spec.track = tx
-      for i = 0, rails.PLATFORM_PIECES - 1 do spec.rails[#spec.rails + 1] = {x = tx, y = cy - half + 1 + 2 * i} end
+      for i = 0, pieces - 1 do spec.rails[#spec.rails + 1] = {x = tx, y = cy - half + 1 + 2 * i} end
       spec.ends = {{x = tx, y = cy - half, d = D.north, l = 0}, {x = tx, y = cy + half, d = D.south, l = 0}}
       spec.stops = {{x = tx + 2, y = cy - half + 3, d = D.north}, {x = tx - 2, y = cy + half - 3, d = D.south}}
       spec.area = {{tx - 4, cy - half - 1}, {tx + 4, cy + half + 1}}
@@ -710,23 +712,30 @@ local function setup_depot(un, rec)
   if d.platform then return d end
   local surface = e.surface
   local spec
+  -- 0.1.2 (#32): the force's platform length for new depots (60 or 80 tiles), else the 40-tile default
+  local pieces = rails.platform_pieces(rec.force)
   -- Economy 0.1.1 (#7, #2): a depot rebuilt on a lost depot's site (rails.ai_program, ai_depot) takes the old platform
   -- layout and the old platform rails that still stand there (spec_fits refuses rails on rails)
   local reuse = R.reuse_site
   R.reuse_site = nil
   if reuse and reuse.force == rec.force and math.abs(reuse.x - e.position.x) < 0.5
      and math.abs(reuse.y - e.position.y) < 0.5 then
-    for _, s in ipairs(platform_specs(e.position)) do
+    for _, s in ipairs(platform_specs(e.position, pieces ~= rails.PLATFORM_PIECES and pieces or nil)) do
       if s.axis == reuse.spec.axis and s.side == reuse.spec.side and s.track == reuse.spec.track then spec = s end
     end
   end
-  -- (a layout clear of other lines' unlaid pieces first; then any that fits, as before)
-  for _, strict in ipairs(spec and {} or {true, false}) do
-    for _, s in ipairs(platform_specs(e.position)) do
-      if spec_fits(surface, rec.force, s, strict) then
-        spec = s
-        break
+  -- (a layout clear of other lines' unlaid pieces first; then any that fits, as before; 0.1.2: a longer platform that
+  -- fits nowhere falls back to the 40-tile one)
+  for _, n in ipairs((spec or pieces == rails.PLATFORM_PIECES) and {rails.PLATFORM_PIECES}
+                     or {pieces, rails.PLATFORM_PIECES}) do
+    for _, strict in ipairs(spec and {} or {true, false}) do
+      for _, s in ipairs(platform_specs(e.position, n ~= rails.PLATFORM_PIECES and n or nil)) do
+        if spec_fits(surface, rec.force, s, strict) then
+          spec = s
+          break
+        end
       end
+      if spec then break end
     end
     if spec then break end
   end
@@ -737,6 +746,7 @@ local function setup_depot(un, rec)
   end
   local cleared = clear_area(surface, spec.area)
   local platform = {axis = spec.axis, side = spec.side, track = spec.track, rails = {}, area = spec.area, stops = {}}
+  if #spec.rails ~= rails.PLATFORM_PIECES then platform.pieces = #spec.rails end -- 0.1.2 (#32): a longer platform
   d.platform = platform
   local idx = index_of(surface.index)
   for _, r in ipairs(spec.rails) do
@@ -1925,6 +1935,8 @@ function rails.deploy_check(depot_un, kind, opts)
   return nil
 end
 
+local spawn -- 0.1.2 (#32): below create_train
+
 --- Spawn a train of `kind` ("cargo" | "construction") on a depot platform from kits in the depot's network.
 --- Returns the LuaTrain, or nil and a reason ("no-depot", "no-platform", "busy", "no-kits", "no-fuel", "no-room",
 --- "no-track", "enemy-on-track"). Own units on the train's stretch of the platform track step off it.
@@ -1946,9 +1958,38 @@ function rails.create_train(depot_un, kind, opts)
   end
   -- Phase 5 M1 integration: a train without coal never moves (an AI crew stood on its platform with 0 coal).
   if net.get_item_count(rails.FUEL) < min_fuel(kind) then return nil, "no-fuel" end
-  local surface, force_name = d.entity.surface, d.force
+  local force_name = d.force
   local slots = train_slots(d, kind, kits, armoured)
   if not track_whole(d, slots) then return nil, "no-track" end
+  local made, train = spawn(d, slots, depot_un, kind)
+  if not made then return nil, train end
+  for _, k in ipairs(kits) do net.remove_item({name = k[1], count = k[2]}) end
+  local color = force_color(force_name)
+  for _, ent in ipairs(made) do
+    if color then ent.color = color end
+    buildings.register(ent)
+  end
+  -- starter fuel from the network (Phase 5 M2 integration: a construction train's locomotives leave full)
+  local fuel = 0
+  local load = kind == "construction" and CFG.fuel_target or CFG.starter_fuel
+  for _, ent in ipairs({made[1], made[#made]}) do
+    local inv = ent.get_fuel_inventory()
+    if inv then fuel = fuel + logistics.transfer(net, inv, rails.FUEL, load) end
+  end
+  train.manual_mode = true
+  local rec = {id = train.id, kind = kind, force = force_name, home = depot_un, loco = made[1], stock = made,
+               state = "idle", created = game.tick, delivered = {}, trips = 0,
+               armoured = armoured or nil} -- Phase 5 M3 war2
+  rstate().trains[train.id] = rec
+  util.log("rails: depot #%d (%s) deployed %s%s train %d: %d carriages, %d coal", depot_un, force_name,
+    armoured and "armoured " or "", kind, train.id, #made, fuel)
+  return train
+end
+
+-- 0.1.2 (#32): the part of create_train that puts rolling stock on the platform slots (shared with the train builder):
+-- returns the carriages and the LuaTrain, or nil and a reason. Kits, colour, fuel and the record are the caller's.
+spawn = function(d, slots, depot_un, kind)
+  local surface, force_name = d.entity.surface, d.force
   local names = {}
   for i, slot in ipairs(slots) do names[i] = slot.name end
   -- Phase 5 M2 QA round 1: own units on the train's stretch of track step off it first (the engine snaps rolling stock
@@ -1988,27 +2029,462 @@ function rails.create_train(depot_un, kind, opts)
     util.log("rails: depot #%d: rolling stock did not join into one train (%s)", depot_un, table.concat(at, " "))
     return nil, "no-room"
   end
-  for _, k in ipairs(kits) do net.remove_item({name = k[1], count = k[2]}) end
-  local color = force_color(force_name)
-  for _, ent in ipairs(made) do
+  return made, train
+end
+
+---------------------------------------------------------------------------
+-- 0.1.2 (#32): the train builder. A composition is a list of carriages {{name = entity name, reversed = bool}, ...}
+-- front to back; every carriage is its kit from the depot network. The AI keeps rails.create_train(depot, kind).
+---------------------------------------------------------------------------
+do -- (a block: rails.lua's main chunk is near Lua's 200-local limit)
+  rails.LOCOS = {[rails.LOCO] = true, [rails.ALOCO] = true}
+  rails.CARRIAGES = {rails.LOCO, rails.ALOCO, rails.WAGON, rails.CWAGON, rails.TWAGON, rails.AWAGON, rails.ARTY}
+  local CARRIAGE_SET = {}
+  for _, n in ipairs(rails.CARRIAGES) do CARRIAGE_SET[n] = true end
+  rails.PLATFORM_LENGTHS = {40, 60, 80}  -- tiles: a force's new depots lay one of these (rails.set_platform_length)
+  rails.MAX_TEMPLATES = 5
+  rails.REMOVE_SHARE = 0.5               -- a carriage taken off a standing train gives half its kit back (credit)
+  do
+    local L, AL, C, CW = rails.LOCO, rails.ALOCO, rails.WAGON, rails.CWAGON
+    local T, AT, A = rails.TWAGON, rails.AWAGON, rails.ARTY
+    local function cars(list)
+      local out = {}
+      for i, n in ipairs(list) do out[i] = {name = n, reversed = (i == #list and rails.LOCOS[n]) or nil} end
+      return out
+    end
+    -- the old Deploy buttons are presets now (Troop: 1 and 3 wagons; the armoured ones and two mixed examples)
+    rails.PRESETS = {
+      {key = "freight", cars = cars({L, C, C, L})},
+      {key = "construction", cars = cars({L, CW, L})},
+      {key = "troop", cars = cars({L, T, L})},
+      {key = "troop3", cars = cars({L, T, T, T, L})},
+      {key = "artillery", cars = cars({L, A, L})},
+      {key = "armoured-freight", cars = cars({AL, C, C, AL})},
+      {key = "armoured-troop", cars = cars({AL, AT, AT, AL})},
+      {key = "mixed", cars = cars({L, C, T, L})},
+      {key = "siege", cars = cars({AL, A, AT, AL})},
+    }
+  end
+
+  --- Pieces of the platform a force's next depot lays (20 = 40 tiles, the default).
+  function rails.platform_pieces(force_name)
+    local R = storage.rails
+    local len = R and R.platform_len and R.platform_len[force_name]
+    return len and floor(len / 2) or rails.PLATFORM_PIECES
+  end
+
+  --- Platform length (tiles) for a force's new depots: 40, 60 or 80. Returns true when set.
+  function rails.set_platform_length(force_name, tiles)
+    local ok = false
+    for _, t in ipairs(rails.PLATFORM_LENGTHS) do
+      if t == tiles then ok = true end
+    end
+    if not ok then return false end
+    local R = rstate()
+    R.platform_len = R.platform_len or {}
+    R.platform_len[force_name] = tiles ~= 2 * rails.PLATFORM_PIECES and tiles or nil
+    util.log("rails: %s's new depots lay %d-tile platforms", force_name, tiles)
+    return true
+  end
+
+  --- Tiles of a depot's platform.
+  function rails.platform_tiles(d)
+    return d and d.platform and 2 * (d.platform.pieces or rails.PLATFORM_PIECES) or 0
+  end
+
+  --- The most carriages a platform of `tiles` holds (the train starts 4 tiles in from the end it leaves by; 7 tiles per
+  --- carriage): 40 -> 5, 60 -> 8, 80 -> 11.
+  function rails.max_carriages(tiles) return floor((tiles - 0.5) / rails.CARRIAGE) end
+
+  --- What a composition's (or a train's) carriages do: {loco, cargo, troop, artillery, construction}.
+  function rails.caps_of(cars)
+    local c = {loco = 0, cargo = 0, troop = 0, artillery = 0, construction = 0}
+    for _, car in ipairs(cars or {}) do
+      local n = car.name or car
+      if rails.LOCOS[n] then c.loco = c.loco + 1
+      elseif n == rails.WAGON then c.cargo = c.cargo + 1
+      elseif n == rails.TWAGON or n == rails.AWAGON then c.troop = c.troop + 1
+      elseif n == rails.ARTY then c.artillery = c.artillery + 1
+      elseif n == rails.CWAGON then c.construction = c.construction + 1 end
+    end
+    return c
+  end
+
+  -- The dominant kind of a composition (the AI's and the old panels' rec.kind): the most wagons of cargo, troop or
+  -- artillery (in that order on a tie); "cargo" for locomotives and construction wagons only.
+  local function dominant(caps)
+    if caps.troop > caps.cargo and caps.troop >= caps.artillery then return "troop" end
+    if caps.artillery > caps.cargo and caps.artillery > caps.troop then return "artillery" end
+    return "cargo"
+  end
+  rails.dominant_kind = dominant
+
+  local function composed_slots(d, cars)
+    local R = rstate()
+    local p = d.platform
+    local line = d.line and R.lines[d.line]
+    local conn = 2
+    if line then conn = (line.a == d.un) and (line.a_end or 2) or (line.b_end or 2) end
+    local e = p.ends[conn] or p.ends[2]
+    local ox, oy = 0, 0
+    if e.d == D.east then ox = 1 elseif e.d == D.west then ox = -1 elseif e.d == D.south then oy = 1 else oy = -1 end
+    local slots = {}
+    for i, car in ipairs(cars) do
+      local back = 4 + (i - 1) * rails.CARRIAGE
+      slots[i] = {name = car.name, x = e.x - ox * back, y = e.y - oy * back,
+                  dir = car.reversed and ((e.d + 8) % 16) or e.d}
+    end
+    return slots
+  end
+
+  --- Kits a composition takes: {[kit] = n}, and its locomotive count.
+  function rails.compose_kits(cars)
+    local kits, locos = {}, 0
+    for _, car in ipairs(cars or {}) do
+      local kit = KIT_OF[car.name]
+      if kit then kits[kit] = (kits[kit] or 0) + 1 end
+      if rails.LOCOS[car.name] then locos = locos + 1 end
+    end
+    return kits, locos
+  end
+
+  --- Why a composition cannot be deployed at a depot now (nil when it can), and what the panel shows:
+  --- info = {kits = {[kit] = n}, missing = {[kit] = n}, locos, coal, tiles, max, length, forwards_only,
+  --- troop_capacity}.
+  --- Reasons: "no-depot", "no-platform", "empty", "bad-carriage", "no-front-loco", "too-long", "busy", "no-network",
+  --- "no-kits", "no-fuel", "no-track", "enemy-on-track", "no-room".
+  function rails.compose_check(depot_un, cars)
+    local info = {kits = {}, missing = {}, locos = 0, coal = 0, tiles = 0, max = 0, length = 0}
+    local d = rails.depot(depot_un)
+    if not d then return "no-depot", info end
+    if not d.platform then return "no-platform", info end
+    info.tiles = rails.platform_tiles(d)
+    info.max = rails.max_carriages(info.tiles)
+    cars = cars or {}
+    info.length = #cars
+    if #cars == 0 then return "empty", info end
+    for _, car in ipairs(cars) do
+      if not CARRIAGE_SET[car.name] then return "bad-carriage", info end
+    end
+    info.kits, info.locos = rails.compose_kits(cars)
+    info.coal = 2 * info.locos
+    local reversed = false
+    for i, car in ipairs(cars) do
+      if i > 1 and rails.LOCOS[car.name] and car.reversed then reversed = true end
+    end
+    info.forwards_only = not reversed
+    local caps = rails.caps_of(cars)
+    info.troop_capacity = caps.troop * balance.nation.war.troop_wagon.capacity
+    if not rails.LOCOS[cars[1].name] or cars[1].reversed then return "no-front-loco", info end
+    if #cars > info.max then return "too-long", info end
+    if not platform_free(d) then return "busy", info end
+    local net = logistics.hub_network(depot_un)
+    if not net then return "no-network", info end
+    local short = false
+    for _, kit in ipairs(sorted_keys(info.kits)) do
+      local have = net.get_item_count(kit)
+      if have < info.kits[kit] then
+        info.missing[kit] = info.kits[kit] - have
+        short = true
+      end
+    end
+    if short then return "no-kits", info end
+    if net.get_item_count(rails.FUEL) < info.coal then return "no-fuel", info end
+    local slots = composed_slots(d, cars)
+    if not track_whole(d, slots) then return "no-track", info end
+    for _, slot in ipairs(slots) do
+      local why = slot_problem(d, slot)
+      if why then return why, info end
+    end
+    return nil, info
+  end
+
+  local function names_text(cars)
+    local parts = {}
+    for _, car in ipairs(cars) do
+      parts[#parts + 1] = string.gsub(car.name, "^rts%-", "") .. (car.reversed and "(r)" or "")
+    end
+    return table.concat(parts, " ")
+  end
+
+  rails.on_deployed = {} -- fn(rec, train, depot_un): trainswar.lua takes the artillery wagons' shells
+
+  --- Deploy a composition at a depot: kits and coal from its network. Returns the LuaTrain or nil and a reason
+  --- (rails.compose_check's). The record's kind is the dominant one; rec.composed, rec.caps and rec.cars describe it.
+  function rails.create_composed(depot_un, cars, opts)
+    local why = rails.compose_check(depot_un, cars)
+    if why then return nil, why end
+    local d = rails.depot(depot_un)
+    local net = logistics.hub_network(depot_un)
+    local force_name = d.force
+    local slots = composed_slots(d, cars)
+    local caps = rails.caps_of(cars)
+    local kind = dominant(caps)
+    local made, train = spawn(d, slots, depot_un, kind)
+    if not made then return nil, train end
+    local kits = rails.compose_kits(cars)
+    for _, kit in ipairs(sorted_keys(kits)) do net.remove_item({name = kit, count = kits[kit]}) end
+    local color = force_color(force_name)
+    local fuel, loco, armoured = 0, nil, false
+    for _, ent in ipairs(made) do
+      if color then ent.color = color end
+      buildings.register(ent)
+      if rails.LOCOS[ent.name] then
+        loco = loco or ent
+        local inv = ent.get_fuel_inventory()
+        if inv then fuel = fuel + logistics.transfer(net, inv, rails.FUEL, CFG.starter_fuel) end
+      end
+      if ent.name == rails.ALOCO or ent.name == rails.AWAGON then armoured = true end
+    end
+    train.manual_mode = true
+    local copy = {}
+    for i, car in ipairs(cars) do copy[i] = {name = car.name, reversed = car.reversed or nil} end
+    local rec = {id = train.id, kind = kind, force = force_name, home = depot_un, loco = loco or made[1], stock = made,
+                 state = "idle", created = game.tick, delivered = {}, trips = 0, armoured = armoured or nil,
+                 composed = true, caps = caps, cars = copy}
+    rstate().trains[train.id] = rec
+    util.log("rails: depot #%d (%s) deployed a composed %s train %d: [%s], %d coal%s", depot_un, force_name, kind,
+      train.id, names_text(cars), fuel, opts and opts.preset and (" (preset " .. opts.preset .. ")") or "")
+    for _, fn in ipairs(rails.on_deployed) do fn(rec, train, depot_un) end
+    return train
+  end
+
+  -- The own depot whose platform holds the whole standing train, or nil.
+  local function platform_under(rec, train)
+    local R = rstate()
+    local a, b = train.front_stock, train.back_stock
+    if not (a and a.valid and b and b.valid) then return nil end
+    for _, un in ipairs(sorted_keys(R.depots)) do
+      local d = R.depots[un]
+      local area = d.force == rec.force and d.entity.valid and d.platform and d.platform.area
+      if area and in_box(a.position, {{area[1][1] - 1, area[1][2] - 1}, {area[2][1] + 1, area[2][2] + 1}})
+         and in_box(b.position, {{area[1][1] - 1, area[1][2] - 1}, {area[2][1] + 1, area[2][2] + 1}}) then
+        return d
+      end
+    end
+    return nil
+  end
+
+  --- The rear of a train standing on depot d's platform: the end carriage farther from the platform end trains leave
+  --- by (create_train's front), and the direction (+1 / -1 along the platform axis) from the train out past it.
+  function rails.train_rear(train, d)
+    local p = d.platform
+    local i = p.axis == "x" and 1 or 2
+    local lo, hi = p.area[1][i], p.area[2][i]
+    local a, b = train.front_stock, train.back_stock
+    local pa = p.axis == "x" and a.position.x or a.position.y
+    local pb = p.axis == "x" and b.position.x or b.position.y
+    -- the outward direction at each end
+    local sa, sb
+    if a == b then
+      sa = (hi - pa >= pa - lo) and 1 or -1
+      return a, sa
+    end
+    sa = (pa >= pb) and 1 or -1
+    sb = -sa
+    -- the front is the end nearer the platform end trains leave by (the line's end, else the second end: where
+    -- create_train puts the front locomotive); without platform ends (a station), the end with less track ahead
+    local R = rstate()
+    local line = d.line and R.lines[d.line]
+    local conn = 2
+    if line then conn = (line.a == d.un) and (line.a_end or 2) or (line.b_end or 2) end
+    local e = p.ends and (p.ends[conn] or p.ends[2])
+    if e then
+      local ea = p.axis == "x" and e.x or e.y
+      if abs(pa - ea) > abs(pb - ea) then return a, sa end
+      return b, sb
+    end
+    local room_a = sa > 0 and (hi - pa) or (pa - lo)
+    local room_b = sb > 0 and (hi - pb) or (pb - lo)
+    if room_a > room_b then return a, sa end
+    return b, sb
+  end
+
+  local function refresh_caps(rec, train)
+    local cars = {}
+    for i, c in ipairs(train.carriages) do cars[i] = {name = c.name} end
+    rec.caps = rails.caps_of(cars)
+    rec.stock = {}
+    for _, c in ipairs(train.carriages) do rec.stock[#rec.stock + 1] = c end
+    if not (rec.loco and rec.loco.valid and rec.loco.train == train) then
+      rec.loco = nil
+      for _, c in ipairs(train.carriages) do
+        if rails.LOCOS[c.name] then
+          rec.loco = c
+          break
+        end
+      end
+      rec.loco = rec.loco or train.carriages[1]
+    end
+  end
+
+  --- Why a carriage cannot be added to / removed from a standing train now, or nil. op = "add" | "remove".
+  function rails.edit_check(train, op, name)
+    local rec = rails.train_record(train)
+    if not (rec and train and train.valid) then return "no-train" end
+    if rec.kind == "construction" then return "crew" end
+    if abs(train.speed) > 0.001 then return "moving" end
+    local d = platform_under(rec, train)
+    if not d then return "not-on-platform" end
+    local net = logistics.hub_network(d.un)
+    if not net then return "no-network" end
+    if op == "add" then
+      if not CARRIAGE_SET[name or ""] then return "bad-carriage" end
+      if #train.carriages + 1 > rails.max_carriages(rails.platform_tiles(d)) then return "too-long" end
+      if net.get_item_count(KIT_OF[name]) < 1 then return "no-kits" end
+    else
+      if #train.carriages <= 1 then return "last-carriage" end
+      local rear = rails.train_rear(train, d)
+      local locos = #train.locomotives.front_movers + #train.locomotives.back_movers
+      if rear.type == "locomotive" and locos <= 1 then return "last-loco" end
+      local M = rstate().manifests
+      if M and M[rear.unit_number] and #M[rear.unit_number].records > 0 then return "troops-aboard" end
+    end
+    return nil, d, net
+  end
+
+  --- Couple a carriage (a carriage entity name; a locomotive may face backwards) at the rear of a train standing on an
+  --- own depot platform; its kit comes from that depot's network. Returns true or false and a reason (edit_check's).
+  function rails.add_carriage(train, name, reversed)
+    local why, d, net = rails.edit_check(train, "add", name)
+    if why then return false, why end
+    local rec = rails.train_record(train)
+    local p = d.platform
+    local back, s = rails.train_rear(train, d)
+    local ba = p.axis == "x" and back.position.x or back.position.y
+    local at = ba + s * rails.CARRIAGE
+    local lo, hi = p.area[1][p.axis == "x" and 1 or 2] + 1, p.area[2][p.axis == "x" and 1 or 2] - 1
+    if at - rails.CARRIAGE / 2 < lo or at + rails.CARRIAGE / 2 > hi then return false, "too-long" end
+    local pos = p.axis == "x" and {at, p.track} or {p.track, at}
+    -- facing the train's front (towards -s) unless reversed
+    local dir
+    if p.axis == "x" then dir = s > 0 and D.west or D.east else dir = s > 0 and D.north or D.south end
+    if reversed then dir = (dir + 8) % 16 end
+    local before = #train.carriages
+    local surface = back.surface
+    local ent = surface.create_entity({name = name, position = pos, direction = dir, force = rec.force})
+    if not ent then return false, "no-room" end
+    local t2 = ent.train
+    if not (t2 and #t2.carriages == before + 1) then
+      ent.destroy()
+      return false, "no-room"
+    end
+    net.remove_item({name = KIT_OF[name], count = 1})
+    local color = force_color(rec.force)
     if color then ent.color = color end
     buildings.register(ent)
+    if rails.LOCOS[name] then
+      local inv = ent.get_fuel_inventory()
+      if inv then logistics.transfer(net, inv, rails.FUEL, CFG.starter_fuel) end
+    end
+    rec = rails.train_record(t2) or rec
+    refresh_caps(rec, t2)
+    rec.composed = true
+    if rec.kind ~= "construction" then rec.kind = dominant(rec.caps) end
+    util.log("rails: train %d (%s) at depot #%d: %s%s coupled at the rear (%d carriages)", t2.id, rec.force, d.un, name,
+      reversed and " (reversed)" or "", #t2.carriages)
+    return true
   end
-  -- starter fuel from the network (Phase 5 M2 integration: a construction train's locomotives leave full)
-  local fuel = 0
-  local load = kind == "construction" and CFG.fuel_target or CFG.starter_fuel
-  for _, ent in ipairs({made[1], made[#made]}) do
-    local inv = ent.get_fuel_inventory()
-    if inv then fuel = fuel + logistics.transfer(net, inv, rails.FUEL, load) end
+
+  --- Take the rear carriage off a train standing on an own depot platform: its cargo, coal and shells go into that
+  --- depot's network, and half of its kit (a per-force credit: every second carriage of a kind gives one kit). Returns
+  --- true or false and a reason (edit_check's).
+  function rails.remove_carriage(train)
+    local why, d, net = rails.edit_check(train, "remove")
+    if why then return false, why end
+    local rec = rails.train_record(train)
+    local rear = rails.train_rear(train, d)
+    local name = rear.name
+    local ends = string.format("ends %s %s / %s %s", train.front_stock.name, util.pos_str(train.front_stock.position),
+      train.back_stock.name, util.pos_str(train.back_stock.position))
+    for _, inv_id in ipairs({defines.inventory.cargo_wagon, defines.inventory.artillery_wagon_ammo,
+                             defines.inventory.fuel}) do
+      local ok, inv = pcall(rear.get_inventory, inv_id)
+      if ok and inv then
+        for _, item in pairs(inv.get_contents()) do logistics.transfer(inv, net, item.name, item.count) end
+      end
+    end
+    local R = rstate()
+    R.kit_credit = R.kit_credit or {}
+    local credit = R.kit_credit[rec.force] or {}
+    R.kit_credit[rec.force] = credit
+    local kit = KIT_OF[name]
+    local back = 0
+    if kit then
+      credit[kit] = (credit[kit] or 0) + rails.REMOVE_SHARE
+      back = floor(credit[kit] + 1e-9)
+      if back > 0 then
+        credit[kit] = credit[kit] - back
+        local put = net.insert({name = kit, count = back})
+        if put < back then
+          rear.surface.spill_item_stack({position = rear.position, stack = {name = kit, count = back - put},
+                                         enable_looted = false, allow_belts = false})
+        end
+      end
+    end
+    local front = (rear == train.front_stock) and train.back_stock or train.front_stock
+    local old_id = train.id
+    if rec.loco == rear then rec.loco = nil end
+    rear.destroy()
+    local t2 = front and front.valid and front.train
+    if t2 then
+      if not R.trains[t2.id] then -- (rails.lua's on_train_created moves a record by its locomotive: this one lost it)
+        R.trains[old_id] = nil
+        R.trains[t2.id] = rec
+        rec.id = t2.id
+        if R.dwelling[old_id] then
+          R.dwelling[old_id] = nil
+          R.dwelling[t2.id] = true
+        end
+      end
+      rec = R.trains[t2.id]
+      refresh_caps(rec, t2)
+      if rec.kind ~= "construction" then rec.kind = dominant(rec.caps) end
+    end
+    util.log("rails: train %d (%s) at depot #%d: %s taken off the rear, %d kit(s) back (%d carriages left; %s)",
+      t2 and t2.id or 0, rec.force, d.un, name, back, t2 and #t2.carriages or 0, ends)
+    return true
   end
-  train.manual_mode = true
-  local rec = {id = train.id, kind = kind, force = force_name, home = depot_un, loco = made[1], stock = made,
-               state = "idle", created = game.tick, delivered = {}, trips = 0,
-               armoured = armoured or nil} -- Phase 5 M3 war2
-  rstate().trains[train.id] = rec
-  util.log("rails: depot #%d (%s) deployed %s%s train %d: %d carriages, %d coal", depot_un, force_name,
-    armoured and "armoured " or "", kind, train.id, #made, fuel)
-  return train
+
+  --- Player templates of a force: list of {name, cars}.
+  function rails.templates(force_name)
+    local R = rstate()
+    R.templates = R.templates or {}
+    R.templates[force_name] = R.templates[force_name] or {}
+    return R.templates[force_name]
+  end
+
+  --- Save a composition as a template (at most MAX_TEMPLATES; the same name replaces). Returns the index or nil, reason
+  --- ("empty", "full").
+  function rails.save_template(force_name, name, cars)
+    if not (cars and #cars > 0) then return nil, "empty" end
+    local list = rails.templates(force_name)
+    name = (type(name) == "string" and name ~= "") and string.sub(name, 1, 40) or nil
+    local copy = {}
+    for i, car in ipairs(cars) do
+      if CARRIAGE_SET[car.name] then copy[#copy + 1] = {name = car.name, reversed = car.reversed or nil} end
+      if i > 32 then break end
+    end
+    for i, t in ipairs(list) do
+      if name and t.name == name then
+        t.cars = copy
+        util.log("rails: %s template %d '%s' replaced: [%s]", force_name, i, name, names_text(copy))
+        return i
+      end
+    end
+    if #list >= rails.MAX_TEMPLATES then return nil, "full" end
+    list[#list + 1] = {name = name or ("#" .. (#list + 1)), cars = copy}
+    util.log("rails: %s template %d '%s' saved: [%s]", force_name, #list, list[#list].name, names_text(copy))
+    return #list
+  end
+
+  function rails.delete_template(force_name, i)
+    local list = rails.templates(force_name)
+    if not list[i] then return false end
+    util.log("rails: %s template %d '%s' deleted", force_name, i, list[i].name)
+    table.remove(list, i)
+    return true
+  end
 end
 
 local function schedule_two(train, rec)
@@ -2321,8 +2797,11 @@ end
 -- Index of the line piece nearest to a position (0 = depot A's platform, #pieces + 1 = depot B's), or nil.
 local function line_index_at(line, pos)
   local A, B = rails.depot(line.a), rails.depot(line.b)
-  if A and A.platform and util.distance(pos, A.entity.position) < 24 then return 0 end
-  if B and B.platform and util.distance(pos, B.entity.position) < 24 then return #line.pieces + 1 end
+  -- (0.1.2: a 60- or 80-tile platform reaches further from its depot)
+  if A and A.platform and util.distance(pos, A.entity.position) < (A.platform.pieces or 20) + 4 then return 0 end
+  if B and B.platform and util.distance(pos, B.entity.position) < (B.platform.pieces or 20) + 4 then
+    return #line.pieces + 1
+  end
   local best, bd
   for i, p in ipairs(line.pieces) do
     local dx, dy = p.x - pos.x, p.y - pos.y

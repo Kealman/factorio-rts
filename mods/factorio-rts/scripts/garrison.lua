@@ -478,6 +478,11 @@ local function on_platform(d, pos)
   return pos.x >= a[1][1] - 4 and pos.x <= a[2][1] + 4 and pos.y >= a[1][2] - 4 and pos.y <= a[2][2] + 4
 end
 
+-- 0.1.2 (#32): a train carries troops when it is a troop train or a composed train with troop wagons.
+local function carries_troops(rec)
+  return rec.kind == "troop" or (rec.caps ~= nil and (rec.caps.troop or 0) > 0)
+end
+
 --- The troop train of `force` standing at depot `depot_un` (record, LuaTrain), or nil.
 function garrison.troop_train_at(force, depot_un)
   local d = rails.depot(depot_un)
@@ -488,7 +493,7 @@ function garrison.troop_train_at(force, depot_un)
   table.sort(ids)
   for _, id in ipairs(ids) do
     local rec = R.trains[id]
-    if rec.kind == "troop" and rec.force == force then
+    if carries_troops(rec) and rec.force == force then
       local train = rails.train_of(rec)
       if train and train.valid and train.speed == 0 and train.front_stock and on_platform(d, train.front_stock.position)
       then
@@ -532,7 +537,7 @@ local function troop_train_coming(force, depot_un)
   local R = storage.rails
   for _, id in ipairs(sorted_keys(R and R.trains)) do
     local rec = R.trains[id]
-    if rec.kind == "troop" and rec.force == force and routed_through(rec, depot_un)
+    if carries_troops(rec) and rec.force == force and routed_through(rec, depot_un)
        and rails.train_of(rec) then
       return rec
     end
@@ -799,7 +804,7 @@ end
 
 -- Before a train is disbanded: troops get out first.
 rails.on_disband = function(rec, train)
-  if rec.kind == "troop" then disembark(train, "train disbanded") end
+  if carries_troops(rec) then disembark(train, "train disbanded") end
 end
 
 -- The troop line of the train panel (railgui.lua).
