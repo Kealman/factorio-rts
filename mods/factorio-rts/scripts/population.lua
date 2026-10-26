@@ -646,6 +646,7 @@ local function check_tier(P, c)
 end
 
 local function is_ai_force(force_name)
+  if storage.ai and storage.ai[force_name] ~= nil then return true end -- an AI commander drives it (also autotests' player)
   for _, f in ipairs(match.ai_forces()) do
     if f == force_name then return true end
   end
