@@ -61,6 +61,7 @@ local supply = require("scripts.supply")
 local research = require("scripts.research")
 local logistics = require("scripts.logistics")
 local demolish = require("scripts.demolish")
+local pieces = require("scripts.pieces")
 local balance = require("balance")
 
 local hud = {}
@@ -865,6 +866,12 @@ local function build_building_page(panel, h)
   el.b_tabs.visible = false
   add_filler(header)
   el.b_hp = header.add({type = "label", style = "rts_hud_mono_label", tooltip = {"rts.health"}})
+  -- Release 0.1.2: Rotate, for the piece page (belts, inserters, ghosts; scripts/pieces.lua)
+  el.b_rotate = header.add({type = "button", name = PREFIX .. "rotate_piece", style = "rts_hud_button",
+                            caption = {"rts.piece-rotate"}, tooltip = {"rts.piece-rotate-tooltip"},
+                            tags = {rts_hud = "rotate_piece"}})
+  el.b_rotate.style.height = P4.DEMOLISH_HEIGHT
+  el.b_rotate.visible = false
   -- Demolish: two presses (first arms, second within 3 s executes); scripts/demolish.lua
   el.b_demolish = header.add({type = "button", name = PREFIX .. "demolish", style = "rts_hud_button",
                               caption = {"rts.demolish"}, tags = {rts_hud = "demolish"}})
@@ -1698,9 +1705,78 @@ local function update_demolish_button(player, h, un, rec)
   button.enabled = not blocked -- Phase 5 M1 integration: greyed like the city panel's (the key still explains)
 end
 
+-- Release 0.1.2 (#23, #27): the page of selected own belts, inserters, poles and ghosts. One piece: name, direction
+-- or pickup / drop, Rotate and Demolish (Cancel for a ghost); a group: the count per name.
+local function update_pieces(player, h, list)
+  local el = h.el
+  if h.bld_un or el.b_buttons.visible then
+    el.b_buttons.clear()
+    h.recipe_buttons, h.bld_un = {}, nil
+    el.b_buttons.visible = false
+    el.b_text.visible = true
+    el.b_foot.visible = false
+    set_text_width(el, PANEL_INNER)
+    if el.b_tabs and el.b_tabs.valid then
+      el.b_tabs.clear()
+      el.b_tabs.visible = false
+    end
+  end
+  local ghosts, names, order = 0, {}, {}
+  for _, e in ipairs(list) do
+    if e.type == "entity-ghost" then ghosts = ghosts + 1 end
+    local n = pieces.name(e)
+    if not names[n] then
+      names[n] = 0
+      order[#order + 1] = n
+    end
+    names[n] = names[n] + 1
+  end
+  table.sort(order)
+  el.b_progress.visible = false
+  el.b_hp.caption = ""
+  el.b_line1.style.font_color = COLOR.white
+  el.b_line2.style.font_color = COLOR.white
+  el.b_line1.tooltip, el.b_line2.tooltip, el.b_line3.tooltip = "", "", ""
+  el.b_line3.caption = ""
+  local all_ghosts = ghosts == #list
+  if #list == 1 then
+    local d = pieces.describe(list[1])
+    el.b_name.caption = d.title
+    el.b_line1.caption = d.lines[1]
+    el.b_line2.caption = d.lines[2]
+  else
+    el.b_name.caption = {"rts.piece-group-title", #list}
+    local parts = {""}
+    for i, n in ipairs(order) do
+      parts[#parts + 1] = (i > 1 and ", " or "")
+      parts[#parts + 1] = {"", names[n] .. " x ", prototypes.entity[n].localised_name}
+    end
+    el.b_line1.caption = parts
+    el.b_line2.caption = ghosts > 0 and {"rts.piece-group-ghosts", ghosts} or ""
+  end
+  local rotatable = false
+  for _, e in ipairs(list) do
+    if pieces.describe(e).rotatable then rotatable = true end
+  end
+  el.b_rotate.visible = rotatable
+  local armed = demolish.is_armed(player.index)
+  el.b_demolish.visible = true
+  el.b_demolish.enabled = true
+  set_style(el.b_demolish, armed and "rts_hud_button_armed" or "rts_hud_button")
+  el.b_demolish.style.height = P4.DEMOLISH_HEIGHT
+  if all_ghosts then
+    el.b_demolish.caption = {"rts.piece-cancel"}
+    el.b_demolish.tooltip = {"rts.piece-cancel-tooltip"}
+  else
+    el.b_demolish.caption = armed and {"rts.demolish-confirm"} or {"rts.demolish"}
+    el.b_demolish.tooltip = {"rts.piece-demolish-tooltip"}
+  end
+end
+
 local function update_building(player, h, un, rec)
   local el = h.el
   local e = rec.entity
+  el.b_rotate.visible = false
   update_demolish_button(player, h, un, rec)
   if h.bld_un ~= un then rebuild_recipe_buttons(player, h, un, rec) end
   el.b_name.caption = {"rts.bld-title", e.localised_name, un}
@@ -1720,6 +1796,14 @@ end
 local function update_selection(player, h)
   local un, rec = selected_building(player)
   local el = h.el
+  local sel_pieces = not rec and optional_fn("scripts.selection", {"get_pieces"})
+  local plist = sel_pieces and sel_pieces(player.index) or {}
+  if #plist > 0 then
+    el.unit_page.visible = false
+    el.bld_page.visible = true
+    update_pieces(player, h, plist)
+    return 0
+  end
   if rec then
     el.unit_page.visible = false
     el.bld_page.visible = true
@@ -2422,6 +2506,14 @@ local function on_click(e)
     if toggle then toggle(player) end
   elseif action == "demolish" then
     demolish.click(player)
+  elseif action == "rotate_piece" then -- Release 0.1.2: rotate the selected pieces / ghosts
+    local rotated = 0
+    local get = optional_fn("scripts.selection", {"get_pieces"})
+    for _, ent in ipairs(get and get(player.index) or {}) do
+      local ok = pcall(function() return ent.rotate({by_player = player}) end)
+      if ok then rotated = rotated + 1 end
+    end
+    util.log("hud click rotate pieces player=%d n=%d", player.index, rotated)
   elseif action == "disband" then -- Phase 5 M2 integration: Disband the selected units (Nation mode)
     local result, n = demolish.disband(player.index)
     util.log("disband: click player=%d result=%s n=%d", player.index, result, n)
