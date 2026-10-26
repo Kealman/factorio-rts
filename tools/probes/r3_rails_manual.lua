@@ -25,7 +25,8 @@
 -- of their pieces), partial (A - D open, part of it reused, part new), depot_lines (A holds all three lines), loops
 -- (each train >= MIN_LOOPS loops in RUN_MINUTES, the stop order kept, no stand at a signal over STUCK_S), own_land,
 -- station, track_waits (a segment on free ground far from every depot and network raises the "track not built" alert
--- after a minute). A crew without a path dumps its track ("r3 manual: diag: ..."). Summary "[rts] r3 manual summary <passed>/<total>".
+-- after a minute), platform_held (train 2 kept on C's platform: train 1, bound for C, shows the single-track hint after
+-- a minute at a signal). A crew without a path dumps its track ("r3 manual: diag: ..."). Summary "[rts] r3 manual summary <passed>/<total>".
 local events = require("scripts.events")
 local util = require("scripts.util")
 local logistics = require("scripts.logistics")
@@ -448,7 +449,35 @@ local function run(T)
   check(T, "loops", order and loops[1] >= MIN_LOOPS and loops[2] >= MIN_LOOPS and (T.max_stuck or 0) < STUCK_S,
     "train 1 %d loops (order %s), train 2 %d loops; longest stand at a signal %.0f s; train 1 delivered %s",
     loops[1], tostring(order), loops[2], T.max_stuck or 0, T.r1 and serpent.line(T.r1.delivered) or "-")
-  finish(T)
+  T.stage, T.t5 = "hold", game.tick
+end
+
+-- Train 2 stays on C's platform (manual mode once it stands there); train 1, on its way to C, waits for it and after
+-- a minute carries the single-track hint ("platform-held") in its panel's state line.
+local function hold(T)
+  local t2 = T.r2 and rails.train_of(T.r2)
+  if not T.held_at then
+    local d = T.r2 and T.r2.dwell
+    if t2 and t2.state == TS.wait_station and d and d.stop == 2 then
+      t2.manual_mode = true
+      T.held_at = game.tick
+      log("train 2 held on C's platform")
+    elseif game.tick - T.t5 > 10 * 3600 then
+      check(T, "platform_held", false, "train 2 never stood at C")
+      finish(T)
+    end
+    return
+  end
+  local r1 = T.r1
+  if r1 and r1.reason == "platform-held" then
+    check(T, "platform_held", true, "train 1 waits %.0f s at a signal for C's platform, state line reason %s",
+      (game.tick - (r1.held_since or game.tick)) / 60, r1.reason)
+    finish(T)
+  elseif game.tick - T.held_at > 10 * 3600 then
+    check(T, "platform_held", false, "train 1 reason %s, state %s, held since %s", tostring(r1 and r1.reason),
+      tostring(r1 and r1.state), tostring(r1 and r1.held_since))
+    finish(T)
+  end
 end
 
 events.on(defines.events.on_train_changed_state, function(e)
@@ -475,5 +504,6 @@ events.on_nth_tick(60, function(e)
   elseif T.stage == "train2" then
     train2(T)
     if T.stage == "run" then own_land(T) end
-  elseif T.stage == "run" then run(T) end
+  elseif T.stage == "run" then run(T)
+  elseif T.stage == "hold" then hold(T) end
 end)

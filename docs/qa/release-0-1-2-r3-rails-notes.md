@@ -201,7 +201,7 @@ ghost. The lead approved the fallback: a script-side Rail tool.
 
 | Test | Command | Result |
 |---|---|---|
-| Manual track fixture (`tools/probes/r3_rails_manual.lua`, beside a Nation 1v1 2048 match, seed 501, speed 6; lab surface, rts-ai-2 played as a human) | `SEED=501 SPEED=6 EXTRA_LUA=tools/probes/r3_rails_manual.lua STOP_ON='r3 manual summary' tools/autotest-run.sh r3-manual '{opponents = 1, difficulty = "normal", mode = "nation", world_size = 2048, enemy_brain = "ai"}' 2400` | **11/11**, see 3.4 for the numbers: segment 1 (A to B, 280 pieces) built by a crew; the Station next to it took its 2 stops; segment 2 branched off segment 1 to C with 8 chain signals and no rail signal around its junction; segment 3 (Rail tool states: a click on a rail, then free ground) built with 6 chain signals at its junction; the auto lines A - C and A - B ran along the track (98 % and 100 % of their pieces reused, bills 17 and 0 rails); A - D left the track and was finished by a crew; depot A holds 3 lines; a segment into rts-ai-1's capital land failed "land-enemy"; a segment far from everything raised the "Track not built" alert after 61 s; two trains on stop lists shared the single track for 20 minutes (10 and 11 loops, stop order kept, longest stand at a signal 49 s). 0 Lua errors |
+| Manual track fixture (`tools/probes/r3_rails_manual.lua`, beside a Nation 1v1 2048 match, seed 501, speed 6; lab surface, rts-ai-2 played as a human) | `SEED=501 SPEED=6 EXTRA_LUA=tools/probes/r3_rails_manual.lua STOP_ON='r3 manual summary' tools/autotest-run.sh r3-manual '{opponents = 1, difficulty = "normal", mode = "nation", world_size = 2048, enemy_brain = "ai"}' 2400` | **12/12** (with the single-track hint check `platform_held`, see 5.1), see 3.4 for the numbers: segment 1 (A to B, 280 pieces) built by a crew; the Station next to it took its 2 stops; segment 2 branched off segment 1 to C with 8 chain signals and no rail signal around its junction; segment 3 (Rail tool states: a click on a rail, then free ground) built with 6 chain signals at its junction; the auto lines A - C and A - B ran along the track (98 % and 100 % of their pieces reused, bills 17 and 0 rails); A - D left the track and was finished by a crew; depot A holds 3 lines; a segment into rts-ai-1's capital land failed "land-enemy"; a segment far from everything raised the "Track not built" alert after 61 s; two trains on stop lists shared the single track for 20 minutes (10 and 11 loops, stop order kept, longest stand at a signal 49 s). 0 Lua errors |
 | Rail tool GUI probe, real client EN and RU (`tools/probes/r3_rails_tool_gui.lua`; the clicks go through the handlers the inputs call) | test copy + `tools/gui-run.sh <copy> 400 RTS_R3T_DONE` (RTS_LOCALE=ru) | **6/6 in both**: the Rail button opens the tool and its panel; three clicks plan two segments, the second with 4 curved or diagonal pieces (32 ghosts); a right click and Backspace take both back (0 ghosts); planned again, the CC's robots built 14 rails in 7 s; a click on a built rail, then one 36 tiles away plans a branch whose junction got 6 chain signals once robots built its first piece; Q closes the tool and the RTS cursor comes back. Screenshots `build/shots-r3rails-tool-en/`, `build/shots-r3rails-tool-ru/` (the panel fits in both languages; the last piece of the branch stayed a ghost, outside the CC's construction area, as a Skirmish map has no depot for a crew) |
 | Rail planner finding (`tools/probes/r3_rails_planner_gui.lua`, real input) | see 3.1 | the vanilla planner does not run in the RTS view |
 | Skirmish smoke | `tools/autotest-run.sh r3r-smoke '{opponents = 1, difficulty = "normal", size = "small", enemy_brain = "waves"}' 240` | 65/65, 0 errors (the first run of the part A tree crashed at tick 900: the Rail tool's right-click hook asked `game.get_player(0)` for the autotest's script orders; fixed by `tool_player`) |
@@ -234,12 +234,35 @@ Main itself moved from 0.1.1's M1 seed 501 numbers: 26026ae has train items 7,78
 in 34) against 0.1.1's 19,101; reported to the lead on day 1 as not this branch's (the #32 tree and main give the same
 log line for line).
 
+**M3 end-to-end, seed 801** (4 normal AIs, 2048, 60 min; `PERF=1 KEEP_TREE=<tree> EXTRA_LUA=tools/probes/m3_acceptance.lua
+DURATION_MIN=60 SEED=801 SPEED=8 tools/autotest-run.sh r3r-m3-801 '{opponents = 3, difficulty = "normal", mode =
+"nation", world_size = 2048, enemy_brain = "ai"}' 12000`; the row computed with `tools/release-check.py`'s own
+`acceptance` / `acc_table`), next to the 0.1.1 release check (`build/release-check/2026-10-25_1305/REPORT.md`, tree
+615854f):
+
+| Tree | AI autotest | Trade / war / peace / capture | Starving | Debt (stage) | Credit line | Lowest ₡ | First Age III | Cities ≥ 3 | Linked by 35:00 | Aggressive first line | Ops / belts / air patrols / interceptors+bombs / artillery / holds | Speed-1 minutes (s) | Errors |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| 0.1.1 (615854f) | 80/83 (3 FAILED) | P/P/P/P | FAIL | none | none | 500 | 38:15 | 4 of 4 | 1 of 4 | ai-1 31:27 | 4/4 nations, 2 / 12 / 0 / 0 / 0 | 60.0 60.0 60.0 60.0 60.0 | 0 |
+| r3-rails part A (aded01b's mod tree) | 81/83 (2 FAILED) | P/P/P/P | PASS | none | none | 1045 | 38:01 | 4 of 4 | 3 of 4 | ai-1 30:37 | 4/4 nations, 4 / 6 / 0 / 0 / 0 | 60.0 60.0 60.0 60.0 60.0 | 0 |
+
+The two failed AI checks are rts-ai-1's (Age II at 32:56, no armoured car); the acceptance's "debt" (no nation in a
+debt stage) and "lines" (first lines at 25:09 and 30:37) seed checks fail as they may per seed. The differences from
+0.1.1 come from main's other 0.1.2 work (main already differs from 0.1.1 on M1 501, see above), not from this branch:
+on M1 501 the part A tree and main 26026ae are line-identical, and no AI force is human in a headless run. Nations:
+rts-player Age II 17:57, Age III 45:07, first line 25:09, 4 lines, 15,049 items by train; rts-ai-1 32:55 / 56:34 /
+30:37 / 2 / 4,746; rts-ai-2 17:34 / 42:57 / 23:02 / 4 / 14,782; rts-ai-3 17:20 / 38:01 / 23:36 / 3 / 18,197.
+
 ## 5. Open items
 
 1. **Single track and stub platforms.** Two trains that each want the other's platform wait for each other forever
    (each holds its own platform; chain signals keep them from meeting, not from this). The fixture's routes never
    swap ends at the same moment; a player with two or more trains between two depots needs a passing loop or a second
-   track (both layable with the Rail tool). A short help-card line would say so.
+   track (both layable with the Rail tool). Accepted for 0.1.2 with a visible hint: a train on a stop list that has
+   waited 60 s at a signal for a platform another train holds (`railroutes.step`: its `path_end_stop` is on a depot or
+   station platform with another train's carriage on it) shows "Waiting for a platform held by another train: single
+   track needs a passing loop or a second track (Rail tool)" as its panel's state line (EN/RU); the README rail
+   section has the same sentence. Fixture check `platform_held`: train 2 kept on C's platform, train 1 bound for C
+   carried the hint after 60 s.
 2. **Junctions turn one way**, as in vanilla. Nothing tells the player when a stop on a train's list cannot be
    reached from the stop before it except the train's "no path" state; a check in the stop editor ("no track leads
    here from stop 2") would help.

@@ -70,6 +70,7 @@ railroutes.UNLOAD = {"keep", "all", "items"}
 railroutes.LOAD = {"exports", "items"}
 railroutes.TROOPS = {"board", "unload"}
 railroutes.WAITS = {"inactivity", "full", "empty", "time", "item_count"}
+railroutes.HELD_TICKS = 3600                -- (#31 A) waiting this long for a platform another train holds: the hint
 local ITEM_WAGONS = {[rails.WAGON] = true}
 local TROOP_WAGONS = {[rails.TWAGON] = true, [rails.AWAGON] = true}
 local RAIL_TYPES = {"straight-rail", "curved-rail-a", "curved-rail-b", "half-diagonal-rail"}
@@ -822,6 +823,26 @@ local function tick()
 end
 
 -- rails.lua's train step for a train on a stop list (every rails.STEP ticks).
+-- 0.1.2 (#31 part A): the train's way ends at a depot or station platform where another train stands.
+local function platform_held(train)
+  local es = train.has_path and train.path_end_stop
+  if not (es and es.valid) then return false end
+  local R = storage.rails
+  for _, un in ipairs(sorted_keys(R and R.depots or {})) do
+    local p = R.depots[un].platform
+    for _, s in pairs(p and p.area and p.stops or {}) do
+      if s == es then
+        for _, e in ipairs(es.surface.find_entities_filtered({area = p.area, type = {"locomotive", "cargo-wagon",
+                                                               "fluid-wagon", "artillery-wagon"}})) do
+          if e.train and e.train.id ~= train.id then return true end
+        end
+        return false
+      end
+    end
+  end
+  return false
+end
+
 local function step(rec, train)
   if rec.written ~= train.id then write(rec, train, "new train id") end
   local st = train.state
@@ -841,12 +862,24 @@ local function step(rec, train)
   else
     rec.state = "to_stop"
   end
+  -- 0.1.2 (#31 part A): a minute at a signal for a platform another train holds: single track (notes, open item 1)
+  if (st == TS.wait_signal or st == TS.destination_full) and platform_held(train) then
+    rec.held_since = rec.held_since or game.tick
+  else
+    rec.held_since = nil
+  end
   if train.speed == 0 and rails.fuel_left(train) == 0 and st == TS.on_the_path then
     if rec.reason ~= "no-fuel" then
       util.log("rails: route train %d (%s) is out of fuel", train.id, rec.force)
     end
     rec.reason = "no-fuel"
-  elseif rec.reason == "no-fuel" or rec.reason == "depot-lost" then
+  elseif rec.held_since and game.tick - rec.held_since >= railroutes.HELD_TICKS then
+    if rec.reason ~= "platform-held" then
+      util.log("rails: route train %d (%s) waits %.0f s for a platform another train holds", train.id, rec.force,
+        (game.tick - rec.held_since) / 60)
+    end
+    rec.reason = "platform-held"
+  elseif rec.reason == "no-fuel" or rec.reason == "depot-lost" or rec.reason == "platform-held" then
     rec.reason = nil
   end
 end
