@@ -952,6 +952,7 @@ local function build_building_page(panel, h)
   -- #28: the refinery / chemical plant say how oil moves (no pipes)
   el.f_hint = page.add({type = "label", style = "rts_hud_dim_label"})
   el.f_hint.style.single_line = false
+  el.f_hint.style.maximal_width = PANEL_INNER -- wraps inside the page
   el.f_hint.visible = false
 end
 

@@ -180,3 +180,32 @@ counters (items moved, trips, minute lines) are identical.
 
 **Modding / tools**
 * `tools/locale-probe/help-check.py`, `tools/probes/r3ux_gui.lua`, `moddown` / `modup` in `tools/gui-input/fdrive.swift`.
+
+## 10. GUI pass fixes (agent rel-fix)
+
+Source: `build/rel-gui-0.1.2-report.md` (visual findings 1, 2, 3, 5, 8). GUI-only, no behaviour change.
+
+* **#1 Pumpjack card said "Needs no power" and "Uses power: 1 kW".** `scripts/help.lua` read the nominal 1 kW floor of a
+  `void` energy source. The power line is now added only when the prototype has an electric energy source
+  (`electric_energy_source_prototype`), so the pumpjack, the rare extractor and the other void-source buildings show no
+  power line.
+* **#2 Expanded objectives list over the city panel / policy window.** `scripts/objectives.lua`: while the city panel
+  (`rts_citygui_frame`) or the hub / stockpile policy window (`rts_hubgui_frame`) is open, the strip draws its header and
+  current step only; the list comes back when the panel closes. The player's list choice (`ps.expanded`), the F-key
+  and the lobby switch are untouched; the toggle's tooltip says why the list is hidden (new key `list-squeezed`, EN+RU).
+  The poll (30 ticks) re-renders the strip when a panel opens or closes.
+* **#3 RU refinery / chemical plant / pumpjack lines wrapped and clipped.** RU `refinery-hint`, `chem-hint`,
+  `pump-hint`, `pump-no-network` shortened to one line; the hint label has `maximal_width = PANEL_INNER` so a long
+  text wraps inside the page.
+* **#5 RU builder preset drop-down** "Заготовка или шабло..." : the drop-down is 200 px wide (was 170) and the RU
+  placeholder lost its ellipsis.
+* **#8 Long RU alerts**: `alert-pump-no-network` and `alert-robots-idle` shortened. The "rail segment stalled" alert
+  does not exist in this tree, so nothing to shorten.
+
+Tests (1280x800, EN and RU, fresh tree copies `build/rf-*`): r3ux_gui with gui-drive (real input checks pass; all
+checks pass except the known `diag-desc` diagnostic), r2_objectives_gui 27/27 and r3_rails_gui 11/11 in both languages,
+no Lua errors; Skirmish smoke 65/65, 0 errors; `help-check.py` clean. Screenshots: `build/shots-rel-fix-before/` (the
+release GUI pass) and `build/shots-rel-fix-after/`.
+
+Carried over (cosmetic, not touched): train panel with the stop editor over the Build menu; Rail tool panel over the
+research banner (and the RU build summary line at the top-left); recipe grid row 3 at the screen edge.

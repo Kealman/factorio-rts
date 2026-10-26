@@ -246,8 +246,11 @@ function help.facts(name)
     f.ranges[#f.ranges + 1] = {"rts-help.card-turret-range", B.range}
   end
   -- power
+  -- 0.1.2 GUI pass: a void energy source (pumpjack, rare extractor, powerless houses) carries a nominal 1 kW floor
+  -- in the prototype, but it draws nothing: no electric source, no "Uses power" line.
   local okp, usage = pcall(proto.get_max_energy_usage)
-  if okp and usage and usage > 0 then
+  local oke, esrc = pcall(function() return proto.electric_energy_source_prototype end)
+  if okp and usage and usage > 0 and oke and esrc ~= nil then
     f.needs[#f.needs + 1] = {"rts-help.card-power-use", string.format("%d", math.floor(usage * 60 / 1000 + 0.5))}
   end
   local okm, make = pcall(proto.get_max_energy_production)
