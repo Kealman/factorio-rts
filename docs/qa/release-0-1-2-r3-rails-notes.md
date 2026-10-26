@@ -234,6 +234,10 @@ Main itself moved from 0.1.1's M1 seed 501 numbers: 26026ae has train items 7,78
 in 34) against 0.1.1's 19,101; reported to the lead on day 1 as not this branch's (the #32 tree and main give the same
 log line for line).
 
+**Final, with main merged** (main 7b8b809 into r3-rails at 3fcf623): smoke 65/65, 0 errors; the owner's Age II save
+130 s, 0 errors, 806 `[rts]` lines (Station and signals unlocked, train 46 on its two-stop list); manual track fixture
+12/12.
+
 **M3 end-to-end, seed 801** (4 normal AIs, 2048, 60 min; `PERF=1 KEEP_TREE=<tree> EXTRA_LUA=tools/probes/m3_acceptance.lua
 DURATION_MIN=60 SEED=801 SPEED=8 tools/autotest-run.sh r3r-m3-801 '{opponents = 3, difficulty = "normal", mode =
 "nation", world_size = 2048, enemy_brain = "ai"}' 12000`; the row computed with `tools/release-check.py`'s own
