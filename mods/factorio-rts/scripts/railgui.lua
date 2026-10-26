@@ -446,7 +446,10 @@ local function refresh_train(player, g)
   local key = STATE_KEYS[rec.state] or (tw and tw.STATE_KEYS[rec.state])
   local state = key and {key} or (rec.state or "-")
   local why = rec.reason or (rec.dwell and rec.dwell.native and rec.dwell.reason)
-  if why then
+  if why == "platform-held" then -- 0.1.2 (#31 part A): single track, the hint says it all
+    el.state.caption = {"rts.rails-why-platform-held"}
+    el.state.style.font_color = COLOR.yellow
+  elseif why then
     el.state.caption = {"rts.railgui-state-why", state, {"rts.rails-why-" .. why}}
     el.state.style.font_color = COLOR.yellow
   else
