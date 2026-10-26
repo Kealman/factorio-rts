@@ -29,6 +29,7 @@ local util = require("scripts.util")
 local events = require("scripts.events")
 local buildings = require("scripts.buildings")
 local production = require("scripts.production")
+local supply = require("scripts.supply")
 local match = require("scripts.match")
 local ages = require("scripts.ages")
 local deps = require("scripts.ai.deps")
@@ -244,21 +245,33 @@ end
 ---------------------------------------------------------------------------
 -- Pumpjacks
 ---------------------------------------------------------------------------
+districts.NO_NET_ALERT_TICKS = 5 * 60 * 60 -- one "no network" alert per pumpjack per five minutes
+
+--- Items per minute the pumpjack puts into its network (an exponential average over the drains; 0 when idle).
+function districts.pump_rate(rec) return rec.pump_rate or 0 end
+
 local function drain(rec)
   local e = rec.entity
-  local amount = e.get_fluid_count(districts.CRUDE)
-  local n = math.floor(amount / districts.CRUDE_PER_ITEM)
-  if n <= 0 then return end
   local net = production.network_for(e)
   if not net then
+    -- #28: a pumpjack outside every network says so in its panel and in an alert, also before it has pumped anything
+    rec.pump_rate = 0
     if rec.pump_state ~= "no network" then
       rec.pump_state = "no network"
       util.log("districts: pumpjack #%d (%s) at %s has no logistic network", e.unit_number, rec.force,
         util.pos_str(e.position))
     end
+    if not rec.pump_alert_tick or game.tick - rec.pump_alert_tick >= districts.NO_NET_ALERT_TICKS then
+      rec.pump_alert_tick = game.tick
+      supply.alert(rec.force, "pump-no-network", "rts-ux.alert-pump-no-network", {}, e.position)
+    end
     return
   end
-  local put = net.insert({name = districts.CRUDE_ITEM, count = n})
+  local amount = e.get_fluid_count(districts.CRUDE)
+  local n = math.floor(amount / districts.CRUDE_PER_ITEM)
+  local put = n > 0 and net.insert({name = districts.CRUDE_ITEM, count = n}) or 0
+  local per_min = put * 3600 / districts.PUMP_PERIOD
+  rec.pump_rate = (rec.pump_rate or per_min) * 0.8 + per_min * 0.2
   if put > 0 then
     e.extract_fluid({name = districts.CRUDE, amount = put * districts.CRUDE_PER_ITEM}) -- 2.1: remove_fluid -> extract_fluid
     rec.pump_state = "pumping"
@@ -267,6 +280,8 @@ local function drain(rec)
     D().stats[rec.force] = st
     st.crude = st.crude + put
     if production.on_flow then production.on_flow(rec, districts.CRUDE_ITEM, put, "made") end
+  elseif rec.pump_state == "no network" then
+    rec.pump_state = "pumping"
   end
 end
 

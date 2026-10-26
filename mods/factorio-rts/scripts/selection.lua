@@ -825,7 +825,17 @@ function selection.rotate_at(player_index, position, reverse)
       if inside and (not best_area or area < best_area) then best, best_area = e, area end
     end
   end
-  if not best then return nil end
+  if not best then
+    -- #28: the refinery and the chemical plant have no fluid boxes, so they cannot rotate: say why instead of nothing
+    for _, e in pairs(surface.find_entities_filtered({position = position, radius = 1, force = player.force})) do
+      local name = e.valid and (e.type == "entity-ghost" and e.ghost_name or e.name)
+      if name == "rts-refinery" or name == "rts-chemical-plant" then
+        player.create_local_flying_text({text = {"rts-ux.rotate-oil"}, position = position})
+        break
+      end
+    end
+    return nil
+  end
   local ok = best.rotate({reverse = reverse == true, by_player = player})
   util.log("rotate %s %s at %s ok=%s now %s player=%d", reverse and "reverse" or "forward",
     best.type == "entity-ghost" and ("ghost of " .. best.ghost_name) or best.name, util.pos_str(best.position),

@@ -644,6 +644,13 @@ local function check_tier(P, c)
   end
 end
 
+local function is_ai_force(force_name)
+  for _, f in ipairs(match.ai_forces()) do
+    if f == force_name then return true end
+  end
+  return false
+end
+
 --- One growth pass of a city (and its needs when due).
 function population.step(city_id)
   local c = cities.get(city_id)
@@ -659,6 +666,11 @@ function population.step(city_id)
       local kit = c.capital and PB.start_stock.capital or PB.start_stock.city
       for item, n in pairs(kit or {}) do
         if (c.capital and P.settled == 0) or not c.capital then net.insert({name = item, count = n}) end
+      end
+      -- 0.1.2 (#26): a human player's new city (not the capital, not an AI nation's) also gets building stock
+      if not c.capital and c.force ~= population.NEUTRAL and not is_ai_force(c.force) then
+        for item, n in pairs(PB.builder_stock or {}) do net.insert({name = item, count = n}) end
+        util.log("people: city %d starts with building stock (%s)", c.id, "raw goods, a factory, 2 houses, a farm")
       end
     end
   end

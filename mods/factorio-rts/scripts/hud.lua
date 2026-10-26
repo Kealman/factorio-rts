@@ -162,6 +162,7 @@ for _, name in ipairs({"rts-supply-crate", "rts-supply-crate-ii", "rts-field-dep
 -- Phase 5 M3 air: the airfield, the AA turret and the plane kits (Aviation, Air Force); the Nation help page's air line
 for _, name in ipairs({"rts-airfield", "rts-aa-turret", "rts-scout-plane-kit", "rts-bomber-kit", "rts-interceptor-kit"}) do
   P4.NATION_ONLY[name] = true end
+table.insert(P4.HELP_NATION, #P4.HELP_NATION, "rts-ux.help-nation-oil") -- #28
 table.insert(P4.HELP_NATION, #P4.HELP_NATION, "rts-air.help-nation-air") -- Phase 5 M3 integration: before the keys
 -- Phase 5 M3 war2: the gate, the artillery wagon, armoured stock and rail shells
 for _, name in ipairs({"rts-gate", "rts-artillery-wagon-kit", "rts-armoured-locomotive-kit", "rts-armoured-wagon-kit",
@@ -659,7 +660,10 @@ end
 
 -- Phase 5 M1 QA round 1: an item that places an entity of another name (the City charter places a City Center) says
 -- so in its build and recipe tooltips: {"", tooltip, "\n", "Builds a [entity] City Center."}.
+local OIL_NOTES = {["rts-pumpjack"] = "rts-ux.note-pumpjack", ["rts-refinery"] = "rts-ux.note-refinery",
+                    ["rts-chemical-plant"] = "rts-ux.note-chemical-plant"} -- #28: no pipes
 local function with_places_note(tooltip, item)
+  if OIL_NOTES[item] then tooltip = {"", tooltip, "\n", {OIL_NOTES[item]}} end
   local proto = item and prototypes.item[item]
   local place = proto and proto.place_result
   if not (place and place.name ~= item) then return tooltip end
@@ -865,10 +869,6 @@ local function build_building_page(panel, h)
   el.b_tabs.visible = false
   add_filler(header)
   el.b_hp = header.add({type = "label", style = "rts_hud_mono_label", tooltip = {"rts.health"}})
-  -- Demolish: two presses (first arms, second within 3 s executes); scripts/demolish.lua
-  el.b_demolish = header.add({type = "button", name = PREFIX .. "demolish", style = "rts_hud_button",
-                              caption = {"rts.demolish"}, tags = {rts_hud = "demolish"}})
-  el.b_demolish.style.height = P4.DEMOLISH_HEIGHT
 
   local body = page.add({type = "flow", direction = "horizontal"})
   body.style.horizontal_spacing = BODY_SPACING
@@ -897,6 +897,10 @@ local function build_building_page(panel, h)
   add_filler(foot)
   el.f_line2 = foot.add({type = "label", style = "rts_hud_dim_label"})
   el.f_line2.style.maximal_width = P4.FACTORY_COUNTS_WIDTH
+  -- #28: the refinery / chemical plant say how oil moves (no pipes)
+  el.f_hint = page.add({type = "label", style = "rts_hud_dim_label"})
+  el.f_hint.style.single_line = false
+  el.f_hint.visible = false
 end
 
 -- Width of the building page's text column: next to the recipe grid, or the whole panel without it.
@@ -1359,6 +1363,7 @@ local function rebuild_recipe_buttons(player, h, un, rec)
   h.recipe_buttons = {}
   h.recipe_locks = {}
   h.bld_un = un
+  if el.f_hint and el.f_hint.valid then el.f_hint.visible = false end
   if rec.kind ~= "barracks" and not factory then
     grid.visible = false
     el.b_text.visible = true
@@ -1502,6 +1507,7 @@ local function block_text(un)
   return {"rts.barracks-blocked-other", tostring(b.reason)}, ""
 end
 
+local OIL_HINTS = {["rts-refinery"] = "rts-ux.refinery-hint", ["rts-chemical-plant"] = "rts-ux.chem-hint"}
 local function update_producer(player, h, un, rec)
   local el = h.el
   local factory = P4.crafter(rec.kind) -- Phase 5 E1: districts too
@@ -1552,6 +1558,11 @@ local function update_producer(player, h, un, rec)
     -- this factory's own counters (production.lua rec.made / rec.moved), not the force's totals
     el.f_line2.caption = {"rts.factory-made-short", rec.made or 0, rec.moved or 0}
     el.f_line2.tooltip = {"", {"rts.factory-made", rec.made or 0, rec.moved or 0}, "\n", {"rts.factory-hint"}}
+    local hint = OIL_HINTS[rec.entity.name]
+    if el.f_hint and el.f_hint.valid then
+      el.f_hint.visible = hint ~= nil
+      if hint then el.f_hint.caption = {hint} end
+    end
   end
 end
 
@@ -1599,6 +1610,16 @@ local function update_other(player, h, un, rec)
     el.b_line2.caption = target and {"rts.extractor-mining", "[entity=" .. target.name .. "]", target.localised_name}
       or {"rts.extractor-no-ore"}
     el.b_line3.caption = {"rts.extractor-hint"}
+  elseif rec.kind == "pumpjack" then -- #28: oil travels through the network as items (scripts/districts.lua drain)
+    if rec.pump_state == "no network" then
+      el.b_line1.caption = {"rts.status", {"rts.state-no-network"}}
+      el.b_line1.style.font_color = COLOR.red
+      el.b_line2.caption = {"rts-ux.pump-no-network"}
+      el.b_line2.style.font_color = COLOR.red
+    else
+      el.b_line2.caption = {"rts-ux.pump-line", string.format("%.0f", (rec.pump_rate or 0))}
+    end
+    el.b_line3.caption = {"rts-ux.pump-hint"}
   elseif rec.kind == "smelter" then
     local recipe = e.get_recipe()
     local name = recipe and recipe.name
