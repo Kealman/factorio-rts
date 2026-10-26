@@ -663,6 +663,14 @@ local function build_depot(player, g, un)
   frame.style.width = WIDTH
   g.frame, g.el = frame, {}
   header(frame, {"rts.railgui-depot-title", depot_name(un)})
+  local dd = rails.depot(un)
+  if dd and dd.station then -- 0.1.2 (#31 part A): a Station: its stops and what it is for
+    g.el.platform = label(frame)
+    g.el.station = true
+    label(frame, "rts_hud_dim_label", {"rts.station-hint"})
+    place(player, frame, "depot")
+    return
+  end
   g.el.platform = label(frame)
   local prow = frame.add({type = "flow", direction = "horizontal", style = "rts_hud_row"})
   prow.add({type = "label", style = "rts_hud_dim_label", caption = {"rts.builder-new-depots"},
@@ -692,6 +700,12 @@ local function refresh_depot(player, g)
   local d = rails.depot(g.id)
   if not d then return false end
   local el = g.el
+  if el.station then -- 0.1.2 (#31 part A)
+    el.platform.caption = d.platform and {"rts.station-stops", #d.platform.stops} or {"rts.station-no-track",
+      rails.STATION_REACH}
+    el.platform.style.font_color = d.platform and COLOR.white or COLOR.yellow
+    return true
+  end
   if d.platform then
     local tiles = rails.platform_tiles(d)
     el.platform.caption = {"rts.builder-platform", tiles, rails.max_carriages(tiles), #d.platform.stops}

@@ -96,7 +96,10 @@ end
 function supply.cap(force_name)
   local cap = 0
   if buildings.main_cc(force_name) then cap = supply.CC_CAP end
-  cap = cap + supply.HUB_CAP * buildings.count(force_name, "hub")
+  -- 0.1.2 (#31 part A): a Station is a hub without a supply cap (supply.hub_discount: scripts/rails.lua)
+  local hubs = buildings.count(force_name, "hub")
+  if supply.hub_discount then hubs = hubs - supply.hub_discount(force_name) end
+  cap = cap + supply.HUB_CAP * hubs
   local r = storage.research
   local bonus = r and r.supply_bonus and r.supply_bonus[force_name]
   for i = 1, #cap_hooks do cap = cap + (cap_hooks[i](force_name) or 0) end -- Phase 5 M1: cities (Nation mode)
