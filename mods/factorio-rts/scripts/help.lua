@@ -135,6 +135,9 @@ function help.check()
   for _ in pairs(ENTRIES) do n = n + 1 end
   util.log("help: %d entries, %d entities without help text%s", n, #missing,
     #missing > 0 and (": " .. table.concat(missing, ", ")) or "")
+  local f = help.facts("rts-refinery") -- a sanity line for the QA log: the refinery's card must list its recipe
+  util.log("help: refinery card takes %d line(s), makes %d line(s), stats %d, needs %d", #f.takes, #f.makes, #f.stats,
+    #f.needs)
   return missing
 end
 
@@ -150,9 +153,11 @@ local function item_list(list)
   return table.concat(parts, "  ")
 end
 
-local function recipe_in_category(recipe, category)
-  local ok, yes = pcall(recipe.has_category, category)
-  return ok and yes
+local function recipe_in_category(recipe, categories)
+  for _, category in ipairs(recipe.categories or {}) do
+    if categories[category] then return true end
+  end
+  return false
 end
 
 local MAX_ICONS = 8     -- icons in a Takes / Makes line
@@ -161,18 +166,14 @@ local MAX_RECIPES = 8   -- a machine with more recipes (factory, barracks) is de
 --- The recipes a machine of this prototype can make (its crafting categories), hidden ones skipped, sorted by order
 --- then name.
 local function machine_recipes(proto)
-  local categories = proto.crafting_categories
-  if not categories then return {} end
+  if not proto.crafting_categories then return {} end
+  local categories = {}
+  for category in pairs(proto.crafting_categories) do
+    if category ~= "parameters" then categories[category] = true end -- every crafting machine has the editor category
+  end
   local list = {}
   for _, recipe in pairs(prototypes.recipe) do
-    if not recipe.hidden then
-      for category in pairs(categories) do
-        if recipe_in_category(recipe, category) then
-          list[#list + 1] = recipe
-          break
-        end
-      end
-    end
+    if not recipe.hidden and recipe_in_category(recipe, categories) then list[#list + 1] = recipe end
   end
   table.sort(list, function(a, b)
     if a.order ~= b.order then return a.order < b.order end
@@ -181,19 +182,23 @@ local function machine_recipes(proto)
   return list
 end
 
---- "[item=a] [item=b]" of the distinct ingredient (or product) names of the recipes, in first-seen order.
+--- A localised "[item=a] Name  [item=b] Name" of the distinct ingredient (or product) names of the recipes, first seen first.
 local function distinct_icons(recipes, products)
-  local seen, parts = {}, {}
+  local seen, parts, n = {}, {""}, 0
   for _, r in ipairs(recipes) do
     for _, x in ipairs(products and r.products or r.ingredients) do
       local key = x.type .. "=" .. x.name
-      if not seen[key] and #parts < MAX_ICONS then
+      if not seen[key] and n < MAX_ICONS then
         seen[key] = true
-        parts[#parts + 1] = string.format("[%s=%s]", x.type == "fluid" and "fluid" or "item", x.name)
+        local kind = x.type == "fluid" and "fluid" or "item"
+        local proto = prototypes[kind][x.name]
+        parts[#parts + 1] = (n > 0 and "   " or "") .. string.format("[%s=%s] ", kind, x.name)
+        parts[#parts + 1] = proto and proto.localised_name or x.name
+        n = n + 1
       end
     end
   end
-  return table.concat(parts, " ")
+  return #parts > 1 and parts or ""
 end
 
 --- The generated lines of the card for entity `name`: {takes = {localised...}, makes = {...}, ranges = {...},

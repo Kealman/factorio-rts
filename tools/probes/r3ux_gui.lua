@@ -20,6 +20,7 @@ local nw = require("scripts.netwait")
 local units = require("scripts.units")
 local orders = require("scripts.orders")
 local helpgui = require("scripts.helpgui")
+local hud = require("scripts.hud")
 
 local function find(el, name)
   if not (el and el.valid) then return nil end
@@ -147,11 +148,35 @@ step(function(player)
   local hubgui_open = player.gui.screen.rts_hubgui_frame
   check("hub_panel", hubgui_open ~= nil, "hub panel open for the new city centre")
 end)
+-- the build-menu tooltips with the one-line description: translated by the client and logged
+local TIPS = {"rts-pumpjack", "rts-refinery", "rts-extractor", "rts-hub", "rts-depot", "transport-belt", "fast-inserter", "medium-electric-pole"}
+events.on(defines.events.on_string_translated, function(e)
+  local label = P.tip_ids and P.tip_ids[e.id]
+  if not label then return end
+  util.log("r3ux tooltip %s: %s %s", label, e.translated and "PASS" or "FAIL", string.gsub(tostring(e.result), "\n", " | "))
+end)
+step(function(player)
+  P.tip_ids = {}
+  for _, item in ipairs(TIPS) do
+    local id = player.request_translation(hud.build_tooltip(item, 5, nil))
+    if id then P.tip_ids[id] = item end
+  end
+  local diag = {["diag-desc"] = {"?", {"entity-description.transport-belt"}, {"item-description.transport-belt"}, ""},
+                ["diag-name"] = prototypes.item["transport-belt"].localised_name,
+                ["diag-instock"] = {"rts.in-stock", 5}}
+  for label, ls in pairs(diag) do
+    local id = player.request_translation(ls)
+    if id then P.tip_ids[id] = label end
+  end
+  return 60
+end)
 -- #30: REAL input (tools/gui-drive.sh): Shift held over the refinery shows its card; Shift+click still adds to the
 -- selection and Shift+right-click still gives an attack-move; the key fallback Shift+F11 shows the card at once.
 local function drive(fmt, ...)
   P.seq = (P.seq or 0) + 1
   util.log("RTS_DRIVE %d " .. fmt, P.seq, ...)
+  -- the client's stdout is block buffered when it goes to a file: padding makes the driver see the line now
+  for _ = 1, 400 do log("RTS_PAD " .. string.rep("x", 100)) end
 end
 local function spx(player, pos)
   local k = 32 * player.zoom
@@ -172,21 +197,20 @@ step(function(player)
   drive("click %d %d", 1100, 300) -- a focus click on empty ground
   drive("move %d %d", x, y)
   drive("moddown shift")
-  drive("sleep 900")
-  drive("capture help-hover-real")
-  return 480 -- the driver runs a command every few hundred ms: the card must have time to come and be captured
-end)
-step(function(player) -- wait (up to 25 s) for the driver: it runs a command every few hundred ms
-  P.wait = (P.wait or 0) + 1
-  if not card_of(player) and P.wait < 400 then return "retry" end
-  check("help_hover_real", card_of(player) == "rts-refinery", "Shift held over the refinery: card %s (after %d polls)",
-    tostring(card_of(player)), P.wait)
-  return 120
-end)
-step(function(player) -- the capture is taken; release Shift
+  drive("sleep 700")
+  -- the game takes the posted flagsChanged press when the release arrives (the hardware order is the same: press,
+  -- hold, release): the card comes HOVER_DELAY ticks after the press event, unless a click follows
   drive("modup shift")
-  drive("sleep 300")
+  drive("sleep 500")
+  drive("capture help-hover-real")
   drive("click %d %d", 1100, 300)
+  return 30
+end)
+step(function(player) -- wait (up to 200 s) for the driver: it runs a command every few hundred ms
+  P.wait = (P.wait or 0) + 1
+  if not P.hover_seen and P.wait < 400 then return "retry" end
+  check("help_hover_real", P.hover_seen == true, "Shift over the refinery: hover card seen %s (after %d polls)",
+    tostring(P.hover_seen), P.wait)
   return 240
 end)
 step(function(player) -- Shift+click adds to the selection, no card
@@ -274,6 +298,16 @@ step(function()
   helpgui.close(game.connected_players[1])
   log("RTS_R3UX_DONE")
   return "done"
+end)
+
+events.on_nth_tick(3, function()
+  local player = game.connected_players[1]
+  if player and P.f and not P.hover_seen then
+    local g = util.pstorage(player.index).helpcard
+    if g and g.frame and g.frame.valid and g.name == "rts-refinery" and g.shown and not g.pinned then
+      P.hover_seen = true
+    end
+  end
 end)
 
 events.on_nth_tick(30, function(e)

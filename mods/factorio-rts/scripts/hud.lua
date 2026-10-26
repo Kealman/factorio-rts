@@ -676,13 +676,25 @@ local function with_places_note(tooltip, item)
   return {"", tooltip, "\n", {"rts.tooltip-places", "[entity=" .. place.name .. "]", place.localised_name}}
 end
 
+--- The help family of an entity name ("piece", "building", ...), or nil (scripts/help.lua, optional: no require).
+local function require_help_family(name)
+  local fn = optional_fn("scripts.help", {"family"})
+  return fn and fn(name) or nil
+end
+
 --- 0.1.2 (#30): the name of the tooltip's first line followed by the one-line description of what the item builds, so
 --- the player knows what he is about to build. The locale string wraps __1__ in a bold font: close it, write the
 --- description on its own line and reopen it.
 local function name_with_description(item)
   local proto = prototypes.item[item]
   local place = proto.place_result
-  local desc = {"?", place and {"entity-description." .. place.name} or {"item-description." .. item}, ""}
+  local desc
+  if place and string.sub(place.name, 1, 4) == "rts-" then
+    desc = {"entity-description." .. place.name}
+  elseif require_help_family(place and place.name or item) == "piece" then -- belts, inserters, poles (vanilla names)
+    desc = {"rts-help." .. (place and place.name or item) .. "-line"}
+  end
+  if not desc then return proto.localised_name end
   return {"", proto.localised_name, "[/font]\n[color=0.78,0.78,0.78]", desc, "[/color][font=default-bold]"}
 end
 
@@ -1750,11 +1762,6 @@ local function update_demolish_button(player, h, un, rec)
   button.enabled = not blocked -- Phase 5 M1 integration: greyed like the city panel's (the key still explains)
 end
 
-local function require_help_family(name)
-  local fn = optional_fn("scripts.help", {"family"})
-  return fn ~= nil and fn(name) ~= nil
-end
-
 -- Release 0.1.2 (#23, #27): the page of selected own belts, inserters, poles and ghosts. One piece: name, direction
 -- or pickup / drop, Rotate and Demolish (Cancel for a ghost); a group: the count per name.
 local function update_pieces(player, h, list)
@@ -1812,7 +1819,7 @@ local function update_pieces(player, h, list)
   if el.b_help and el.b_help.valid then -- 0.1.2 (#30): the help card of a single piece
     local one = #list == 1 and pieces.name(list[1]) or nil
     el.b_help.tags = {rts_help = one or ""}
-    el.b_help.visible = one ~= nil and require_help_family(one)
+    el.b_help.visible = one ~= nil and require_help_family(one) ~= nil
   end
   local armed = demolish.is_armed(player.index)
   el.b_demolish.visible = true
@@ -1837,7 +1844,7 @@ local function update_building(player, h, un, rec)
   el.b_name.caption = {"rts.bld-title", e.localised_name, un}
   if el.b_help and el.b_help.valid then
     el.b_help.tags = {rts_help = e.name}
-    el.b_help.visible = require_help_family(e.name)
+    el.b_help.visible = require_help_family(e.name) ~= nil
   end
   local hp, max = e.health or 0, e.max_health or 0
   el.b_hp.caption = max > 0 and {"rts.hp-value", math.floor(hp + 0.5), math.floor(max + 0.5)} or ""
@@ -3140,6 +3147,7 @@ do -- dev-only locals stay out of the main chunk (Lua allows 200 locals there)
   end)
 end
 
+hud.build_tooltip = build_tooltip -- 0.1.2 (#30): the GUI probe translates it (tools/probes/r3ux_gui.lua)
 hud.P4 = P4 -- Phase 5 M3 age3: modules add Nation-only items, alert styles and recipe tabs at load time
 
 return hud

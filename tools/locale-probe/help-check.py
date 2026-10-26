@@ -23,10 +23,10 @@ for lang in ("en", "ru"):
             if not v.strip(): problems.append("%s: empty text for %s" % (lang, k))
     keys[lang] = d
     for name in entries:
-        for suffix in ("how", "tip"):
+        for suffix in (("how", "tip", "line") if entries[name] == "piece" else ("how", "tip")):
             if "%s-%s" % (name, suffix) not in d: problems.append("%s: missing %s-%s" % (lang, name, suffix))
     for k in d:
-        m = re.match(r"^(.*)-(how|tip)$", k)
+        m = re.match(r"^(.*)-(how|tip|line)$", k)
         if m and not k.startswith("card-") and m.group(1) not in entries: problems.append("%s: %s has no entry in help.lua" % (lang, k))
 if set(keys["en"]) != set(keys["ru"]):
     problems.append("en/ru keys differ: %s" % sorted(set(keys["en"]) ^ set(keys["ru"])))
