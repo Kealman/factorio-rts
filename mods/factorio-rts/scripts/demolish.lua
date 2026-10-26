@@ -6,11 +6,17 @@
 -- CONFIRM_TICKS on the same set executes. The Command Center and a capital City Center are never demolished (a
 -- "cannot demolish" message). Done: refund and contents as in buildings.demolish, alert "Demolished X".
 --
+-- Release 0.1.2 (#23, #27): the selection can also hold own belts, undergrounds, splitters, inserters, poles and entity
+-- ghosts (selection.get_pieces, scripts/pieces.lua). Ghosts are cancelled at once on the first press (nothing to
+-- confirm, nothing to refund); the pieces follow the two-press rule with the recipe-based refund (10 belts per craft:
+-- the refund rounds down per batch, so one lone belt returns nothing and the message says so).
+--
 -- Owns storage.players[i].demolish = {key = "un,un,...", tick = tick it was armed}.
 local util = require("scripts.util")
 local events = require("scripts.events")
 local buildings = require("scripts.buildings")
 local selection = require("scripts.selection")
+local pieces = require("scripts.pieces")
 local supply = require("scripts.supply")
 
 local demolish = {}
@@ -53,8 +59,18 @@ end
 
 local function key_of(list) return table.concat(list, ",") end
 
+--- The selected non-ghost pieces (own, valid), array of LuaEntity.
+local function selected_real_pieces(player_index)
+  local out = {}
+  for _, e in ipairs(selection.get_pieces(player_index)) do
+    if e.type ~= "entity-ghost" then out[#out + 1] = e end
+  end
+  return out
+end
+
 --- Number of buildings a request would demolish now, and whether the selection holds protected ones.
 function demolish.preview(player_index, list)
+  if not list and #selection.get_pieces(player_index) > 0 then return #selection.get_pieces(player_index), 0 end
   local ok, blocked = resolve(player_index, list)
   return #ok, #blocked
 end
@@ -63,6 +79,9 @@ end
 function demolish.is_armed(player_index, list)
   local st = util.pstorage(player_index).demolish
   if not (st and game.tick - st.tick <= demolish.CONFIRM_TICKS) then return false end
+  if not list and #selection.get_pieces(player_index) > 0 then
+    return st.key == pieces.key(selected_real_pieces(player_index))
+  end
   return st.key == key_of((resolve(player_index, list)))
 end
 
@@ -103,10 +122,86 @@ local function execute(player_index, list)
   return #infos, infos
 end
 
+-- "N item, M item" for a refund table, or nil when it is empty.
+local function refund_text(refund)
+  local shown = {}
+  for item, c in pairs(refund) do shown[#shown + 1] = "[item=" .. item .. "] " .. c end
+  table.sort(shown)
+  return #shown > 0 and table.concat(shown, ", ") or nil
+end
+
+-- Press on a selection of pieces and ghosts. Ghosts go at once; the pieces left are armed, or removed on the second
+-- press. Returns "armed" | "done" and the count (ghosts + pieces removed, or pieces armed).
+local function request_pieces(player_index)
+  local force = selection.force_name(player_index)
+  local ghosts, real = {}, {}
+  for _, e in ipairs(selection.get_pieces(player_index)) do
+    if e.force.name == force then
+      if e.type == "entity-ghost" then ghosts[#ghosts + 1] = e else real[#real + 1] = e end
+    end
+  end
+  local cancelled = 0
+  for _, e in ipairs(ghosts) do
+    local ok, info = pieces.remove(e, {force = force})
+    if ok then
+      cancelled = cancelled + 1
+      util.log("ghost cancelled %s at %s player=%d", info.name, util.pos_str(info.position), player_index)
+    end
+  end
+  if cancelled > 0 then
+    say(player_index, {"rts.ghost-cancelled", cancelled})
+    util.log("demolish: done player=%d ghosts=%d refund []", player_index, cancelled)
+  end
+  local p = util.pstorage(player_index)
+  if #real == 0 then
+    selection.clear(player_index)
+    return "done", cancelled
+  end
+  if cancelled > 0 then selection.select_pieces(player_index, real, false) end -- the pieces stay selected, armed below
+  local key = pieces.key(real)
+  local st = p.demolish
+  if not (st and st.key == key and game.tick - st.tick <= demolish.CONFIRM_TICKS) then
+    p.demolish = {key = key, tick = game.tick}
+    say(player_index, {"rts.pieces-armed", #real})
+    util.log("demolish: armed player=%d pieces=%d (%s)", player_index, #real, key)
+    selection.notify_hud(player_index)
+    return "armed", #real
+  end
+  p.demolish = nil
+  local carry, refund, infos, spilled = {}, {}, {}, 0
+  for _, e in ipairs(real) do
+    local ok, info = pieces.remove(e, {force = force, carry = carry})
+    if ok then
+      infos[#infos + 1] = info
+      spilled = spilled + info.spilled
+      for item, c in pairs(info.refund) do refund[item] = (refund[item] or 0) + c end
+    end
+  end
+  local stacks, spilled_refund = {}, 0
+  for item, c in pairs(refund) do stacks[#stacks + 1] = {name = item, count = c} end
+  table.sort(stacks, function(a, b) return a.name < b.name end)
+  if #infos > 0 and #stacks > 0 then
+    local first = infos[1]
+    local _, lost = buildings.deliver_items(first.surface, force, first.position, stacks)
+    spilled_refund = lost
+  end
+  local shown = {}
+  for item, c in pairs(refund) do shown[#shown + 1] = c .. " " .. item end
+  table.sort(shown)
+  util.log("demolish: done player=%d pieces=%d refund [%s]%s", player_index, #infos, table.concat(shown, ", "),
+    spilled_refund > 0 and string.format(" (%d spilled)", spilled_refund) or "")
+  local text = refund_text(refund)
+  say(player_index, text and {"rts.pieces-done", #infos, text} or {"rts.pieces-done-none", #infos})
+  if spilled_refund > 0 then say(player_index, {"rts.alert-demolish-refund-spilled", spilled_refund}) end
+  selection.clear(player_index)
+  return "done", #infos + cancelled
+end
+
 --- Press of a Demolish button or of the key. `list` = unit numbers (default: the selected building(s)).
 --- Returns "none" (nothing to demolish), "blocked" (only protected ones), "armed" or "done", and a count.
 --- QA log lines: "demolish: armed|done player=N ...".
 function demolish.request(player_index, list)
+  if not list and #selection.get_pieces(player_index) > 0 then return request_pieces(player_index) end
   local ok, blocked = resolve(player_index, list)
   if #ok == 0 then
     if #blocked > 0 then
