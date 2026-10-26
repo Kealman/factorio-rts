@@ -590,6 +590,15 @@ events.on(defines.events.on_train_changed_state, function(e)
     trainswar.shells(e.train))
 end)
 
+-- 0.1.2 (#32): a composed train with an artillery wagon takes its starting shells like trainswar.deploy's.
+rails.on_deployed[#rails.on_deployed + 1] = function(rec, train, depot_un)
+  if #arty_wagons(train) == 0 then return end
+  local shells = rearm(train, logistics.hub_network(depot_un))
+  fstats(rec.force).deployed = fstats(rec.force).deployed + 1
+  util.log("train: composed train %d (%s) with %d artillery wagon(s) deployed at depot #%d with %d shells", train.id,
+    rec.force, #arty_wagons(train), depot_un, shells)
+end
+
 -- Disband (rails.disband_train): the shells go back into the depot network with the cargo (chained after garrison's
 -- hook, which lets the troops out first).
 do
