@@ -3,11 +3,13 @@
 -- factory and barracks that hold no recipe, orders 1 craft of the first recipe they can make and logs
 --   [rts] r3 owner <check>: PASS|FAIL ...
 -- (queue_factory, queue_barracks), plus a "r3 owner loaded" line with the counts so the run shows what the save has.
--- With CLEAR_CHECK the clear order is tried too (see scripts/r3_owner_save.lua tail, added with #24).
+-- Also (#24): a walker is spawned next to the main CC with 3 planted trees and a clear order ("r3 owner clear").
 local events = require("scripts.events")
 local util = require("scripts.util")
 local buildings = require("scripts.buildings")
 local production = require("scripts.production")
+local units = require("scripts.units")
+local orders = require("scripts.orders")
 
 local S = {}
 
@@ -35,6 +37,23 @@ events.on_nth_tick(60, function()
     S.fr, S.br = fr, br
     S.fm = f and (f.made or 0)
     S.bs = b and (b.spawned or 0)
+    local cc = buildings.main_cc(util.PLAYER_FORCE)
+    if cc then
+      local surface, p = cc.entity.surface, cc.entity.position
+      local name
+      for n, proto in pairs(prototypes.entity) do
+        if proto.type == "tree" and (not name or n < name) then name = n end
+      end
+      S.trees = {}
+      for i = 1, 3 do
+        local pos = surface.find_non_colliding_position("rts-walker", {x = p.x + 12 + i * 2, y = p.y + 12}, 6, 0.5)
+        local t = pos and surface.create_entity({name = name, position = pos})
+        if t then S.trees[#S.trees + 1] = t end
+      end
+      local w = units.spawn("rts-walker", {x = p.x + 10, y = p.y + 14}, util.PLAYER_FORCE, "walker", surface)
+      S.cleared = w and orders.clear({w}, S.trees) or 0
+      S.cstart = game.tick
+    end
     if f then production.queue_recipe(S.f, fr, 1) end
     if b then production.queue_recipe(S.b, br, 1) end
   elseif S.n > 5 then
@@ -51,7 +70,16 @@ events.on_nth_tick(60, function()
       util.log("r3 owner queue_barracks: %s spawned %d", ((b.spawned or 0) - S.bs == 1) and "PASS" or "FAIL",
         (b.spawned or 0) - S.bs)
     end
-    if (S.fd or not S.f) and (S.bd or not S.b) and not S.done then
+    if S.trees and not S.cd then
+      local left = 0
+      for _, t in ipairs(S.trees) do if t.valid then left = left + 1 end end
+      if left == 0 or game.tick - S.cstart > 60 * 60 then
+        S.cd = true
+        util.log("r3 owner clear: %s order taken by %d unit(s), %d of %d trees left after %.1f s",
+          (left == 0 and S.cleared == 1) and "PASS" or "FAIL", S.cleared or 0, left, #S.trees, (game.tick - S.cstart) / 60)
+      end
+    end
+    if (S.fd or not S.f) and (S.cd or not S.trees) and (S.bd or not S.b) and not S.done then
       S.done = true
       util.log("r3 owner done")
     end
