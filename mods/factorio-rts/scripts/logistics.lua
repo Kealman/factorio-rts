@@ -1041,7 +1041,7 @@ local function manual_plan(h)
   -- Release 0.1.2 (#21): a supply route (the drop-off keeps stock levels) may hold a small load back while the drop-off
   -- is not short. relax = false: some planned item stands below balance.nation.supply_low of its keep, go now.
   local hold = false
-  if not feeder then
+  if not feeder and not (storage.ai and storage.ai[h.force]) then -- an AI-driven force keeps 0.1.1 pace
     hold = true
     local low = balance.nation and balance.nation.supply_low or 0.5
     local items = balance.nation and balance.nation.supply_hold_items or {}
