@@ -266,6 +266,15 @@ pumpjack.map_color = {r = 0.55, g = 0.4, b = 0.75}
 pumpjack.enemy_map_color = ENEMY_MAP_COLOR
 pumpjack.trigger_target_mask = table.deepcopy(RAID_MASK)
 pumpjack.flags = {"placeable-neutral", "placeable-player", "player-creation"}
+-- #28: oil leaves the pumpjack into the logistic network, not through a pipe: no pipe stub and no pipe cover are drawn
+-- (the fluid box stays: the drill needs somewhere to put the oil, scripts/districts.lua drains it)
+if pumpjack.output_fluid_box then
+  pumpjack.output_fluid_box.pipe_picture = nil
+  pumpjack.output_fluid_box.pipe_picture_frozen = nil
+  pumpjack.output_fluid_box.pipe_covers = nil
+  pumpjack.output_fluid_box.pipe_covers_frozen = nil
+  pumpjack.output_fluid_box.hide_connection_info = true
+end
 
 local function plant(source, name, color)
   local src = data.raw["assembling-machine"][source]

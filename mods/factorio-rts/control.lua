@@ -95,6 +95,7 @@ local modules = {
   require("scripts.trainswar"),
   -- 0.1.1 (issue #16): guided objectives (after the HUD and the lobby: their layout and the lobby switch; after the
   -- modules whose events and signals tick the steps)
+  require("scripts.netwait"),   -- 0.1.2 (#26): ghosts waiting for items in a hub / city network (read-only; panels and alert)
   require("scripts.objectives"),
   require("scripts.debug"),
 }
