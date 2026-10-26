@@ -1,6 +1,6 @@
 # Factorio RTS: complete feature list
 
-Every feature of version 0.1.1, by area. Each line starts with the milestone that introduced it:
+Every feature of version 0.1.2, by area. Each line starts with the milestone that introduced it:
 
 | Tag | Milestone | Tag | Milestone |
 |---|---|---|---|
@@ -9,6 +9,7 @@ Every feature of version 0.1.1, by area. Each line starts with the milestone tha
 | `P2` | Phase 2: economy slice | `M3` | Phase 5 M3: "A state at war" |
 | `P3` | Phase 3: AI opponent and match flow | `2.1` | The port to Factorio 2.1 |
 | `P4` | Phase 4: a real RTS with a Factorio economy | `0.1.1` | The first update after the public release |
+| | | `0.1.2` | The update after the first real game: building, help and railways |
 
 Phases 1 to 4 built the Skirmish game; M1 to M3 built Nation mode on top of it. The player guide is the [README](../README.md); the design is in [DESIGN.md](DESIGN.md) and [SCALE-VISION.md](SCALE-VISION.md).
 
@@ -52,6 +53,9 @@ Phases 1 to 4 built the Skirmish game; M1 to M3 built Nation mode on top of it. 
 - `M3` H with whole divisions selected and the cursor at a front makes them hold that front.
 - `0.1.1` Escape opens the game menu (save, load, settings, exit) and closes an open RTS panel first, without leaving the remote view.
 - `0.1.1` A right click on a pentapod's leg attacks the pentapod.
+- `0.1.2` Delete or Backspace on selected belts, underground belts, splitters, inserters and medium poles demolishes them (two presses, half the recipe back, rounded down per batch); on selected ghosts it cancels them at once.
+- `0.1.2` A click or a box with no unit inside selects your belts, inserters, poles and ghosts; the building page shows the piece and has Rotate, Demolish and Cancel buttons.
+- `0.1.2` A right click on a tree or rock sends the selected units to clear it, and a Shift + right-drag of 3 tiles or more clears an area.
 
 ## HUD and feedback
 
@@ -72,6 +76,11 @@ Phases 1 to 4 built the Skirmish game; M1 to M3 built Nation mode on top of it. 
 - `M3` The kill feed names a building killer, such as the AA turret that shot a plane down.
 - `0.1.1` Guided objectives show seven first steps for a first Skirmish and a first Nation match, with a switch in the lobby.
 - `0.1.1` The stockpile panel colours a count against the selected hub's own Keep and names the network's levels in the tooltip.
+- `0.1.2` Hold Shift over a building, unit or ghost, press Shift+F11, or click the ? button on a building, hub, depot or city panel for a help card with what it is, how it works, what it takes and makes, ranges, needs and a tip; 85 entries, English and Russian.
+- `0.1.2` Build menu tooltips show a one-line description under the name.
+- `0.1.2` The refinery, chemical plant and pumpjack panels, their tooltips, F11 and the R message say that oil travels as items; a pumpjack outside every network shows "no network" and raises an alert.
+- `0.1.2` Every recipe has an explicit English and Russian name; the refinery and factory pages no longer show "Unknown key: recipe-name".
+- `0.1.2` The objectives of the other mode no longer log "step done" in a match.
 
 ## Units and abilities
 
@@ -119,6 +128,10 @@ Phases 1 to 4 built the Skirmish game; M1 to M3 built Nation mode on top of it. 
 - `M1` In Nation mode every 10 army units beyond 20 make Age I unit kits 10 % dearer (the army soft cap).
 - `M1` Make targets tell a city how much of a good to keep, and new factories and districts run on Auto to fill the largest shortfall.
 - `M1` The city ledger (L) shows stock, production, use, targets, shortfalls and hints for every good of a city.
+- `0.1.2` Factory and barracks recipe buttons order crafts: click 1, Shift 5, Ctrl as many as the network can pay, right click takes crafts off; the button and the status line show the crafts left and a finished order stops the machine.
+- `0.1.2` An Endless toggle in the recipe grid keeps the old endless production.
+- `0.1.2` The factory crafts underground belts and splitters, and in Nation mode long-handed inserters; the economy build menu has them.
+- `0.1.2` Units clear trees and rocks; rocks pay stone and coal to the nearest stockpile, and a ghost placed over trees marks them for the construction robots.
 
 ## Hubs and haulers
 
@@ -134,6 +147,7 @@ Phases 1 to 4 built the Skirmish game; M1 to M3 built Nation mode on top of it. 
 - `0.1.1` A hauler bound for a stop that may lack coal pays its way back before it leaves, from its tank, its network or the destination's, so it does not strand there without coal.
 - `0.1.1` An auto hauler waits at home for up to a minute for a load worth the trip's coal.
 - `0.1.1` The map shows the selected haulers' routes while the hauler panel is open, and the engine's own hauler lines are drawn at their thinnest.
+- `0.1.2` Your own supply haulers wait up to 4 minutes for a fuller load of rations, goods and magazines while the town holds at least half its Keep; below half they leave at once, and AI haulers are not held.
 
 ## Research
 
@@ -183,6 +197,8 @@ Phases 1 to 4 built the Skirmish game; M1 to M3 built Nation mode on top of it. 
 - `M1` Enemy units deep in your land lose about 18 % of their health a minute (attrition) unless an own centre, hub or fort is near.
 - `M1` Forts are cheap machine-gun strongpoints that claim land and stop attrition for your units.
 - `M1` The city panel shows the city's tier, land, supply, networks and make targets, and renames or demolishes it.
+- `0.1.2` The settlers of a new city bring iron, copper, stone, coal, a factory, two houses and a farm from the mother city's network, as far as it holds them; nothing is created.
+- `0.1.2` A city whose robots have nothing to build with shows "N ghosts waiting" in its hub and city panels and raises an alert.
 
 ## Nation: rails and trains
 
@@ -201,6 +217,14 @@ Phases 1 to 4 built the Skirmish game; M1 to M3 built Nation mode on top of it. 
 - `M3` Artillery trains bombard hostile buildings within 120 tiles that your units, planes, radars, land or held fronts see.
 - `M3` Armoured locomotives and wagons have 3 times the health and 40 % resistance, for artillery and troop trains.
 - `M3` A greyed Deploy button lists in a yellow line what a train is missing.
+- `0.1.2` Trains run stop lists: right-click depots, stations and (for troop and artillery trains) rails to add stops; each stop has unload, load, troop and bombard orders and the engine's wait conditions, and the list loops as a native schedule.
+- `0.1.2` The train builder composes trains carriage by carriage from presets or up to 5 saved templates, with mixed cargo, troop and artillery wagons, and shows what is missing.
+- `0.1.2` Depot platforms of 40, 60 or 80 tiles hold 5, 8 or 11 carriages, and a standing train couples or drops a carriage at its depot.
+- `0.1.2` The Rail tool lays your own track from waypoints with curves, branches, a bill per segment and undo; robots and construction trains build it.
+- `0.1.2` Player track is signalled with chain signals only, so two trains never meet head-on on single track; rail signals and chain signals are in the build menu.
+- `0.1.2` Rail stations are small depots without a platform that put two stops on your track.
+- `0.1.2` Auto lines run along your own track where it helps, and a depot takes any number of lines.
+- `0.1.2` 0.1.1 saves load: a train's pickup and drop-off become a two-stop list, and the Station and the signals are unlocked.
 
 ## Nation: ages, districts and goods
 
