@@ -31,12 +31,14 @@ Later in the milestone (after the four above land): `r3-ai` (Opus) on #20 and #2
    (a contract comment at the top of each module) and log QA-readable `[rts]` lines through `util.log`.
 3. **Locale**: every new string in `locale/en/*.cfg` and `locale/ru/*.cfg` in the same commit. The RU text had a full
    review in 0.1.1; keep its tone (see the existing keys of the same file).
-4. **Saves from 0.1.1 must load and keep working.** The owner's own Age II save is the fixture:
-   `/Users/evgeniyivanov/Projects/home/games/factorio_rts/build/saves/owner-0111-age2.zip` (read-only: copy it). Before
-   the last commit of each issue, start a headless server on a copy of it with your tree (the `--start-server` call in
-   `tools/saveload-check.sh` shows how) for at least 120 s: 0 Lua errors, `[rts]` lines keep coming, and your feature
-   works in that save where it applies (an existing belt is demolishable, an existing factory takes a queue, ...).
-   New storage fields are created lazily or in an idempotent `init()`; `on_configuration_changed` runs every `init`.
+4. **Saves from 0.1.1: nice to have, not a constraint.** The owner is happy to start a new game if 0.1.2 changes the
+   rules, so do not bend a design to keep old storage alive. Still, a 0.1.1 save must not crash on load: keep `init()`
+   idempotent, create new storage fields lazily, and when a save cannot keep an old structure, drop or reset it cleanly
+   with a `[rts]` log line that says what was reset. The owner's Age II save
+   `/Users/evgeniyivanov/Projects/home/games/factorio_rts/build/saves/owner-0111-age2.zip` (read-only: copy it) is the
+   fixture for that check: before the last commit of an issue, start a headless server on a copy with your tree (the
+   `--start-server` call in `tools/saveload-check.sh` shows how) for 120 s and report errors, if any, and what was
+   reset, in your notes. A breaking change is fine when the notes and the proposed changelog line say so.
 5. **Skirmish stays byte-identical** unless your issue is about Skirmish behaviour. The lead ran
    `SEED=777 JOBS=3 tools/autotest-matrix.sh base0111` on the 0.1.1 tree; the result is
    `/Users/evgeniyivanov/Projects/home/games/factorio_rts/build/matrix-base0111`. Symlink it into your worktree's
