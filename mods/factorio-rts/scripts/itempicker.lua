@@ -8,10 +8,13 @@
 -- recipes the auto-recipe pass of production.lua chooses from), minus hidden items and cursor-only tools. Goods whose
 -- recipes the player's force has unlocked come first ("Can make now"), the rest after ("After research").
 --
--- API: itempicker.open(player, owner, ctx, location?) shows it (one per player; opening it again for the same owner
--- closes it), itempicker.close(player[, owner]), itempicker.is_open(player[, owner]), itempicker.allowed(item),
+-- API: itempicker.open(player, owner, ctx, location?, opts?) shows it (one per player; opening it again for the same
+-- owner closes it), itempicker.close(player[, owner]), itempicker.is_open(player[, owner]), itempicker.allowed(item),
 -- itempicker.list(), and itempicker.on_pick(owner, fn) where fn(player, item, ctx) runs when a good is clicked (the
--- picker closes first). `owner` is "citygui" or "ledger"; `ctx` is a plain table stored with the picker ({city = id}).
+-- picker closes first). `owner` is "citygui", "ledger" or "railgui"; `ctx` is a plain table stored with the picker
+-- ({city = id}). 0.1.2 (#31 part B): opts = {items = {names}, title = LocalisedString} shows that list instead (one
+-- section, in that order; a pick from it is valid for that owner: the train panel's stop policies, which carry ores
+-- and anything a network holds).
 -- Owns util.pstorage(i).itempicker = {owner, ctx}. Element names start with "rts_itempicker_". Texts: [rts] keys
 -- "itempicker-*" (locale/*/cities.cfg). QA log lines start with "itempicker: ".
 local util = require("scripts.util")
@@ -121,10 +124,10 @@ function itempicker.close(player, owner)
   if owner and s.owner ~= owner then return end
   local frame = player.gui.screen[itempicker.FRAME]
   if frame and frame.valid then frame.destroy() end
-  s.owner, s.ctx = nil, nil
+  s.owner, s.ctx, s.list = nil, nil, nil
 end
 
-local function add_section(parent, player, caption, items)
+local function add_section(parent, player, caption, items, plain)
   if #items == 0 then return end
   local head = parent.add({type = "label", style = "caption_label", caption = caption})
   head.style.top_margin = 4
@@ -132,7 +135,7 @@ local function add_section(parent, player, caption, items)
   local tbl = deep.add({type = "table", column_count = COLUMNS, style = "filter_slot_table"})
   for _, item in ipairs(items) do
     local proto = prototypes.item[item]
-    local unlocked = itempicker.unlocked(player.force, item)
+    local unlocked = plain or itempicker.unlocked(player.force, item)
     tbl.add({type = "sprite-button", name = PREFIX .. "pick_" .. item, sprite = "item/" .. item, style = "slot_button",
       tooltip = unlocked and {"rts.itempicker-item", proto.localised_name}
         or {"rts.itempicker-item-locked", proto.localised_name},
@@ -142,7 +145,7 @@ end
 
 --- Open the picker for `owner` with context `ctx`. `location` (pixels) places it; without one it is centred.
 --- A second open for the same owner closes it (the add button toggles). Returns the frame or nil.
-function itempicker.open(player, owner, ctx, location)
+function itempicker.open(player, owner, ctx, location, opts)
   local s = pstate(player.index)
   if itempicker.is_open(player, owner) then
     itempicker.close(player)
@@ -154,26 +157,42 @@ function itempicker.open(player, owner, ctx, location)
   frame.style.width = WIDTH
   local bar = frame.add({type = "flow", direction = "horizontal"})
   bar.drag_target = frame
-  bar.add({type = "label", caption = {"rts.itempicker-title"}, style = "frame_title", ignored_by_interaction = true})
+  bar.add({type = "label", caption = opts and opts.title or {"rts.itempicker-title"}, style = "frame_title",
+           ignored_by_interaction = true})
   local drag = bar.add({type = "empty-widget", style = "draggable_space_header"})
   drag.style.horizontally_stretchable = true
   drag.style.height = 24
   drag.drag_target = frame
   bar.add({type = "sprite-button", name = PREFIX .. "close", style = "frame_action_button", sprite = "utility/close",
            tooltip = {"rts.itempicker-close"}, tags = {rts_itempicker = "close"}})
-  local hint = frame.add({type = "label", caption = {"rts.itempicker-hint"}})
-  hint.style.single_line = false
-  hint.style.maximal_width = WIDTH - 24
-  local scroll = frame.add({type = "scroll-pane", vertical_scroll_policy = "auto", horizontal_scroll_policy = "never"})
-  scroll.style.maximal_height = MAX_ROWS_HEIGHT + 60
+  local scroll
   local now, later = {}, {}
-  for _, item in ipairs(itempicker.list()) do
-    if itempicker.unlocked(player.force, item) then now[#now + 1] = item else later[#later + 1] = item end
+  if opts and opts.items then
+    scroll = frame.add({type = "scroll-pane", vertical_scroll_policy = "auto", horizontal_scroll_policy = "never"})
+    scroll.style.maximal_height = MAX_ROWS_HEIGHT + 60
+    for _, item in ipairs(opts.items) do
+      if prototypes.item[item] then now[#now + 1] = item end
+    end
+    add_section(scroll, player, {"rts.itempicker-list"}, now, true)
+  else
+    local hint = frame.add({type = "label", caption = {"rts.itempicker-hint"}})
+    hint.style.single_line = false
+    hint.style.maximal_width = WIDTH - 24
+    scroll = frame.add({type = "scroll-pane", vertical_scroll_policy = "auto", horizontal_scroll_policy = "never"})
+    scroll.style.maximal_height = MAX_ROWS_HEIGHT + 60
+    for _, item in ipairs(itempicker.list()) do
+      if itempicker.unlocked(player.force, item) then now[#now + 1] = item else later[#later + 1] = item end
+    end
+    add_section(scroll, player, {"rts.itempicker-now"}, now)
+    add_section(scroll, player, {"rts.itempicker-later"}, later)
   end
-  add_section(scroll, player, {"rts.itempicker-now"}, now)
-  add_section(scroll, player, {"rts.itempicker-later"}, later)
   if location then frame.location = location else frame.auto_center = true end
   s.owner, s.ctx = owner, ctx or {}
+  s.list = nil
+  if opts and opts.items then -- the items of a custom list are valid picks for this owner
+    s.list = {}
+    for _, item in ipairs(now) do s.list[item] = true end
+  end
   util.log("itempicker: opened owner=%s ctx=%s player=%d items=%d now=%d", owner, serpent.line(s.ctx), player.index,
     #now + #later, #now)
   return frame
@@ -190,10 +209,10 @@ events.on(defines.events.on_gui_click, function(e)
     util.log("itempicker: closed owner=%s player=%d", tostring(s.owner), player.index)
     itempicker.close(player)
   elseif action == "pick" then
-    local item, owner, ctx = el.tags.item, s.owner, s.ctx
+    local item, owner, ctx, list = el.tags.item, s.owner, s.ctx, s.list
     itempicker.close(player)
     local fn = owner and handlers[owner]
-    local ok = fn ~= nil and itempicker.allowed(item)
+    local ok = fn ~= nil and (itempicker.allowed(item) or (list ~= nil and list[item] == true))
     util.log("itempicker: pick %s owner=%s ok=%s player=%d", tostring(item), tostring(owner), tostring(ok),
       player.index)
     if ok then fn(player, item, ctx or {}) end

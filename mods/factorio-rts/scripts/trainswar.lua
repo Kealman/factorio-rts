@@ -425,6 +425,9 @@ function trainswar.deploy(depot_un, kind, armoured)
 end
 
 local function go(train, record_spec)
+  -- 0.1.2 (#31 part B): a single order (the AI's) replaces the train's stop list (scripts/railroutes.lua)
+  local rec = record(train.id)
+  if rec and rec.stops then rec.stops, rec.rmap, rec.written, rec.dwell, rec.halted = nil, nil, nil, nil, nil end
   local sch = train.get_schedule()
   sch.clear_records()
   record_spec.wait_conditions = {{type = "time", ticks = rails.LONG_WAIT}}
@@ -530,7 +533,7 @@ local function step_train(rec, train, tick)
         trainswar.shells(train))
     end
   end
-  if rec.kind == trainswar.KIND then
+  if rec.kind == trainswar.KIND and not rec.stops then -- (0.1.2: railroutes.lua keeps the state of a stop list)
     local st = train.state
     if st == TS.wait_station then
       rec.state = "in_position"
@@ -540,7 +543,11 @@ local function step_train(rec, train, tick)
       rec.state = "to_position"
     end
   end
-  if rec.stance ~= "bombard" then return end
+  -- 0.1.2 (#31 part B): a train on a stop list also fires while it stands at a stop marked bombard
+  local rr = rec.stops and loaded("scripts.railroutes")
+  local here = rr and rr.bombard_here and rr.bombard_here(rec, train)
+  if rec.stance ~= "bombard" and not here then return end
+  if here and not rec.next_shot then rec.next_shot = tick end
   if tick < (rec.next_shot or 0) then return end
   local fired, _, why = trainswar.fire(rec.id)
   if fired > 0 then
@@ -561,7 +568,7 @@ events.on_nth_tick(trainswar.STEP, function(e)
   if not (R and next(R.trains)) then return end
   for _, id in ipairs(sorted_keys(R.trains)) do
     local rec = R.trains[id]
-    if rec and (rec.stance or rec.kind == trainswar.KIND) then
+    if rec and (rec.stance or rec.kind == trainswar.KIND or rec.stops) then -- 0.1.2: stop lists (bombard stops)
       local train = train_of(rec)
       if train and train.valid then step_train(rec, train, e.tick) end
     end
@@ -676,7 +683,7 @@ function trainswar.panel_train_update(gel, el, rec, train)
       if gel[key] and gel[key].valid then gel[key].visible = false end
     end
   end
-  if rec.kind == trainswar.KIND and gel and gel.route and gel.route.valid then
+  if rec.kind == trainswar.KIND and not rec.stops and gel and gel.route and gel.route.valid then
     -- Phase 5 M3 QA fix (F4): where it stands and where it goes ("Position: Depot 2" read as if it stood there while it
     -- waited at Depot 1 with no path)
     local here = train and train.valid and depot_here(rec, train)

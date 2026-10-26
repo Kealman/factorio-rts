@@ -12,6 +12,10 @@
 -- and these fields of storage.buildings records (barracks / factory / turret):
 --   last_pf     products_finished at the last look
 --   made, moved crafts finished / items moved to the network by this factory (the HUD's factory line; Wave C)
+--   queue       Release 0.1.2 (#22) a counted order {recipe, remaining, total, pf, restore_auto}: the machine makes
+--               `remaining` more crafts of `recipe` (counted down on the products_finished delta), then stops with no
+--               recipe and, when it was in Auto before the order, goes back to Auto. production.queue_recipe adds to it;
+--               production.set_recipe (the AI's and the Endless toggle's call) is endless production and drops it.
 --   next_check  tick of the pending predicted check (barracks)
 --   pull_state  "idle" | "supplied" | "starved: <items>" | "no network"   (logged on change only)
 --   starved_since  tick the consumer first lacked ingredients the network could not give (nil when supplied)
@@ -152,6 +156,11 @@ function production.set_recipe(target, recipe_name, opts)
     or (target and target.valid and buildings.get(target.unit_number))
   if not rec or not PRODUCER[rec.kind] then return false end
   local e = rec.entity
+  if rec.queue and not (opts and opts.queue) then
+    util.log("production: %s #%d (%s) queue dropped (%s x%d left)", rec.kind, e.unit_number, rec.force,
+      rec.queue.recipe, rec.queue.remaining)
+    rec.queue = nil -- endless production, pause and the auto pass all replace a counted order
+  end
   -- Phase 4: LuaEntity.set_recipe accepts a recipe the force has disabled (research locks, scripts/research.lua)
   local force_recipe = recipe_name and e.force.recipes[recipe_name]
   if force_recipe and not force_recipe.enabled then
@@ -200,6 +209,7 @@ function production.status(unit_number)
     rally = rec.kind == "barracks" and buildings.rally_point(unit_number) or nil,
     spawned = rec.spawned or 0,
     auto = production.is_auto(rec),
+    queue = rec.queue and {recipe = rec.queue.recipe, remaining = rec.queue.remaining, total = rec.queue.total} or nil,
     staffing = production.staffing and production.staffing(e) or 1, -- Phase 5 M2 people
   }
 end
@@ -222,12 +232,123 @@ function production.set_auto(target, on)
     or (target and target.valid and buildings.get(target.unit_number))
   if not (rec and CRAFTER[rec.kind]) then return false end
   local mode = on and "auto" or "fixed"
+  if rec.queue then
+    if on then
+      rec.queue = nil -- the player handed the machine back to Auto: the counted order is over
+    else
+      rec.queue.restore_auto = false
+    end
+  end
   if rec.recipe_mode ~= mode then
     rec.recipe_mode = mode
     rec.auto_set = nil
     util.log("production: %s #%d (%s) recipe mode -> %s", rec.kind, rec.entity.unit_number, rec.force, mode)
   end
   return true
+end
+
+
+---------------------------------------------------------------------------
+-- Release 0.1.2 (#22): counted orders (the craft queue)
+---------------------------------------------------------------------------
+production.QUEUE_MAX = 500 -- crafts one order can hold
+
+--- Crafts a Ctrl+click can pay for now: the least of (network stock + the machine's own input) / amount over the
+--- ingredients of `recipe_name`, at least 1 and at most QUEUE_MAX. `target` is an entity, unit number or record.
+function production.affordable(target, recipe_name)
+  local rec = type(target) == "number" and buildings.get(target)
+    or (type(target) == "table" and target.entity and target)
+    or (target and target.valid and buildings.get(target.unit_number))
+  local proto = prototypes.recipe[recipe_name]
+  if not (rec and proto and rec.entity.valid) then return 1 end
+  local e = rec.entity
+  local network = production.network_for(e)
+  local cur = e.get_recipe()
+  local input = cur and cur.name == recipe_name and e.get_inventory(defines.inventory.crafter_input) or nil
+  local n = production.QUEUE_MAX
+  for _, ing in ipairs(proto.ingredients) do
+    if ing.type == "item" then
+      local have = (network and network.get_item_count(ing.name) or 0) + (input and input.get_item_count(ing.name) or 0)
+      n = math.min(n, math.floor(have / ing.amount))
+    end
+  end
+  return math.max(1, n)
+end
+
+--- Order `count` crafts of `recipe_name` from a barracks / factory / district (entity, unit number or record).
+--- The same recipe adds to the running order; another recipe replaces it. Returns true when the machine now holds
+--- the order. QA log line: "production: <kind> #N (<force>) queue <recipe> +count -> remaining/total".
+function production.queue_recipe(target, recipe_name, count)
+  local rec = type(target) == "number" and buildings.get(target)
+    or (type(target) == "table" and target.entity and target)
+    or (target and target.valid and buildings.get(target.unit_number))
+  if not (rec and PRODUCER[rec.kind] and rec.entity.valid and recipe_name and (count or 0) > 0) then return false end
+  local e = rec.entity
+  local cur = e.get_recipe()
+  local q = rec.queue
+  if q and q.recipe == recipe_name and cur and cur.name == recipe_name then
+    q.remaining = math.min(production.QUEUE_MAX, q.remaining + count)
+    q.total = q.total + count
+  else
+    local restore = q and q.restore_auto
+    if restore == nil then restore = production.is_auto(rec) end
+    if not (cur and cur.name == recipe_name) and not production.set_recipe(e, recipe_name, {queue = true}) then
+      return false
+    end
+    rec.recipe_mode = "fixed" -- the order overrides Auto until it is done
+    rec.auto_set = nil
+    local n = math.min(production.QUEUE_MAX, count)
+    rec.queue = {recipe = recipe_name, remaining = n, total = n, pf = e.products_finished, restore_auto = restore}
+    q = rec.queue
+  end
+  util.log("production: %s #%d (%s) queue %s +%d -> %d/%d", rec.kind, e.unit_number, rec.force, recipe_name, count,
+    q.remaining, q.total)
+  if rec.kind == "barracks" then production.schedule_check(rec, game.tick + 1) end
+  return true
+end
+
+--- Take `count` crafts off the running order (the recipe button's right click); the order ends at zero.
+--- Returns the crafts left, or nil when the machine has no order.
+function production.unqueue(target, count)
+  local rec = type(target) == "number" and buildings.get(target)
+    or (type(target) == "table" and target.entity and target)
+    or (target and target.valid and buildings.get(target.unit_number))
+  local q = rec and rec.queue
+  if not q then return nil end
+  q.remaining = math.max(0, q.remaining - math.max(1, count or 1))
+  util.log("production: %s #%d (%s) queue %s -%d -> %d/%d", rec.kind, rec.entity.unit_number, rec.force, q.recipe,
+    count or 1, q.remaining, q.total)
+  production.queue_step(rec)
+  return rec.queue and rec.queue.remaining or 0
+end
+
+-- Count the finished crafts against the order and end it at zero: the machine takes no recipe once its output is
+-- empty (the output is handed on first, so nothing is returned to the network by the recipe change).
+function production.queue_step(rec)
+  local q = rec.queue
+  local e = rec.entity
+  if not (q and e.valid) then return end
+  local pf = e.products_finished
+  if pf > q.pf then
+    q.remaining = math.max(0, q.remaining - (pf - q.pf))
+    q.pf = pf
+  end
+  if q.remaining > 0 then return end
+  if not e.get_output_inventory().is_empty() then return end -- hand-off / unit spawn first
+  rec.queue = nil
+  local restore = q.restore_auto
+  production.set_recipe(e, nil)
+  util.log("production: %s #%d (%s) queue %s done (%d crafts)%s", rec.kind, e.unit_number, rec.force, q.recipe,
+    q.total, restore and ", back to auto" or "")
+  if restore then production.set_auto(rec, true) end
+end
+
+-- Crafts' worth of ingredients to hold in the input: PULL_CRAFTS, less what the order still needs (the craft in
+-- progress has taken its ingredients already).
+local function pull_goal(rec, e)
+  local q = rec.queue
+  if not q then return production.PULL_CRAFTS end
+  return math.max(0, math.min(production.PULL_CRAFTS, q.remaining - (e.is_crafting() and 1 or 0)))
 end
 
 ---------------------------------------------------------------------------
@@ -257,10 +378,11 @@ local function pull(rec, reserved)
     return false
   end
   local input = e.get_inventory(defines.inventory.crafter_input)
+  local goal = pull_goal(rec, e)
   local missing, have = false, {}
   for i, ing in ipairs(recipe.ingredients) do
     have[i] = input.get_item_count(ing.name)
-    if have[i] < ing.amount then missing = true end
+    if goal > 0 and have[i] < ing.amount then missing = true end
   end
   if not missing then
     rec.starved_since = nil
@@ -289,7 +411,7 @@ local function pull(rec, reserved)
     return false
   end
   for i, ing in ipairs(recipe.ingredients) do
-    local want = ing.amount * production.PULL_CRAFTS - have[i]
+    local want = ing.amount * goal - have[i]
     if want > 0 then
       local got = network.remove_item({name = ing.name, count = want})
       if got > 0 then
@@ -495,6 +617,7 @@ local function check_barracks(rec)
       end
     end
   end
+  if rec.queue then production.queue_step(rec) end
   local recipe = e.get_recipe()
   if recipe and e.is_crafting() then
     local ticks = predict(e, recipe)
@@ -518,7 +641,10 @@ local function hand_off(rec)
   end
   rec.last_pf = pf
   local out = e.get_output_inventory()
-  if out.is_empty() then return end
+  if out.is_empty() then
+    if rec.queue then production.queue_step(rec) end
+    return
+  end
   local network = production.network_for(e)
   if not network then return end -- stays in the output until a network covers the factory
   for _, item in pairs(out.get_contents()) do
@@ -533,6 +659,7 @@ local function hand_off(rec)
         item.name)
     end
   end
+  if rec.queue then production.queue_step(rec) end
 end
 
 ---------------------------------------------------------------------------

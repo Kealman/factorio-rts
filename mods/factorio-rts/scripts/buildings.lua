@@ -577,6 +577,44 @@ function buildings.demolish(entity, opts)
                 refund_spilled = refund_spilled}
 end
 
+--- Deliver item stacks ({name, count, quality}) of a removed non-building piece (belt, inserter, pole; scripts/pieces.lua):
+--- into the nearest own stockpile of the logistic network at `position`, else (no network) a stockpile within
+--- SINK_RANGE, else another own stockpile within REFUND_RANGE, else the Command Center's network; what has no room
+--- spills on the ground. The same cascade as the refund of buildings.demolish. Returns delivered, spilled (item counts).
+function buildings.deliver_items(surface, force_name, position, stacks)
+  if #stacks == 0 then return 0, 0 end
+  local net = surface.find_logistic_network_by_position(position, force_name)
+  local net_id = net and net.valid and net.network_id or nil
+  local rest = insert_into(sink_candidates(surface.index, force_name, position, net_id, {}), stacks)
+  if #rest > 0 then
+    local near = {}
+    for sun, r in pairs(storage.buildings) do
+      if r.kind == "stockpile" and r.force == force_name and r.surface == surface.index and r.entity.valid then
+        local d = util.distance(r.entity.position, position)
+        if d <= buildings.REFUND_RANGE then near[#near + 1] = {entity = r.entity, d = d, un = sun} end
+      end
+    end
+    table.sort(near, function(a, b) if a.d ~= b.d then return a.d < b.d end return a.un < b.un end)
+    rest = insert_into(near, rest)
+  end
+  if #rest > 0 then
+    local cc = buildings.main_cc(force_name)
+    local pool = cc and cc.entity.valid and cc.entity.logistic_network
+    if pool and pool.valid then
+      local left = {}
+      for _, st in ipairs(rest) do
+        local n = pool.insert({name = st.name, count = st.count, quality = st.quality})
+        if n < st.count then left[#left + 1] = {name = st.name, count = st.count - n, quality = st.quality} end
+      end
+      rest = left
+    end
+  end
+  local total = 0
+  for _, st in ipairs(stacks) do total = total + st.count end
+  local spilled = #rest > 0 and spill(surface, position, rest) or 0
+  return total - spilled, spilled
+end
+
 ---------------------------------------------------------------------------
 -- Events
 ---------------------------------------------------------------------------
