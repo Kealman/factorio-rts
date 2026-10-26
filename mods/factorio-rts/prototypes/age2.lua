@@ -117,7 +117,7 @@ function M.recipe(name, spec, subgroup)
   local r = {
     type = "recipe",
     name = name,
-    localised_name = (#results > 1 or spec.named) and {"recipe-name." .. name} or nil,
+    localised_name = {"recipe-name." .. name}, -- always explicit: the 2.1 fallback to the product name fails (#29)
     categories = {spec.category}, -- 2.1: RecipePrototype::category -> categories
     subgroup = subgroup or spec.subgroup,
     order = spec.order,
@@ -158,6 +158,7 @@ function M.building_recipe(name, subgroup, order)
   return {
     type = "recipe",
     name = name,
+    localised_name = {"entity-name." .. name}, -- explicit (#29)
     categories = {"rts-buildings"}, -- 2.1: RecipePrototype::category -> categories
     subgroup = subgroup,
     order = order,
