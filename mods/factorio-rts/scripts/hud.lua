@@ -168,6 +168,9 @@ table.insert(P4.HELP_NATION, #P4.HELP_NATION, "rts-air.help-nation-air") -- Phas
 for _, name in ipairs({"rts-gate", "rts-artillery-wagon-kit", "rts-armoured-locomotive-kit", "rts-armoured-wagon-kit",
                        "rts-rail-shell"}) do
   P4.NATION_ONLY[name] = true end
+-- Release 0.1.2 (#25): the long-handed inserter (recipe and build item) is Nation only: the Skirmish factory page holds
+-- 28 buttons (two rows of 14, Pause included) and the underground belt and splitter already fill it.
+for _, name in ipairs({"rts-long-inserter", "long-handed-inserter"}) do P4.NATION_ONLY[name] = true end
 P4.crafter = function(kind) return kind == "factory" or kind == "district" end -- Phase 5 E1: districts are producers
 P4.place_name = require("scripts.world").place_name -- Phase 5 M2 world: region names in alerts (alert_text)
 -- Phase 5 E1: recipes an age locks (research.AGE_LOCKS: Age II goods, buildings, the Armoured car kit) exist in Nation
@@ -184,7 +187,8 @@ P4.FACTORY_TABS = {
   {key = "science", sprite = "item/rts-science-basic", tooltip = "rts.factory-tab-science"},
   {key = "age2", sprite = "item/rts-science-industrial", tooltip = "rts.factory-tab-age2"},
 }
-P4.LOGISTICS_PRODUCTS = {["transport-belt"] = true, ["fast-inserter"] = true, ["medium-electric-pole"] = true,
+P4.LOGISTICS_PRODUCTS = {["transport-belt"] = true, ["fast-inserter"] = true, ["underground-belt"] = true,
+  ["splitter"] = true, ["long-handed-inserter"] = true, ["medium-electric-pole"] = true,
   ["firearm-magazine"] = true, ["rts-hauler-kit"] = true, rail = true, ["rts-locomotive-kit"] = true,
   ["rts-cargo-wagon-kit"] = true, ["rts-construction-wagon-kit"] = true,
   ["rts-supply-crate"] = true, ["rts-troop-wagon-kit"] = true, -- Phase 5 M2 war
@@ -294,7 +298,8 @@ local GROUP_COUNT = 5
 -- tooltip (it can still be placed while the network holds some).
 local BUILD_TABS = {
   {key = "economy", caption = "rts.build-tab-economy", tooltip = "rts.build-tab-economy-tooltip",
-   items = {"rts-extractor", "rts-smelter", "rts-stockpile", "transport-belt", "fast-inserter", "medium-electric-pole",
+   items = {"rts-extractor", "rts-smelter", "rts-stockpile", "transport-belt", "underground-belt", "splitter",
+            "fast-inserter", "long-handed-inserter", "medium-electric-pole",
             "rts-hub", "rts-depot", -- Phase 5 M1: rts-depot is Nation-only (P4.NATION_ONLY)
             "rts-district-rails"}}, -- Phase 5 M2 integration: the Rail works comes with Railways in Age I
   {key = "production", caption = "rts.build-tab-production", tooltip = "rts.build-tab-production-tooltip",
