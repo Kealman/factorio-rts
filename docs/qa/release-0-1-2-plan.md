@@ -51,7 +51,7 @@ Later in the milestone (after the four above land): `r3-ai` (Opus) on #20 and #2
    (65/65, 0 errors). Nation changes also run a Nation match of the area touched with the fixture that covers it
    (`tools/probes/`), and `tools/saveload-check.sh` when storage changed.
 7. **Machine budget.** At most 5 headless servers run on this machine at once, shared by everyone: check
-   `pgrep -fc -- "--start-server"` before a run and wait while it is 5 or more. Normally one server per agent; the
+   `pgrep -fc "start-server"` (macOS pgrep takes no `--`) before a run and wait while it is 5 or more. Normally one server per agent; the
    identity matrix may use `JOBS=2`. Every `Bash` call must return within 10 minutes: run long jobs with
    `run_in_background` or in a foreground loop that polls the log and exits before the limit. Benchmarks taken under
    load are upper bounds only.
