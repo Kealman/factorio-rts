@@ -444,6 +444,13 @@ balance.nation.hauler_tiles_per_coal = 40 -- a hauler takes 1 coal per this many
 -- at most hauler_batch_wait ticks (scripts/logistics.lua small_load)
 balance.nation.hauler_items_per_coal = 25
 balance.nation.hauler_batch_wait = 60 * 60
+-- Release 0.1.2 (#21): a manual supply route (its drop-off keeps stock levels: the AI's town supply haulers) holds a load
+-- worth less than hauler_items_per_coal per coal for at most supply_batch_wait ticks, but only while every planned item
+-- still stands at supply_low of the drop-off's keep or more; below that it leaves at once.
+balance.nation.supply_batch_wait = 4 * 60 * 60
+balance.nation.supply_low = 0.5
+-- (only routes that carry nothing but these items wait: rations and goods of the towns, not fuel or building material)
+balance.nation.supply_hold_items = {["rts-rations"] = true, ["rts-goods"] = true, ["firearm-magazine"] = true}
 balance.nation.rails = {
   -- factory recipes (category rts-buildings), unlocked by the Railways technology
   depot = {cost = {["iron-plate"] = 40, ["steel-plate"] = 10, ["copper-plate"] = 10}, time = 10, health = 1500,

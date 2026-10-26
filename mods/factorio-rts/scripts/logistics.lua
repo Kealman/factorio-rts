@@ -1038,7 +1038,20 @@ local function manual_plan(h)
   end
   local plan = fit_plan(h, want)
   if not plan then return nil, "nothing" end
-  return plan
+  -- Release 0.1.2 (#21): a supply route (the drop-off keeps stock levels) may hold a small load back while the drop-off
+  -- is not short. relax = false: some planned item stands below balance.nation.supply_low of its keep, go now.
+  local hold = false
+  if not feeder then
+    hold = true
+    local low = balance.nation and balance.nation.supply_low or 0.5
+    local items = balance.nation and balance.nation.supply_hold_items or {}
+    for item in pairs(plan) do
+      local keep = dst.keep[item]
+      if not items[item] then hold = false end -- only the people's goods wait; building and fuel routes never do
+      if keep and dst.network.get_item_count(item) < keep * low then hold = false end
+    end
+  end
+  return plan, nil, hold
 end
 
 -- Auto: a source hub and a plan for the home hub's requests, or nil, reason.
@@ -1096,7 +1109,7 @@ end
 -- stood there out of fuel). A trip now waits at home until its load is worth the round trip's coal
 -- (balance.nation.hauler_items_per_coal items per coal) or for at most hauler_batch_wait ticks since the first small
 -- load was offered, then takes what there is. True while it should wait (h.batch_since: when the wait began).
-local function small_load(h, plan, from_un, to_un)
+local function small_load(h, plan, from_un, to_un, max_wait)
   local per = nation_mode(h.force) and balance.nation and balance.nation.hauler_tiles_per_coal
   if not (per and plan) then return false end
   local a, b = logistics.approach_point(from_un), logistics.approach_point(to_un)
@@ -1108,7 +1121,7 @@ local function small_load(h, plan, from_un, to_un)
   if total >= want then return false end
   local now = game.tick
   if not h.batch_since then h.batch_since = now end
-  return now - h.batch_since < (balance.nation.hauler_batch_wait or 3600)
+  return now - h.batch_since < (max_wait or balance.nation.hauler_batch_wait or 3600)
 end
 
 -- One decision for a hauler that is not travelling (idle / waiting).
@@ -1138,7 +1151,14 @@ local function plan_next(h)
       return
     end
     if near_hub(h, h.pickup) then
-      local plan, reason = manual_plan(h)
+      local plan, reason, hold = manual_plan(h)
+      -- Release 0.1.2 (#21): a town supply route waits (up to supply_batch_wait) for a load worth its coal while the
+      -- town still holds supply_low of its keep; below that the small load goes at once (rations must not wait)
+      if plan and hold and small_load(h, plan, h.pickup, h.dropoff, balance.nation.supply_batch_wait) then
+        set_state(h, "waiting", "small-load")
+        return
+      end
+      h.batch_since = nil
       if plan and load_cargo(h, h.pickup, plan) > 0 then
         go(h, h.dropoff, "to_dropoff")
       else
