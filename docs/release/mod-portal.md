@@ -25,12 +25,12 @@ The tag list is the portal's 2.0-era list (Transportation, Logistics, Trains, Co
 Factorio as a StarCraft-style RTS: command armies from a free camera, build them through a real Factorio economy, then grow a nation of cities, rails, trade and war on worlds up to 4096 tiles.
 =====
 
-## What's new in 0.1.1 (top of the long description)
+## What's new in 0.1.2 (top of the long description)
 
-Paste this block at the top of the long description when 0.1.1 is uploaded, and replace it with the next release's block later. The portal's Changelog tab needs nothing: it shows `changelog.txt` from the uploaded zip.
+Paste this block at the top of the long description when 0.1.2 is uploaded, and replace it with the next release's block later. The portal's Changelog tab needs nothing: it shows `changelog.txt` from the uploaded zip.
 
 =====
-**New in 0.1.1:** the Nation AI gets to Age III sooner, shrinks its armies in debt and plays hard by skill; haulers no longer strand without coal and AI freight trains carry full loads; far fewer script tick spikes; guided objectives for your first Skirmish and Nation match; Escape opens the game menu; a full review of the Russian text; the headless tests pass on Linux. Air Force now costs 30 industrial kits and Military railways 17. The full list is on the Changelog tab.
+**New in 0.1.2:** order crafts in the factory and barracks (click 1, Shift 5, Ctrl all); select and demolish your belts, inserters and poles, and cancel ghosts; underground belts and splitters; units clear trees and rocks; help cards on Shift hover, a ? button and Shift+F11; oil panels that say there are no pipes; a new city brings starter stock from its mother city. Railways are yours: train stop lists, a train builder for mixed trains, the Rail tool for your own track with signals and rail stations. 0.1.1 saves load. The full list is on the Changelog tab.
 =====
 
 ## Long description (the portal's Markdown)
@@ -52,7 +52,9 @@ Start a **new Freeplay game**; the RTS lobby opens as soon as you join. Press **
 * A free camera with no character, box select, right-click orders, attack-move (F), stop (X) and hold (H).
 * Control groups (Ctrl+1..5), a minimap, unit cards, alerts with a jump key (F3) and a kill feed.
 * Divisions that march as one formation with stances and reinforcements.
-* Demolish your own buildings (Delete, two presses) for a 50 % refund.
+* Demolish your own buildings, belts, inserters and poles (Delete, two presses) for a 50 % refund, and cancel ghosts with one press.
+* Help cards: hold Shift over anything, click the ? button or press Shift+F11.
+* Order crafts like handcrafting (click 1, Shift 5, Ctrl all), and clear trees and rocks with a right click.
 
 ### An economy you build
 
@@ -77,10 +79,10 @@ Start a **new Freeplay game**; the RTS lobby opens as soon as you join. Press **
 * **The world:** named regions, mountain ranges with passes, rivers with fords, a scarcity portfolio that leaves every nation short of something, neutral city-states, trade ports, ruins, uranium and six rare resources.
 * **Cities and territory:** up to 4 cities per nation, tiers from village to city, an ownership grid with borders, build rules and attrition in enemy land, and forts.
 * **People:** residents who need housing, rations and household goods, staff your buildings by labor priority and become your recruits.
-* **Rails:** select a depot, right-click another, and a construction train lays the line. Freight, troop, artillery and armoured trains.
+* **Rails:** select a depot, right-click another, and a construction train lays the line, or lay your own track with the Rail tool, with signals and rail stations. Compose freight, troop, artillery and armoured trains carriage by carriage, and give them stop lists with orders per stop.
 * **Money:** a treasury in crowns, taxes, upkeep, three debt stages, a shared world market, contracts, and money sinks (Rush, Hire, Mercenaries).
 * **Diplomacy:** war, ceasefire, peace and alliance, war goals, treaties, and Conquest, Territory, Score or Space victories.
-* **Three ages:** the Railway Charter brings Age II (oil as goods, districts, armoured cars, bunkers); the Space Program brings Age III (chemistry, nuclear power, automation) and a Space victory.
+* **Three ages:** the Railway Charter brings Age II (oil as goods with no pipes, districts, armoured cars, bunkers); the Space Program brings Age III (chemistry, nuclear power, automation) and a Space victory.
 * **War is logistics:** divisions burn supply, cities are captured rather than razed, garrisons, fronts, fort belts, air units with anti-aircraft turrets, and artillery trains.
 
 ### Screenshots (gallery order)
@@ -147,20 +149,22 @@ A 4-nation Nation match with 16 cities, about 600 units and 40 trains runs at 60
 ### What are the known issues?
 
 * The Nation AI reaches Age III and links its cities by rail later than designed.
+* On single track, two trains that each want the platform the other holds wait for each other; a passing loop or a second track solves it. Junctions turn one way.
 * The Nation AI fields no interceptors, bombers or artillery trains within a 60-minute match: Air Force needs Age III, Aviation and a war at once.
 * AI nations keep a cash reserve and seldom go into debt, so money pressure on them is light.
 * The engine draws a thin line from every driving hauler to its next stop on the map, which Factorio 2.1 cannot switch off.
 * Map labels crowd around the capital at some zoom levels, and most build-menu buttons are icons with tooltips.
+* The pumpjack's picture keeps a drawn pipe stub although oil travels as items.
 
 The full list is in the README on GitHub.
 
 ### Which languages?
 
-English and Russian. The Russian text had a full review in 0.1.1.
+English and Russian. The Russian text had a full review in 0.1.1; 0.1.2 adds help cards in both languages.
 
 ### Is there a tutorial?
 
-Guided objectives (0.1.1) walk your first Skirmish match and your first Nation match through seven steps each, in a strip at the top right. The "Guided objectives" switch in the lobby turns them on or off. F11 has the full rules and keys.
+Guided objectives (0.1.1) walk your first Skirmish match and your first Nation match through seven steps each, in a strip at the top right. The "Guided objectives" switch in the lobby turns them on or off. F11 has the full rules and keys, and in 0.1.2 a Shift hover or the ? button shows a help card for any building.
 
 ### Where do I report a bug?
 
