@@ -31,7 +31,10 @@ local function S()
   return storage.netwait
 end
 
+--- True for a force an AI drives: a real game's opponents (match.ai_forces) and, in autotests, the player force when an
+--- AI commander plays it (storage.ai[force]). Only forces a human plays are looked at.
 local function is_ai(force_name)
+  if storage.ai and storage.ai[force_name] ~= nil then return true end
   for _, f in ipairs(match.ai_forces()) do
     if f == force_name then return true end
   end

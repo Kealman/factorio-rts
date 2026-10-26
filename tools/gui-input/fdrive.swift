@@ -9,6 +9,7 @@
 //                                              the click (key down, flagged mouse events, key up)
 // fdrive drag X1 Y1 X2 Y2 [left|right] [MODS] press at 1, dragged events in 12 steps to 2, release at 2
 // fdrive key CODE [MODS]                      e.g. key 15 ctrl+shift = Ctrl+Shift+R
+// fdrive moddown MODS | modup MODS            press / release modifier keys (shift, ctrl, cmd, alt, a+b) across commands
 // fdrive keydown CODE | keyup CODE            hold a key across other commands (e.g. D pans while clicking)
 // fdrive hold CODE MS [click|rclick X Y]     a held key with auto-repeat for MS milliseconds (WASD camera pan),
 //                                              optionally a click half way through
@@ -195,6 +196,22 @@ case "dtap":
 case "keydown", "keyup":
   let code = CGKeyCode(Int(args[2])!)
   CGEvent(keyboardEventSource: src, virtualKey: code, keyDown: args[1] == "keydown")?.post(tap: .cghidEventTap)
+case "moddown", "modup":
+  // a modifier key as the hardware sends it: a flagsChanged event (a keyDown of virtual key 56 is not seen as Shift
+  // being held by the game itself, only by the clicks that carry its flag)
+  var f = CGEventFlags()
+  let m = mods(args[2])
+  let down = args[1] == "moddown"
+  for (code, fl) in (down ? m : m.reversed()) {
+    _ = fl
+    if down { f.insert(fl) }
+    let ev = CGEvent(source: src)
+    ev?.type = .flagsChanged
+    ev?.setIntegerValueField(.keyboardEventKeycode, value: Int64(code))
+    ev?.flags = down ? f : CGEventFlags()
+    ev?.post(tap: .cghidEventTap)
+    usleep(30000)
+  }
 case "wheel":
   let n = Int32(args[2]) ?? 1
   for _ in 0..<abs(n) {

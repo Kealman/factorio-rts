@@ -685,15 +685,37 @@ local function with_places_note(tooltip, item)
   return {"", tooltip, "\n", {"rts.tooltip-places", "[entity=" .. place.name .. "]", place.localised_name}}
 end
 
+--- The help family of an entity name ("piece", "building", ...), or nil (scripts/help.lua, optional: no require).
+local function require_help_family(name)
+  local fn = optional_fn("scripts.help", {"family"})
+  return fn and fn(name) or nil
+end
+
+--- 0.1.2 (#30): the name of the tooltip's first line followed by the one-line description of what the item builds, so
+--- the player knows what he is about to build. The locale string wraps __1__ in a bold font: close it, write the
+--- description on its own line and reopen it.
+local function name_with_description(item)
+  local proto = prototypes.item[item]
+  local place = proto.place_result
+  local desc
+  if place and string.sub(place.name, 1, 4) == "rts-" then
+    desc = {"entity-description." .. place.name}
+  elseif require_help_family(place and place.name or item) == "piece" then -- belts, inserters, poles (vanilla names)
+    desc = {"rts-help." .. (place and place.name or item) .. "-line"}
+  end
+  if not desc then return proto.localised_name end
+  return {"", proto.localised_name, "[/font]\n[color=0.78,0.78,0.78]", desc, "[/color][font=default-bold]"}
+end
+
 local function build_tooltip(item, in_network, lock)
   local recipe = recipe_for(item)
   local how = recipe and {"rts.build-recipe", cost_text(recipe), product_amount(recipe), seconds_text(recipe.energy)}
     or {"rts.build-no-recipe"}
   if lock then
-    return with_places_note({"rts.build-tooltip-locked", prototypes.item[item].localised_name,
+    return with_places_note({"rts.build-tooltip-locked", name_with_description(item),
                              {"rts.in-stock", in_network}, how, tech_name(lock)}, item)
   end
-  return with_places_note({"rts.build-tooltip", prototypes.item[item].localised_name, {"rts.in-stock", in_network},
+  return with_places_note({"rts.build-tooltip", name_with_description(item), {"rts.in-stock", in_network},
                            how}, item)
 end
 
@@ -884,6 +906,11 @@ local function build_building_page(panel, h)
   el.b_tabs.visible = false
   add_filler(header)
   el.b_hp = header.add({type = "label", style = "rts_hud_mono_label", tooltip = {"rts.health"}})
+  -- 0.1.2 (#30): the pinned help card of this building (scripts/helpgui.lua reads tags.rts_help)
+  el.b_help = header.add({type = "button", name = PREFIX .. "help_card", style = "rts_hud_button", caption = "?",
+                          tooltip = {"rts-help.card-pin-tooltip"}, tags = {rts_help = ""}})
+  el.b_help.style.height = P4.DEMOLISH_HEIGHT
+  el.b_help.style.minimal_width = P4.DEMOLISH_HEIGHT
   -- Release 0.1.2: Rotate, for the piece page (belts, inserters, ghosts; scripts/pieces.lua)
   el.b_rotate = header.add({type = "button", name = PREFIX .. "rotate_piece", style = "rts_hud_button",
                             caption = {"rts.piece-rotate"}, tooltip = {"rts.piece-rotate-tooltip"},
@@ -1798,6 +1825,11 @@ local function update_pieces(player, h, list)
     if pieces.describe(e).rotatable then rotatable = true end
   end
   el.b_rotate.visible = rotatable
+  if el.b_help and el.b_help.valid then -- 0.1.2 (#30): the help card of a single piece
+    local one = #list == 1 and pieces.name(list[1]) or nil
+    el.b_help.tags = {rts_help = one or ""}
+    el.b_help.visible = one ~= nil and require_help_family(one) ~= nil
+  end
   local armed = demolish.is_armed(player.index)
   el.b_demolish.visible = true
   el.b_demolish.enabled = true
@@ -1819,6 +1851,10 @@ local function update_building(player, h, un, rec)
   update_demolish_button(player, h, un, rec)
   if h.bld_un ~= un then rebuild_recipe_buttons(player, h, un, rec) end
   el.b_name.caption = {"rts.bld-title", e.localised_name, un}
+  if el.b_help and el.b_help.valid then
+    el.b_help.tags = {rts_help = e.name}
+    el.b_help.visible = require_help_family(e.name) ~= nil
+  end
   local hp, max = e.health or 0, e.max_health or 0
   el.b_hp.caption = max > 0 and {"rts.hp-value", math.floor(hp + 0.5), math.floor(max + 0.5)} or ""
   local ratio = max > 0 and hp / max or 1
@@ -3128,6 +3164,7 @@ do -- dev-only locals stay out of the main chunk (Lua allows 200 locals there)
   end)
 end
 
+hud.build_tooltip = build_tooltip -- 0.1.2 (#30): the GUI probe translates it (tools/probes/r3ux_gui.lua)
 hud.P4 = P4 -- Phase 5 M3 age3: modules add Nation-only items, alert styles and recipe tabs at load time
 
 return hud

@@ -53,6 +53,11 @@ inputs[#inputs + 1] = {name = "rts-tech", key_sequence = "T", consuming = "game-
 -- "How to play". Both are free in vanilla 2.0 (F4/F5 are the debug keys).
 inputs[#inputs + 1] = {name = "rts-alert-jump", key_sequence = "F3", consuming = "game-only"}
 inputs[#inputs + 1] = {name = "rts-help", key_sequence = "F11", consuming = "game-only"}
+-- 0.1.2 (#30, scripts/helpgui.lua): Shift over a building or unit shows its help card. consuming = "none": Shift+click
+-- selection and Shift+right-click routes keep working. Shift+F11 / Shift+/ show the same card at once.
+inputs[#inputs + 1] = {name = "rts-help-hover", key_sequence = "LSHIFT", alternative_key_sequence = "RSHIFT", consuming = "none"}
+inputs[#inputs + 1] = {name = "rts-help-card", key_sequence = "SHIFT + F11", alternative_key_sequence = "SHIFT + SLASH",
+                       consuming = "none"}
 
 -- Phase 4: abilities (scripts/abilities.lua). Z Stim, C Shield, V Scanner sweep, G Artillery strike; Overcharge is a
 -- button only. Away from WASD, Q/E/R/T, B, F, X, H, M and space, which other inputs or vanilla controls use.
