@@ -151,6 +151,11 @@ P4.nation = function()
   local m = storage.match
   return m ~= nil and m.config ~= nil and m.config.mode == "nation"
 end
+-- 0.1.2 (#31 part A): the Station, the Rail tool, the signals and their recipes
+for _, name in ipairs({"rts-station", "rail", "rail-signal", "rail-chain-signal", "rts-rail-signal",
+                       "rts-rail-chain-signal"}) do
+  P4.NATION_ONLY[name] = true
+end
 for _, name in ipairs({"rts-depot", "rts-rail", "rts-locomotive-kit", "rts-cargo-wagon-kit", "rts-construction-wagon-kit",
                        "rts-district-rails", "rts-dra-rail"}) do -- Phase 5 M2 integration: the Rail works (Railways)
   P4.NATION_ONLY[name] = true end -- Phase 5 M1 (m1-rails): the depot item, the rail and kit recipes
@@ -302,6 +307,7 @@ local BUILD_TABS = {
    items = {"rts-extractor", "rts-smelter", "rts-stockpile", "transport-belt", "underground-belt", "splitter",
             "fast-inserter", "long-handed-inserter", "medium-electric-pole",
             "rts-hub", "rts-depot", -- Phase 5 M1: rts-depot is Nation-only (P4.NATION_ONLY)
+            "rts-station", "rail", "rail-signal", "rail-chain-signal", -- 0.1.2 (#31 A): player-built track, Nation only
             "rts-district-rails"}}, -- Phase 5 M2 integration: the Rail works comes with Railways in Age I
   {key = "production", caption = "rts.build-tab-production", tooltip = "rts.build-tab-production-tooltip",
    items = {"rts-barracks", "rts-factory", "rts-lab", "rts-city-charter", "rts-fort", -- Phase 5 M1: Nation only
@@ -363,6 +369,8 @@ P4.ALERT_STYLE = {
   ["line-cut"] = {icons = {"item/rail", "utility/danger_icon"}, color = "red", sound = "utility/alert_destroyed"},
   ["line-blocked"] = {icons = {"item/rail", "utility/warning_icon"}, color = "yellow"},
   ["line-failed"] = {icons = {"item/rail", "utility/warning_icon"}, color = "yellow"},
+  ["station-no-track"] = {icons = {"item/rts-station", "utility/warning_icon"}, color = "yellow"}, -- 0.1.2 (#31 A)
+  ["track-waits"] = {icons = {"item/rail", "utility/warning_icon"}, color = "yellow"}, -- 0.1.2 (#31 A)
   ["train-lost"] = {icons = {"entity/rts-locomotive", "utility/danger_icon"}, color = "red",
                     sound = "utility/alert_destroyed"},
   -- Phase 5 M1 (scripts/cities.lua)
@@ -666,7 +674,8 @@ end
 
 -- Phase 5 M1 QA round 1: an item that places an entity of another name (the City charter places a City Center) says
 -- so in its build and recipe tooltips: {"", tooltip, "\n", "Builds a [entity] City Center."}.
-local OIL_NOTES = {["rts-pumpjack"] = "rts-ux.note-pumpjack", ["rts-refinery"] = "rts-ux.note-refinery",
+local OIL_NOTES = {["rail"] = "rts.railtool-note", -- 0.1.2 (#31 part A): the Rail button opens the Rail tool
+                   ["rts-pumpjack"] = "rts-ux.note-pumpjack", ["rts-refinery"] = "rts-ux.note-refinery",
                     ["rts-chemical-plant"] = "rts-ux.note-chemical-plant"} -- #28: no pipes
 local function with_places_note(tooltip, item)
   if OIL_NOTES[item] then tooltip = {"", tooltip, "\n", {OIL_NOTES[item]}} end
@@ -2321,6 +2330,14 @@ end
 --- Build menu button: put a ghost of `item` in the cursor (build mode), or end build mode when that item's
 --- ghost is already there. QA log line: "hud click build <item> player=N in_network=N ghost=true|false".
 function hud.build_click(player, item)
+  -- 0.1.2 (#31 part A): the Rail button opens the Rail tool (scripts/railtool.lua) instead of a rail ghost (the vanilla
+  -- rail planner does not run in the RTS remote view)
+  if item == "rail" then
+    local toggle = optional_fn("scripts.railtool", {"toggle"})
+    local ok = toggle and toggle(player)
+    util.log("hud click build rail player=%d -> rail tool %s", player.index, tostring(ok))
+    return ok
+  end
   local snap = snapshot(player.force.name)
   local n = snap and snap.items[item] or 0
   if cursor.ghost_name(player) == item then

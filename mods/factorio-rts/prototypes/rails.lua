@@ -11,6 +11,9 @@
 -- turns kits found in a depot network into trains (rails.create_train); rolling stock is never placed by hand.
 -- Recipes (category rts-buildings, the factory), all disabled until the Railways technology: rts-depot, the three
 -- kits and rts-rail (2 steel + 1 stone -> 2 vanilla "rail" items, so depot robots can build rail ghosts too).
+-- 0.1.2 (#31 part A): rts-station (a small roboport hub with a 10-tile logistic area: scripts/rails.lua puts two
+-- rts-depot-stop on the own straight track next to it), its item and recipe, and the recipes rts-rail-signal and
+-- rts-rail-chain-signal (vanilla items: robots build signal ghosts from the network). All with Railways.
 -- Technologies: rts-railways (tier 1, basic kits) and, only with the elevated-rails mod (Space Age), rts-bridges
 -- (tier 2): elevated spans for the planner. Effects live in scripts/rails.lua (research.EFFECTS). Both are Nation-only
 -- (research.NATION_ONLY), so Skirmish never shows them.
@@ -78,6 +81,20 @@ depot.energy_usage = "20kW"
 depot.charging_energy = "50kW"
 for _, key in pairs({"base", "base_patch", "base_animation", "door_animation_up", "door_animation_down"}) do
   tint_layers(depot[key], DEPOT_TINT)
+end
+
+-- 0.1.2 (#31 part A): the Station, a small depot without a platform
+local STATION_TINT = {r = 0.55, g = 1.0, b = 0.6, a = 1}
+local station = table.deepcopy(depot)
+station.name = "rts-station"
+station.icons = tinted_icons(data.raw.roboport.roboport, STATION_TINT)
+station.max_health = R.station.health
+station.map_color = {r = 0.45, g = 0.9, b = 0.55}
+station.minable = {mining_time = 0.5, result = "rts-station"}
+station.logistics_radius = 10
+station.construction_radius = 14
+for _, key in pairs({"base", "base_patch", "base_animation", "door_animation_up", "door_animation_down"}) do
+  tint_layers(station[key], STATION_TINT)
 end
 
 local stop = table.deepcopy(data.raw["train-stop"]["train-stop"])
@@ -183,8 +200,18 @@ local with_order = function(spec, subgroup, order)
   return s
 end
 
+local station_item = table.deepcopy(depot_item)
+station_item.name = "rts-station"
+station_item.localised_description = {"entity-description.rts-station"}
+station_item.icons = table.deepcopy(station.icons)
+station_item.place_result = "rts-station"
+station_item.order = "a-c[depot]-b[station]"
+
 data:extend({
-  depot, stop, locomotive, wagon, cwagon, depot_item,
+  depot, stop, locomotive, wagon, cwagon, depot_item, station, station_item,
+  recipe("rts-station", with_order(R.station, "rts-economy", "a-c-b")),
+  recipe("rts-rail-signal", with_order(R.signal, "rts-economy", "a-e"), "rail-signal", 1),
+  recipe("rts-rail-chain-signal", with_order(R.chain_signal, "rts-economy", "a-f"), "rail-chain-signal", 1),
   kit("rts-locomotive-kit", "__base__/graphics/icons/locomotive.png", "k[train]-a"),
   kit("rts-cargo-wagon-kit", "__base__/graphics/icons/cargo-wagon.png", "k[train]-b"),
   kit("rts-construction-wagon-kit", "__base__/graphics/icons/cargo-wagon.png", "k[train]-c", CONSTRUCTION_TINT),

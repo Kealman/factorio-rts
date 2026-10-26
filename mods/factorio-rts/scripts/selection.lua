@@ -949,8 +949,13 @@ end
 events.on("rts-rotate", function(e) selection.rotate_at(e.player_index, e.cursor_position, false) end)
 events.on("rts-reverse-rotate", function(e) selection.rotate_at(e.player_index, e.cursor_position, true) end)
 
+-- 0.1.2 (#31 part A): fn(player_index, area, entities, surface) -> true when a tool owns the left click
+-- (scripts/railtool.lua: a waypoint of the Rail tool)
+selection.area_hook = nil
+
 events.on(defines.events.on_player_selected_area, function(e)
   if e.item ~= util.CURSOR_ITEM then return end
+  if selection.area_hook and selection.area_hook(e.player_index, e.area, e.entities, e.surface) then return end
   selection.handle_area(e.player_index, e.entities, e.area, false, e.surface)
 end)
 

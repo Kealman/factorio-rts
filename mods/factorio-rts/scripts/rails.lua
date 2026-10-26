@@ -47,6 +47,14 @@
 -- second per wagon and sends it on with go_to_station. Cargo = what the pickup's network exports above its threshold
 -- and the drop-off's network still keeps (logistics.lua policies; a drop-off without keep thresholds takes every
 -- export). Locomotives are topped up with coal from the depot network at every stop.
+-- 0.1.2 (#31 part A): player-built track. rails.plan_segment plans a "manual" line (the Rail tool's segment,
+-- scripts/railtool.lua) between rail end states of the caller's choice; crews from a depot connected by track build it
+-- in order (or robots in range), and a segment that starts on or joins existing track gets a pair of chain signals on
+-- every track that meets at the junction; player track is signalled with chain signals only (single track both ways:
+-- a train enters a stretch only when its path to the next stop is free). Surveys of human forces (job.reuse) run along
+-- own track at REUSE_COST per tile of it instead of laying a parallel one, with junction signals where they leave it;
+-- a human force's depot may have any number of lines (depot.lines). The AI's surveys and its one line per depot are
+-- unchanged.
 -- 0.1.2 (#31 part B): that two-record route is the AI's (rails.set_route, unchanged). A train with a stop list
 -- (rec.stops: the player's trains) runs a native engine schedule instead: scripts/railroutes.lua owns it and sets
 -- rails.routes = {step, click, refresh, resume, serves}; this module's train step, state handler, right click,
@@ -107,6 +115,7 @@ rails.AWAGON_KIT = "rts-armoured-wagon-kit"
 rails.KIND_HOOKS = {}
 rails.RAIL = "rail"
 rails.SIGNAL = "rail-signal"
+rails.CHAIN_SIGNAL = "rail-chain-signal" -- 0.1.2 (#31 part A): junctions of player-built track
 rails.SUPPORT = "rail-support"
 rails.RAMP = "rail-ramp"
 rails.FUEL = "coal"
@@ -123,6 +132,10 @@ rails.MAX_EXPANSIONS = 160000       -- fine A* gives up after this many (per cor
 rails.MAX_CORRIDOR = 3              -- corridor radius in cells, widened from 1 when the fine search fails
 rails.WEIGHT = 1.3                  -- heuristic weight (weighted A*)
 rails.WALL_CROSS_COST = 6           -- Phase 5 M3 integration: extra cost of a straight piece over own walls (gated)
+rails.REUSE_COST = 0.2              -- 0.1.2 (#31 part A): cost factor of a piece of own existing track (human surveys)
+rails.HUMAN_WEIGHT = 1.05           -- 0.1.2 (#31 part A): heuristic weight of a player's survey (straighter routes)
+rails.HUMAN_CURVE_COST = 4          -- 0.1.2 (#31 part A): extra cost of a curved piece in a player's survey
+rails.CREW_RUNOUT = 36              -- 0.1.2 (#31 part A): a crew for a branch first parks this far behind the junction
 -- Phase 5 M3 perf: in a Nation match a survey is a scheduler job (scripts/sched.lua kind "rails_survey") that spends
 -- the nation's work units instead of the fixed per-tick counts above (those stay for the rails autotest outside a
 -- match). Units per item, calibrated with PERF=1 so that one unit is about 1 microsecond (docs/qa/phase5-perf-notes.md):
@@ -165,6 +178,17 @@ if logistics.NAME_HOOKS then
     return {"rts.depot-name", d and d.index or un}
   end
 end
+-- 0.1.2 (#31 part A): the Station is a small hub too (no platform, no kits: two stops on the own track next to it)
+rails.STATION = "rts-station"
+rails.STATION_REACH = 8   -- tiles from the station to the straight track its stops go on
+rails.STATION_AREA = 40   -- tiles along the track on each side of the stops that count as "at the station"
+buildings.KIND_BY_NAME[rails.STATION] = "hub"
+if logistics.NAME_HOOKS then
+  logistics.NAME_HOOKS[rails.STATION] = function(un)
+    local d = storage.rails and storage.rails.depots[un]
+    return {"rts.station-name", d and d.index or un}
+  end
+end
 -- Rolling stock is a building of kind "train" (selection, removal events, fog); rails.lua keeps the train records.
 buildings.KIND_BY_NAME[rails.LOCO] = rails.KIND
 buildings.KIND_BY_NAME[rails.WAGON] = rails.KIND
@@ -183,7 +207,8 @@ end
 -- Research (scripts/research.lua): Railways unlocks the depot, rails and kits; Bridges lets the planner fly over water.
 -- Both technologies are Nation-only.
 local UNLOCKS = {rails.DEPOT, "rts-rail", rails.LOCO_KIT, rails.WAGON_KIT, rails.CWAGON_KIT,
-                 "rts-district-rails", "rts-dra-rail"} -- Phase 5 M2 integration: the Rail works in Age I (scripts/ages.lua)
+                 "rts-district-rails", "rts-dra-rail", -- Phase 5 M2 integration: the Rail works in Age I (scripts/ages.lua)
+                 "rts-station", "rts-rail-signal", "rts-rail-chain-signal"} -- 0.1.2 (#31 part A): player-built track
 if research then
   research.EFFECTS["rts-railways"] = {unlock = UNLOCKS}
   research.EFFECTS["rts-bridges"] = {flag = "bridges"}
@@ -195,6 +220,22 @@ if research then
   end
 end
 deps.rails = rails -- the AI reads it at run time (scripts/ai/deps.lua)
+-- 0.1.2 (#31 part A): a Station is a hub for logistics but adds no supply cap (scripts/supply.lua)
+do
+  local ok, supply = pcall(require, "scripts.supply")
+  if ok and type(supply) == "table" then
+    supply.hub_discount = function(force_name)
+      local R = storage.rails
+      if not (R and R.stations) then return 0 end
+      local n = 0
+      for un in pairs(R.stations) do
+        local d = R.depots[un]
+        if d and d.force == force_name and d.entity.valid then n = n + 1 end
+      end
+      return n
+    end
+  end
+end
 
 local D = defines.direction
 local RD = defines.rail_direction
@@ -235,6 +276,7 @@ local CLEAR_TYPES = {"tree", "simple-entity", "cliff"}
 local WALL_TYPES = {"wall", "gate"} -- Phase 5 M3 integration: own ones are crossed (rails.WALL_CROSS_COST, gates)
 local MANUAL_GHOST, SCRIPT, MANUAL = defines.build_check_type.manual_ghost, defines.build_check_type.script,
   defines.build_check_type.manual
+local CHAIN = "rail-chain-signal" -- 0.1.2 (#31 part A)
 
 ---------------------------------------------------------------------------
 -- State
@@ -408,7 +450,7 @@ local function entries_of(re)
         dx = x.position.x - loc.position.x, dy = x.position.y - loc.position.y,
         gdx = x.goal.position.x - loc.position.x, gdy = x.goal.position.y - loc.position.y,
         gdir = x.goal.direction, glayer = x.goal.rail_layer,
-        len = len, rails = ramp and CFG.ramp_rails or count, elev = elev, ramp = ramp,
+        len = len, rails = ramp and CFG.ramp_rails or count, elev = elev, ramp = ramp, curve = curve or nil,
         cost = len * (elev and 1.5 or 1) + (ramp and 20 or 0) + (curve and 1 or 0),
       }
       if ramp then HAS_RAMP = true end
@@ -506,7 +548,8 @@ local function draw_depot_label(d)
   d.label = nil
   local e = d.entity
   if not (e and e.valid) then return end
-  d.label = rendering.draw_text({text = {"rts.depot-name", d.index or d.un}, surface = e.surface, target = {entity = e,
+  d.label = rendering.draw_text({text = {d.station and "rts.station-name" or "rts.depot-name", d.index or d.un},
+    surface = e.surface, target = {entity = e,
     offset = {0, -6}}, color = {r = 0.85, g = 0.85, b = 1, a = 1}, scale = rails.LABEL_SCALE, alignment = "center",
     vertical_alignment = "middle", render_mode = "chart", forces = {d.force}})
 end
@@ -767,8 +810,93 @@ local function setup_depot(un, rec)
   return d
 end
 
+-- 0.1.2 (#31 part A): a Station's two stops (one per direction, one name) on the nearest own straight orthogonal
+-- ground rail within STATION_REACH; none yet: it tries again every CHECK_PERIOD (rails.check_stations).
+local function setup_station(un, rec)
+  local R = rstate()
+  local e = rec.entity
+  local d = R.depots[un]
+  if not d then
+    R.station_index = R.station_index or {}
+    R.station_index[rec.force] = (R.station_index[rec.force] or 0) + 1
+    d = {un = un, force = rec.force, surface = e.surface.index, entity = e, stop_name = stop_name(rec.force, un),
+         index = R.station_index[rec.force], station = true}
+    R.depots[un] = d
+    R.stations = R.stations or {}
+    R.stations[un] = true
+    draw_depot_label(d)
+  end
+  if d.platform then return d end
+  local surface = e.surface
+  local best, bd
+  for _, r in ipairs(surface.find_entities_filtered({position = e.position, radius = rails.STATION_REACH,
+                                                     name = "straight-rail", force = rec.force})) do
+    if r.direction % 4 == 0 then
+      local dd = util.distance_sq(r.position, e.position)
+      if not bd or dd < bd then best, bd = r, dd end
+    end
+  end
+  if not best then
+    if not d.warned then
+      d.warned = true
+      alert(rec.force, "station-no-track", e.position, "rts.alert-station-no-track")
+      util.log("rails: station #%d of %s at %s: no straight track within %d tiles yet", un, rec.force,
+        util.pos_str(e.position), rails.STATION_REACH)
+    end
+    return d
+  end
+  local axis = (best.direction == D.east or best.direction == D.west) and "x" or "y"
+  local track = axis == "x" and best.position.y or best.position.x
+  local a0 = 2 * floor((axis == "x" and e.position.x or e.position.y) / 2) + 1
+  local spec = {axis = axis, track = track}
+  local h = rails.STATION_AREA
+  if axis == "x" then
+    spec.stops = {{x = a0, y = track - 2, d = D.west}, {x = a0, y = track + 2, d = D.east}}
+    spec.area = {{a0 - h, track - 4}, {a0 + h, track + 4}}
+  else
+    spec.stops = {{x = track + 2, y = a0, d = D.north}, {x = track - 2, y = a0, d = D.south}}
+    spec.area = {{track - 4, a0 - h}, {track + 4, a0 + h}}
+  end
+  d.platform = {axis = axis, track = track, side = 1, rails = {}, ends = {}, stops = {}, area = spec.area,
+                station_spec = spec}
+  place_stops(d, spec)
+  local n = 0
+  for _, st in pairs(d.platform.stops) do if st.valid then n = n + 1 end end
+  if n == 0 then
+    d.platform = nil
+    return d
+  end
+  d.warned = nil
+  util.log("rails: station #%d (%s) of %s: %d stops '%s' on the track %s=%d", un, util.pos_str(e.position), rec.force,
+    n, d.stop_name, axis == "x" and "y" or "x", track)
+  return d
+end
+
+--- 0.1.2 (#31 part A): stations still without stops look for track again (rails.lua's CHECK_PERIOD handler).
+function rails.check_stations()
+  local R = storage.rails
+  if not (R and R.stations) then return end
+  for _, un in ipairs(sorted_keys(R.stations)) do
+    local d = R.depots[un]
+    local rec = d and buildings.get(un)
+    if not (d and rec and d.entity.valid) then
+      R.stations[un] = nil
+    elseif not d.platform then
+      setup_station(un, rec)
+    else
+      for _, st in pairs(d.platform.stops) do
+        if not st.valid then
+          place_stops(d, d.platform.station_spec)
+          break
+        end
+      end
+    end
+  end
+end
+
 buildings.on_added(function(un, rec)
   if rec.kind == "hub" and rec.entity.valid and rec.entity.name == rails.DEPOT then setup_depot(un, rec) end
+  if rec.kind == "hub" and rec.entity.valid and rec.entity.name == rails.STATION then setup_station(un, rec) end
 end)
 
 buildings.on_removed(function(un, rec)
@@ -783,6 +911,15 @@ buildings.on_removed(function(un, rec)
     end
   end
   util.log("rails: depot #%d of %s removed (platform rails stay)", un, d.force)
+  if R.stations then R.stations[un] = nil end -- 0.1.2 (#31 part A)
+  -- 0.1.2 (#31 part A): a human force's further lines of the depot are lost too
+  for lid in pairs(d.lines or {}) do
+    local ln = R.lines[lid]
+    if ln and ln.state ~= "lost" then
+      ln.state = "lost"
+      util.log("rails: line #%d of %s lost: depot #%d is gone", lid, ln.force, un)
+    end
+  end
   -- Phase 5 M2 integration: a line without one of its depots is lost (it stood "building" or "open" with no path to
   -- the missing end; seed 703: the far depot died in the fight for the town). The AI program re-binds it to a new
   -- depot on the same spot or plans a new line (rails.ai_program).
@@ -811,8 +948,24 @@ local function platform_free(d)
   local p = d.platform
   if not p then return false end
   local surface = d.entity.surface
-  return surface.count_entities_filtered({area = p.area, type = {"locomotive", "cargo-wagon", "fluid-wagon",
-                                                                  "artillery-wagon"}}) == 0
+  if surface.count_entities_filtered({area = p.area, type = {"locomotive", "cargo-wagon", "fluid-wagon",
+                                                             "artillery-wagon"}}) > 0 then
+    return false
+  end
+  -- 0.1.2 (#31 part A): a player's track is single and chain-signalled: a train already on its way in has the track to
+  -- the platform reserved, and one spawned there would meet it nose to nose. The platform is busy until it arrives.
+  if rails.human(d.force) then
+    for _, t in ipairs(game.train_manager.get_trains({surface = surface, force = d.force})) do
+      local es, er = t.has_path and t.path_end_stop, t.has_path and t.path_end_rail
+      for _, st in pairs(es and p.stops or {}) do
+        if st == es then return false end
+      end
+      for _, r in ipairs(er and p.rails or {}) do
+        if r == er then return false end
+      end
+    end
+  end
+  return true
 end
 
 ---------------------------------------------------------------------------
@@ -892,6 +1045,11 @@ local function score_cell(job, s, cx, cy)
   else
     cost = C * (mul + 3 * wf)
   end
+  -- 0.1.2 (#31 part A): a player's survey runs along its own track: a cell with some is cheap for the coarse route, the
+  -- corridor and the flow field (the fine search reuses the track itself at REUSE_COST)
+  if job.reuse and s.count_entities_filtered({area = area, name = RAIL_NAMES, force = job.force, limit = 1}) > 0 then
+    cost = C * rails.REUSE_COST * 2
+  end
   return cost, mul, cliffs > 0
 end
 
@@ -952,6 +1110,8 @@ local function survey_coarse(job, budget)
   local scx, scy = cell_of(job.ax, job.ay)
   local gcx, gcy = cell_of(job.bx, job.by)
   local goal = ckey(gcx, gcy)
+  -- (0.1.2 #31 A: cells with own track cost less than a tile per tile; the distance estimate stays below the cost)
+  local hmul = job.reuse and rails.REUSE_COST * 2 or 1
   local Q = job.coarse
   if not Q then
     Q = {hf = {}, hk = {}, g = {}, came = {}, closed = {}}
@@ -1005,7 +1165,7 @@ local function survey_coarse(job, budget)
               Q.g[nk] = ng
               Q.came[nk] = k
               local hx, hy = (gcx - nx) * C, (gcy - ny) * C
-              heap_push(Q.hf, Q.hk, ng + sqrt(hx * hx + hy * hy), nk)
+              heap_push(Q.hf, Q.hk, ng + hmul * sqrt(hx * hx + hy * hy), nk)
             end
           end
         end
@@ -1143,6 +1303,11 @@ local function on_mountain(s, px, py)
 end
 
 local function check_piece(job, s, e, px, py, ck)
+  -- 0.1.2 (#31 part A): a human force's survey runs along its own track (no ghost, no bill)
+  if job.reuse and not (e.elev or e.ramp) then
+    local ex = s.find_entity(e.name, {px, py})
+    if ex and ex.valid and ex.direction == e.dir and ex.force.name == job.force then return "reuse" end
+  end
   if not e.elev and on_mountain(s, px, py) then return false end
   if e.elev then
     return s.can_place_entity({name = e.name, position = {px, py}, direction = e.dir, force = job.force,
@@ -1170,9 +1335,10 @@ local function survey_fine(job, s, budget)
   local F = job.fine
   local hf, hk, g, came, closed, pc = F.hf, F.hk, F.g, F.came, F.closed, F.pc
   local goalset, corridor, mul = job.goalset, job.corridor, job.mul
-  local W = rails.WEIGHT
+  local W = job.weight or rails.WEIGHT -- (0.1.2 #31 A: a player's survey searches closer to the shortest route)
   local C = rails.CELL
   local bridges = job.bridges
+  local curve_cost = job.curve_cost
   local n = 0
   while n < budget do
     if #hk == 0 or job.fine_expanded >= rails.MAX_EXPANSIONS then
@@ -1219,7 +1385,13 @@ local function survey_fine(job, s, budget)
                   job.checks = job.checks + 1
                 end
                 if ok then
-                  local ng = gk + e.cost * (mul[ck] or 1) + (ok == true and 0 or ok)
+                  local ng
+                  if ok == "reuse" then -- 0.1.2 (#31 part A): own track
+                    ng = gk + e.cost * rails.REUSE_COST
+                  else
+                    ng = gk + e.cost * (mul[ck] or 1) + (ok == true and 0 or ok)
+                    if curve_cost and e.curve then ng = ng + curve_cost end -- (a player's survey: straight runs)
+                  end
                   local old = g[k2]
                   if not old or ng < old then
                     g[k2] = ng
@@ -1345,13 +1517,50 @@ local function survey_extract(job)
       since = nil
     end
   end
-  -- signal pairs at rail ends of ground track: both station entries and every signal_spacing tiles
+  -- 0.1.2 (#31 part A): pieces of own track the survey runs along stand already; a new piece next to existing track
+  -- (the segment's start or end on a rail, or where the survey leaves or joins own track) marks a junction: its signals
+  -- come when the piece is built (junction_signals)
+  local reused = 0
+  if job.reuse or job.manual then
+    local s = game.surfaces[job.surface]
+    for i, p in ipairs(path) do
+      local ex = s and s.find_entity(p.name, {p.x, p.y})
+      if job.reuse and ex and ex.valid and ex.direction == p.d and ex.force.name == job.force then
+        p.e, p.reused = ex, true
+        reused = reused + 1
+      end
+    end
+    for i, p in ipairs(path) do
+      if not p.reused then
+        local prev, nxt = path[i - 1], path[i + 1]
+        if (prev and prev.reused) or (i == 1 and job.start_rail) then p.jpos = {x = p.sx, y = p.sy} end
+        if (nxt and nxt.reused) or (i == #path and job.end_rail) then p.jpos2 = {x = p.gx, y = p.gy} end
+      end
+    end
+    -- own land (#31 A, the Rail tool): no piece on another nation's land (territory.can_build, the build rule of
+    -- infrastructure: own or neutral land)
+    local t = job.own_land and loaded("scripts.territory")
+    local ms = t and match.surface()
+    if ms and ms.index == job.surface and t.can_build then
+      for _, p in ipairs(path) do
+        if not p.reused then
+          local ok, why = t.can_build(job.force, p.name, {x = p.x, y = p.y}, p.d)
+          if not ok then
+            job.phase, job.reason, job.land_at = "failed", "land-" .. tostring(why), {x = p.x, y = p.y}
+            return
+          end
+        end
+      end
+    end
+  end
+  -- signal pairs at rail ends of ground track: both station entries and every signal_spacing tiles (a Rail tool
+  -- segment: every signal_spacing tiles only; its junctions get their own signals)
   local acc, signals = 0, 0
   for i, p in ipairs(path) do
     acc = acc + p.len
     local nxt = path[i + 1]
-    if nxt and not (p.elev or p.ramp or nxt.elev or nxt.ramp) then
-      if i == 1 or i == #path - 1 or acc >= CFG.signal_spacing then
+    if nxt and not (p.elev or p.ramp or nxt.elev or nxt.ramp) and not (p.reused or nxt.reused) then
+      if (not job.manual and (i == 1 or i == #path - 1)) or acc >= CFG.signal_spacing then
         p.sig = true
         acc = 0
         signals = signals + 2
@@ -1361,7 +1570,7 @@ local function survey_extract(job)
   if job.detour then return apply_detour(job, line, path, supports, k) end
   local track, length = 0, 0
   for _, p in ipairs(path) do
-    track = track + p.rails
+    if not p.reused then track = track + p.rails end -- 0.1.2 (#31 part A): own track costs nothing
     length = length + p.len
   end
   line.pieces = path
@@ -1372,12 +1581,15 @@ local function survey_extract(job)
                pieces = #path, supports = #supports, ramps = ramps, signals = signals}
   line.rails = line.bill.rails
   line.length = length
-  line.missing = #path
+  line.missing = #path - reused
+  line.reused = reused > 0 and reused or nil
   line.used, line.loaded, line.returned, line.robot = 0, 0, 0, 0
   line.survey = {ticks = game.tick - job.started, expanded = job.expanded, checks = job.checks,
                  cells = job.cells_scored or 0, corridor = job.R}
   local idx = index_of(job.surface)
-  for i, p in ipairs(path) do idx[pkey(p.name, p.x, p.y, p.d)] = line.id * 100000 + i end
+  for i, p in ipairs(path) do
+    if not p.reused then idx[pkey(p.name, p.x, p.y, p.d)] = line.id * 100000 + i end -- (own track keeps its line)
+  end
   job.phase = "ghosts"
   job.ghost_i = 1
   util.log("rails: survey #%d done in %.1f s (%d ticks of work): %d pieces (%d ramps), %.0f tiles of track for %.0f "
@@ -1418,10 +1630,22 @@ local function survey_ghosts(job, s, budget)
   while job.ghost_i <= last and n < budget do
     local p = pieces[job.ghost_i]
     job.ghost_i = job.ghost_i + 1
-    local gated = gate_walls(s, job.force, p) -- Phase 5 M3 integration
-    if gated > 0 then util.log("rails: survey #%d: %d wall(s) at (%.0f, %.0f) turned into gates", job.id, gated, p.x, p.y) end
-    p.g = s.create_entity({name = "entity-ghost", inner_name = p.name, position = {p.x, p.y}, direction = p.d,
-                           force = job.force})
+    if not p.reused then -- 0.1.2 (#31 part A): own track stands already
+      local gated = gate_walls(s, job.force, p) -- Phase 5 M3 integration
+      if gated > 0 then
+        util.log("rails: survey #%d: %d wall(s) at (%.0f, %.0f) turned into gates", job.id, gated, p.x, p.y)
+      end
+      p.g = s.create_entity({name = "entity-ghost", inner_name = p.name, position = {p.x, p.y}, direction = p.d,
+                             force = job.force})
+      -- 0.1.2 (#31 part A): robots build a Rail tool segment too: trees and rocks under its ghosts get marked for
+      -- deconstruction, as under a ghost a player places (a crew clears them itself)
+      if job.manual and p.g then
+        for _, t in ipairs(s.find_entities_filtered({area = p.g.bounding_box, type = {"tree", "simple-entity"},
+                                                     force = "neutral"})) do
+          if t.valid and t.minable then t.order_deconstruction(job.force) end
+        end
+      end
+    end
     n = n + 1
   end
   if job.ghost_i > last then
@@ -1461,6 +1685,16 @@ local function finish_job(job)
       line.blocked, line.blocked_at = nil, nil
       line.surveyed = game.tick
     end
+    return
+  end
+  if line.kind == "manual" then -- 0.1.2 (#31 part A): a Rail tool segment
+    line.state = job.phase == "failed" and "failed" or "building"
+    line.reason = job.reason
+    line.surveyed = game.tick
+    util.log("rails: track segment #%d of %s: %s%s", line.id, line.force, line.state,
+      job.phase == "failed" and (" (" .. tostring(job.reason) .. ")") or string.format(": %d pieces, %d new, bill %d rails",
+      #(line.pieces or {}), line.missing or 0, line.bill and line.bill.rails or 0))
+    if rails.on_segment then rails.on_segment(line, job) end
     return
   end
   if job.phase == "failed" then
@@ -1565,6 +1799,83 @@ sched.register("rails_survey", survey_sched_step, function(sjob, status)
   end
 end)
 
+--- 0.1.2 (#31 part A): true for a force a player plays (its surveys reuse own track, its depots take any number of
+--- lines); false for AI nations (and the headless autotests' rts-player).
+function rails.human(force_name)
+  local R = storage.rails
+  if R and R.test_human and R.test_human[force_name] then return true end -- (fixtures: tools/probes/r3_rails_manual.lua)
+  local f = game.forces[force_name]
+  return f ~= nil and #f.players > 0
+end
+
+--- 0.1.2 (#31 part A): plan a piece of player-built track (a Rail tool segment) as a "manual" line: from rail end
+--- states `opts.starts` to `opts.goals` ({x, y, d, l}; goal directions point along the track as it arrives), on surface
+--- `opts.surface` (index). opts.start_rail / opts.end_rail: the existing rails it branches from / joins (junction
+--- signals, the crews' way in), opts.prev: the segment it continues, opts.tool: the player index, opts.own_land: refuse
+--- other nations' land. Returns the line id (= survey job id) or nil, reason ("not-nation", "no-geometry",
+--- "segment-too-long").
+function rails.plan_segment(force_name, opts)
+  if not rails.nation() then return nil, "not-nation" end
+  if not geometry() then return nil, "no-geometry" end
+  local a, b = opts.starts[1], opts.goals[1]
+  if not (a and b) then return nil, "no-route" end
+  local dist = util.distance(a, b)
+  if dist > (opts.max_length or 600) then return nil, "segment-too-long" end
+  local R = rstate()
+  local id = R.next_id
+  R.next_id = id + 1
+  local line = {id = id, force = force_name, kind = "manual", state = "surveying", created = game.tick,
+                surface = opts.surface, rails = 0, length = 0, missing = 0, start_rail = opts.start_rail,
+                end_rail = opts.end_rail, prev = opts.prev, tool = opts.tool, chain = true}
+  R.lines[id] = line
+  local job = {id = id, line = id, force = force_name, surface = opts.surface, bridges = rails.bridges(force_name),
+               ax = a.x, ay = a.y, bx = b.x, by = b.y, phase = "score", scan = 0, cost = {}, mul = {}, cliff = {},
+               margin = max(48, floor(dist / 3)), started = game.tick, ticks = 0, expanded = 0, checks = 0,
+               starts = opts.starts, goals = opts.goals, reuse = true, manual = true, own_land = opts.own_land,
+               weight = rails.HUMAN_WEIGHT, curve_cost = rails.HUMAN_CURVE_COST,
+               start_rail = opts.start_rail ~= nil or nil, end_rail = opts.end_rail ~= nil or nil}
+  R.jobs[id] = job
+  job.sched = rails.SURVEY_SCHED and sched.submit(force_name, "rails_survey", {job = id}) or nil
+  util.log("rails: track segment #%d of %s: survey %s -> %s, %.0f tiles, %d start states, %d goal states%s", id,
+    force_name, util.pos_str(a), util.pos_str(b), dist, #opts.starts, #opts.goals,
+    job.sched and string.format(", scheduler job %d", job.sched) or "")
+  return id
+end
+
+--- 0.1.2 (#31 part A): a pair of chain signals on every own ground rail with an end at junction `pos`, at that rail's
+--- far end (out: trains leaving the junction, in: trains coming to it). Player-built track is single and runs both ways:
+--- with chain signals only, a train enters a stretch only when its path is free up to its next stop, so two trains
+--- never meet head-on between signals (a rail signal out of the junction let a train wait inside it, nose to nose
+--- with one coming the other way). Returns the number of signals placed.
+function rails.junction_signals(surface, force_name, pos)
+  local n = 0
+  local meet = {}
+  for _, r in ipairs(surface.find_entities_filtered({position = pos, radius = 6, name = RAIL_NAMES, force = force_name})) do
+    if r.valid then
+      for _, rd in ipairs({RD.front, RD.back}) do
+        local loc = r.get_rail_end(rd).location
+        if loc.rail_layer == 0 and abs(loc.position.x - pos.x) < 0.2 and abs(loc.position.y - pos.y) < 0.2 then
+          meet[#meet + 1] = {r, rd}
+        end
+      end
+    end
+  end
+  -- two rails meeting are a plain continuation (a platform end, a segment's start on a track end): no junction
+  if #meet < 3 then return 0 end
+  for _, m in ipairs(meet) do
+    local away = m[1].get_rail_end(m[2] == RD.front and RD.back or RD.front)
+    for _, l in ipairs({away.out_signal_location, away.in_signal_location}) do
+      if l and l.rail_layer == 0 then
+        local sig = surface.create_entity({name = CHAIN, position = l.position, direction = l.direction,
+                                           force = force_name, rail_layer = l.rail_layer})
+        if sig then n = n + 1 end
+      end
+    end
+  end
+  util.log("rails: junction at %s of %s: %d signals", util.pos_str(pos), force_name, n)
+  return n
+end
+
 --- Plan a line between two own depots. Returns the line id (= survey job id), or nil and a reason.
 function rails.plan_line(force, depot_a, depot_b)
   local force_name = type(force) == "string" and force or force.name
@@ -1574,10 +1885,13 @@ function rails.plan_line(force, depot_a, depot_b)
   if not rails.nation() then why = "not-nation"
   elseif not geometry() then why = "no-geometry"
   elseif not (A and B) or depot_a == depot_b then why = "no-depot"
+  elseif A.station or B.station then why = "station" -- 0.1.2 (#31 part A): stations take track from the Rail tool
   elseif A.force ~= force_name or B.force ~= force_name then why = "foreign-depot"
   elseif A.surface ~= B.surface then why = "other-surface"
   elseif not (A.platform and B.platform) then why = "no-platform"
-  elseif (A.line and R.lines[A.line]) or (B.line and R.lines[B.line]) then why = "depot-busy" end
+  elseif ((A.line and R.lines[A.line]) or (B.line and R.lines[B.line])) and not rails.human(force_name) then
+    why = "depot-busy" -- (0.1.2 #31 A: a human force's depot takes any number of lines; the AI keeps one)
+  end
   if why then
     util.log("rails: plan_line %s #%s -> #%s refused: %s", force_name, tostring(depot_a), tostring(depot_b), why)
     return nil, why
@@ -1587,7 +1901,15 @@ function rails.plan_line(force, depot_a, depot_b)
   local line = {id = id, force = force_name, a = depot_a, b = depot_b, state = "surveying", created = game.tick,
                 surface = A.surface, rails = 0, length = 0, missing = 0}
   R.lines[id] = line
-  A.line, B.line = id, id
+  -- 0.1.2 (#31 part A): a depot that has a line already lists the new one in depot.lines
+  for _, d in ipairs({A, B}) do
+    if d.line and R.lines[d.line] then
+      d.lines = d.lines or {}
+      d.lines[id] = true
+    else
+      d.line = id
+    end
+  end
   local pa, pb = A.entity.position, B.entity.position
   local job = {id = id, line = id, force = force_name, surface = A.surface, bridges = rails.bridges(force_name),
                ax = pa.x, ay = pa.y, bx = pb.x, by = pb.y, phase = "score", scan = 0, cost = {}, mul = {}, cliff = {},
@@ -1595,6 +1917,9 @@ function rails.plan_line(force, depot_a, depot_b)
                checks = 0, starts = {}, goals = {}}
   for _, e in ipairs(A.platform.ends) do job.starts[#job.starts + 1] = {x = e.x, y = e.y, d = e.d, l = e.l} end
   for _, e in ipairs(B.platform.ends) do job.goals[#job.goals + 1] = {x = e.x, y = e.y, d = (e.d + 8) % 16, l = e.l} end
+  job.reuse = rails.human(force_name) or nil -- 0.1.2 (#31 part A): a player's line runs along its own track
+  if job.reuse then job.weight, job.curve_cost = rails.HUMAN_WEIGHT, rails.HUMAN_CURVE_COST end
+  line.chain = job.reuse -- (and is signalled with chain signals: several trains share player track both ways)
   R.jobs[id] = job
   -- Phase 5 M3 perf: nil outside a Nation match (and with rails.SURVEY_SCHED off: a test copy's comparison with M2)
   job.sched = rails.SURVEY_SCHED and sched.submit(force_name, "rails_survey", {job = id}) or nil
@@ -1917,6 +2242,7 @@ function rails.deploy_check(depot_un, kind, opts)
   local armoured = armoured_of(kind, opts) -- Phase 5 M3 war2
   local d = rails.depot(depot_un)
   if not d then return "no-depot" end
+  if d.station then return "station" end -- 0.1.2 (#31 part A)
   if not d.platform then return "no-platform" end
   if not platform_free(d) then return "busy" end
   local net = logistics.hub_network(depot_un)
@@ -1948,6 +2274,7 @@ function rails.create_train(depot_un, kind, opts)
   local armoured = armoured_of(kind, opts) -- Phase 5 M3 war2
   local d = rails.depot(depot_un)
   if not d then return nil, "no-depot" end
+  if d.station then return nil, "station" end -- 0.1.2 (#31 part A)
   if not d.platform then return nil, "no-platform" end
   if not platform_free(d) then return nil, "busy" end
   local net = logistics.hub_network(depot_un)
@@ -2157,6 +2484,7 @@ do -- (a block: rails.lua's main chunk is near Lua's 200-local limit)
     local info = {kits = {}, missing = {}, locos = 0, coal = 0, tiles = 0, max = 0, length = 0}
     local d = rails.depot(depot_un)
     if not d then return "no-depot", info end
+    if d.station then return "station", info end -- 0.1.2 (#31 part A)
     if not d.platform then return "no-platform", info end
     info.tiles = rails.platform_tiles(d)
     info.max = rails.max_carriages(info.tiles)
@@ -2879,6 +3207,19 @@ end
 local function dispatch_builder(line)
   local lo, hi = missing_range(line)
   if not lo then return end
+  -- 0.1.2 (#31 part A): a player's crews go out one at a time: on single chain-signalled track two crews block each
+  -- other (one working on the track, the other one's way through it reserved), the AI's lines keep their own crews
+  if rails.human(line.force) then
+    for _, rec in pairs(rstate().trains) do
+      if rec.kind == "construction" and rec.force == line.force then
+        if line.wait ~= "crew-out" then
+          line.wait = "crew-out"
+          util.log("rails: line #%d (%s) waits for a construction train: crew-out", line.id, line.state)
+        end
+        return
+      end
+    end
+  end
   local cargo = cargo_positions(line)
   local sides = {{depot = line.a, dir = 1, from = lo}, {depot = line.b, dir = -1, from = hi}}
   local why = "no-kits"
@@ -2926,12 +3267,186 @@ local function dispatch_builder(line)
   end
 end
 
+-- 0.1.2 (#31 part A): the rail before a manual line's first piece (its start rail, or the last piece of the segment
+-- it continues), or nil while that is not built.
+function rails.manual_anchor(line)
+  if line.start_rail and line.start_rail.valid then return line.start_rail end
+  local R = rstate()
+  local prev = line.prev and R.lines[line.prev]
+  local lp = prev and prev.pieces and prev.pieces[#prev.pieces]
+  if lp and lp.e and lp.e.valid then return lp.e end
+  -- (a segment started on free ground that other track reached since: the rail ending where its first piece starts)
+  local p1 = line.pieces and line.pieces[1]
+  local s = p1 and not (p1.e and p1.e.valid) and game.surfaces[line.surface]
+  if s then
+    for _, r in ipairs(s.find_entities_filtered({position = {p1.sx, p1.sy}, radius = 4, name = RAIL_NAMES,
+                                                 force = line.force})) do
+      for _, rd in ipairs({RD.front, RD.back}) do
+        local loc = r.get_rail_end(rd).location
+        if loc.rail_layer == 0 and abs(loc.position.x - p1.sx) < 0.2 and abs(loc.position.y - p1.sy) < 0.2 then
+          return r
+        end
+      end
+    end
+  end
+  return nil
+end
+
+--- 0.1.2 (#31 part A): where a crew for a manual line's first piece parks: on the anchor's side of the junction,
+--- CREW_RUNOUT tiles of track away from it, so the whole train passes the junction heading into the branch (a train
+--- parked on the anchor itself stands across the junction and has no path into a branch that leaves backwards).
+function rails.manual_approach(line)
+  local anchor = rails.manual_anchor(line)
+  local p1 = line.pieces and line.pieces[1]
+  if not (anchor and anchor.valid and p1 and line.start_rail) then return anchor end
+  for _, rd in ipairs({RD.front, RD.back}) do
+    local loc = anchor.get_rail_end(rd).location
+    if abs(loc.position.x - p1.sx) < 0.2 and abs(loc.position.y - p1.sy) < 0.2 then
+      local walk = anchor.get_rail_end(rd == RD.front and RD.back or RD.front)
+      local rail, dist = anchor, 0
+      for _ = 1, 60 do
+        if dist >= rails.CREW_RUNOUT or not walk.move_natural() then break end
+        rail = walk.rail
+        dist = dist + (rail.rail_length or 2)
+      end
+      return rail
+    end
+  end
+  return anchor
+end
+
+--- 0.1.2 (#31 part A): the parking rail a crew passes first on its way to a manual line that lies behind a branch (the
+--- approach of the first segment of its chain that starts on existing track), or nil.
+function rails.manual_via(line)
+  local R = rstate()
+  local root, n = line, 0
+  while root and not root.start_rail and root.prev and n < 64 do
+    root = R.lines[root.prev]
+    n = n + 1
+  end
+  if not (root and root.start_rail and root.start_rail.valid) then return nil end
+  local via = rails.manual_approach(root)
+  if via == root.start_rail then return nil end
+  return via
+end
+
+rails.MANUAL_DISPATCH_TICKS = 600 -- a manual line without a crew looks for a depot connected by track this often
+rails.TRACK_WAIT_ALERT = 3600     -- ... and raises an alert (once per reason) after this long without a piece built
+
+-- A manual line without a crew and without a piece built (by robots) for TRACK_WAIT_ALERT: an alert says why, once per
+-- reason (robots build only what a network's construction area covers).
+local function track_waits(line, why, lo)
+  if not line.progress or line.progress.missing ~= line.missing then
+    line.progress = {missing = line.missing, tick = game.tick}
+  elseif game.tick - line.progress.tick >= rails.TRACK_WAIT_ALERT and why ~= "busy" and line.alerted ~= why then
+    line.alerted = why
+    local p = line.pieces[lo] or line.pieces[1]
+    alert(line.force, "track-waits", {x = p.x, y = p.y}, (why == "no-access" or why == "no-depot")
+      and "rts.alert-track-no-crew" or "rts.alert-track-no-supplies")
+    util.log("rails: track segment #%d (%s) still waits after %.0f s (%s): alert", line.id, line.force,
+      (game.tick - line.progress.tick) / 60, tostring(why))
+  end
+end
+
+-- A crew for a manual line from the nearest own depot whose platform reaches the line's anchor rail by track, with the
+-- kits and the rails for it. Robots in range build the ghosts meanwhile (a line out of every reach waits).
+local function dispatch_manual(line)
+  if game.tick < (line.next_dispatch or 0) then return end
+  line.next_dispatch = game.tick + rails.MANUAL_DISPATCH_TICKS
+  local lo = missing_range(line)
+  if not lo then return end
+  local R = rstate()
+  -- one crew at a time on a force's own track (segments' and lines' crews alike): player track is single, a second
+  -- crew only waited behind the first or blocked it
+  for _, rec in pairs(R.trains) do
+    if rec.kind == "construction" and rec.force == line.force then return end
+  end
+  local anchor = lo == 1 and rails.manual_anchor(line) or (line.pieces[lo - 1] and line.pieces[lo - 1].e)
+  local via = rails.manual_via(line) -- (behind a branch: the crew reaches it through the junction from there)
+  if anchor and anchor.valid and via and via.valid then anchor = via end
+  if not (anchor and anchor.valid) then
+    if line.wait ~= "no-access" then
+      line.wait = "no-access"
+      util.log("rails: track segment #%d (%s) waits: no built track leads to it yet", line.id, line.force)
+    end
+    track_waits(line, "no-access", lo)
+    return
+  end
+  local cands = {}
+  for _, un in ipairs(sorted_keys(R.depots)) do
+    local d = R.depots[un]
+    if d.force == line.force and d.platform and d.platform.spec and d.entity.valid and d.surface == line.surface then
+      cands[#cands + 1] = {un = un, d = util.distance(d.entity.position, anchor.position)}
+    end
+  end
+  table.sort(cands, function(x, y) return x.d < y.d end)
+  local why = "no-depot"
+  for k = 1, min(#cands, 4) do
+    local d = R.depots[cands[k].un]
+    local rail = d.platform.rails[floor(#d.platform.rails / 2)]
+    local ok, res = false, nil
+    if rail and rail.valid then
+      ok, res = pcall(game.train_manager.request_train_path, {starts = {{rail = rail, direction = RD.front},
+        {rail = rail, direction = RD.back}}, goals = {{rail = anchor, direction = RD.front},
+        {rail = anchor, direction = RD.back}}, type = "any-goal-accessible"})
+    end
+    if ok and res and res.found_path then
+      local net = logistics.hub_network(d.un)
+      local need = rails_needed(line, 1, lo)
+      if not net or net.get_item_count(rails.RAIL) < min(need, rails.CREW_MIN_RAILS) then
+        why = "no-rails"
+      else
+        local train, reason = rails.create_train(d.un, "construction")
+        if train then
+          local rec = rails.train_record(train)
+          rec.line, rec.dir, rec.state = line.id, 1, "to_head"
+          local wagon = wagons_of(train, rails.CWAGON)[1]
+          rec.wagon = wagon
+          local inv = wagon and wagon.get_inventory(defines.inventory.cargo_wagon)
+          local cap = rails.WAGON_STACKS * (prototypes.item[rails.RAIL].stack_size or 100)
+          local loaded_n = inv and logistics.transfer(net, inv, rails.RAIL, min(need, cap)) or 0
+          line.loaded = line.loaded + loaded_n
+          if inv then logistics.transfer(net, inv, rails.FUEL, rails.CREW_COAL) end
+          line.builder = train.id
+          line.wait = nil
+          util.log("rails: track segment #%d: construction train %d from depot #%d, %d rails loaded of %d needed",
+            line.id, train.id, d.un, loaded_n, need)
+          return
+        end
+        why = reason
+      end
+    else
+      why = "no-access"
+    end
+  end
+  if line.wait ~= why then
+    line.wait = why
+    util.log("rails: track segment #%d (%s) waits for a construction train: %s", line.id, line.force, tostring(why))
+  end
+  track_waits(line, why, lo)
+end
+
 local function check_lines()
   local R = rstate()
   for _, id in ipairs(sorted_keys(R.lines)) do
     local line = R.lines[id]
     local st = line.state
-    if (st == "building" or st == "cut") and line.pieces then
+    if line.kind == "manual" then -- 0.1.2 (#31 part A): a Rail tool segment
+      if (st == "building" or st == "cut") and line.pieces then
+        if line.builder and not R.trains[line.builder] then line.builder = nil end
+        if line.missing <= 0 and supports_missing(line) == 0 then
+          line.state = "open"
+          line.opened = line.opened or game.tick
+          line.wait = nil
+          util.log("rails: track segment #%d of %s built: %d pieces (%d robots, %d crews)", line.id, line.force,
+            #line.pieces, line.robot or 0, (line.used or 0) - (line.robot or 0))
+        elseif not line.builder then
+          dispatch_manual(line)
+        end
+      elseif st == "open" and line.missing > 0 then
+        line.state = "cut"
+      end
+    elseif (st == "building" or st == "cut") and line.pieces then
       if line.builder and not R.trains[line.builder] then line.builder = nil end
       local detour_due = st == "building" and line.blocked and line.blocked_at
         and (line.detours or 0) < #rails.DETOUR_SPAN
@@ -3090,8 +3605,8 @@ local function place_signals(line, p, rec, s)
     local loc = re[key]
     local inv = wagon_inv(rec)
     if loc and loc.rail_layer == 0 and inv and inv.get_item_count(rails.RAIL) >= CFG.signal_rails then
-      local sig = s.create_entity({name = rails.SIGNAL, position = loc.position, direction = loc.direction,
-                                   force = line.force, rail_layer = loc.rail_layer})
+      local sig = s.create_entity({name = line.chain and CHAIN or rails.SIGNAL, position = loc.position,
+                                   direction = loc.direction, force = line.force, rail_layer = loc.rail_layer})
       if sig then
         take_rails(rec, CFG.signal_rails)
         line.used = line.used + CFG.signal_rails
@@ -3176,6 +3691,9 @@ local function lay_piece(line, i, rec, s)
   p.e, p.g = ent, nil
   line.missing = line.missing - 1
   if p.sig then place_signals(line, p, rec, s) end
+  -- 0.1.2 (#31 part A): the piece next to existing track: signals around the junction
+  if p.jpos then rails.junction_signals(s, line.force, p.jpos) end
+  if p.jpos2 then rails.junction_signals(s, line.force, p.jpos2) end
   return true
 end
 
@@ -3238,6 +3756,20 @@ local function builder_step(rec, train)
     if rec.state == "returning" then
       util.log("rails: construction train %d stuck on its way home at %s for %.0f s (%s): recalled to depot #%s",
         train.id, where, secs, how, tostring(rec.home))
+      if rails.human(rec.force) then -- 0.1.2 (#31 part A): what held it (player track)
+        local coal, burning = 0, 0
+        for _, group in pairs({train.locomotives.front_movers, train.locomotives.back_movers}) do
+          for _, loco in ipairs(group) do
+            local finv = loco.get_fuel_inventory()
+            coal = coal + (finv and finv.get_item_count(rails.FUEL) or 0)
+            if loco.burner and loco.burner.currently_burning then burning = burning + 1 end
+          end
+        end
+        local inv = wagon_inv(rec)
+        util.log("rails: construction train %d: %d coal in its locomotives (%d burning), %d in the wagon, path %s to %s, "
+          .. "speed %.2f", train.id, coal, burning, inv and inv.get_item_count(rails.FUEL) or -1, tostring(train.has_path),
+          train.path_end_rail and util.pos_str(train.path_end_rail.position) or "-", train.speed)
+      end
       despawn(rec, train)
     else
       util.log("rails: construction train %d of line #%s stuck at %s for %.0f s (%s): it goes home", train.id,
@@ -3247,12 +3779,71 @@ local function builder_step(rec, train)
     return
   end
   if rec.state == "returning" then
-    if rec.arrived then despawn(rec, train) end
+    if rec.arrived then
+      despawn(rec, train)
+    elseif rails.human(rec.force) then
+      -- 0.1.2 (#31 part A): a player's junctions turn one way: a crew with no way back to its depot goes to the
+      -- nearest own depot it can reach instead (a branch built from the main track towards a depot further on)
+      if (train.state == TS.no_path or train.state == TS.path_lost) and not rec.rehomed then
+        rec.rehomed = true
+        local here = train.front_stock.position
+        local cands = {}
+        for _, un in ipairs(sorted_keys(R.depots)) do
+          local d = R.depots[un]
+          if un ~= rec.home and d.force == rec.force and not d.station and d.platform and d.entity.valid then
+            cands[#cands + 1] = {un = un, d = util.distance(d.entity.position, here)}
+          end
+        end
+        table.sort(cands, function(x, y) return x.d < y.d end)
+        for k = 1, min(#cands, 4) do
+          local d = R.depots[cands[k].un]
+          local goals = {}
+          for _, st in pairs(d.platform.stops) do
+            if st.valid and st.connected_rail then goals[#goals + 1] = {train_stop = st} end
+          end
+          local ok, res = pcall(game.train_manager.request_train_path, {train = train, goals = goals,
+                                                                        type = "any-goal-accessible"})
+          if #goals > 0 and ok and res and res.found_path then
+            rec.home = d.un
+            go_home(rec, train, "its own depot is out of reach")
+            break
+          end
+        end
+      end
+      -- ... and tops up on its way home (fixture runs: crews stood still on the way back from a long stretch of own
+      -- track until the stuck rule recalled them); the AI's crews as before
+      local inv = wagon_inv(rec)
+      for _, group in pairs(inv and {train.locomotives.front_movers, train.locomotives.back_movers} or {}) do
+        for _, loco in ipairs(group) do
+          local finv = loco.get_fuel_inventory()
+          if finv and finv.get_item_count(rails.FUEL) < 5 then logistics.transfer(inv, finv, rails.FUEL, 10) end
+        end
+      end
+    end
     return
   end
   if not (line and line.pieces) or line.state == "surveying" or line.detour_wanted then
     go_home(rec, train, line and "detour survey" or "no line")
     return
+  end
+  -- 0.1.2 (#31 part A): a manual line behind a branch: park behind the junction first, then head into the branch
+  if line.kind == "manual" and not rec.via_done then
+    local via = rails.manual_via(line)
+    if not (via and via.valid) then
+      rec.via_done = true
+    else
+      if rec.target ~= "via" then
+        rec.target = "via"
+        goto_rail(train, via)
+      end
+      if train.state == TS.wait_station or (abs(train.speed) < 0.01 and nearest_loco_distance(train, via.position) < 12)
+      then
+        rec.via_done, rec.target = true, nil
+      else
+        rec.state = "to_head"
+        return
+      end
+    end
   end
   local s = train.front_stock.surface
   local i = next_missing(line, rec.dir, rec.scan)
@@ -3261,8 +3852,8 @@ local function builder_step(rec, train)
     finish_build(rec, train, line)
     return
   end
-  -- never lay past the line's freight train
-  for _, ci in ipairs(cargo_positions(line)) do
+  -- never lay past the line's freight train (a Rail tool segment has none of its own)
+  for _, ci in ipairs(line.kind == "manual" and {} or cargo_positions(line)) do
     if (rec.dir == 1 and i > ci and ci > 0) or (rec.dir == -1 and i < ci and ci <= #line.pieces) then
       go_home(rec, train, "freight train ahead")
       return
@@ -3328,6 +3919,8 @@ local function builder_step(rec, train)
   local target
   if t >= 1 and t <= #line.pieces then
     target = line.pieces[t].e
+  elseif line.kind == "manual" then -- 0.1.2 (#31 part A): behind the rail the segment starts from
+    target = rails.manual_approach(line)
   else
     local d = rails.depot(t < 1 and line.a or line.b)
     local which = t < 1 and (line.a_end or 2) or (line.b_end or 2)
@@ -3507,9 +4100,52 @@ function rails.lines_of(force_name)
   local R = storage.rails
   for _, id in ipairs(sorted_keys(R and R.lines or {})) do
     local line = R.lines[id]
-    if line.force == force_name then out[#out + 1] = line end
+    if line.force == force_name and line.kind ~= "manual" then out[#out + 1] = line end -- (0.1.2: not the Rail tool's)
   end
   return out
+end
+
+--- 0.1.2 (#31 part A): the force's player-built track (Rail tool segments): {segments, pieces, missing, open}.
+function rails.track_of(force_name)
+  local out = {segments = 0, pieces = 0, missing = 0, open = 0}
+  local R = storage.rails
+  for _, line in pairs(R and R.lines or {}) do
+    if line.force == force_name and line.kind == "manual" and line.pieces then
+      out.segments = out.segments + 1
+      out.pieces = out.pieces + #line.pieces
+      out.missing = out.missing + (line.missing or 0)
+      if line.state == "open" then out.open = out.open + 1 end
+    end
+  end
+  return out
+end
+
+--- 0.1.2 (#31 part A): take a Rail tool segment back: the ghosts and supports not built yet go (built pieces stay);
+--- a crew on it goes home. Returns true and the number of ghosts removed.
+function rails.remove_manual_line(id)
+  local R = rstate()
+  local line = R.lines[id]
+  if not (line and line.kind == "manual") then return false, 0 end
+  local n = 0
+  local idx = R.index[line.surface]
+  for _, p in ipairs(line.pieces or {}) do
+    if p.g and p.g.valid then
+      p.g.destroy()
+      n = n + 1
+    end
+    if idx and not p.reused and not (p.e and p.e.valid) then idx[pkey(p.name, p.x, p.y, p.d)] = nil end
+  end
+  for _, sp in ipairs(line.supports or {}) do
+    if sp.g and sp.g.valid then sp.g.destroy() end
+  end
+  local job = R.jobs[id]
+  if job then
+    R.jobs[id] = nil
+    if job.sched then pcall(sched.cancel, job.sched) end
+  end
+  R.lines[id] = nil
+  util.log("rails: track segment #%d of %s taken back: %d ghosts removed", id, line.force, n)
+  return true, n
 end
 
 --- Trains of a force: list of records.
@@ -4346,6 +4982,7 @@ end)
 
 events.on_nth_tick(rails.CHECK_PERIOD, function()
   local R = storage.rails
+  if R and R.stations then rails.check_stations() end -- 0.1.2 (#31 part A)
   if not (R and next(R.lines)) then return end
   check_lines()
   -- stops of depots that lost one (destroyed) come back
@@ -4469,6 +5106,9 @@ local function on_built_rail(e)
     line.missing = line.missing - 1
     line.robot = line.robot + p.rails
     line.used = line.used + p.rails
+    -- 0.1.2 (#31 part A): a junction piece built by robots
+    if p.jpos then rails.junction_signals(entity.surface, line.force, p.jpos) end
+    if p.jpos2 then rails.junction_signals(entity.surface, line.force, p.jpos2) end
   end
 end
 events.on(defines.events.on_robot_built_entity, on_built_rail)
@@ -4492,6 +5132,18 @@ function rails.init()
   rstate()
   learn_geometry()
   bind()
+  -- 0.1.2 (#31 part A): a save from before the Station and the signals: a force with Railways gets them now (research
+  -- only recomputes its unlocks when a technology finishes)
+  local rr = storage.research
+  if research and research.apply and rr and rr.unlocked then
+    for _, force_name in ipairs(sorted_keys(rr.forces or {})) do
+      local u, f = rr.unlocked[force_name], game.forces[force_name]
+      if f and u and u[rails.DEPOT] and not u[rails.STATION] then
+        research.apply(f)
+        util.log("rails: %s has Railways from an older save: the Station and the signals unlocked", force_name)
+      end
+    end
+  end
 end
 
 events.on_load(bind)

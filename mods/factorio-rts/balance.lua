@@ -454,6 +454,11 @@ balance.nation.rails = {
   locomotive_kit = {cost = {["iron-plate"] = 40, ["steel-plate"] = 10, ["electronic-circuit"] = 10}, time = 10},
   cargo_wagon_kit = {cost = {["iron-plate"] = 20, ["steel-plate"] = 5}, time = 6},
   construction_wagon_kit = {cost = {["iron-plate"] = 30, ["steel-plate"] = 10}, time = 8},
+  -- 0.1.2 (#31 part A): player-built track: the Station (a small hub: 2 stockpiles, logistic radius 10, two train stops
+  -- on the own track next to it; no supply cap) and the signals
+  station = {cost = {["iron-plate"] = 20, ["steel-plate"] = 4, ["copper-plate"] = 4}, time = 5, health = 800},
+  signal = {cost = {["iron-plate"] = 5, ["electronic-circuit"] = 1}, time = 1},
+  chain_signal = {cost = {["iron-plate"] = 5, ["electronic-circuit"] = 1}, time = 1},
   -- bill of a line, in rail items: track pieces cost their vanilla rail count (straight 1, half-diagonal 2,
   -- curves 3); bridges and signals are paid in rails too, so a construction wagon only ever carries rails
   support_rails = 10, ramp_rails = 20, signal_rails = 2,
