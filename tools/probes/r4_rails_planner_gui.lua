@@ -18,6 +18,7 @@
 --   warnings   #33: a depot no track reaches added to the train's stops gets "No track leads here from stop 2", and a
 --              second train between the depot and Station 2 the passing-loop hint (the train panel, screenshot)
 --   unit_click with the planner in hand, a click over one of the player's walkers selects nothing (the planner has the click)
+--   rotate     R before the first click turns the first rail (vanilla rotate of the planner's cursor)
 --   q_ends     the first Q stops the planner's path (the rail stays in hand, as in vanilla), the second one ends laying:
 --              the RTS cursor comes back and hover selection goes off again
 -- Checks "[rts] r4p check <name>: PASS|FAIL ...", summary "[rts] r4p summary <passed>/<total>", marker RTS_R4P_DONE.
@@ -42,7 +43,7 @@ local railroutes = require("scripts.railroutes")
 local hud = require("scripts.hud")
 local selection = require("scripts.selection")
 
-local KEY = {Q = 12}
+local KEY = {Q = 12, R = 15}
 local RAILS = {"straight-rail", "half-diagonal-rail", "curved-rail-a", "curved-rail-b"}
 local RD = defines.rail_direction
 local TS = defines.train_state
@@ -654,6 +655,30 @@ step(function(player, P)
     and not cursor.holds_planner(player), "after the first Q: planner in hand %s (the path stopped), hover %s; after "
     .. "the second Q: RTS cursor %s, hover selection %s", tostring(P.q1.planner), tostring(P.q1.hover),
     tostring(cursor.holds_tool(player)), tostring(hover_on(player)))
+  -- R: a rail placed after one R press lies turned (the planner's first rail, vanilla rotate)
+  hud.build_click(player, "rail")
+  if not cursor.holds_planner(player) then hud.build_click(player, "rail") end
+  P.rpos = {x = P.view.x - 20, y = P.view.y + 24}
+  local x, y = spx(player, P.rpos)
+  drive("move %d %d", x, y)
+  drive("sleep 400")
+  drive("key %d", KEY.R)
+  drive("sleep 400")
+  drive("click %d %d", x, y)
+  drive("sleep 300")
+  drive("capture rotate")
+  drive("key %d", KEY.Q)
+  drive("sleep 500")
+  drive("key %d", KEY.Q)
+  return 300
+end)
+
+step(function(player, P)
+  local g = player.surface.find_entities_filtered({position = P.rpos, radius = 3, name = "entity-ghost",
+                                                    force = player.force})[1]
+  check(P, "rotate", g ~= nil and g.direction ~= defines.direction.north,
+    "after R a click placed %s with direction %s (an unturned first rail is north, 0)",
+    g and g.ghost_name or "nothing", g and tostring(g.direction) or "-")
   shot(player, "end")
   util.log("r4p summary %d/%d", P.pass or 0, P.total or 0)
   util.log("RTS_R4P_DONE player %d", player.index)
