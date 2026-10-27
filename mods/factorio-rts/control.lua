@@ -97,6 +97,7 @@ local modules = {
   -- 0.1.1 (issue #16): guided objectives (after the HUD and the lobby: their layout and the lobby switch; after the
   -- modules whose events and signals tick the steps)
   require("scripts.helpgui"),   -- 0.1.2 (#30): the help card (Shift hover, ? buttons; after the HUD)
+  require("scripts.stripgui"),  -- 0.1.3 (#38): the configurable top strip (chooser, hover details; after the HUD)
   require("scripts.netwait"),   -- 0.1.2 (#26): ghosts waiting for items in a hub / city network (read-only; panels and alert)
   require("scripts.objectives"),
   require("scripts.debug"),

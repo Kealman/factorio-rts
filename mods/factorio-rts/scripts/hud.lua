@@ -141,9 +141,10 @@ local P4 = {
   DEMOLISH_HEIGHT = 22, -- the building page's Demolish button (header row)
   -- Phase 5 E1: the factory / district Auto button (recipe tag) and the Nation-only Age II build tab (two rows when it
   -- holds more than BUILD_COLUMNS items; the frame grows upwards by BUILD_ROW per extra row)
-  AUTO = "*auto*", ENDLESS = "*endless*", BUILD_ROW = 42, AGE2_TAB_WIDTH = 26, TAB_PADDING_NATION = 5, -- (the text tabs narrow a little)
+  AUTO = "*auto*", ENDLESS = "*endless*", BUILD_ROW = 42, RECIPE_ROW = 36, FACTORY_ROWS = 2, CTL_SIZE = 24, AGE2_TAB_WIDTH = 26, TAB_PADDING_NATION = 5, -- (the text tabs narrow a little)
 }
 P4.CARDS_WIDTH = P4.CARD_MAX * P4.CARD_SIZE + (P4.CARD_MAX - 1) * P4.CARD_SPACING -- 190
+P4.stripgui = require("scripts.stripgui") -- 0.1.3 (#38): the top strip's entry list, chooser and hover texts
 -- Phase 5 M1 (scripts/cities.lua, scripts/territory.lua): build items and factory recipes shown in Nation mode only;
 -- the strip shows the territory share and a Cities button (scripts/citygui.lua city list) in Nation mode.
 P4.NATION_ONLY = {["rts-city-charter"] = true, ["rts-fort"] = true}
@@ -175,7 +176,8 @@ for _, name in ipairs({"rts-gate", "rts-artillery-wagon-kit", "rts-armoured-loco
                        "rts-rail-shell"}) do
   P4.NATION_ONLY[name] = true end
 -- Release 0.1.2 (#25): the long-handed inserter (recipe and build item) is Nation only: the Skirmish factory page holds
--- 28 buttons (two rows of 14, Pause included) and the underground belt and splitter already fill it.
+-- 28 recipes (two rows of 14; since 0.1.3 Pause / Auto / Endless sit in the header) and is full without it; a 29th
+-- would make the Skirmish panel grow a row, which #34 leaves out on purpose.
 for _, name in ipairs({"rts-long-inserter", "long-handed-inserter"}) do P4.NATION_ONLY[name] = true end
 P4.crafter = function(kind) return kind == "factory" or kind == "district" end -- Phase 5 E1: districts are producers
 P4.place_name = require("scripts.world").place_name -- Phase 5 M2 world: region names in alerts (alert_text)
@@ -335,19 +337,6 @@ for _, tab in ipairs(BUILD_TABS) do
   for _, item in ipairs(tab.items) do BUILD_ITEMS[#BUILD_ITEMS + 1] = item end
 end
 local RTS_CATEGORIES = {["rts-buildings"] = true, ["rts-units"] = true}
-
--- Top-strip resources: economy.snapshot field, icon, tooltip key.
--- `item` (Phase 4): read snapshot.items[item] instead of the snapshot field `key`.
-local RESOURCES = {
-  {key = "iron", sprite = "item/iron-plate", tooltip = "rts.res-iron-tooltip"},
-  {key = "copper", sprite = "item/copper-plate", tooltip = "rts.res-copper-tooltip"},
-  {key = "steel", sprite = "item/steel-plate", tooltip = "rts.res-steel-tooltip"},
-  {key = "circuits", item = "electronic-circuit", sprite = "item/electronic-circuit",
-   tooltip = "rts.res-circuits-tooltip"},
-  {key = "explosives", item = "rts-explosives", sprite = "item/rts-explosives", tooltip = "rts.res-explosives-tooltip"},
-  {key = "stone", sprite = "item/stone", tooltip = "rts.res-stone-tooltip"},
-  {key = "magazines", sprite = "item/firearm-magazine", tooltip = "rts.res-magazines-tooltip"},
-}
 
 -- Alert kinds (storage.alerts): icon (first valid sprite path wins), text colour, sound when it arrives.
 P4.ALERT_STYLE = {
@@ -778,7 +767,8 @@ local function place(player, h)
   local mx = res.width - px(MINIMAP_SIZE, s) - pad - m
   h.minimap.location = {mx, m + pad}
   h.minimap_frame.location = {mx - pad, m}
-  h.panel.location = {m, res.height - px(PANEL_HEIGHT, s) - m}
+  local ph = PANEL_HEIGHT + (h.panel_extra or 0) * P4.RECIPE_ROW
+  h.panel.location = {m, res.height - px(ph, s) - m}
   h.build.location = {res.width - px(BUILD_WIDTH, s) - m,
                       res.height - px(BUILD_HEIGHT + (h.build_extra_rows or 0) * P4.BUILD_ROW, s) - m}
   -- Centred, but never under the minimap (at large UI scales on narrow windows the centred strip would reach it).
@@ -794,7 +784,7 @@ local function place(player, h)
   util.log("hud: layout player=%d display %dx%d scale %.2f: panel (%d, %d) %dx%d, build (%d, %d) %dx%d, "
     .. "strip (%d, %d) %dx%d, minimap (%d, %d) %dx%d, alerts (%d, %d) %d wide, kill feed (%d, %d) %d wide",
     player.index, res.width, res.height, s,
-    m, res.height - px(PANEL_HEIGHT, s) - m, px(PANEL_WIDTH, s), px(PANEL_HEIGHT, s),
+    m, res.height - px(ph, s) - m, px(PANEL_WIDTH, s), px(ph, s),
     res.width - px(BUILD_WIDTH, s) - m, res.height - px(BUILD_HEIGHT, s) - m, px(BUILD_WIDTH, s), px(BUILD_HEIGHT, s),
     sx, m, sw, px(STRIP_HEIGHT, s), mx, m + pad, px(MINIMAP_SIZE, s), px(MINIMAP_SIZE, s), ax, ay, aw, m, m,
     px(P4.KILL_WIDTH, s))
@@ -904,6 +894,11 @@ local function build_building_page(panel, h)
   el.b_tabs.style.horizontal_spacing = 2
   el.b_tabs.style.left_margin = 8
   el.b_tabs.visible = false
+  -- 0.1.3 (#35): Pause / Auto / Endless live in the header (never in the recipe grid), so the grid holds recipes only
+  el.b_ctl = header.add({type = "flow", direction = "horizontal"})
+  el.b_ctl.style.horizontal_spacing = 2
+  el.b_ctl.style.left_margin = 6
+  el.b_ctl.visible = false
   add_filler(header)
   el.b_hp = header.add({type = "label", style = "rts_hud_mono_label", tooltip = {"rts.health"}})
   -- 0.1.2 (#30): the pinned help card of this building (scripts/helpgui.lua reads tags.rts_help)
@@ -981,6 +976,47 @@ local function resource_pair(row, sprite, tooltip)
   return pair.add({type = "label", style = "rts_hud_mono_label", caption = "-", tooltip = tooltip}), pair
 end
 
+--- 0.1.3 (#38): (re)build the strip from the entry list `keys` (scripts/stripgui.lua). Row 1 keeps the timer, the army
+--- counters and the supply as labels shown or hidden; row 2 gets one pair per other entry in list order, then the gear.
+function P4.fill_strip(h, keys, nation)
+  local stripgui = P4.stripgui
+  local el = h.el
+  local on = {}
+  for _, key in ipairs(keys) do on[key] = true end
+  el.timer.visible = on.timer == true
+  el.own.visible, el.vs.visible, el.enemy.visible = on.army == true, on.army == true, on.army == true
+  el.supply.visible = on.supply == true
+  el.res_row.clear()
+  h.sres, el.treasury = {}, nil
+  for _, key in ipairs(keys) do
+    local item = stripgui.item_of(key)
+    if item then
+      local sprite = "item/" .. item
+      if valid_sprite(sprite) then
+        h.sres[key] = {item = item, label = (resource_pair(el.res_row, sprite, prototypes.item[item].localised_name))}
+      end
+    elseif key == "power" then
+      local power_tip = {"rts.power-tooltip"}
+      local power, pair = resource_pair(el.res_row, "tooltip-category-electricity", power_tip) -- core SpritePrototype
+      h.sres.power = {label = power,
+                      sat = pair.add({type = "label", style = "rts_hud_mono_label", caption = "", tooltip = power_tip})}
+    elseif key == "bots" then
+      h.sres.bots = {label = (resource_pair(el.res_row, "item/construction-robot", {"rts.bots-tooltip"}))}
+    elseif key == "treasury" and nation then
+      -- Phase 5 M2 treasury: "(coin) 1,240 (+35/min)" (scripts/treasury.lua); a click opens the market (Nation only)
+      el.treasury = el.res_row.add({type = "label", name = PREFIX .. "treasury", style = "rts_hud_mono_label",
+                                    caption = "", tags = {rts_hud = "market"}})
+      el.treasury.visible = false
+    end
+  end
+  local sprite = first_sprite({"utility/rename_icon", "utility/rename_icon_normal", "utility/gear"})
+  local gear = el.res_row.add({type = "sprite-button", name = PREFIX .. "strip_gear", style = "tool_button",
+    sprite = sprite, caption = (not sprite) and "*" or nil, tooltip = {"rts-strip.gear-tooltip"},
+    tags = {rts_hud = "strip_gear"}})
+  gear.style.size = 22
+  h.strip_sig = table.concat(keys, ",") .. (nation and "|n" or "|s")
+end
+
 local function build_strip(screen, h)
   local strip = screen.add({type = "frame", name = NAMES.strip, direction = "vertical", style = "rts_hud_frame"})
   strip.style.width = STRIP_WIDTH
@@ -991,7 +1027,7 @@ local function build_strip(screen, h)
   el.timer = row.add({type = "label", style = "rts_hud_timer_label", caption = "--:--", tooltip = {"rts.match-time"}})
   el.own = row.add({type = "label", style = "rts_hud_mono_label", tooltip = {"rts.own-units-tooltip"}})
   el.own.style.font_color = COLOR.own
-  row.add({type = "label", style = "rts_hud_dim_label", caption = {"rts.versus"}})
+  el.vs = row.add({type = "label", style = "rts_hud_dim_label", caption = {"rts.versus"}})
   el.enemy = row.add({type = "label", style = "rts_hud_mono_label", tooltip = {"rts.enemy-units-tooltip"}})
   el.enemy.style.font_color = COLOR.enemy
   -- Phase 4: supply used / cap (supply.get)
@@ -1022,21 +1058,10 @@ local function build_strip(screen, h)
   el.menu.style.padding = {0, 6}
   el.menu.style.font = "default-semibold"
 
-  local res = strip.add({type = "flow", direction = "horizontal", style = "rts_hud_centered_row"})
-  res.style.horizontal_spacing = 8
-  h.res = {}
-  for _, r in ipairs(RESOURCES) do
-    if valid_sprite(r.sprite) then h.res[r.key] = resource_pair(res, r.sprite, {r.tooltip}) end
-  end
-  local power_tip = {"rts.power-tooltip"}
-  local power, pair = resource_pair(res, "tooltip-category-electricity", power_tip) -- core SpritePrototype
-  h.res.power = power
-  h.res.power_sat = pair.add({type = "label", style = "rts_hud_mono_label", caption = "", tooltip = power_tip})
-  h.res.bots = resource_pair(res, "item/construction-robot", {"rts.bots-tooltip"})
-  -- Phase 5 M2 treasury: "₡ 1,240 (+35/min)" (scripts/treasury.lua); a click opens the market (Nation mode only)
-  el.treasury = res.add({type = "label", name = PREFIX .. "treasury", style = "rts_hud_mono_label", caption = "",
-                         tags = {rts_hud = "market"}})
-  el.treasury.visible = false
+  -- 0.1.3 (#38): the resource row is filled by P4.fill_strip from the player's list (scripts/stripgui.lua)
+  el.res_row = strip.add({type = "flow", direction = "horizontal", style = "rts_hud_centered_row"})
+  el.res_row.style.horizontal_spacing = 8
+  h.sres = {}
 
   local message_row = strip.add({type = "flow", direction = "horizontal", style = "rts_hud_centered_row"})
   el.message = message_row.add({type = "label", style = "rts_hud_message_label"})
@@ -1407,6 +1432,19 @@ end
 ---------------------------------------------------------------------------
 -- Refresh: building page (Phase 2)
 ---------------------------------------------------------------------------
+--- 0.1.3 (#35): the building panel holds `extra` more recipe rows than the two it was sized for: taller, and moved
+--- up so its bottom edge stays put. Logs "hud: panel rows player=N extra=E height=H" when it changes.
+function P4.set_panel_rows(player, h, extra)
+  if (h.panel_extra or 0) == extra then return end
+  h.panel_extra = extra
+  local height = PANEL_HEIGHT + extra * P4.RECIPE_ROW
+  h.panel.style.height = height
+  local res, sc = player.display_resolution, player.display_scale
+  local m = math.floor(MARGIN * sc + 0.5)
+  h.panel.location = {m, res.height - math.floor(height * sc + 0.5) - m}
+  util.log("hud: panel rows player=%d extra=%d height=%d", player.index, extra, height)
+end
+
 local function rebuild_recipe_buttons(player, h, un, rec)
   local el = h.el
   local factory = P4.crafter(rec.kind) -- Phase 5 E1: districts too
@@ -1416,11 +1454,14 @@ local function rebuild_recipe_buttons(player, h, un, rec)
   h.recipe_buttons = {}
   h.recipe_locks = {}
   h.bld_un = un
+  if el.b_ctl and el.b_ctl.valid then el.b_ctl.clear() end
   if el.f_hint and el.f_hint.valid then el.f_hint.visible = false end
   if rec.kind ~= "barracks" and not factory then
     grid.visible = false
     el.b_text.visible = true
     el.b_foot.visible = false
+    if el.b_ctl and el.b_ctl.valid then el.b_ctl.visible = false end
+    P4.set_panel_rows(player, h, 0)
     set_text_width(el, PANEL_INNER)
     -- Phase 5 M1 integration: the factory's category tabs stayed on every page without recipes (City Center, depot,
     -- rolling stock) after a factory page
@@ -1434,19 +1475,21 @@ local function rebuild_recipe_buttons(player, h, un, rec)
   el.b_text.visible = not factory -- the factory's status is on the line under its full-width grid
   el.b_foot.visible = factory
   set_text_width(el, TEXT_WITH_GRID)
-  -- Pause first: same place for every producer, and a new recipe never moves it.
-  h.recipe_buttons[""] = grid.add({type = "sprite-button", name = PREFIX .. "recipe_pause",
-    style = "rts_hud_recipe_button", sprite = "utility/pause", tooltip = {"rts.pause-tooltip"},
+  -- 0.1.3 (#35): Pause first, then Auto (Nation factories) and Endless, in the header row: same place for every
+  -- producer, and the recipe grid below holds recipes only.
+  local ctl = el.b_ctl
+  ctl.visible = true
+  h.recipe_buttons[""] = ctl.add({type = "sprite-button", name = PREFIX .. "recipe_pause",
+    style = "rts_hud_ctl_button", sprite = "utility/pause", tooltip = {"rts.pause-tooltip"},
     tags = {rts_hud = "recipe", recipe = ""}})
   if factory and P4.nation() then -- Phase 5 E1: Auto (make targets pick the recipe)
-    h.recipe_buttons[P4.AUTO] = grid.add({type = "sprite-button", name = PREFIX .. "recipe_auto",
-      style = "rts_hud_recipe_button", sprite = "utility/refresh", tooltip = {"rts.recipe-auto-tooltip"},
+    h.recipe_buttons[P4.AUTO] = ctl.add({type = "sprite-button", name = PREFIX .. "recipe_auto",
+      style = "rts_hud_ctl_button", sprite = "utility/refresh", tooltip = {"rts.recipe-auto-tooltip"},
       tags = {rts_hud = "recipe", recipe = P4.AUTO}})
   end
-  -- Release 0.1.2 (#22): the Endless toggle (a click on a recipe makes endless production, as before 0.1.2, instead
-  -- of a counted order). After Pause and Auto so those never move.
-  h.recipe_buttons[P4.ENDLESS] = grid.add({type = "sprite-button", name = PREFIX .. "recipe_endless",
-    style = "rts_hud_recipe_button", sprite = "utility/status_working", tooltip = {"rts.recipe-endless-tooltip"},
+  -- Release 0.1.2 (#22): the Endless toggle (a click on a recipe makes endless production instead of a counted order).
+  h.recipe_buttons[P4.ENDLESS] = ctl.add({type = "sprite-button", name = PREFIX .. "recipe_endless",
+    style = "rts_hud_ctl_button", sprite = "utility/status_working", tooltip = {"rts.recipe-endless-tooltip"},
     tags = {rts_hud = "recipe", recipe = P4.ENDLESS}})
   -- Phase 5 E1: a factory in Nation mode shows one category tab at a time
   local tabs = rec.kind == "factory" and P4.nation() and el.b_tabs ~= nil and el.b_tabs.valid
@@ -1478,6 +1521,8 @@ local function rebuild_recipe_buttons(player, h, un, rec)
       names[#names + 1] = r.name
     end
   end
+  -- 0.1.3 (#35): the panel grows by one grid row per row beyond two (the build menu's build_extra_rows way)
+  P4.set_panel_rows(player, h, factory and math.max(0, math.ceil(#names / columns) - P4.FACTORY_ROWS) or 0)
   -- QA log line: the button order, left to right and row by row ("hud: recipe buttons barracks#N player=N:
   -- pause rts-walker-kit rts-walker-heavy-kit (6 per row)")
   util.log("hud: recipe buttons %s#%d player=%d: pause %s (%d per row)%s", rec.kind, un, player.index,
@@ -1494,8 +1539,8 @@ local function update_recipe_buttons(player, h, rec, active)
     if button.valid then
       local special = name == "" or name == P4.AUTO or name == P4.ENDLESS
       local lock = not special and recipe_lock(force, name) or false
-      local style = name == active and "rts_hud_recipe_button_active"
-        or (lock and "rts_hud_recipe_button_locked" or "rts_hud_recipe_button")
+      local style = name == active and (special and "rts_hud_ctl_button_active" or "rts_hud_recipe_button_active")
+        or (lock and "rts_hud_recipe_button_locked" or (special and "rts_hud_ctl_button" or "rts_hud_recipe_button"))
       set_style(button, style)
       if not special and h.recipe_locks[name] ~= lock then
         h.recipe_locks[name] = lock
@@ -1595,11 +1640,11 @@ local function update_producer(player, h, un, rec)
   end
   local endless_button = h.recipe_buttons and h.recipe_buttons[P4.ENDLESS]
   if endless_button and endless_button.valid then
-    set_style(endless_button, prefs(player.index).endless and "rts_hud_recipe_button_active" or "rts_hud_recipe_button")
+    set_style(endless_button, prefs(player.index).endless and "rts_hud_ctl_button_active" or "rts_hud_ctl_button")
   end
   local auto_button = h.recipe_buttons and h.recipe_buttons[P4.AUTO]
   if auto_button and auto_button.valid then
-    set_style(auto_button, st.auto and "rts_hud_recipe_button_active" or "rts_hud_recipe_button")
+    set_style(auto_button, st.auto and "rts_hud_ctl_button_active" or "rts_hud_ctl_button")
   end
   local stats = production.stats(rec.force)
   if not factory then
@@ -1782,6 +1827,8 @@ local function update_pieces(player, h, list)
     el.b_buttons.visible = false
     el.b_text.visible = true
     el.b_foot.visible = false
+    if el.b_ctl and el.b_ctl.valid then el.b_ctl.clear() end
+    P4.set_panel_rows(player, h, 0)
     set_text_width(el, PANEL_INNER)
     if el.b_tabs and el.b_tabs.valid then
       el.b_tabs.clear()
@@ -1890,8 +1937,10 @@ local function update_selection(player, h)
   el.bld_page.visible = false
   if h.bld_un then
     el.b_buttons.clear()
+    if el.b_ctl and el.b_ctl.valid then el.b_ctl.clear() end
     h.recipe_buttons, h.bld_un = {}, nil
   end
+  P4.set_panel_rows(player, h, 0)
   return update_units(player, h)
 end
 
@@ -1974,6 +2023,11 @@ local function update_strip(player, h)
   end
   local own = player.force.name
   local enemy = own == ENEMY and PLAYER or ENEMY
+  -- 0.1.3 (#38): the entry list follows the player's choice and the mode; the row is rebuilt when either changed
+  local stripgui = P4.stripgui
+  local nation0 = P4.nation()
+  local keys = stripgui.keys(player.index, nation0)
+  if h.strip_sig ~= table.concat(keys, ",") .. (nation0 and "|n" or "|s") then P4.fill_strip(h, keys, nation0) end
   el.own.caption = {"rts.army", count_force(own)}
   -- Phase 3 fog: only the enemy units in sight while the match runs, the real total after it. Phase 5 M1 QA round 1:
   -- 0 instead of "?" when none is in sight ("?" read as "unknown" in the middle of fights).
@@ -2008,18 +2062,33 @@ local function update_strip(player, h)
   end
 
   local snap = snapshot(own)
-  local res = h.res
+  local res = h.sres
   if snap then
-    for _, r in ipairs(RESOURCES) do
-      if res[r.key] then res[r.key].caption = fmt_count(r.item and (snap.items[r.item] or 0) or snap[r.key]) end
+    local stocks = {}
+    for _, entry in pairs(res) do
+      if entry.item then
+        local count = snap.items[entry.item] or 0
+        local tip, minutes, total = stripgui.item_tooltip(player, entry.item, count)
+        count = total or count
+        stocks[entry.item] = count
+        entry.label.caption = minutes and {"rts-strip.label-left", fmt_count(count), stripgui.minutes_text(minutes)}
+          or fmt_count(count)
+        entry.label.tooltip = tip
+        entry.label.style.font_color = (minutes and minutes < 3) and COLOR.red
+          or ((minutes and minutes < 10) and COLOR.yellow or COLOR.white)
+      end
     end
-    res.power.caption = {"rts.power-mw", string.format("%.1f", snap.power_demand / 1e6),
-                         string.format("%.1f", snap.power_capacity / 1e6)}
+    stripgui.sample(player.index, stocks)
+    if res.power then
+      res.power.label.caption = {"rts.power-mw", string.format("%.1f", snap.power_demand / 1e6),
+                                 string.format("%.1f", snap.power_capacity / 1e6)}
+      local sat0 = math.floor(snap.power_satisfaction * 100 + 0.5)
+      res.power.sat.caption = string.format("%d%%", sat0)
+      res.power.sat.style.font_color = sat0 >= 90 and COLOR.green or (sat0 >= 50 and COLOR.yellow or COLOR.red)
+      res.power.label.style.font_color = snap.power_demand > 0.9 * snap.power_capacity and COLOR.yellow or COLOR.white
+    end
+    if res.bots then res.bots.label.caption = string.format("%d/%d", snap.bots_idle, snap.bots_total) end
     local sat = math.floor(snap.power_satisfaction * 100 + 0.5)
-    res.power_sat.caption = string.format("%d%%", sat)
-    res.power_sat.style.font_color = sat >= 90 and COLOR.green or (sat >= 50 and COLOR.yellow or COLOR.red)
-    res.power.style.font_color = snap.power_demand > 0.9 * snap.power_capacity and COLOR.yellow or COLOR.white
-    res.bots.caption = string.format("%d/%d", snap.bots_idle, snap.bots_total)
     -- QA log line, when a value changed and at most every RESOURCE_LOG_TICKS:
     -- "hud resources player=N iron=.. copper=.. steel=.. stone=.. magazines=.. power=../.. MW sat=..% bots=../.."
     local line = string.format("iron=%d copper=%d steel=%d stone=%d magazines=%d power=%.2f/%.2f MW sat=%d%% bots=%d/%d"
@@ -2268,6 +2337,7 @@ function hud.refresh(player_index)
   end
   for _, fn in ipairs(hud.refresh_hooks) do fn(player) end
 end
+P4.stripgui.refresh = hud.refresh -- the chooser redraws the strip after a change
 
 -- A torn-down match takes its kill feed, attack-alert rate limits and pings with it (Wave C).
 match.on_teardown(function()
@@ -2563,6 +2633,8 @@ local function on_click(e)
     if toggle then toggle(player) end
   elseif action == "build_tab" then
     hud.set_build_tab(player, element.tags.tab)
+  elseif action == "strip_gear" then -- 0.1.3 (#38): the top strip's chooser
+    P4.stripgui.toggle(player)
   elseif action == "factory_tab" then -- Phase 5 E1: the factory page's category tabs
     prefs(player.index).factory_tab = element.tags.tab
     h.bld_un = nil -- rebuild the recipe grid on the refresh below

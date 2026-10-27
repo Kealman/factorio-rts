@@ -167,6 +167,19 @@ styles.rts_hud_recipe_button = {
   size = 34,
 }
 
+-- 0.1.3 (#35): Pause / Auto / Endless in the building page's header row (24 px; hud.lua P4.CTL_SIZE).
+styles.rts_hud_ctl_button = {
+  type = "button_style",
+  parent = "slot_button",
+  size = 24,
+}
+
+styles.rts_hud_ctl_button_active = {
+  type = "button_style",
+  parent = "yellow_slot_button",
+  size = 24,
+}
+
 -- The recipe the machine runs now (or pause while it has none).
 styles.rts_hud_recipe_button_active = {
   type = "button_style",
