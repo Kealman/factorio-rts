@@ -47,6 +47,8 @@
 --   railroutes.targets(rec) -> {[depot un] = stop index}  (garrison.lua: troop trains coming to a depot)
 --   railroutes.bombard_here(rec, train) -> bool  (trainswar.lua)
 --   railroutes.selected_stop = fn(player_index, train_id) -> stop index | nil (railgui.lua: Shift + right click)
+--   railroutes.unreachable(rec) -> {[stop index] = index of the stop before} (0.1.3, #33: no track leads there)
+--   railroutes.shared_with(rec) -> train id | nil (0.1.3, #33: another train runs between two of the same stops)
 -- Log lines "[rts] rails: route ...".
 local util = require("scripts.util")
 local events = require("scripts.events")
@@ -929,6 +931,76 @@ function railroutes.bombard_here(rec, train)
 end
 
 --- The panel line: {index, count, stop, phase = "unload" | "load" | nil, item, done, want, state}.
+-- 0.1.3 (#33 item 2): where a train standing at a depot or station stop can start from (both ways: trains are
+-- double-headed) and the stops it can head for. nil for a rail stop or a depot that is gone.
+local function stop_points(stop)
+  local d = stop and stop.target and rails.depot(stop.target)
+  if not (d and d.platform and d.entity and d.entity.valid) then return nil end
+  local starts, goals = {}, {}
+  for _, st in pairs(d.platform.stops or {}) do
+    local rail = st.valid and st.connected_rail
+    if rail then
+      starts[#starts + 1] = {rail = rail, direction = defines.rail_direction.front}
+      starts[#starts + 1] = {rail = rail, direction = defines.rail_direction.back}
+      goals[#goals + 1] = {train_stop = st}
+    end
+  end
+  if #goals == 0 then return nil end
+  return starts, goals
+end
+
+--- 0.1.3 (#33 item 2): the stops of a list that no track leads to from the stop before (junctions turn one way, as in
+--- vanilla, or the track is not built yet; with Loop on the stop before stop 1 is the last one): {[i] = index of the
+--- stop before}. Depot and station stops only. One path request per stop (the panel asks every few seconds).
+function railroutes.unreachable(rec)
+  local out = {}
+  local stops = rec and rec.stops or {}
+  local n = #stops
+  if n < 2 then return out end
+  for i = 1, n do
+    local j = i > 1 and i - 1 or (rec.loop ~= false and n or nil)
+    local starts = j and stop_points(stops[j])
+    local _, goals = stop_points(stops[i])
+    if starts and goals then
+      local ok, res = pcall(game.train_manager.request_train_path, {starts = starts, goals = goals,
+                                                                    type = "any-goal-accessible"})
+      if ok and res and not res.found_path then out[i] = j end
+    end
+  end
+  return out
+end
+
+--- 0.1.3 (#33 item 1): another train of the force whose stop list shares two or more depots or stations with this one
+--- (on single track two such trains can each wait for the platform the other one holds). Returns its train id or nil.
+function railroutes.shared_with(rec)
+  local mine, n = {}, 0
+  for _, st in ipairs(rec and rec.stops or {}) do
+    if st.target and not mine[st.target] then
+      mine[st.target] = true
+      n = n + 1
+    end
+  end
+  if n < 2 then return nil end
+  local R = storage.rails
+  local ids = {}
+  for id in pairs(R and R.trains or {}) do ids[#ids + 1] = id end
+  table.sort(ids)
+  for _, id in ipairs(ids) do
+    local other = R.trains[id]
+    if other ~= rec and other.force == rec.force and other.stops then
+      local seen, shared = {}, 0
+      for _, st in ipairs(other.stops) do
+        if st.target and mine[st.target] and not seen[st.target] then
+          seen[st.target] = true
+          shared = shared + 1
+        end
+      end
+      if shared >= 2 then return id end
+    end
+  end
+  return nil
+end
+
 function railroutes.status(rec, train)
   local out = {count = rec.stops and #rec.stops or 0, state = rec.state}
   if not (rec.stops and train and train.valid) then return out end

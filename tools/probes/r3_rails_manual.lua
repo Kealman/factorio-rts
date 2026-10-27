@@ -30,7 +30,8 @@
 -- seg3 (the free-point branch built, chain signals at its junction), reuse (the auto lines A - C and A - B reuse >= 90 %
 -- of their pieces), partial (A - D open, part of it reused, part new), depot_lines (A holds all three lines), loops
 -- (each train >= MIN_LOOPS loops in RUN_MINUTES, the stop order kept, no stand at a signal over STUCK_S), own_land,
--- station, track_waits (the alert of track 4), cancel (track 4 after the cancelled ghost), platform_held (train 2 kept
+-- station, track_waits (the alert of track 4), cancel (track 4 after the cancelled ghost), warnings (#33: a stop no
+-- track leads to, two trains between the same stops), platform_held (train 2 kept
 -- on C's platform: train 1, bound for C, shows the single-track hint after a minute at a signal). A crew without a path
 -- dumps its track ("r3 manual: diag: ..."). Summary "[rts] r3 manual summary <passed>/<total>".
 local events = require("scripts.events")
@@ -559,6 +560,15 @@ local function run(T)
   check(T, "loops", order and loops[1] >= MIN_LOOPS and loops[2] >= MIN_LOOPS and (T.max_stuck or 0) < STUCK_S,
     "train 1 %d loops (order %s), train 2 %d loops; longest stand at a signal %.0f s; train 1 delivered %s",
     loops[1], tostring(order), loops[2], T.max_stuck or 0, T.r1 and serpent.line(T.r1.delivered) or "-")
+  -- 0.1.3 (#33 items 1 and 2): the stop editor's warnings. A depot E whose platform no track reaches: A -> E and E -> A
+  -- are unreachable, A -> B is not; train 1 (A, B, C, B) shares A and C with train 2 (A, C)
+  T.E = depot(surface(), {x = 500, y = 300})
+  local un = railroutes.unreachable({stops = {{target = T.A}, {target = T.E}}, loop = true})
+  local none = railroutes.unreachable({stops = {{target = T.A}, {target = T.B}, {target = T.C}}, loop = true})
+  local shared = railroutes.shared_with(T.r1)
+  check(T, "warnings", un[2] == 1 and un[1] == 2 and next(none) == nil and shared ~= nil and shared == T.r2.id,
+    "A, E: unreachable %s; A, B, C: unreachable %s; train 1 shares its stops with train %s (train 2 is %s)",
+    serpent.line(un), serpent.line(none), tostring(shared), tostring(T.r2 and T.r2.id))
   T.stage, T.t5 = "hold", game.tick
 end
 

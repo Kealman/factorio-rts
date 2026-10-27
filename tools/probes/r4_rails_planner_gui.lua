@@ -15,6 +15,8 @@
 --   built2     the diagonal and the branch get built
 --   junction   the branch's junction gets chain signals (>= 4 within 24 tiles)
 --   train      a freight train on a stop list depot -> Station 2 (at the branch's end) reaches Station 2 over the branch
+--   warnings   #33: a depot no track reaches added to the train's stops gets "No track leads here from stop 2", and a
+--              second train between the depot and Station 2 the passing-loop hint (the train panel, screenshot)
 --   unit_click with the planner in hand, a click over one of the player's walkers selects nothing (the planner has the click)
 --   q_ends     the first Q stops the planner's path (the rail stays in hand, as in vanilla), the second one ends laying:
 --              the RTS cursor comes back and hover selection goes off again
@@ -506,6 +508,63 @@ step(function(player, P)
   camera.jump_to(player, P.view)
   player.zoom = ZOOM
   return 30
+end)
+
+-- #33 items 1 and 2: the stop list warns about a stop no track leads to and about a second train between the same stops
+step(function(player, P)
+  local s = player.surface
+  local t = P.train and rails.train_of(P.train)
+  if not t then
+    check(P, "warnings", false, "no train")
+    return 30
+  end
+  -- a depot of its own, with nothing connecting its platform to the track
+  local pos = {x = 2 * math.floor((P.E.x + 70) / 2), y = 2 * math.floor((P.E.y - 2) / 2)}
+  storage.rails.reuse_site = {force = player.force.name, x = pos.x, y = pos.y, spec = {axis = "x", side = 1,
+    track = 2 * math.floor((pos.y + rails.PLATFORM_GAP) / 2) + 1}}
+  local de = s.create_entity({name = rails.DEPOT, position = pos, force = player.force, raise_built = true})
+  storage.rails.reuse_site = nil
+  P.lone = de and de.unit_number
+  local idx = P.lone and railroutes.add(t, P.lone)
+  local t2 = rails.create_train(P.depot, "cargo")
+  if t2 then
+    railroutes.set(t2, {{target = P.depot, wait = {type = "time", seconds = 3}},
+                        {target = P.station2, wait = {type = "time", seconds = 3}}})
+  end
+  P.train2 = t2 and t2.id
+  local loco = t.front_stock
+  selection.select_building(player.index, loco.unit_number)
+  camera.jump_to(player, loco.position)
+  player.zoom = ZOOM
+  local un = railroutes.unreachable(P.train)
+  local shared = railroutes.shared_with(P.train)
+  note("warnings: lone depot %s added as stop %s; unreachable %s, shared with %s (second train %s)", tostring(P.lone),
+    tostring(idx), serpent.line(un), tostring(shared), tostring(P.train2))
+  P.warn = {un = un, shared = shared}
+  return 120
+end)
+
+step(function(player, P)
+  local frame = player.gui.screen.rts_railgui_frame or find(player.gui.screen, "rts_railgui_frame")
+  local texts = {}
+  local function walk(el)
+    if el.type == "label" and type(el.caption) == "table" then
+      local key = el.caption[1]
+      if key == "rts.route-unreachable" or key == "rts.route-shared" then texts[#texts + 1] = key end
+    end
+    for _, c in pairs(el.children) do walk(c) end
+  end
+  for _, el in pairs(player.gui.screen.children) do walk(el) end
+  local un = P.warn and P.warn.un or {}
+  check(P, "warnings", un[3] == 2 and un[1] == 3 and P.warn.shared == P.train2 and #texts >= 2,
+    "stop 3 (a depot with no track to it) unreachable from stop %s, stop 1 from stop %s; shared with train %s (the "
+    .. "second train %s); warning labels in the panel %s", tostring(un[3]), tostring(un[1]), tostring(P.warn.shared),
+    tostring(P.train2), table.concat(texts, ", "))
+  shot(player, "warnings")
+  selection.clear(player.index)
+  camera.jump_to(player, P.view)
+  player.zoom = ZOOM
+  return 60
 end)
 
 -- a click over one of the player's walkers with the planner in hand
