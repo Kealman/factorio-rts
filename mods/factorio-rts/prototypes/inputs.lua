@@ -70,10 +70,6 @@ end
 inputs[#inputs + 1] = {name = "rts-demolish", key_sequence = "DELETE", alternative_key_sequence = "BACKSPACE",
                        consuming = "game-only"}
 
--- 0.1.2 (#31 part A): Backspace undoes the Rail tool's last segment (scripts/railtool.lua; with the tool open nothing
--- is selected, so the demolish key on the same Backspace finds nothing)
-inputs[#inputs + 1] = {name = "rts-rail-undo", key_sequence = "BACKSPACE", consuming = "none"}
-
 -- Phase 5 M2 diplomacy: F4 toggles the diplomacy panel (scripts/diplomacygui.lua via hud.lua's key table P4.KEYS).
 -- Vanilla F4 is the debug settings window, which the RTS game does not need.
 inputs[#inputs + 1] = {name = "rts-diplomacy", key_sequence = "F4", consuming = "game-only"}

@@ -79,3 +79,52 @@ The other questions of the issue:
 
 So the planner can run under our view: hover selection goes on while a rail ghost is in the cursor and off when the RTS
 cursor comes back (the hover pulse of Phase 5 M2 already does the off part). No substitute tool is needed.
+
+## 2. The rail planner as built (#37)
+
+- **The Rail button** (build menu, Economy tab, Railways) puts the `rail` ghost in the cursor like any build item
+  (`hud.build_click` -> `cursor.give_ghost`; the 0.1.2 special case is gone). `cursor.on_ghost_given` hooks tell
+  `camera.lua`, which turns `update_entity_selection` on for a rail-planner ghost only (`camera.planner_view`,
+  `storage.camera.planner[player]`) and lets the 10-tick hover clear wait meanwhile; when the RTS cursor comes back (Q,
+  right click, the button again, F1) the hover pulse of Phase 5 M2 turns it off as after any build mode. A pulse that is
+  still running when a planner comes in keeps hover on; a planner ghost that goes without the RTS cursor coming back is
+  caught by the 10-tick check; a save made with the planner in hand gets hover back on join. Signals and the Station
+  stay single ghosts and keep hover off. The HUD line says "Track: click a rail end, then where it goes. R turns. Q stops,
+  Q again: done."
+- **The vanilla planner as it is**: click the end of a rail (a depot platform, own track, the rail a first click on bare
+  ground places, a ghost's end), then click where the track goes: its path with curves and diagonals follows the
+  pointer and the click lays it as ghosts; it goes on from the new end until stopped. The 2.x planner does not build
+  while dragging (a drag only moves its preview; probe: 0 ghosts after a 50-step drag, the path after the click), so
+  "like belts" means click, move, click. A click on a rail end in the middle of track starts a branch (a junction),
+  track laid onto other track joins it. R turns the first rail. Q with a path under way stops the path (the rail stays
+  in hand, vanilla), Q again or a right click ends laying. Ground only: `rail_planner_allow_elevated_rails` stays false
+  (robots could not build supports and ramps without items); bridges stay the auto lines' (Bridges, Space Age).
+- **Land:** pieces on another nation's land are refused by territory's build check with its usual message, now at most
+  one flying text per player and tick (a path over foreign land refuses many pieces at once); own and neutral land take
+  track; the remote view builds nothing on uncharted ground.
+- **Ghosts to track** (`scripts/railplan.lua`, new): every rail ghost a player of a human force places in Nation mode is
+  collected per force and handed over `FLUSH_TICKS` (60) after the force's last one to `rails.adopt_ghosts`
+  (`scripts/rails.lua`, section "planner track"):
+  - piece ends come from the learned geometry (GEO read back as traversals per piece name and direction); the ghosts form
+    nodes (rail end positions);
+  - chains start where a ghost meets built own track (the start rail is the built rail a train comes off heading into
+    the chain: a branch that leaves heading west is entered from the rail east of the junction), then from free track
+    ends (the one nearest an own depot first); a chain runs straight on while no built track stands at its end, and every
+    other piece at a node (a switch's other leg, a piece from the side, track beyond built rails) starts a chain of its
+    own;
+  - each chain is a `manual` line with `planner = true`: the 0.1.2 machinery builds it unchanged (robots in range through
+    the line index, one crew at a time from the nearest depot connected by track, chain signal pairs every 80 tiles,
+    junction chain signals: every piece end at a node with three or more rail ends, built or ghost, carries the mark, so
+    whichever piece stands last places them; the "Track not built" alert after a minute, but not for a chain that waits
+    behind other planned track);
+  - before a crew is sent a chain finds its start rail once built track reaches its first piece, or is turned round when
+    built track meets its far end instead;
+  - a chain whose ghost goes unbuilt (cancelled by the #27 selection, Ctrl+Z, mined) is dissolved and its other ghosts are
+    adopted again, so nothing comes back; a rail built by other means counts as built.
+- **The Rail tool is removed**: `scripts/railtool.lua`, its panel, the Backspace undo input (`rts-rail-undo`), its
+  locale and help text, `selection.area_hook`. `rails.plan_segment` stays (the fixture draws track with it). On the first
+  load of an older save `railplan.init` removes `storage.railtool` and an open Rail tool panel, and turns the 0.1.2
+  segments still being built into planner track (`rails.segments_to_planner`: their ghosts stay, built pieces stay track;
+  segments with elevated pieces stay as they were).
+- The AI never touches any of it: the planner is a player's cursor, adoption needs a human force, every new hunk in
+  `check_lines` is behind `line.planner`.

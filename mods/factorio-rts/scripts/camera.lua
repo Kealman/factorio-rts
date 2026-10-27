@@ -6,7 +6,7 @@
 --   qa_pos, qa_zoom, qa_render   last camera state written to the log (QA lines "camera pan|zoom|render_mode")
 --   selftest_step                GUI self-test progress (dev only)
 -- and storage.camera = {pending = {[player_index] = tick}, selftest = nil|true|false,
---                       pulse = {[player_index] = {at, on, reason}}}
+--                       pulse = {[player_index] = {at, on, reason}}, planner = {[player_index] = true}}
 -- (deferred re-apply; the self-test switch set by /rts-selftest, nil = SELFTEST_DEFAULT).
 local util = require("scripts.util")
 local events = require("scripts.events")
@@ -303,6 +303,8 @@ events.on(defines.events.on_tick, function(e)
       elseif not P.on then
         set_hover(player, true)
         P.on, P.at = true, e.tick + 1
+      elseif storage.camera.planner and storage.camera.planner[index] then
+        pulse[index] = nil -- 0.1.3 (#37): a rail planner came into the cursor meanwhile: hover selection stays on
       else
         set_hover(player, false)
         local sel = player.selected
@@ -314,7 +316,37 @@ events.on(defines.events.on_tick, function(e)
   end
 end)
 
-cursor.on_tool_given(function(player, reason) camera.hover_pulse(player, "tool back: " .. tostring(reason)) end)
+-- 0.1.3 (#37, docs/qa/release-0-1-3-r4-rails-notes.md section 1): the vanilla rail planner starts from the rail end
+-- under the pointer, and the engine only knows what is under the pointer with hover selection on
+-- (update_entity_selection, off for RTS players since Wave C): with it off every click of a rail ghost placed one piece
+-- and a drag a staircase of straight pieces (0.1.2), with it on the planner previews and builds its path, curves,
+-- joins and all (probe tools/probes/r4_planner_finding_gui.lua, real input). So while a rail planner ghost is in the
+-- cursor hover selection is on and the 10-tick hover clear below waits (storage.camera.planner); when the RTS cursor
+-- comes back the hover pulse turns it off as after any build mode.
+function camera.planner_view(player, on)
+  if not (player and player.valid) then return end
+  local c = storage.camera
+  c.planner = c.planner or {}
+  if on then
+    if c.planner[player.index] then return end
+    c.planner[player.index] = true
+    set_hover(player, true)
+    util.log("camera: rail planner view on (hover selection) player=%d", player.index)
+  elseif c.planner[player.index] then
+    c.planner[player.index] = nil
+    util.log("camera: rail planner view off player=%d", player.index)
+  end
+end
+
+cursor.on_ghost_given(function(player, item)
+  local proto = prototypes.item[item]
+  if proto and proto.type == "rail-planner" then camera.planner_view(player, true) end
+end)
+
+cursor.on_tool_given(function(player, reason)
+  camera.planner_view(player, false) -- 0.1.3 (#37): the pulse below turns hover selection off
+  camera.hover_pulse(player, "tool back: " .. tostring(reason))
+end)
 
 events.on_nth_tick(10, function()
   for _, player in pairs(game.connected_players) do
@@ -323,7 +355,14 @@ events.on_nth_tick(10, function()
       p.last_remote_pos = player.position
       p.last_zoom = player.zoom
       local pulsing = storage.camera.pulse and storage.camera.pulse[player.index]
-      if not pulsing and player.permission_group and player.permission_group.name == PERMISSION_GROUP then
+      local planner = storage.camera.planner and storage.camera.planner[player.index] -- 0.1.3 (#37)
+      if planner and not cursor.holds_planner(player) and not pulsing then
+        -- (the planner ghost went without the RTS cursor coming back: hover selection off again)
+        camera.planner_view(player, false)
+        set_hover(player, false)
+        planner = nil
+      end
+      if not (pulsing or planner) and player.permission_group and player.permission_group.name == PERMISSION_GROUP then
         clear_hover(player)
       end
     end
@@ -507,6 +546,8 @@ events.on(defines.events.on_player_joined_game, function(e)
   keep_remote_on_menu(player)
   reapply(player, "joined")
   cursor.ensure(player)
+  local c = storage.camera -- 0.1.3 (#37): a save made with the rail planner in hand keeps it working
+  if c.planner and c.planner[player.index] and cursor.holds_planner(player) then set_hover(player, true) end
 end)
 
 events.on(defines.events.on_player_respawned, function(e)

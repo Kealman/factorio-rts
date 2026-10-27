@@ -1,39 +1,45 @@
--- Test-only (tools/autotest-run.sh EXTRA_LUA): 0.1.2 #31 part A, player-built track (rails.plan_segment: the Rail
--- tool's planner; crews, junction signals, reuse by the auto survey, depots with two lines, own land). Beside a Nation
--- AI match (about 8 minutes of wall clock):
+-- Test-only (tools/autotest-run.sh EXTRA_LUA): player-built track. 0.1.2 #31 part A laid it with the Rail tool; 0.1.3
+-- #37 lays it with the vanilla rail planner, whose ghosts rails.adopt_ghosts turns into planner track (crews, robots,
+-- junction signals, the "track not built" alert). A headless run has no pointer to drive the planner, so
+-- rails.plan_segment only draws each piece of track (its survey lays the curved and diagonal ghosts the planner would)
+-- and the moment its ghosts stand they are handed over as a player's planner ghosts (rails.segments_to_planner: the
+-- same rails.adopt_ghosts path; tools/probes/r4_rails_planner_gui.lua drives the real planner). Then: crews, junction
+-- signals, reuse by the auto survey, depots with several lines, own land, a cancelled ghost. Beside a Nation AI match
+-- (about 8 minutes of wall clock):
 --   SEED=501 SPEED=6 EXTRA_LUA=tools/probes/r3_rails_manual.lua STOP_ON='r3 manual summary' \
 --     tools/autotest-run.sh r3-manual '{opponents = 1, difficulty = "normal", mode = "nation", world_size = 2048, enemy_brain = "ai"}' 1500
 -- Scene on a lab-tile surface, force rts-ai-2 played "as a human" (storage.rails.test_human: its surveys reuse own
 -- track, its depots take any number of lines): depots A (0, 0), B (600, 0), C (300, 400) and D (230, 220), every
 -- platform east-west.
---   1. segment 1 from A's platform end rail to B's (rails.plan_segment as the Rail tool calls it); a crew from A builds
---   2. segment 2 branches from a rail of segment 1 near x = 300 and joins C's platform end rail: the junction gets chain
+--   1. track 1 from A's platform end rail to B's; a crew from A builds it
+--   2. track 2 branches from a rail of track 1 near x = 300 and joins C's platform end rail: the junction gets chain
 --      signals on all three tracks once its first piece stands
 --   3. the auto lines A - C and A - B (rails.plan_line) run along that track: nearly every piece reused; A holds both
 --   4. train 1 runs A (load exports) -> B (unload to Keep, load exports) -> C (unload everything, load exports) -> B
 --      (unload to Keep); train 2 runs A (load) -> C (unload); both share the single track and the junction
---   5. on the match surface, a segment from rts-player land into rts-ai-1's capital land is refused
---   6. a Station placed 7 tiles from segment 1's track gets its two stops on the track, adds no supply cap, and a
---      train path leads from A's platform to it
---   7. segment 3, as the Rail tool plans a click on a rail of segment 1 near x = 150 and then a click on free ground
---      (railtool.starts_of / goals_of), branches off to a point 110 tiles south: planned, built by a crew that parks
---      behind the junction first, chain signals at its junction
+--   5. on the match surface, a player's rail ghost on rts-ai-1's capital land is refused (territory's build check)
+--   6. a Station placed 7 tiles from track 1 gets its two stops on the track, adds no supply cap, and a train path
+--      leads from A's platform to it
+--   7. track 3 from a rail of track 1 near x = 150 to free ground 110 tiles south: built by a crew that parks behind
+--      the junction first, chain signals at its junction
 --   8. the auto line A - D runs along own track as far as it helps, then leaves it: a crew from A reaches the point
 --      where it leaves (past the junctions on the way) and lays the rest
+--   9. track 4 on free ground far from everything: the "track not built" alert after a minute; then one of its ghosts
+--      in the middle is cancelled: its planner line is dissolved, the other ghosts become two lines, nothing comes back
 -- Checks ("[rts] r3 manual check <name>: PASS|FAIL ..."): seg1_built, junction (chain signals around it), seg2_built,
 -- seg3 (the free-point branch built, chain signals at its junction), reuse (the auto lines A - C and A - B reuse >= 90 %
 -- of their pieces), partial (A - D open, part of it reused, part new), depot_lines (A holds all three lines), loops
 -- (each train >= MIN_LOOPS loops in RUN_MINUTES, the stop order kept, no stand at a signal over STUCK_S), own_land,
--- station, track_waits (a segment on free ground far from every depot and network raises the "track not built" alert
--- after a minute), platform_held (train 2 kept on C's platform: train 1, bound for C, shows the single-track hint after
--- a minute at a signal). A crew without a path dumps its track ("r3 manual: diag: ..."). Summary "[rts] r3 manual summary <passed>/<total>".
+-- station, track_waits (the alert of track 4), cancel (track 4 after the cancelled ghost), platform_held (train 2 kept
+-- on C's platform: train 1, bound for C, shows the single-track hint after a minute at a signal). A crew without a path
+-- dumps its track ("r3 manual: diag: ..."). Summary "[rts] r3 manual summary <passed>/<total>".
 local events = require("scripts.events")
 local util = require("scripts.util")
 local logistics = require("scripts.logistics")
 local buildings = require("scripts.buildings")
 local rails = require("scripts.rails")
 local railroutes = require("scripts.railroutes")
-local railtool = require("scripts.railtool")
+local territory = require("scripts.territory")
 
 local F = "rts-ai-2"
 local SURFACE = "r3-manual"
@@ -107,6 +113,135 @@ local function platform_rail(un, which)
   return which == 1 and pr[1] or pr[#pr]
 end
 
+-- 0.1.3: the start states of a rail (the Rail tool's "click on a rail") and goal states around a free point
+local function starts_of_rail(rail)
+  local out = {}
+  for _, rd in ipairs({RD.front, RD.back}) do
+    local loc = rail.get_rail_end(rd).location
+    if loc.rail_layer == 0 then out[#out + 1] = {x = loc.position.x, y = loc.position.y, d = loc.direction, l = 0} end
+  end
+  return out
+end
+local function starts_of_point(x, y)
+  local out = {}
+  for dx = 0, 1 do
+    for dy = 0, 1 do
+      for d = 0, 14, 2 do out[#out + 1] = {x = x + dx, y = y + dy, d = d, l = 0} end
+    end
+  end
+  return out
+end
+local function goals_of_point(pos)
+  local out = {}
+  local x, y = 2 * math.floor(pos.x / 2 + 0.5), 2 * math.floor(pos.y / 2 + 0.5)
+  for dx = -2, 2 do
+    for dy = -2, 2 do
+      for d = 0, 15 do out[#out + 1] = {x = x + dx, y = y + dy, d = d, l = 0} end
+    end
+  end
+  return out
+end
+
+-- 0.1.3 (#37): draw a piece of track with the survey; handed() hands its ghosts over as planner ghosts once they stand
+local function lay(T, key, opts)
+  opts.surface = opts.surface or surface().index
+  local id, why = rails.plan_segment(opts.force or F, opts)
+  T.plan = T.plan or {}
+  T.plan[key] = {seg = id, why = why}
+  log("%s: drawn as survey #%s (%s)", key, tostring(id), tostring(why))
+  return id, why
+end
+
+-- The planner track of `key`: {pieces = {{name, x, y, d}}, lines = {ids}} once handed over, nil while the survey runs,
+-- false when it failed.
+local function handed(T, key)
+  local P = T.plan and T.plan[key]
+  if not P then return false end
+  if P.pieces then return P end
+  local line = P.seg and rails.lines[P.seg]
+  if not line or line.state == "failed" then return false end
+  if line.state == "surveying" then return nil end
+  local first = storage.rails.next_id
+  P.pieces = {}
+  for _, p in ipairs(line.pieces or {}) do
+    -- (where the ghost stands: a survey from a free point may plan off the rail grid, and the ghost snaps onto it)
+    local g = p.g and p.g.valid and p.g
+    if g then
+      P.pieces[#P.pieces + 1] = {name = g.ghost_name, x = g.position.x, y = g.position.y, d = g.direction}
+    elseif not p.reused then
+      P.pieces[#P.pieces + 1] = {name = p.name, x = p.x, y = p.y, d = p.d}
+    end
+  end
+  local n, made, ghosts = rails.segments_to_planner(P.seg)
+  P.lines = {}
+  for id = first, storage.rails.next_id - 1 do
+    if rails.lines[id] and rails.lines[id].planner then P.lines[#P.lines + 1] = id end
+  end
+  P.t0 = game.tick
+  log("%s: %d new pieces, %d ghosts handed over as planner ghosts: %d planner lines (%s)", key, #P.pieces, ghosts, made,
+    table.concat(P.lines, ", "))
+  return P
+end
+
+-- built pieces of a planner track, rails standing on its pieces' places
+local function built_of(P)
+  local s, n = surface(), 0
+  for _, q in ipairs(P.pieces) do
+    local e = s.find_entity(q.name, {q.x, q.y})
+    if e and e.valid and e.direction == q.d and e.force.name == F then n = n + 1 end
+  end
+  return n
+end
+
+-- the built straight rail of a planner track nearest to x = `x` (within `tol`)
+local function rail_near_x(P, x, tol)
+  local s = surface()
+  for _, q in ipairs(P.pieces) do
+    if q.name == "straight-rail" and math.abs(q.x - x) <= tol then
+      local e = s.find_entity(q.name, {q.x, q.y})
+      if e and e.valid then return e end
+    end
+  end
+  return nil
+end
+
+-- wait for a planner track to stand: true when built, false on a timeout or a failed survey (checked as `name`)
+local function track_done(T, key, name, t0)
+  local P = handed(T, key)
+  if P == nil then return nil end
+  if P == false then
+    check(T, name, false, "%s: survey failed or gone", key)
+    finish(T)
+    return false
+  end
+  local built = built_of(P)
+  if built >= #P.pieces then return P end
+  if game.tick - t0 > 10 * 3600 then
+    local waits = {}
+    for _, id in ipairs(P.lines) do
+      local l = rails.lines[id]
+      if l then waits[#waits + 1] = string.format("#%d %s %s", id, l.state, tostring(l.wait)) end
+    end
+    check(T, name, false, "%s: %d of %d pieces built after 10 min; lines %s", key, built, #P.pieces,
+      table.concat(waits, ", "))
+    finish(T)
+    return false
+  end
+  return nil
+end
+
+local function crews_of(P)
+  local robot, crew = 0, 0
+  for _, id in ipairs(P.lines) do
+    local l = rails.lines[id]
+    if l then
+      robot = robot + (l.robot or 0)
+      crew = crew + (l.used or 0) - (l.robot or 0)
+    end
+  end
+  return robot, crew
+end
+
 local function setup(T)
   local R = storage.rails
   R.test_forces = R.test_forces or {}
@@ -134,30 +269,17 @@ local function stock(T)
   logistics.set_policy(T.B, "export_above", "copper-plate", 0)
   logistics.set_policy(T.C, "export_above", "stone", 0)
   local a_end, b_end = platform_rail(T.A, 2), platform_rail(T.B, 1)
-  local id, why = rails.plan_segment(F, {starts = ends_of(a_end), goals = ends_of(b_end, true),
-    surface = surface().index, start_rail = a_end, end_rail = b_end, own_land = true})
-  T.seg1 = id
-  log("segment 1: line %s (%s)", tostring(id), tostring(why))
+  lay(T, "track1", {starts = ends_of(a_end), goals = ends_of(b_end, true), start_rail = a_end, end_rail = b_end,
+    own_land = true})
   T.stage, T.t0 = "seg1", game.tick
 end
 
 local function seg1(T)
-  local line = rails.lines[T.seg1]
-  if not line then
-    check(T, "seg1_built", false, "segment 1 gone")
-    finish(T)
-    return
-  end
-  if line.state ~= "open" then
-    if game.tick - T.t0 > 10 * 3600 then
-      check(T, "seg1_built", false, "state %s after 10 min, %d missing, wait %s", line.state, line.missing or -1,
-        tostring(line.wait))
-      finish(T)
-    end
-    return
-  end
-  check(T, "seg1_built", true, "%d pieces (%d reused), bill %d rails, built in %.0f s (%d by robots), %d signals",
-    #line.pieces, line.reused or 0, line.bill.rails, (game.tick - T.t0) / 60, line.robot or 0, #(line.signals or {}))
+  local P = track_done(T, "track1", "seg1_built", T.t0)
+  if not P then return end
+  local robot, crew = crews_of(P)
+  check(T, "seg1_built", true, "%d pieces in %d planner lines, built in %.0f s (%d rails by robots, %d by crews)",
+    #P.pieces, #P.lines, (game.tick - T.t0) / 60, robot, crew)
   -- a Station next to the track
   local se = surface().create_entity({name = rails.STATION, position = {450, 0}, force = F, raise_built = true})
   local sd = se and rails.depot(se.unit_number)
@@ -178,88 +300,52 @@ local function seg1(T)
   end
   check(T, "station", stops == 2 and discount == 1 and reach == true, "station %s: %d stops, supply discount %d, path from "
     .. "A %s", tostring(se and se.unit_number), stops, discount, tostring(reach))
-  -- segment 2: from a rail of segment 1 near x = 300 to C's west platform end
-  local s = surface()
-  local mid
-  for _, p in ipairs(line.pieces) do
-    if p.e and p.e.valid and p.name == "straight-rail" and math.abs(p.x - 301) <= 4 then mid = p.e end
-  end
+  -- track 2: from a rail of track 1 near x = 300 to C's west platform end
+  local mid = rail_near_x(P, 301, 4)
   local c_end = platform_rail(T.C, 1)
-  local id, why = rails.plan_segment(F, {starts = ends_of(mid), goals = ends_of(c_end, true), surface = s.index,
-    start_rail = mid, end_rail = c_end, own_land = true})
-  T.seg2, T.jpos = id, mid and {x = mid.position.x, y = mid.position.y}
-  log("segment 2 from the rail at %s: line %s (%s)", mid and util.pos_str(mid.position) or "-", tostring(id),
-    tostring(why))
+  lay(T, "track2", {starts = ends_of(mid), goals = ends_of(c_end, true), start_rail = mid, end_rail = c_end,
+    own_land = true})
+  T.jpos = mid and {x = mid.position.x, y = mid.position.y}
+  log("track 2 from the rail at %s", mid and util.pos_str(mid.position) or "-")
   T.stage, T.t1 = "seg2", game.tick
 end
 
 local function seg2(T)
-  local line = rails.lines[T.seg2]
-  if not line then
-    check(T, "seg2_built", false, "segment 2 gone")
-    finish(T)
-    return
-  end
-  if line.state ~= "open" then
-    if game.tick - T.t1 > 10 * 3600 then
-      check(T, "seg2_built", false, "state %s after 10 min, %d missing, wait %s", line.state, line.missing or -1,
-        tostring(line.wait))
-      finish(T)
-    end
-    return
-  end
+  local P = track_done(T, "track2", "seg2_built", T.t1)
+  if not P then return end
   local s = surface()
-  -- (the junction: where the segment leaves segment 1; it may run along segment 1 for a few pieces first)
-  for _, p in ipairs(line.pieces) do
-    if p.jpos then
-      T.jpos = p.jpos
-      break
+  -- (the junction: where track 2 leaves track 1, the end of track 2's first new piece next to track 1)
+  for _, id in ipairs(P.lines) do
+    local l = rails.lines[id]
+    for _, p in ipairs(l and l.pieces or {}) do
+      if p.jpos and not T.jfound then T.jpos, T.jfound = p.jpos, true end
     end
   end
-  log("segment 2 leaves segment 1 at %s", util.pos_str(T.jpos))
+  log("track 2 leaves track 1 at %s", util.pos_str(T.jpos))
   local chains = s.count_entities_filtered({position = T.jpos, radius = 24, name = "rail-chain-signal", force = F})
   local plain = s.count_entities_filtered({position = T.jpos, radius = 24, name = "rail-signal", force = F})
-  check(T, "seg2_built", true, "%d pieces (%d reused), bill %d rails, built in %.0f s", #line.pieces, line.reused or 0,
-    line.bill.rails, (game.tick - T.t1) / 60)
+  local robot, crew = crews_of(P)
+  check(T, "seg2_built", true, "%d pieces in %d planner lines, built in %.0f s (%d rails by robots, %d by crews)",
+    #P.pieces, #P.lines, (game.tick - T.t1) / 60, robot, crew)
   check(T, "junction", chains >= 4 and plain == 0, "%d chain signals and %d rail signals within 24 tiles of the junction",
     chains, plain)
-  -- segment 3: the Rail tool's states for a click on a rail of segment 1 near x = 150, then on free ground
-  local l1 = rails.lines[T.seg1]
-  local r150
-  for _, p in ipairs(l1.pieces) do
-    if p.e and p.e.valid and p.name == "straight-rail" and math.abs(p.x - 151) <= 2 then r150 = p.e end
-  end
-  local id3, why3
+  -- track 3: from a rail of track 1 near x = 150 to free ground
+  local r150 = rail_near_x(T.plan.track1, 151, 2)
   if r150 then
     local goal = {x = r150.position.x + 30, y = r150.position.y + 110}
-    id3, why3 = rails.plan_segment(F, {starts = railtool.starts_of({kind = "rail", rail = r150}),
-      goals = railtool.goals_of(nil, goal), surface = s.index, start_rail = r150, own_land = true})
+    lay(T, "track3", {starts = starts_of_rail(r150), goals = goals_of_point(goal), start_rail = r150, own_land = true})
     T.j3 = {x = r150.position.x, y = r150.position.y}
   end
-  T.seg3 = id3
-  log("segment 3 from the rail at %s to free ground: line %s (%s)", r150 and util.pos_str(r150.position) or "-",
-    tostring(id3), tostring(why3))
+  log("track 3 from the rail at %s to free ground", r150 and util.pos_str(r150.position) or "-")
   T.stage, T.t15 = "seg3", game.tick
 end
 
 local function seg3(T)
-  local line = T.seg3 and rails.lines[T.seg3]
-  if not line or line.state == "failed" then
-    check(T, "seg3", false, "segment 3 %s (%s)", line and line.state or "gone", line and tostring(line.reason) or "-")
-    finish(T)
-    return
-  end
-  if line.state ~= "open" then
-    if game.tick - T.t15 > 10 * 3600 then
-      check(T, "seg3", false, "state %s after 10 min, %d missing, wait %s", line.state, line.missing or -1,
-        tostring(line.wait))
-      finish(T)
-    end
-    return
-  end
+  local P = track_done(T, "track3", "seg3", T.t15)
+  if not P then return end
   local chains = surface().count_entities_filtered({position = T.j3, radius = 24, name = "rail-chain-signal", force = F})
-  check(T, "seg3", chains >= 4, "free-point branch: %d pieces, bill %d rails, built in %.0f s, %d chain signals at its "
-    .. "junction", #line.pieces, line.bill.rails, (game.tick - T.t15) / 60, chains)
+  check(T, "seg3", chains >= 4, "free-point branch: %d pieces in %d planner lines, built in %.0f s, %d chain signals at "
+    .. "its junction", #P.pieces, #P.lines, (game.tick - T.t15) / 60, chains)
   -- the auto lines A - C and A - B along the player track
   T.lac = rails.plan_line(F, T.A, T.C)
   T.lab = rails.plan_line(F, T.A, T.B)
@@ -340,23 +426,20 @@ local function own_land(T)
   local c = city and city.center and buildings.get(city.center)
   if not (ms and c) then
     check(T, "own_land", false, "no AI capital on the match surface")
-    return
+  else
+    -- a planner ghost of rts-player on rts-ai-1's capital land: territory's build check (on_built_entity) refuses it
+    local p = c.entity.position
+    local at = {x = 2 * math.floor((p.x + 12) / 2) + 1, y = 2 * math.floor((p.y + 12) / 2) + 1}
+    local g = ms.create_entity({name = "entity-ghost", inner_name = "straight-rail", position = at,
+                                direction = D.east, force = "rts-player"})
+    local ok = g and territory.build_check(g, {name = defines.events.on_built_entity, player_index = 0})
+    check(T, "own_land", g ~= nil and ok == false and not g.valid,
+      "a rail ghost of rts-player on rts-ai-1's capital land at %s: placed %s, build check %s, ghost left %s",
+      util.pos_str(at), tostring(g ~= nil), tostring(ok), tostring(g ~= nil and g.valid))
   end
-  local p = c.entity.position
-  local a = {x = 2 * math.floor((p.x + 30) / 2), y = 2 * math.floor((p.y + 30) / 2)}
-  local b = {x = a.x + 30, y = a.y}
-  local starts, goals = {}, {}
-  for d = 0, 14, 2 do starts[#starts + 1] = {x = a.x, y = a.y, d = d, l = 0} end
-  for d = 0, 15 do goals[#goals + 1] = {x = b.x, y = b.y, d = d, l = 0} end
-  local R = storage.rails
-  R.test_human["rts-player"] = true
-  T.foreign = rails.plan_segment("rts-player", {starts = starts, goals = goals, surface = ms.index, own_land = true})
-  log("segment on rts-ai-1's land near %s: line %s", util.pos_str(a), tostring(T.foreign))
-  -- a segment out of every reach (no track to it, no network over it): an alert after a minute
-  T.wild = rails.plan_segment(F, {starts = railtool.starts_of({kind = "point", x = 0, y = 300}),
-    goals = railtool.goals_of(nil, {x = 60, y = 300}), surface = surface().index, own_land = true})
+  -- track 4, out of every reach (no track to it, no network over it): an alert after a minute
+  lay(T, "wild", {starts = starts_of_point(0, 300), goals = goals_of_point({x = 60, y = 300}), own_land = true})
   T.t_wild = game.tick
-  log("segment out of reach at (0, 300): line %s", tostring(T.wild))
 end
 
 -- Once per line: a crew of F without a path to its target gets its track dumped (where the path along the line breaks,
@@ -418,22 +501,49 @@ local function run(T)
       end
     end
   end
-  local fl = T.foreign and rails.lines[T.foreign]
-  if T.foreign and not T.land_done and (not fl or fl.state ~= "surveying") then
-    T.land_done = true
-    check(T, "own_land", fl ~= nil and fl.state == "failed" and string.sub(tostring(fl.reason), 1, 5) == "land-",
-      "segment on another nation's land: %s (%s)", fl and fl.state or "gone", fl and tostring(fl.reason) or "-")
-  end
-  local wl = T.wild and rails.lines[T.wild]
-  if T.wild and not T.wild_done and (game.tick - T.t_wild > 150 * 60 or (wl and wl.alerted)) then
+  local W = T.t_wild and handed(T, "wild")
+  local wl = W and W.lines and rails.lines[W.lines[1]]
+  if W and not T.wild_done and (game.tick - T.t_wild > 150 * 60 or (wl and wl.alerted)) then
     T.wild_done = true
     local seen = false
     for _, a in ipairs(storage.alerts or {}) do
       if a.kind == "track-waits" and a.force == F then seen = true end
     end
     check(T, "track_waits", wl ~= nil and wl.state == "building" and wl.alerted == "no-access" and seen,
-      "segment out of reach after %.0f s: %s, wait %s, alerted %s, alert in the list %s", (game.tick - T.t_wild) / 60,
-      wl and wl.state or "gone", wl and tostring(wl.wait) or "-", wl and tostring(wl.alerted) or "-", tostring(seen))
+      "track out of reach after %.0f s: %d planner lines, %s, wait %s, alerted %s, alert in the list %s",
+      (game.tick - T.t_wild) / 60, #W.lines, wl and wl.state or "gone", wl and tostring(wl.wait) or "-",
+      wl and tostring(wl.alerted) or "-", tostring(seen))
+    -- cancel one ghost in the middle of track 4 (as #27's selection or the vanilla undo would)
+    local q = W.pieces[math.floor(#W.pieces / 2)]
+    local s = surface()
+    for _, g in ipairs(s.find_entities_filtered({position = {q.x, q.y}, radius = 0.5, name = "entity-ghost"})) do
+      if g.ghost_name == q.name and g.direction == q.d then
+        g.destroy()
+        T.cancelled = {name = q.name, x = q.x, y = q.y, d = q.d, at = game.tick}
+      end
+    end
+    log("track 4: ghost %s at %s cancelled", q.name, util.pos_str({q.x, q.y}))
+  end
+  if T.cancelled and not T.cancel_done and game.tick - T.cancelled.at > 10 * 60 then
+    T.cancel_done = true
+    local s, ghosts, lines, holder = surface(), 0, {}, false
+    for _, q in ipairs(W.pieces) do
+      for _, g in ipairs(s.find_entities_filtered({position = {q.x, q.y}, radius = 0.5, name = "entity-ghost"})) do
+        if g.ghost_name == q.name and g.direction == q.d then ghosts = ghosts + 1 end
+      end
+    end
+    for id, l in pairs(storage.rails.lines) do
+      if l.planner and l.force == F then
+        for _, p in ipairs(l.pieces) do
+          if math.abs(p.x - W.pieces[1].x) < 200 and math.abs(p.y - 300) < 40 then lines[id] = true end
+          if p.x == T.cancelled.x and p.y == T.cancelled.y and p.name == T.cancelled.name then holder = true end
+        end
+      end
+    end
+    local nl = table_size(lines)
+    check(T, "cancel", ghosts == #W.pieces - 1 and nl == 2 and not holder,
+      "track 4 after a cancelled ghost: %d of %d ghosts stand, %d planner lines hold them, a line holds the cancelled "
+      .. "piece %s", ghosts, #W.pieces, nl, tostring(holder))
   end
   if (game.tick - T.t4) % 3600 == 0 then
     log("minute %d: train 1 visits %d, train 2 visits %d, longest stand %.0f s", (game.tick - T.t4) / 3600,

@@ -855,7 +855,10 @@ local function build_check(entity, e)
   if item then economy.give(force_name, item.name, item.count or 1) end
   local text = territory.reason_text(reason, name)
   local player = (e.player_index or 0) > 0 and game.get_player(e.player_index)
-  if player and player.valid then
+  -- (0.1.3, #37: one text per player and tick: a rail planner path over foreign land refuses many pieces at once)
+  T.refused_text = T.refused_text or {}
+  if player and player.valid and T.refused_text[player.index] ~= game.tick then
+    T.refused_text[player.index] = game.tick
     player.create_local_flying_text({text = text, position = pos, surface = surface, color = {1, 0.4, 0.3}})
   end
   util.log("territory: refused %s%s of %s at %s (%s, %s by %s)", name, ghost and " ghost" or "", force_name,

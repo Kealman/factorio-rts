@@ -151,7 +151,7 @@ P4.nation = function()
   local m = storage.match
   return m ~= nil and m.config ~= nil and m.config.mode == "nation"
 end
--- 0.1.2 (#31 part A): the Station, the Rail tool, the signals and their recipes
+-- 0.1.2 (#31 part A): the Station, the rail (0.1.3: the vanilla rail planner), the signals and their recipes
 for _, name in ipairs({"rts-station", "rail", "rail-signal", "rail-chain-signal", "rts-rail-signal",
                        "rts-rail-chain-signal"}) do
   P4.NATION_ONLY[name] = true
@@ -674,7 +674,7 @@ end
 
 -- Phase 5 M1 QA round 1: an item that places an entity of another name (the City charter places a City Center) says
 -- so in its build and recipe tooltips: {"", tooltip, "\n", "Builds a [entity] City Center."}.
-local OIL_NOTES = {["rail"] = "rts.railtool-note", -- 0.1.2 (#31 part A): the Rail button opens the Rail tool
+local OIL_NOTES = {["rail"] = "rts.railplan-note", -- 0.1.3 (#37): the Rail button is the vanilla rail planner
                    ["rts-pumpjack"] = "rts-ux.note-pumpjack", ["rts-refinery"] = "rts-ux.note-refinery",
                     ["rts-chemical-plant"] = "rts-ux.note-chemical-plant"} -- #28: no pipes
 local function with_places_note(tooltip, item)
@@ -1955,6 +1955,7 @@ local function player_message(player)
     return {"rts.attack-move-armed"}, COLOR.red
   end
   local ghost = cursor.ghost_name(player)
+  if ghost and cursor.holds_planner(player) then return {"rts.placing-rail"}, COLOR.green end -- 0.1.3 (#37)
   if ghost and prototypes.item[ghost] then
     return {"rts.placing", prototypes.item[ghost].localised_name}, COLOR.green
   end
@@ -2367,14 +2368,7 @@ end
 --- Build menu button: put a ghost of `item` in the cursor (build mode), or end build mode when that item's
 --- ghost is already there. QA log line: "hud click build <item> player=N in_network=N ghost=true|false".
 function hud.build_click(player, item)
-  -- 0.1.2 (#31 part A): the Rail button opens the Rail tool (scripts/railtool.lua) instead of a rail ghost (the vanilla
-  -- rail planner does not run in the RTS remote view)
-  if item == "rail" then
-    local toggle = optional_fn("scripts.railtool", {"toggle"})
-    local ok = toggle and toggle(player)
-    util.log("hud click build rail player=%d -> rail tool %s", player.index, tostring(ok))
-    return ok
-  end
+  -- (0.1.3, #37: the Rail button gives the rail ghost like any item: the vanilla rail planner, scripts/railplan.lua)
   local snap = snapshot(player.force.name)
   local n = snap and snap.items[item] or 0
   if cursor.ghost_name(player) == item then
