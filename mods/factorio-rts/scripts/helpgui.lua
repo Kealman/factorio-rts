@@ -18,6 +18,7 @@ local util = require("scripts.util")
 local events = require("scripts.events")
 local help = require("scripts.help")
 local hud = require("scripts.hud")
+local abilitygui = require("scripts.abilitygui")
 
 local helpgui = {}
 
@@ -183,6 +184,37 @@ function helpgui.open(player, name, mode, at)
   return true
 end
 
+--- 0.1.3 (#34): the card of the five abilities (the "?" of the ability bar): what each does, its hotkey, cooldown and
+--- research, and how the bar reads. Pinned until its x is pressed.
+function helpgui.open_abilities(player)
+  local g = pstate(player.index)
+  destroy(g)
+  local frame = player.gui.screen.add({type = "frame", name = FRAME, direction = "vertical", style = "rts_hud_frame"})
+  frame.style.width = WIDTH
+  g.frame, g.name, g.pinned, g.shown = frame, "*abilities*", true, game.tick
+  local row = frame.add({type = "flow", direction = "horizontal", style = "rts_hud_row"})
+  row.add({type = "label", style = "rts_hud_heading_label", caption = {"rts-help.abilities-card-title"}})
+  row.add({type = "empty-widget", style = "rts_hud_filler"})
+  row.add({type = "sprite-button", name = PREFIX .. "close", sprite = "utility/close", style = "frame_action_button",
+           tooltip = {"rts-help.card-close"}, tags = {rts_helpcard = "close"}})
+  text(frame, {"rts-help.abilities-card-intro"}, "rts_hud_dim_label")
+  for _, a in ipairs(abilitygui.card_lines()) do
+    local block = frame.add({type = "flow", direction = "vertical"})
+    block.style.vertical_spacing = 0
+    text(block, {"", "[font=default-bold]", a.title, "[/font]  ",
+                 a.key and {"rts.ability-tooltip-hotkey", a.key} or {"rts.ability-tooltip-button-only"}, ", ",
+                 {"rts.ability-tooltip-cooldown-total", a.cooldown}})
+    text(block, a.description)
+    if a.tech then text(block, {"rts.ability-tooltip-needs", {"technology-name." .. a.tech}}, "rts_hud_dim_label") end
+  end
+  local tip = frame.add({type = "flow", direction = "vertical"})
+  tip.style.vertical_spacing = 0
+  text(tip, bold("rts-help.card-tip"))
+  text(tip, {"rts-help.abilities-card-hint"})
+  place(player, frame, nil)
+  util.log("helpgui: card *abilities* (pinned) player=%d", player.index)
+end
+
 ---------------------------------------------------------------------------
 -- Inputs
 ---------------------------------------------------------------------------
@@ -250,6 +282,9 @@ events.on(defines.events.on_gui_click, function(e)
   elseif tags.rts_helpcard == "f11" then
     helpgui.close(player)
     hud.toggle_help(player, "helpcard")
+  elseif tags.rts_help == "*abilities*" then
+    local g = pstate(player.index)
+    if g.frame and g.frame.valid and g.name == "*abilities*" then destroy(g) else helpgui.open_abilities(player) end
   elseif tags.rts_help then
     local g = pstate(player.index)
     if g.frame and g.frame.valid and g.name == tags.rts_help and g.pinned then
