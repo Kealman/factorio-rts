@@ -59,9 +59,8 @@ checked with a planted line (3 problems reported) and 0 problems on the tree.
   before the check; the old check ran right after the scene steps).
 - Looked at and left: the long-handed inserter stays Nation only (Skirmish holds 27-28 recipes, a 29th would grow the
   Skirmish panel; #34 wants two rows).
-- Not done: train panel over the Build menu (a max-height clamp in `railgui.place` was written and dropped: it clips the
-  stop list and `r4-rails` is reworking the rail panels), Rail tool panel and the RU summary line (the Rail tool goes
-  away with #37), help cards for the five abilities and the unit panel, clear order for divisions. Open for 0.1.4.
+- Done after the merge of #37 (the Rail tool items are moot): the train and depot panels stop above the Build menu (79b70ae); help cards for a selected unit type (the unit page "?") and for the five abilities (a "?" on the ability bar, one pinned card), 5f17548.
+- Not done: clear order for divisions, a Clear button in the build menu (open for 0.1.4).
 
 ## Tests
 
@@ -74,7 +73,7 @@ checked with a planted line (3 problems reported) and 0 problems on the tree.
 | Owner save `owner-0112.zip`, 120 s headless | loads, 659 `[rts]` lines, 0 errors |
 | Owner save `owner-0111-age2.zip`, 120 s headless | loads, 725 `[rts]` lines, 0 errors |
 | M1 seed 501 vs frozen 0.1.2 tree (`determinism-compare.sh`, WHAT=all, 60 min) | 67110 lines both, 2 differing = the stagger-phase listing lines (new modules); no other difference |
-| Skirmish seed 777 matrix vs `base0111` | see below |
+| Skirmish seed 777 matrix vs `base0111` (frozen tree d048ae9, JOBS=1, 10 scenarios) | total differing lines: 0 (the 1v3 stress scenario shows 36/38 in both trees) |
 
 Screenshot index (`build/shots-r4-hud-en/`, `-ru/`): 01-03 factory page with the panel grown one row (Nation,
 buildings, logistics, queue), 04-08 strip default / chooser / picker / edited / reset, s1-s3 Skirmish factory page and
