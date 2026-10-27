@@ -991,14 +991,17 @@ function council.rail_programs(C)
   return out
 end
 
---- True while a siege railway is under way or open for an operation without its artillery train (ai/planner.lua: the
---- works factory makes the train's kits and shells at the capital).
+--- True while a siege railway is planned, under way or open for an operation without its artillery train
+--- (ai/planner.lua: the works factory makes the train's kits and shells at the capital).
+--- (0.1.3, issue #20: from the moment it is planned, its forward depot still a construction job: requested only once
+--- its line was under way, the kits were not made by the time the line opened or the operation ended, 0.1.1 notes 8.10)
 function council.artillery_want(C)
   local K = K_of(C.force, false)
   if not (K and K.siege) then return false end
   for _, cid in ipairs(sorted_keys(K.siege)) do
     local S = K.siege[cid]
-    if (S.state == "line" or S.state == "open") and not S.train and not S.over and not S.failed and S.origin_center then
+    if (S.state == "depot" or S.state == "line" or S.state == "open") and not S.train and not S.over and not S.failed
+       and S.origin_center then
       local cap = capital_of(C.force)
       if cap and S.origin_center == cap.center then return true end
     end

@@ -912,9 +912,11 @@ local function trunk_step(C, P, own, capital)
       end
       -- (0.1.1, issue #1: and while the research waits for engines, planner.engine_focus, an edge not open yet whose
       -- crew has not left: an open edge's program tops up its depots' coal, runs its freight train and repairs)
+      -- (0.1.3, issue #20: not a lost line either: its program rebuilds the destroyed depot on its old site, rails.lua
+      -- ai_depot, and the laid line reopens; held, the rebuild waited up to 3 of every 5 minutes)
       if E and planner.engine_focus(C) and E.A.state ~= "open" then
         local el = E.A.line and storage.rails and storage.rails.lines[E.A.line]
-        if not (el and el.builder) then hold = true end
+        if not (el and (el.builder or el.state == "lost")) then hold = true end
       end
       if E then E.held = hold or nil end -- (0.1.1: rail_wants skips a held edge)
       if E and not hold then
