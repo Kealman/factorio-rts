@@ -102,6 +102,9 @@ step(function(player) -- R on the refinery: the flying text
   return 20
 end)
 snap("refinery-rotate-text")
+-- 0.1.3 (#34): the pump state flips on the first pump pass after the network joins; the check was timing-flaky (2 of 7
+-- runs) because it ran right after the scenes, so give the oil another 5 s first
+step(function() return 300 end)
 step(function(player)
   local rec = buildings.get(P.pj.unit_number)
   local out = buildings.get(P.pj_out.unit_number)
