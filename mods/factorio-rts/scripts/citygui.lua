@@ -241,6 +241,11 @@ local function place_staff(player, frame)
   local s, res = player.display_scale, player.display_resolution
   frame.location = {math.floor(MARGIN * s + 0.5),
                     res.height - math.floor((HUD_PANEL_HEIGHT + MARGIN + 34 + 4) * s + 0.5)}
+  -- 0.1.3 (#35): above the building page however tall it is (a factory tab with more rows grows the page upwards)
+  local panel = player.gui.screen["rts_hud_panel"]
+  if panel and panel.valid and panel.visible then
+    frame.location = {math.floor(MARGIN * s + 0.5), panel.location.y - math.floor((34 + 4) * s + 0.5)}
+  end
 end
 
 local function show_staff(player, g)
