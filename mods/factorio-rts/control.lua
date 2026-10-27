@@ -35,7 +35,7 @@ local modules = {
   require("scripts.rails"),     -- Phase 5 M1: depots, line planner, trains (after logistics: depots are hubs, and
                                 -- after orders: its right-click hook follows the haulers')
   require("scripts.railroutes"), -- 0.1.2 (#31 part B): multi-stop train schedules (after rails: its hooks)
-  require("scripts.railtool"),  -- 0.1.2 (#31 part A): the Rail tool (after rails, selection and orders: its hooks)
+  require("scripts.railplan"),  -- 0.1.3 (#37): the vanilla rail planner's track (after rails; replaces the Rail tool)
   require("scripts.railgui"),   -- Phase 5 M1: train and depot rail panels
   require("scripts.demolish"),  -- Phase 5: demolish own buildings (Delete, Demolish buttons)
   require("scripts.commander"), -- Phase 4: Commander hero (after logistics: its right-click hook follows the haulers')

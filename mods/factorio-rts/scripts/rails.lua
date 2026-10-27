@@ -55,6 +55,10 @@
 -- own track at REUSE_COST per tile of it instead of laying a parallel one, with junction signals where they leave it;
 -- a human force's depot may have any number of lines (depot.lines). The AI's surveys and its one line per depot are
 -- unchanged.
+-- 0.1.3 (#37): the Rail tool is gone; players lay track with the vanilla rail planner and rails.adopt_ghosts makes its
+-- ghosts "manual" lines (line.planner, see the "planner track" section): built by robots and crews like the segments,
+-- dissolved and adopted again when a ghost is cancelled. rails.plan_segment stays for the fixtures, and 0.1.2 segments
+-- still being built become planner track on load (rails.segments_to_planner, scripts/railplan.lua).
 -- 0.1.2 (#31 part B): that two-record route is the AI's (rails.set_route, unchanged). A train with a stop list
 -- (rec.stops: the player's trains) runs a native engine schedule instead: scripts/railroutes.lua owns it and sets
 -- rails.routes = {step, click, refresh, resume, serves}; this module's train step, state handler, right click,
@@ -1808,7 +1812,8 @@ function rails.human(force_name)
   return f ~= nil and #f.players > 0
 end
 
---- 0.1.2 (#31 part A): plan a piece of player-built track (a Rail tool segment) as a "manual" line: from rail end
+--- 0.1.2 (#31 part A; 0.1.3: the Rail tool is gone, tools/probes/r3_rails_manual.lua draws track with it and hands the
+--- ghosts over as planner ghosts): plan a piece of player-built track as a "manual" line: from rail end
 --- states `opts.starts` to `opts.goals` ({x, y, d, l}; goal directions point along the track as it arrives), on surface
 --- `opts.surface` (index). opts.start_rail / opts.end_rail: the existing rails it branches from / joins (junction
 --- signals, the crews' way in), opts.prev: the segment it continues, opts.tool: the player index, opts.own_land: refuse
@@ -3369,7 +3374,7 @@ local function dispatch_manual(line)
       line.wait = "no-access"
       util.log("rails: track segment #%d (%s) waits: no built track leads to it yet", line.id, line.force)
     end
-    track_waits(line, "no-access", lo)
+    track_waits(line, line.after and "busy" or "no-access", lo) -- 0.1.3 (#37): behind other planned track, no alert
     return
   end
   local cands = {}
@@ -3426,21 +3431,437 @@ local function dispatch_manual(line)
   track_waits(line, why, lo)
 end
 
+---------------------------------------------------------------------------
+-- 0.1.3 (#37): planner track. Players lay track with the vanilla rail planner (scripts/railplan.lua hands its ground
+-- rail ghosts over). rails.adopt_ghosts turns them into "manual" lines with line.planner = true, one per chain of ghosts
+-- in track order, from where the chain meets built track (or, for ghosts on free ground, from the track end nearest to
+-- an own depot); a chain that branches off another one is a line of its own starting at the branch point. Robots in
+-- range and one crew at a time build them exactly as the 0.1.2 Rail tool segments (dispatch_manual, chain signals every
+-- signal_spacing tiles and around junctions, the "track not built" alert). A planner line whose ghost goes away unbuilt
+-- (cancelled, undone, mined) is dissolved and its other ghosts are adopted again, so lines always match what stands.
+---------------------------------------------------------------------------
+local GROUND_RAILS = {"straight-rail", "half-diagonal-rail", "curved-rail-a", "curved-rail-b"}
+local GROUND_SET = {}
+for _, n in ipairs(GROUND_RAILS) do GROUND_SET[n] = true end
+rails.GROUND_RAILS = GROUND_RAILS
+rails.GROUND_SET = GROUND_SET
+
+local function poskey(x, y) return (floor(x * 2 + 0.5) + OFF) * SPAN + (floor(y * 2 + 0.5) + OFF) end
+
+-- Traversals of a ground piece, read from GEO: {[name .. "|" .. dir] = {t, t}}, t = {sdx, sdy, sd, gdx, gdy, gd, len,
+-- rails}: from its end at (x + sdx, y + sdy) heading sd to its end at (x + gdx, y + gdy) arriving heading gd.
+local TRAV
+local function traversals()
+  if TRAV then return TRAV end
+  local geo = geometry()
+  if not geo then return nil end
+  local t = {}
+  for _, k in ipairs(sorted_keys(geo)) do
+    if k % 2 == 0 then
+      local d = floor(k / 2)
+      for _, e in ipairs(geo[k]) do
+        if GROUND_SET[e.name] and e.glayer == 0 then
+          local key = e.name .. "|" .. e.dir
+          t[key] = t[key] or {}
+          table.insert(t[key], {sdx = -e.dx, sdy = -e.dy, sd = d, gdx = e.gdx - e.dx, gdy = e.gdy - e.dy, gd = e.gdir,
+                                len = e.len, rails = e.rails})
+        end
+      end
+    end
+  end
+  TRAV = t
+  return t
+end
+
+-- Own built ground rails with an end at (x, y).
+local function built_ends(s, force_name, x, y)
+  local out = {}
+  for _, r in ipairs(s.find_entities_filtered({position = {x, y}, radius = 5, name = GROUND_RAILS, force = force_name})) do
+    for _, rd in ipairs({RD.front, RD.back}) do
+      local loc = r.get_rail_end(rd).location
+      if loc.rail_layer == 0 and abs(loc.position.x - x) < 0.2 and abs(loc.position.y - y) < 0.2 then
+        out[#out + 1] = r
+        break
+      end
+    end
+  end
+  return out
+end
+rails.built_ends = built_ends
+
+-- The own built rail a train comes off when it leaves (x, y) heading d: the one whose end there points d (a branch that
+-- leaves a track heading west is entered from the rail east of the junction), else any built rail with an end there.
+local function rail_into(s, force_name, x, y, d)
+  local any
+  for _, r in ipairs(s.find_entities_filtered({position = {x, y}, radius = 5, name = GROUND_RAILS, force = force_name})) do
+    for _, rd in ipairs({RD.front, RD.back}) do
+      local loc = r.get_rail_end(rd).location
+      if loc.rail_layer == 0 and abs(loc.position.x - x) < 0.2 and abs(loc.position.y - y) < 0.2 then
+        if loc.direction == d then return r end
+        any = any or r
+      end
+    end
+  end
+  return any
+end
+
+-- Own ground rail ghosts with an end at (x, y): list of {g = LuaEntity}.
+local function ghost_ends(s, force_name, x, y)
+  local trav = traversals()
+  local out = {}
+  if not trav then return out end
+  for _, g in ipairs(s.find_entities_filtered({position = {x, y}, radius = 5, name = "entity-ghost",
+                                               force = force_name})) do
+    local ts = GROUND_SET[g.ghost_name] and trav[g.ghost_name .. "|" .. g.direction]
+    local t = ts and ts[1]
+    if t then
+      local p = g.position
+      if (abs(p.x + t.sdx - x) < 0.2 and abs(p.y + t.sdy - y) < 0.2)
+         or (abs(p.x + t.gdx - x) < 0.2 and abs(p.y + t.gdy - y) < 0.2) then
+        out[#out + 1] = {g = g}
+      end
+    end
+  end
+  return out
+end
+rails.ghost_ends = ghost_ends
+
+local function nearest_depot_distance(force_name, surface_index, x, y)
+  local best
+  for _, d in pairs(rstate().depots) do
+    if d.force == force_name and d.surface == surface_index and d.entity.valid then
+      local p = d.entity.position
+      local dd = (p.x - x) ^ 2 + (p.y - y) ^ 2
+      if not best or dd < best then best = dd end
+    end
+  end
+  return best or 0
+end
+
+-- A junction at (x, y) (three or more rail ends, built or ghost): every line piece with an unbuilt end there gets the
+-- mark that runs junction_signals when it is built (whichever stands last places the signals). Returns the marks set.
+local function mark_junction(s, force_name, x, y)
+  local ghosts = ghost_ends(s, force_name, x, y)
+  local built = built_ends(s, force_name, x, y)
+  if #ghosts + #built < 3 then return 0 end
+  local idx = index_of(s.index)
+  local R = rstate()
+  local n = 0
+  for _, ge in ipairs(ghosts) do
+    local g = ge.g
+    local v = idx[pkey(g.ghost_name, g.position.x, g.position.y, g.direction)]
+    local line = v and v > 0 and R.lines[floor(v / 100000)]
+    local p = line and line.pieces and line.pieces[v % 100000]
+    if p then
+      if abs(p.sx - x) < 0.2 and abs(p.sy - y) < 0.2 then p.jpos = {x = x, y = y} else p.jpos2 = {x = x, y = y} end
+      n = n + 1
+    end
+  end
+  return n
+end
+
+--- 0.1.3 (#37): adopt the ground rail ghosts `ghosts` (LuaEntity list) of force `force_name` on surface `s` as planner
+--- track (see above). Ghosts a line holds already are skipped. Returns the number of lines made.
+function rails.adopt_ghosts(force_name, s, ghosts)
+  local trav = traversals()
+  if not (trav and s and s.valid) then return 0 end
+  local R = rstate()
+  local idx = index_of(s.index)
+  local P, have = {}, {}
+  for _, g in ipairs(ghosts) do
+    if g.valid and g.type == "entity-ghost" and g.force.name == force_name and GROUND_SET[g.ghost_name] then
+      local pos = g.position
+      local key = pkey(g.ghost_name, pos.x, pos.y, g.direction)
+      local ts = trav[g.ghost_name .. "|" .. g.direction]
+      if ts and not idx[key] and not have[key] then
+        have[key] = true
+        P[#P + 1] = {g = g, name = g.ghost_name, x = pos.x, y = pos.y, d = g.direction, ts = ts}
+      end
+    end
+  end
+  if #P == 0 then return 0 end
+  table.sort(P, function(a, b)
+    if a.x ~= b.x then return a.x < b.x end
+    if a.y ~= b.y then return a.y < b.y end
+    if a.name ~= b.name then return a.name < b.name end
+    return a.d < b.d
+  end)
+  -- nodes: rail end positions, each with the pieces that leave from there ({pi, ti})
+  local nodes, nkeys, npos = {}, {}, {}
+  for pi, p in ipairs(P) do
+    for ti, t in ipairs(p.ts) do
+      local x, y = p.x + t.sdx, p.y + t.sdy
+      local k = poskey(x, y)
+      if not nodes[k] then
+        nodes[k] = {}
+        nkeys[#nkeys + 1] = k
+        npos[k] = {x = x, y = y}
+      end
+      local list = nodes[k]
+      list[#list + 1] = {pi = pi, ti = ti}
+    end
+  end
+  table.sort(nkeys)
+  local built = {}
+  local function built_at(k, x, y)
+    local b = built[k]
+    if not b then
+      b = built_ends(s, force_name, x, y)
+      built[k] = b
+    end
+    return b
+  end
+  local seen, chains, queue = {}, {}, {}
+  local function walk(pi, ti, start_rail)
+    local chain = {start_rail = start_rail}
+    while pi and not seen[pi] do
+      seen[pi] = true
+      local p = P[pi]
+      local t = p.ts[ti]
+      chain[#chain + 1] = {p = p, t = t}
+      local gx, gy = p.x + t.gdx, p.y + t.gdy
+      local k = poskey(gx, gy)
+      local b = built_at(k, gx, gy)
+      if #b > 0 then chain.end_rail = b[1] end
+      local nxt
+      for _, o in ipairs(nodes[k] or {}) do
+        if not seen[o.pi] then
+          -- straight on (the same heading) continues this chain while no built track stands here; anything else
+          -- (a switch's other leg, a piece coming in from the side, track beyond a built rail) starts a chain of its own
+          if not nxt and #b == 0 and P[o.pi].ts[o.ti].sd == t.gd then nxt = o else queue[#queue + 1] = o end
+        end
+      end
+      pi, ti = nil, nil
+      if nxt then pi, ti = nxt.pi, nxt.ti end
+    end
+    if #chain > 0 then chains[#chains + 1] = chain end
+  end
+  local function run_queue()
+    local i = 1
+    while i <= #queue do
+      local o = queue[i]
+      i = i + 1
+      if not seen[o.pi] then
+        local p = P[o.pi]
+        local t = p.ts[o.ti]
+        local x, y = p.x + t.sdx, p.y + t.sdy
+        walk(o.pi, o.ti, #built_at(poskey(x, y), x, y) > 0 and rail_into(s, force_name, x, y, t.sd) or nil)
+      end
+    end
+    queue = {}
+  end
+  -- 1. chains that start on built track
+  for _, k in ipairs(nkeys) do
+    local b = built_at(k, npos[k].x, npos[k].y)
+    if #b > 0 then
+      for _, o in ipairs(nodes[k]) do
+        if not seen[o.pi] then walk(o.pi, o.ti, rail_into(s, force_name, npos[k].x, npos[k].y, P[o.pi].ts[o.ti].sd)) end
+      end
+      run_queue()
+    end
+  end
+  -- 2. the rest: from a track end (one piece end there), the one nearest to an own depot first; a closed ring of
+  -- ghosts from any piece
+  while true do
+    local best, bd
+    for _, k in ipairs(nkeys) do
+      local list = nodes[k]
+      if #list == 1 and not seen[list[1].pi] then
+        local d = nearest_depot_distance(force_name, s.index, npos[k].x, npos[k].y)
+        if not bd or d < bd then best, bd = list[1], d end
+      end
+    end
+    if not best then
+      for pi = 1, #P do
+        if not seen[pi] then
+          best = {pi = pi, ti = 1}
+          break
+        end
+      end
+    end
+    if not best then break end
+    walk(best.pi, best.ti, nil)
+    run_queue()
+  end
+  -- chains -> lines
+  local made, ends = 0, {}
+  for _, chain in ipairs(chains) do
+    local id = R.next_id
+    R.next_id = id + 1
+    local pieces, length, track = {}, 0, 0
+    for i, c in ipairs(chain) do
+      local p, t = c.p, c.t
+      pieces[i] = {name = p.name, ni = NAME_INDEX[p.name], x = p.x, y = p.y, d = p.d, l = 0, sl = 0, rails = t.rails,
+                   len = t.len, sx = p.x + t.sdx, sy = p.y + t.sdy, sd = t.sd, gx = p.x + t.gdx, gy = p.y + t.gdy,
+                   gd = t.gd, g = p.g}
+      length = length + t.len
+      track = track + t.rails
+      idx[pkey(p.name, p.x, p.y, p.d)] = id * 100000 + i
+    end
+    local acc, signals = 0, 0
+    for i, q in ipairs(pieces) do
+      acc = acc + q.len
+      if pieces[i + 1] and acc >= CFG.signal_spacing then
+        q.sig, acc, signals = true, 0, signals + 2
+      end
+    end
+    local first, last = pieces[1], pieces[#pieces]
+    local bill = track + signals * CFG.signal_rails
+    R.lines[id] = {id = id, force = force_name, kind = "manual", planner = true, state = "building", created = game.tick,
+                   surveyed = game.tick, surface = s.index, chain = true, pieces = pieces, supports = {}, signals = {},
+                   start_rail = chain.start_rail, end_rail = chain.end_rail, rails = bill, length = length,
+                   missing = #pieces, used = 0, loaded = 0, returned = 0, robot = 0,
+                   bill = {rails = bill, track = track, pieces = #pieces, supports = 0, ramps = 0, signals = signals}}
+    made = made + 1
+    ends[poskey(first.sx, first.sy)] = {x = first.sx, y = first.sy}
+    ends[poskey(last.gx, last.gy)] = {x = last.gx, y = last.gy}
+    util.log("rails: planner track #%d of %s: %d pieces %s -> %s, %.0f tiles, bill %d rails, %s%s", id, force_name,
+      #pieces, util.pos_str({first.sx, first.sy}), util.pos_str({last.gx, last.gy}), length, bill,
+      chain.start_rail and "from built track" or "from free ground", chain.end_rail and ", onto built track" or "")
+  end
+  local marked = 0
+  for _, k in ipairs(sorted_keys(ends)) do marked = marked + mark_junction(s, force_name, ends[k].x, ends[k].y) end
+  if marked > 0 then util.log("rails: planner track of %s: %d piece ends at junctions", force_name, marked) end
+  return made
+end
+
+--- 0.1.3 (#37): Rail tool segments (0.1.2 manual lines) that are still being built become planner track: the line goes
+--- (a crew on it goes home: builder_step finds no line), its ghosts are adopted (rails.adopt_ghosts) and its built
+--- pieces stay as track. Segments with elevated pieces or supports stay as they are. `only` = one line id (fixtures),
+--- nil for all. Returns the segments converted, the planner lines made and the ghosts handed over.
+function rails.segments_to_planner(only)
+  local R = rstate()
+  local groups, keys = {}, {}
+  local n = 0
+  for _, id in ipairs(sorted_keys(R.lines)) do
+    local line = R.lines[id]
+    local ground = line.kind == "manual" and not line.planner and line.pieces ~= nil and #(line.supports or {}) == 0
+    for _, p in ipairs(ground and line.pieces or {}) do
+      if not GROUND_SET[p.name] then ground = false end
+    end
+    if ground and line.state == "building" and (not only or only == id) and game.surfaces[line.surface] then
+      local k = line.force .. "|" .. line.surface
+      local G = groups[k]
+      if not G then
+        G = {force = line.force, surface = line.surface, ghosts = {}}
+        groups[k] = G
+        keys[#keys + 1] = k
+      end
+      local idx = index_of(line.surface)
+      for _, p in ipairs(line.pieces) do
+        idx[pkey(p.name, p.x, p.y, p.d)] = nil
+        if not (p.e and p.e.valid) and p.g and p.g.valid then G.ghosts[#G.ghosts + 1] = p.g end
+      end
+      R.lines[id] = nil
+      n = n + 1
+      util.log("rails: track segment #%d of %s becomes planner track (%d pieces, %d built)", id, line.force,
+        #line.pieces, #line.pieces - (line.missing or 0))
+    end
+  end
+  table.sort(keys)
+  local made, ghosts = 0, 0
+  for _, k in ipairs(keys) do
+    local G = groups[k]
+    ghosts = ghosts + #G.ghosts
+    made = made + rails.adopt_ghosts(G.force, game.surfaces[G.surface], G.ghosts)
+  end
+  return n, made, ghosts
+end
+
+-- A planner line against what stands: a piece built by someone else (by hand, a script revive) counts as built; a
+-- piece whose ghost went without a rail in its place dissolves the line: its ghosts are adopted again. Returns true
+-- when the line was dissolved.
+local function planner_resync(line)
+  local s = game.surfaces[line.surface]
+  if not s then return false end
+  local gone, missing = nil, 0
+  for i, p in ipairs(line.pieces) do
+    if not (p.e and p.e.valid) then
+      p.e = nil
+      if not (p.g and p.g.valid) then
+        local ex = s.find_entity(p.name, {p.x, p.y})
+        if ex and ex.valid and ex.direction == p.d and ex.force.name == line.force then
+          p.e, p.g = ex, nil
+        else
+          gone = gone or i
+        end
+      end
+      if not p.e then missing = missing + 1 end
+    end
+  end
+  line.missing = missing
+  if not gone then return false end
+  local R = rstate()
+  local idx = index_of(line.surface)
+  local ghosts = {}
+  for _, p in ipairs(line.pieces) do
+    idx[pkey(p.name, p.x, p.y, p.d)] = nil
+    if not p.e and p.g and p.g.valid then ghosts[#ghosts + 1] = p.g end
+  end
+  R.lines[line.id] = nil
+  local p = line.pieces[gone]
+  util.log("rails: planner track #%d of %s: piece %d %s at %s went unbuilt: dissolved, %d ghosts adopted again", line.id,
+    line.force, gone, p.name, util.pos_str({p.x, p.y}), #ghosts)
+  rails.adopt_ghosts(line.force, s, ghosts)
+  return true
+end
+rails.planner_resync = planner_resync
+
+-- Before a crew is sent: the start rail of a planner line is found once built track reaches its first piece; a line
+-- that nothing built reaches at its first piece but built track meets at its last one is turned round. A line whose
+-- start touches ghosts of other lines waits for them without an alert (line.after).
+local function planner_orient(line)
+  line.after = nil
+  if line.start_rail and line.start_rail.valid then return end
+  local p1 = line.pieces[1]
+  if not p1 or (p1.e and p1.e.valid) then return end
+  local s = game.surfaces[line.surface]
+  if not s then return end
+  local anchor = rail_into(s, line.force, p1.sx, p1.sy, p1.sd)
+  if anchor then
+    line.start_rail = anchor
+    return
+  end
+  local n = #line.pieces
+  local pn = line.pieces[n]
+  local b = not (pn.e and pn.e.valid) and rail_into(s, line.force, pn.gx, pn.gy, (pn.gd + 8) % 16) or nil
+  if not b then
+    line.after = #ghost_ends(s, line.force, p1.sx, p1.sy) > 1 or nil
+    return
+  end
+  local rev = {}
+  for i = n, 1, -1 do
+    local p = line.pieces[i]
+    p.sx, p.sy, p.sd, p.gx, p.gy, p.gd = p.gx, p.gy, (p.gd + 8) % 16, p.sx, p.sy, (p.sd + 8) % 16
+    p.jpos, p.jpos2 = p.jpos2, p.jpos
+    rev[#rev + 1] = p
+  end
+  line.pieces = rev
+  line.start_rail, line.end_rail = b, nil
+  local idx = index_of(line.surface)
+  for i, p in ipairs(rev) do idx[pkey(p.name, p.x, p.y, p.d)] = line.id * 100000 + i end
+  util.log("rails: planner track #%d of %s turned round: built track meets its far end at %s", line.id, line.force,
+    util.pos_str({rev[1].sx, rev[1].sy}))
+end
+
 local function check_lines()
   local R = rstate()
   for _, id in ipairs(sorted_keys(R.lines)) do
-    local line = R.lines[id]
+    local line = R.lines[id] or {} -- (0.1.3: a planner line dissolved during this check is gone)
     local st = line.state
-    if line.kind == "manual" then -- 0.1.2 (#31 part A): a Rail tool segment
+    if line.kind == "manual" then -- 0.1.2 (#31 part A): a Rail tool segment; 0.1.3 (#37): planner track too
       if (st == "building" or st == "cut") and line.pieces then
         if line.builder and not R.trains[line.builder] then line.builder = nil end
-        if line.missing <= 0 and supports_missing(line) == 0 then
+        if line.planner and planner_resync(line) then
+          -- (dissolved: its ghosts are lines of their own from the next check)
+        elseif line.missing <= 0 and supports_missing(line) == 0 then
           line.state = "open"
           line.opened = line.opened or game.tick
           line.wait = nil
           util.log("rails: track segment #%d of %s built: %d pieces (%d robots, %d crews)", line.id, line.force,
             #line.pieces, line.robot or 0, (line.used or 0) - (line.robot or 0))
         elseif not line.builder then
+          if line.planner then planner_orient(line) end
           dispatch_manual(line)
         end
       elseif st == "open" and line.missing > 0 then

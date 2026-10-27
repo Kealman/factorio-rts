@@ -1,6 +1,8 @@
 -- Keeps the rts-cursor selection tool in the player's hand (spike #1/#2, decision 13):
 -- given on setup, re-inserted when the cursor empties (Q, controller changes), F1 forces it back.
 --
+-- 0.1.3 (#37): a rail ghost is the vanilla rail planner (camera.lua turns hover selection on for it).
+--
 -- Phase 2 build mode: the build menu (hud.lua) puts a ghost in the cursor with cursor.give_ghost. While a
 -- ghost is in the cursor the tool is NOT re-inserted, so the player can place several ghosts in a row.
 -- Build mode ends when the cursor is cleared: Q (vanilla clear-cursor, followed by the rts-clear-cursor input),
@@ -24,6 +26,9 @@ local giving = false
 -- Phase 5 M2 QA round 1: fn(player, reason) after the tool came back (camera.lua refreshes the vanilla hover box).
 local given_hooks = {}
 function cursor.on_tool_given(fn) given_hooks[#given_hooks + 1] = fn end
+-- 0.1.3 (#37): fn(player, item) after a build ghost went into the cursor (camera.lua: the rail planner needs hover)
+local ghost_hooks = {}
+function cursor.on_ghost_given(fn) ghost_hooks[#ghost_hooks + 1] = fn end
 
 --- Item name of the ghost in the player's cursor, or nil.
 function cursor.ghost_name(player)
@@ -32,6 +37,13 @@ function cursor.ghost_name(player)
   local name = ghost.name
   if type(name) == "table" or type(name) == "userdata" then name = name.name end -- LuaItemPrototype on read
   return name
+end
+
+--- 0.1.3 (#37): true when the cursor holds a ghost of a rail planner item (the vanilla rail planner runs).
+function cursor.holds_planner(player)
+  local name = cursor.ghost_name(player)
+  local proto = name and prototypes.item[name]
+  return proto ~= nil and proto.type == "rail-planner"
 end
 
 --- True when the player holds the RTS cursor tool.
@@ -75,6 +87,9 @@ function cursor.give_ghost(player, item)
   giving = false
   local ok = cursor.ghost_name(player) == item
   if not ok then cursor.ensure(player, true, "ghost refused") end
+  if ok then
+    for _, fn in ipairs(ghost_hooks) do fn(player, item) end
+  end
   return ok
 end
 
