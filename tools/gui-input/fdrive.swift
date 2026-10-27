@@ -7,7 +7,8 @@
 // 0.1.1 (r2-ux, issue #12: tools/probes/r2_inputs_gui.lua), all backwards compatible:
 // fdrive click X Y [MODS] | rclick X Y [MODS]  MODS: shift, ctrl, cmd, alt or a "+" list (shift+ctrl); held around
 //                                              the click (key down, flagged mouse events, key up)
-// fdrive drag X1 Y1 X2 Y2 [left|right] [MODS] press at 1, dragged events in 12 steps to 2, release at 2
+// fdrive drag X1 Y1 X2 Y2 [left|right] [MODS] [STEPS] [MS]  press at 1, dragged events in STEPS steps (12) MS ms
+//                                              apart (25) to 2, release at 2 (0.1.3 r4-rails: slow rail planner drags)
 // fdrive key CODE [MODS]                      e.g. key 15 ctrl+shift = Ctrl+Shift+R
 // fdrive moddown MODS | modup MODS            press / release modifier keys (shift, ctrl, cmd, alt, a+b) across commands
 // fdrive keydown CODE | keyup CODE            hold a key across other commands (e.g. D pans while clicking)
@@ -131,12 +132,13 @@ case "drag":
   modsDown(m)
   mouse(right ? .rightMouseDown : .leftMouseDown, a, button, f)
   usleep(80000)
-  let steps = 12
+  let steps = max(1, args.count > 8 ? Int(args[8]) ?? 12 : 12)
+  let stepUs = UInt32(max(1, args.count > 9 ? Int(args[9]) ?? 25 : 25)) * 1000
   for i in 1...steps {
     let t = CGFloat(i) / CGFloat(steps)
     let p = CGPoint(x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t)
     mouse(right ? .rightMouseDragged : .leftMouseDragged, p, button, f)
-    usleep(25000)
+    usleep(stepUs)
   }
   usleep(60000)
   mouse(right ? .rightMouseUp : .leftMouseUp, b, button, f)
