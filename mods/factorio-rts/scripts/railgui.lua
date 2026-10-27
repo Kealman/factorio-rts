@@ -74,6 +74,11 @@ local function place(player, frame, kind)
   local res = player.display_resolution
   local right = (WIDTH + MARGIN) + (kind == "depot" and (HUB_WIDTH + MARGIN) or 0)
   frame.location = {res.width - math.floor(right * s + 0.5), math.floor(TOP * s + 0.5)}
+  -- 0.1.3 (#34): the panel stops above the Build menu (the right column below it), not over it
+  local build = player.gui.screen["rts_hud_build"]
+  if build and build.valid and build.visible then
+    frame.style.maximal_height = math.max(200, math.floor((build.location.y - frame.location.y) / s) - MARGIN)
+  end
 end
 
 local function label(parent, style, caption)
