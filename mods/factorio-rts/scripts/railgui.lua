@@ -304,6 +304,15 @@ local function editor(parent, g, rec, train, i)
   return box
 end
 
+-- 0.1.3 (#33 items 1 and 2): what the stop list warns about, as a string that changes when the warnings do
+local UNREACH_TICKS = 300
+local function warnings_sig(unreach, shared)
+  local parts = {tostring(shared or "-")}
+  for i, j in pairs(unreach) do parts[#parts + 1] = i .. "<" .. j end
+  table.sort(parts)
+  return table.concat(parts, ",")
+end
+
 local function build_stops(frame, g, rec, train)
   local el = g.el
   local head = frame.add({type = "flow", direction = "horizontal", style = "rts_hud_row"})
@@ -320,6 +329,9 @@ local function build_stops(frame, g, rec, train)
     g.sel[rec.id] = nil
   end
   el.rows = {}
+  local unreach = railroutes.unreachable(rec) -- 0.1.3 (#33 item 2)
+  local shared = railroutes.shared_with(rec)  -- 0.1.3 (#33 item 1)
+  g.warn_sig, g.warn_tick = warnings_sig(unreach, shared), game.tick
   if #stops == 0 then
     label(frame, "rts_hud_dim_label", {"rts.route-empty"})
   else
@@ -336,8 +348,20 @@ local function build_stops(frame, g, rec, train)
       b.toggled = sel == i
       local sum = scroll.add({type = "label", style = "rts_hud_dim_label", caption = stop_summary(stop)})
       sum.style.left_padding = 16
+      if unreach[i] then
+        local w = scroll.add({type = "label", style = "rts_hud_label", caption = {"rts.route-unreachable", unreach[i]}})
+        w.style.left_padding = 16
+        w.style.single_line = false
+        w.style.maximal_width = WIDTH - 40
+        w.style.font_color = COLOR.red
+      end
       el.rows[i] = b
     end
+  end
+  if shared then
+    local w = label(frame, "rts_hud_label", {"rts.route-shared", shared})
+    w.style.single_line = false
+    w.style.font_color = COLOR.yellow
   end
   if sel then editor(frame, g, rec, train, sel) end
   el.status = label(frame)
@@ -420,6 +444,11 @@ local function refresh_train(player, g)
   local el = g.el
   -- 0.1.2 (#31 part B): the stop list's structure changed (a stop added by a right click, a policy): rebuild
   if el.rows and stops_sig(rec, train, g.sel and g.sel[rec.id]) ~= g.sig then return "rebuild" end
+  -- 0.1.3 (#33): track built or taken up since, another train's list changed: the warnings follow
+  if el.rows and game.tick - (g.warn_tick or 0) >= UNREACH_TICKS then
+    g.warn_tick = game.tick
+    if warnings_sig(railroutes.unreachable(rec), railroutes.shared_with(rec)) ~= g.warn_sig then return "rebuild" end
+  end
   -- 0.1.2 (#32): the train came to or left a depot platform, or a carriage was coupled or taken off
   if el.rows then
     local why = rails.edit_check(train, "remove")
