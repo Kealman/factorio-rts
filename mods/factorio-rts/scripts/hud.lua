@@ -832,6 +832,12 @@ local function build_unit_page(panel, h)
   el.order = header.add({type = "label", style = "rts_hud_label", tooltip = {"rts.order-tooltip"}})
   el.order.style.maximal_width = 250 -- "Order: Idle 6 / Commander 1" was cut at 200 (Phase 4 QA)
   -- Phase 5 M2 integration: Disband (Nation mode only; demolish.disband, two presses)
+  -- 0.1.3 (#34): the help card of the selected unit type (one type selected; scripts/helpgui.lua reads tags.rts_help)
+  el.u_help = header.add({type = "button", name = PREFIX .. "help_card_unit", style = "rts_hud_button", caption = "?",
+                          tooltip = {"rts-help.card-pin-tooltip"}, tags = {rts_help = ""}})
+  el.u_help.style.height = P4.DEMOLISH_HEIGHT
+  el.u_help.style.minimal_width = P4.DEMOLISH_HEIGHT
+  el.u_help.visible = false
   el.disband = header.add({type = "sprite-button", name = PREFIX .. "disband", sprite = "utility/trash",
                            style = "tool_button_red", tooltip = {"rts.disband-tooltip"}, tags = {rts_hud = "disband"}})
   el.disband.style.size = 24
@@ -1362,6 +1368,7 @@ local function update_units(player, h)
   update_cards(h, names, by_name, player.force.name)
   if n == 0 then
     if el.disband and el.disband.valid then el.disband.visible = false end -- Phase 5 M2 integration
+    if el.u_help and el.u_help.valid then el.u_help.visible = false end
     el.sel_count.caption = {"rts.sel-none"}
     el.hint.caption = {"rts.sel-hint-empty"}
     el.health.caption = ""
@@ -1372,6 +1379,11 @@ local function update_units(player, h)
   -- One prototype: "Raider ×6"; mixed: "9 units selected"
   el.sel_count.caption = #names == 1 and {"rts.kind-count", unit_name(names[1]), n} or {"rts.sel-count", n}
   el.hint.caption = {"rts.sel-hint"}
+  if el.u_help and el.u_help.valid then -- 0.1.3 (#34): one unit type selected: its help card
+    local one = #names == 1 and names[1] or nil
+    el.u_help.tags = {rts_help = one or ""}
+    el.u_help.visible = one ~= nil and require_help_family(one) ~= nil
+  end
   if el.disband and el.disband.valid then -- Phase 5 M2 integration: Nation mode only; red while armed
     el.disband.visible = P4.nation()
     local armed_fn = optional_fn("scripts.demolish", {"disband_armed"})

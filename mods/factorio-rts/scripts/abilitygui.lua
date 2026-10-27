@@ -28,7 +28,8 @@ local abilitygui = {}
 abilitygui.FRAME = "rts_ability_bar"
 local PREFIX = "rts_ability_"
 -- GUI units (x player.display_scale on screen). Full: 359x65 px at 0.75. Compact (no card text): 320 wide.
-local WIDTH, COMPACT_WIDTH, HEIGHT = 478, 320, 86
+-- 0.1.3 (#34): +30 for the "?" column (the help card of the five abilities)
+local WIDTH, COMPACT_WIDTH, HEIGHT = 508, 350, 86
 local MARGIN = 8               -- GUI units above the bottom edge
 local INFO_WIDTH = 150         -- card text column; the health bar has the same width
 local REFRESH = 15
@@ -78,6 +79,17 @@ local function description(name)
 end
 
 local function valid(el) return el ~= nil and el.valid end
+
+--- 0.1.3 (#34): what the help card prints per ability: {name, title, hotkey, cooldown seconds, description, tech}.
+function abilitygui.card_lines()
+  local out = {}
+  for _, name in ipairs(abilities.LIST) do
+    local def = abilities.DEF[name]
+    out[#out + 1] = {name = name, title = TEXT[name], key = def.key, cooldown = def.cooldown / 60,
+                     description = description(name), tech = def.tech}
+  end
+  return out
+end
 
 -- The bar's elements as a flat table, or nil when anything is missing or invalid (or the layout changed): the caller
 -- rebuilds then.
@@ -142,6 +154,15 @@ local function build(player, screen, mode)
     col.add({type = "progressbar", name = "bar", style = "rts_ability_cooldown_bar", value = 1})
     col.add({type = "label", name = "key", style = "rts_ability_key_label", caption = def.key or "–"})
   end
+  -- 0.1.3 (#34): "?" opens the card that explains the five abilities (scripts/helpgui.lua, tags.rts_help = "*abilities*")
+  local help = frame.add({type = "flow", name = "help", direction = "vertical"})
+  help.style.vertical_align = "center"
+  help.style.height = HEIGHT - 16
+  local hb = help.add({type = "button", name = PREFIX .. "help", style = "rts_hud_button", caption = "?",
+                       tooltip = {"rts-help.abilities-card-tooltip"}, tags = {rts_help = "*abilities*"}})
+  hb.style.height = 24
+  hb.style.minimal_width = 24
+  hb.style.padding = 0
   frame.location = {x, y}
   util.log("abilitygui: built for player %d (%s) at (%d, %d), %dx%d px (display %dx%d, scale %.2f)", player.index, mode,
     x, y, w, px(HEIGHT, player.display_scale), player.display_resolution.width, player.display_resolution.height,
