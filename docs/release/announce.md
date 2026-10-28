@@ -95,12 +95,12 @@ The forums use BBCode, not Markdown. Post in the Mods subforum; the post title i
 Feedback and bug reports are very welcome. Please include the map seed ([i]/seed[/i] in the console), the mode and the [i][rts][/i] lines of factorio-current.log.
 =====
 
-## 0.1.2 update (reply in the forum thread and on the Reddit post)
+## 0.1.3 update (reply in the forum thread and on the Reddit post)
 
-Paste it as a comment; replace the 0.1.1 paragraph if one is pinned.
+Paste it as a comment; replace the 0.1.2 paragraph if one is pinned.
 
 =====
-**Factorio RTS 0.1.2 is out.** It comes from the first long game on 0.1.1, where building and logistics got in the way. You can now order crafts in the factory like handcrafting (click 1, Shift 5, Ctrl all), select and demolish belts, inserters and poles, cancel ghosts, clear trees and rocks with a right click, and use underground belts and splitters. Hold Shift over anything (or press Shift+F11) for a help card. Oil panels say there are no pipes, and a new city brings starter stock from its mother city. Railways are yours now: trains run stop lists with orders per stop, a train builder composes mixed trains carriage by carriage, and the Rail tool lays your own track with signals and rail stations. 0.1.1 saves load. Known limits: two trains on single track can block each other at a platform (add a passing loop), junctions turn one way, and the AI is unchanged from 0.1.1.
+**Factorio RTS 0.1.3 is out.** Your own track is back on the vanilla rail planner: press the Rail button, click a rail end, then click where the track goes. Curves, branches and joins work as in vanilla, robots and construction trains build it, and junctions get chain signals. The factory page no longer overflows (Pause, Auto and Endless are in its header), the top strip is configurable with a gear button and hover details, including minutes of food left, and the unit page and ability bar have help cards. The Nation AI reaches Age II sooner. 0.1.2 and 0.1.1 saves load. Known limits: the planner lays ground track only, the AI still links 12 of 20 test nations by minute 35 (the target is 16), and a few rail follow-ups wait for 0.1.4.
 
 Mod Portal: https://mods.factorio.com/mod/factorio-rts · Release notes: https://github.com/Kealman/factorio-rts/releases
 =====
