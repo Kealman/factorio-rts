@@ -1333,3 +1333,23 @@ to 8 of 20, so the lead shipped the stone-only keep. Age III by 40:00 on the shi
   done at 21:50); in 801 its supply cap put Supply 2 first and Industrialisation ran 14:05-22:45 with the labs short of
   advanced kits (the lever would not help there). Accepted for 0.1.1 by the lead as a research-order effect; not
   measured.
+
+### 8.13 Release 0.1.3 (r4-ai): the standing numbers
+
+Agent `r4-ai`, notes `docs/qa/release-0-1-3-r4-ai-notes.md` (levers, tables, guard figures). The 0.1.2 tree reproduced
+the 0.1.2 release check line for line; the shipped AI tree is 17a405d (Industrialisation, then Railways, first in
+Nation Age I; one more coal extractor when coal runs short; AI freight trains that lose a locomotive or their path are
+rebuilt; siege kits from plan time and for siege railways from towns; the lost-line rebuild and the third city's edge
+not held by the engine focus). The items of 8.12 are done except army.step's pool passes (not needed).
+
+| Criterion (M1 501; M3 801-805, 4 normal AIs, 2048, 60 min) | 0.1.2 | 0.1.3 AI tree (17a405d) |
+|---|---|---|
+| M1 501 checks; train items; rts-ai-1 Age II | 51/53; 19,101; 32:36 | 53/53; 25,678; 19:57 |
+| Age III by 40:00 (first Age III per seed) | 2/5 | 5/5 (36:59 38:03 38:02 37:56 37:26) |
+| nations with three cities linked by 35:00 (target 16) | 9/20 | 12/20 (13/20 with the research levers alone) |
+| the aggressive AI's first line before 32:00 | 4/5 | 3/5 (805 at 32:08) |
+| lines opened by 60:00; crews' coal waits over 60 min | 52; 308 line-minutes | 74; 9 line-minutes |
+| capital starving minutes; capitals lost | 0; 0 | 0; 0 |
+
+#2 stays open for 0.1.4: the aggressive AI's capital smelts 37-38 copper a minute in Age I, and its depots and crew
+kits wait for copper (a copper hub for the aggressive and turtle doctrines is the next lever).
