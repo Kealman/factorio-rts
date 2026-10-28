@@ -4,7 +4,7 @@
 
 ![A Nation capital at City tier in Age III: districts, hubs, rail depots, stockpiles and haulers on the move](docs/media/02-capital.png)
 
-**Version 0.1.2** for Factorio 2.1 · Space Age optional · [Mod Portal](https://mods.factorio.com/mod/factorio-rts) · [Full feature list](docs/FEATURES.md) · [Changelog](CHANGELOG.md) · [MIT license](LICENSE)
+**Version 0.1.3** for Factorio 2.1 · Space Age optional · [Mod Portal](https://mods.factorio.com/mod/factorio-rts) · [Full feature list](docs/FEATURES.md) · [Changelog](CHANGELOG.md) · [MIT license](LICENSE)
 
 Contents: [Gallery](#gallery) · [Highlights](#highlights) · [Requirements](#requirements) · [Install](#install) · [Quick start](#quick-start) · [Controls](#controls) · [The economy](#the-economy) · [Your first Skirmish match](#your-first-skirmish-match) · [Units](#units) · [AI and difficulty](#ai-and-difficulty) · [Nation mode](#nation-mode) · [Multiplayer](#multiplayer) · [Known limitations](#known-limitations-and-open-issues) · [Roadmap](#roadmap) · [Development](#development) · [Contributing](#contributing) · [License and credits](#license-and-credits)
 
@@ -46,7 +46,7 @@ Contents: [Gallery](#gallery) · [Highlights](#highlights) · [Requirements](#re
 
 **From the Mod Portal.** In the game's main menu open **Mods**, search the online mods for "Factorio RTS", install it and let the game restart. You can also download it from [mods.factorio.com/mod/factorio-rts](https://mods.factorio.com/mod/factorio-rts).
 
-**Manually.** Download `factorio-rts_0.1.2.zip` from the [GitHub releases](https://github.com/Kealman/factorio-rts/releases) and put the zip, unpacked or not, into your mods folder. Then enable the mod in **Mods**.
+**Manually.** Download `factorio-rts_0.1.3.zip` from the [GitHub releases](https://github.com/Kealman/factorio-rts/releases) and put the zip, unpacked or not, into your mods folder. Then enable the mod in **Mods**.
 
 | System | Mods folder |
 |---|---|
@@ -111,6 +111,9 @@ Every side starts with a Command Center (CC), the same stock and 6 walkers. Huma
 | Esc | Game menu: save, load, settings, exit (the RTS panels close first if one is open) |
 | F11 | How to play |
 | Hold Shift over a building, unit or ghost; **?** on a panel; Shift+F11 | A help card: what it is, how it works, what it takes and makes, ranges, needs and a tip (a hover card closes with a click, after 20 s or on the next Shift press) |
+| **?** on the unit page (a unit type selected); **?** on the ability bar | A help card for the unit type; one pinned card for the five abilities with their hotkeys and cooldowns |
+| The gear button at the end of the top strip's resource row | Choose what the strip shows (see [The top strip](#the-top-strip)) |
+| Pause / Auto / Endless in the factory page header | Stop the machine / make the largest shortfall among the city's make targets (Nation) / keep producing after an order (see [The factory page](#the-factory-page)) |
 | F1 | Get the RTS cursor back |
 | **Nation mode only** | |
 | L, or a click on the age badge | City ledger (age, national project, goods, make targets) |
@@ -133,7 +136,19 @@ Every side starts with a Command Center (CC), the same stock and 6 walkers. Huma
 
 On macOS, every Ctrl chord also works with Cmd. You can rebind keys under Settings → Controls; the mod's controls are named "RTS: …", "Ability: …", "Research panel" and "City ledger". Haulers are left out of Ctrl+A; select them with a click or a box.
 
-**Abilities** are on the bar at the bottom centre. Cooldowns are per side.
+### The top strip
+
+The strip at the top shows the timer and your stock. The **gear** button at the end of its resource row opens the chooser: the list of what is shown, with `<` `>` to move an entry, `x` to remove it, "Show also" buttons for the special entries (army counters, supply, robots), **Add an item** (a picker of every item that has stock in your networks and is not shown yet) and **Reset to default**. At most 12 entries fit. The choice is kept per player and per mode.
+
+- **Nation default:** timer, iron, copper, stone, coal, grain, rations, power and treasury.
+- **Skirmish default:** timer, army counters, supply, iron, copper, stone, coal, magazines and power. Steel, circuits, explosives, robots and anything else are off until you add them.
+- **Hover** an item for its total, the split per logistic network (named by its Command Center or City Center) and the last minute's change ("+N per minute"). Rations and grain also show the stock of every network that feeds a city and the **minutes left** per city and in total, from what the residents eat; grain counts as the rations the bakery makes from it (2 grain make 3 rations). The label reads like "700 (35 min)", yellow under 10 minutes and red under 3.
+
+### The factory page
+
+Select a factory or barracks to see its page. **Pause**, **Auto** and **Endless** sit in the page header, between the category tabs and the hit points; the recipe grid below holds only recipes. A tab with more recipes than two rows makes the panel taller (it grows upwards), so the status line with the progress, the state, the counts and the queue always shows. The long-handed inserter is Nation only, which keeps the Skirmish page at two rows.
+
+**Abilities** are on the bar at the bottom centre. Cooldowns are per side. A **?** on the bar opens one pinned help card for all five.
 
 | Key | Ability | Needs | Effect | Cooldown |
 |---|---|---|---|---|
@@ -381,7 +396,7 @@ Haulers carry 10 slots instead of 20 (*Hauler capacity I* and *II* add 10 each) 
 
 **Cuts and repairs.** A destroyed rail of a line leaves a ghost, the line reads *cut*, and "Rail line cut" sounds. A construction train from the free side of the cut repairs it, so keep a crew's kits and rails at both ends; trains resume afterwards. A construction train leaves its depot only with 40 coal in the network (20 per locomotive). Trains run over units on the track (haulers pass through), so keep armies off the line. In Nation mode attack-moves do not shoot rails, signals or poles; raiders and a right-click attack do. A line whose depot is captured is lost to you; when you take the city back, the line comes back too, and the trains you routed take their stop lists up again. A line whose depot is destroyed is lost; stop lists skip a depot that is gone.
 
-**Bridges** (tier-2 research, 20 advanced kits, Space Age only) let the planner cross water on elevated spans with supports.
+**Bridges** (tier-2 research, 20 advanced kits, Space Age only) let the auto lines cross water on elevated spans with supports; the rail planner lays ground track only.
 
 ### Ages
 
@@ -522,7 +537,7 @@ The simulation is deterministic, which multiplayer needs. In the 0.1.1 release a
 
 ## Known limitations and open issues
 
-The lists below come from the 0.1.2 notes (`docs/qa/release-0-1-2-*-notes.md`), the 0.1.1 release acceptance and notes (`docs/qa/phase5-r2-platform-notes.md`, `docs/qa/phase5-ai3-notes.md` section 8 and the other `docs/qa/phase5-r2-*-notes.md`) and the 0.1.0 acceptance notes (`docs/qa/phase5-m3-integration-notes.md`, `docs/qa/phase5-port21-notes.md`). Open items are tracked in the [issue tracker](https://github.com/Kealman/factorio-rts/issues).
+The lists below come from the 0.1.3 notes (`docs/qa/release-0-1-3-*-notes.md`), the 0.1.2 notes (`docs/qa/release-0-1-2-*-notes.md`), the 0.1.1 release acceptance and notes (`docs/qa/phase5-r2-platform-notes.md`, `docs/qa/phase5-ai3-notes.md` section 8 and the other `docs/qa/phase5-r2-*-notes.md`) and the 0.1.0 acceptance notes (`docs/qa/phase5-m3-integration-notes.md`, `docs/qa/phase5-port21-notes.md`). Open items are tracked in the [issue tracker](https://github.com/Kealman/factorio-rts/issues).
 
 **Platform and setup**
 
@@ -534,12 +549,12 @@ The lists below come from the 0.1.2 notes (`docs/qa/release-0-1-2-*-notes.md`), 
 
 **Nation AI and balance**
 
-- The AI reaches Age III later than designed. In the 0.1.1 release acceptance the first nation got there by minute 40 in 2 of 5 four-nation seeds (34:42 to 41:36; the target is 3 of 5).
-- The AI links its cities by rail later than designed. In the same seeds 9 of 20 AI nations had three cities linked by minute 35 (the target is 16), though the aggressive AI now opens its first line before minute 32 in 4 of 5 seeds. Lines lost in wars and capitals short of steel for the crews' kits cause most misses.
+- The AI reaches Age III by minute 40 in 5 of 5 four-nation test seeds (0.1.2: 2 of 5; target 3 of 5), after the aggressive AI took Industrialisation and Railways before its army technologies. One seed set is a small sample, and any change to the code moves war outcomes.
+- The AI links its cities by rail later than designed. In the 0.1.3 test seeds 12 of 20 AI nations had three cities linked by minute 35 (0.1.2: 9; the target is 16), and the aggressive AI opened its first line before minute 32 in 3 of 5 seeds (0.1.2: 4 of 5). The limit is copper in Age I (one copper slot pays depots, crew kits and the Charter's circuits) and, after a lost battle, steel ([#39](https://github.com/Kealman/factorio-rts/issues/39)).
 - The AI does not field interceptors, bombers or artillery trains within a 60-minute match, although its scout planes patrol in every test seed. It researches the war technologies first at war and lays siege railways, and every war path works in a test that grants the technology. But Air Force needs Age III, Aviation and a war at the same time, which no test nation reached in 60 minutes, and no siege line opened before its operation ended. The balance of air, anti-aircraft and artillery trains is still a first guess.
 - Money pressure on the AI is light: AI nations keep a cash reserve and stop recruiting before they slide into debt. Retiring units in debt is exercised by a test probe rather than by real matches.
 - Small changes swing per-seed AI outcomes. Every run is deterministic, but a seed's war outcome can flip with any change to the code.
-- Rail freight is just below its design target: in the 60-minute 1v1 Nation test seed the two AI-run sides move 19,101 items by train in two identical runs, against a target of 20,000. The figure swings with the war on that seed.
+- Rail freight meets its design target on one seed only: in the 60-minute 1v1 Nation test seed the two AI-run sides moved 25,678 items by train (target 20,000; 0.1.2: 19,101). With the aggressive AI on time its war starts at Age II, and earlier tree drafts gave 7,103 to 8,774 items when that war broke the player's lines.
 - An AI town can still starve in a long match: one of five seeds in each 4-nation test set had a starving nation.
 
 **Gameplay and interface**
@@ -551,6 +566,7 @@ The lists below come from the 0.1.2 notes (`docs/qa/release-0-1-2-*-notes.md`), 
 - Panels can open over other panels.
 - A hover help card closes with a click, after 20 s or on the next Shift press, not when you release Shift: the engine reports key presses only.
 - The pumpjack's picture keeps its drawn pipe stub, and the refinery its drawn piping, though oil travels as items. The panels, tooltips and the R message say so; new art is needed.
+- The strip's chooser and the unit and ability help cards open over the top banner, and cover the strip's status line while open. Close them with the X.
 - The Skirmish factory has no room for the long-handed inserter, so it is Nation only. The clear order works for loose units, not for whole divisions, and there is no Clear button in the build menu.
 
 **Rails**
@@ -559,7 +575,8 @@ The lists below come from the 0.1.2 notes (`docs/qa/release-0-1-2-*-notes.md`), 
 - A junction turns one way, as in vanilla: a branch that leaves the main track heading east cannot be entered by a train heading west. The train panel marks a stop that no track reaches from the stop before it.
 - Two auto lines surveyed at the same time can plan over the same ground, and the second one takes a detour after two minutes. A crew that cannot reach its frontier goes home after 120 s and another tries later.
 - A platform counts as busy while a train of yours has a path ending on it, so a depot with many trains through it deploys rarely.
-- The rail planner lays ground track only; bridges over water come with auto lines (Space Age).
+- The rail planner lays ground track only, by clicks (a drag moves its preview), and built track has no "remove" action. Bridges over water come with auto lines (Space Age).
+- The AI's construction crews sometimes stand "on the path" for 120 s on single seeds, and depot platforms next to another depot of the same capital can flip busy for minutes. Both are open.
 
 **Out of scope for now**: naval units, vassals, tariffs and embargoes, razing cities (cities are always captured), Space Age planets and content beyond the graphics swap, and player-versus-player.
 
@@ -567,7 +584,7 @@ The lists below come from the 0.1.2 notes (`docs/qa/release-0-1-2-*-notes.md`), 
 
 There is no fixed schedule. These are the next candidates, roughly in order:
 
-1. **Nation AI.** Link cities by rail sooner, bring air units, artillery trains and front holds into real wars (the artillery train's kits requested when its siege railway is planned), and slice the AI's army pass.
+1. **Nation AI.** Link cities by rail sooner (a copper hub for the aggressive and turtle doctrines, #39), bring air units, artillery trains and front holds into real wars, and slice the AI's army pass.
 2. **Balance.** Tune air, anti-aircraft, artillery and armoured trains from play data, and add money pressure where matches stay comfortable.
 3. **Multiplayer.** Test two or more humans at once, then add player-versus-player nations.
 4. **Platforms.** Confirm Windows and the Linux GUI client, and make the rest of the development tooling portable.
