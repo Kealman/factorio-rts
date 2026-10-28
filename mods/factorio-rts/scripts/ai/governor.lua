@@ -876,8 +876,11 @@ local function city_pass(C, G, surface, c, capital, list, age)
       -- more stone and copper when they run short: houses, farms, bricks and the rails take stone (the build order
       -- stops at one stone extractor), goods, circuits and the advanced kits take copper (seed 404: one copper slot at
       -- 37 plates a minute until minute 18, Industrialisation at 19:02)
+      -- (0.1.3, issue #2: and coal below coal_low: haulers, trains and the rail crews burn it, the build order stops at
+      -- one coal extractor, 60 coal a minute; crews stood "no-fuel" at the capital from 39:00 to the end, M1 seed 501)
       for _, R in ipairs({{line = "stone", item = "stone", low = AI.stone_low or 100, steel = true},
-                          {line = "copper", item = "copper-plate", low = AI.copper_low}}) do -- Phase 5 M3 ai: a balance key
+                          {line = "copper", item = "copper-plate", low = AI.copper_low},
+                          {line = "coal", item = "coal", low = AI.coal_low}}) do -- Phase 5 M3 ai: a balance key
         local RL = C.lines and C.lines[R.line]
         local key = R.line .. "_at"
         if RL and RL.status == "ok" and (steel_ready(C) or not R.steel) and construction.have(C, R.item) < R.low
