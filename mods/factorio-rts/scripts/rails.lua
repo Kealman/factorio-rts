@@ -4836,6 +4836,7 @@ rails.AI_CRAFT_TICKS = 300
 rails.AI_REPAIR_RAILS = 60
 rails.AI_EXPORT = 100
 rails.AI_KEEP = 3000
+rails.AI_FREIGHT_STUCK = 3 * 60 * 60 -- 0.1.3 (r4-ai): an AI freight train without a path this long is scrapped
 rails.AI_PAY = true -- Phase 5 M3 ai: A.pay (a unit number, normally the capital's centre) pays a program's depots, kits and
                     -- rails instead of A.anchor (a trunk edge between two towns, ai/planner.lua); nil = A.anchor
 
@@ -5239,6 +5240,23 @@ function rails.ai_program(force_name, A)
         util.log("rails: AI %s routes freight train %d on line #%d again", force_name, train.id, A.line)
       else
         have = nil
+      end
+    end
+    -- 0.1.3 (#2, #7, r4-ai): a freight train that lost a locomotive (a double-headed train runs one way only then) or
+    -- has had no path for AI_FREIGHT_STUCK on an open line is scrapped (rails.disband_train: half its kits, its cargo
+    -- and coal back) and a new one made: M1 seed 501, a walker destroyed the player's front locomotive at 22:00 and
+    -- the rest stood without a path to the end of the match (238 items by train).
+    if have then
+      local train = train_of(have)
+      if have.state == "no_path" then A.freight_stuck = A.freight_stuck or game.tick else A.freight_stuck = nil end
+      local locos = (train and train.valid) and (#train.locomotives.front_movers + #train.locomotives.back_movers) or 2
+      if train and train.valid and math.abs(train.speed) < 0.001 and (locos < 2 or (A.freight_stuck
+         and game.tick - A.freight_stuck >= rails.AI_FREIGHT_STUCK)) then
+        local id = train.id
+        local done, why = rails.disband_train(train, da)
+        util.log("rails: AI %s scraps freight train %d of line #%d (%s): %s", force_name, id, A.line,
+          locos < 2 and "a locomotive lost" or "no path", done and "a new one follows" or tostring(why))
+        if done then have, A.freight_stuck = nil, nil end
       end
     end
     if not have then

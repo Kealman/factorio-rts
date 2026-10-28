@@ -59,18 +59,39 @@ local function producible(C, name)
   return ok("steel-plate") and ok("copper-plate")
 end
 
+-- (0.1.3, issue #20) Industrialisation, then Railways: in Nation mode the first of them not researched yet takes the
+-- labs from any other technology once its kit can be made (tech.step)
+tech.PAIR = {[tech.NATION_FIRST[1]] = true, [tech.NATION_NEXT[1]] = true}
+function tech.first_pair(C)
+  local research = deps.research
+  for _, name in ipairs({tech.NATION_FIRST[1], tech.NATION_NEXT[1]}) do
+    if not research.has(C.force, name) then
+      if research.status(C.force, name) == "available" and producible(C, name) then return name end
+      return nil
+    end
+  end
+  return nil
+end
+
 --- The technology commander C researches next, or nil.
 function tech.next(C)
   local research = deps.research
   local function try(name)
     return research.status(C.force, name) == "available" and producible(C, name)
   end
+  local nation = deps.ages and deps.ages.is_nation()
+  -- (0.1.3, issue #20) Nation: Industrialisation, then Railways, before the supply cap's technologies once the
+  -- opening's two are done (see tech.step)
+  if nation and C.tech and table_size(C.tech.done) >= 2 then
+    local first = tech.first_pair(C)
+    if first then return first end
+  end
   if C.capped then
     for _, name in ipairs(tech.SUPPLY) do
       if try(name) then return name end
     end
   end
-  if deps.ages and deps.ages.is_nation() then
+  if nation then
     for _, name in ipairs(tech.NATION_FIRST) do
       if try(name) then return name end
     end
@@ -154,7 +175,24 @@ function tech.step(C)
       cur = force.current_research
     end
   end
-  if cur and C.capped and not is_supply(cur.name) then
+  -- (0.1.3, issue #20) Nation: Industrialisation (the Railway Charter, then Age II) takes the labs from any running
+  -- technology as soon as its kit can be made, the supply cap's included (their progress is kept). The aggressive AI
+  -- researched Supply 2, Unlock Heavy or Mining 1 first and missed the Age II test deadline (about 20:00): M1 seed 501
+  -- rts-ai-1 put Industrialisation back for Supply 2 at 11:00 and finished it at 21:20 (Age II 32:35, 0.1.2 release
+  -- check); 801 ran Supply 2 from 7:00 to 14:05 first. Not before the opening's two technologies are done (the
+  -- autotest's 6-minute research check: an economic AI's Unlock Heavy, put back at 4:30, left it at one). Railways
+  -- (NATION_NEXT: the works factory's depot and crew kit recipes) right after it the same way: with Age II at 19:00
+  -- the aggressive AI went to war at once and put Railways back for Aviation, and its first line's crew waited for
+  -- kits from 22:00 to 36:00 (seed 801).
+  local nation = deps.ages and deps.ages.is_nation()
+  local first = nation and table_size(C.tech.done) >= 2 and tech.first_pair(C) or nil
+  if cur and first and cur.name ~= first and research.queue(C.force, first) then
+    research.cancel(C.force, cur.name)
+    util.log("ai %s: research %s first (Nation), %s put back", C.force, first, cur.name)
+    cur = force.current_research
+  end
+  local pair = nation and tech.PAIR[cur and cur.name or ""]
+  if cur and C.capped and not is_supply(cur.name) and not pair then
     -- supply first while capped: queue it, then put the running one back (it keeps its progress)
     for _, name in ipairs(tech.SUPPLY) do
       if research.status(C.force, name) == "available" and producible(C, name) then
@@ -169,7 +207,7 @@ function tech.step(C)
   end
   -- Phase 5 M3 ai (Nation): a wanted technology (tech.wants) takes the labs from a running one the AI does not want
   -- as much (its progress is kept): Electrification waited behind the doctrine's Age I list until minute 37
-  if cur and not C.capped and deps.ages and deps.ages.is_nation() then
+  if cur and not C.capped and deps.ages and deps.ages.is_nation() and not tech.PAIR[cur.name] then
     local wants = tech.wants(C)
     local rank = #wants + 1
     for i, name in ipairs(wants) do

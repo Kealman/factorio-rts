@@ -238,6 +238,8 @@ local function siege_artillery(C, K, op)
   if S and S.state == "open" and S.A and S.A.depot_a and S.A.depot_b and rails_depot(S.A.depot_b) then
     -- (the forward depot's own network holds no kits: the train comes from the line's capital end)
     from, via, bd = S.A.depot_a, S.A.depot_b, dist(rails_depot(S.A.depot_b).entity.position, op.target.position)
+  elseif S and S.depot and from == S.depot then
+    return -- (0.1.3: nor before its line opens: every try there failed "no-kits")
   end
   if not from then return end
   local train, why = tw.deploy(from, tw.KIND or "artillery", false)
@@ -864,6 +866,31 @@ local function siege_targets(C, K)
   return out
 end
 
+-- (0.1.3, issue #20) The artillery train's kits and shells for a siege railway that starts at another own city: the
+-- works factory makes them at the capital (council.artillery_want, ai/planner.lua); once all of them are there they
+-- move to the line's own depot at that city, where siege_deploy deploys the train (as the planner sends a freight
+-- train's kits to a town depot). True when they were moved.
+local function forward_artillery_kits(C, capital, depot_un)
+  local L, rails = deps.logistics, deps.rails
+  if not (L and L.transfer and L.hub_network and rails and rails.kit_list) then return false end
+  local rec = capital.center and buildings.get(capital.center)
+  local capnet = rec and rec.entity.valid and rec.entity.logistic_network
+  local dnet = L.hub_network(depot_un)
+  if not (capnet and capnet.valid and dnet) or dnet.network_id == capnet.network_id then return false end
+  local list = {}
+  for _, k in ipairs(rails.kit_list("artillery")) do list[#list + 1] = {k[1], k[2]} end
+  local AR = balance.nation.ai3.planner.artillery or {}
+  list[#list + 1] = {"rts-rail-shell", AR.shells or 10}
+  for _, k in ipairs(list) do
+    if dnet.get_item_count(k[1]) + capnet.get_item_count(k[1]) < k[2] then return false end
+  end
+  for _, k in ipairs(list) do
+    local miss = k[2] - dnet.get_item_count(k[1])
+    if miss > 0 then L.transfer(capnet, dnet, k[1], miss) end
+  end
+  return true
+end
+
 function council.siege_step(C, K, surface)
   local SR = CB.siege_rail
   local rails = deps.rails
@@ -968,6 +995,12 @@ function council.siege_step(C, K, surface)
           rails.ai_program(C.force, S.A) -- (never once open: its freight train would take kits for nothing)
         end
       end
+      if (S.state == "line" or S.state == "open") and not S.train and not S.kits_sent and S.A.depot_a
+         and forward_artillery_kits(C, capital, S.A.depot_a) then
+        S.kits_sent = true
+        util.log("council: %s sends the artillery train's kits to depot #%d (siege railway to city %d)", C.force,
+          S.A.depot_a, cid)
+      end
       if S.state == "open" then
         local tr = S.train and game.train_manager.get_train_by_id(S.train)
         if S.train and not (tr and tr.valid) then S.train = nil end
@@ -991,16 +1024,20 @@ function council.rail_programs(C)
   return out
 end
 
---- True while a siege railway is under way or open for an operation without its artillery train (ai/planner.lua: the
---- works factory makes the train's kits and shells at the capital).
+--- True while a siege railway is planned, under way or open for an operation without its artillery train
+--- (ai/planner.lua: the works factory makes the train's kits and shells at the capital).
+--- (0.1.3, issue #20: from the moment it is planned, its forward depot still a construction job: requested only once
+--- its line was under way, the kits were not made by the time the line opened or the operation ended, 0.1.1 notes 8.10;
+--- and for a line from any own city, not only from the capital: forward_artillery_kits moves them there. 0.1.2 release
+--- check, 801-805: 14 of 17 siege railways ran from a town and never had kits)
 function council.artillery_want(C)
   local K = K_of(C.force, false)
   if not (K and K.siege) then return false end
   for _, cid in ipairs(sorted_keys(K.siege)) do
     local S = K.siege[cid]
-    if (S.state == "line" or S.state == "open") and not S.train and not S.over and not S.failed and S.origin_center then
-      local cap = capital_of(C.force)
-      if cap and S.origin_center == cap.center then return true end
+    if (S.state == "depot" or S.state == "line" or S.state == "open") and not S.train and not S.over and not S.failed
+       and not S.kits_sent and S.origin_center then
+      return true
     end
   end
   return false

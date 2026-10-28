@@ -840,6 +840,29 @@ local function trunk_step(C, P, own, capital)
       util.log("planner: %s has three cities linked by rail", C.force)
     end
   end
+  -- (0.1.3, issue #2) the cities joined to the capital by open lines now (rails.lua's own line and the open edges)
+  local joined = {[capital.id] = true}
+  do
+    local links = {}
+    local of_center = deps.cities.of_center
+    if main and main.state == "open" and main.anchor and main.far and of_center then
+      local a, b = of_center(main.anchor), of_center(main.far)
+      if a and b then links[#links + 1] = {a.id, b.id} end
+    end
+    for _, E in pairs(P.trunk) do
+      if E.A and E.A.state == "open" then links[#links + 1] = {E.from, E.to} end
+    end
+    local grown = true
+    while grown do
+      grown = false
+      for _, l in ipairs(links) do
+        if joined[l[1]] ~= joined[l[2]] then
+          joined[l[1]], joined[l[2]], grown = true, true, true
+        end
+      end
+    end
+  end
+  local joined_n = table_size(joined)
   local parent, by_id = mst(own, capital.id)
   local live = (main and LIVE[main.state]) and 1 or 0
   for _, id in ipairs((function()
@@ -912,9 +935,15 @@ local function trunk_step(C, P, own, capital)
       end
       -- (0.1.1, issue #1: and while the research waits for engines, planner.engine_focus, an edge not open yet whose
       -- crew has not left: an open edge's program tops up its depots' coal, runs its freight train and repairs)
+      -- (0.1.3, issue #20: not a lost line either: its program rebuilds the destroyed depot on its old site, rails.lua
+      -- ai_depot, and the laid line reopens; held, the rebuild waited up to 3 of every 5 minutes)
+      -- (0.1.3, issue #2: nor the edge that joins another city to the capital's lines while fewer than three cities
+      -- are joined: the aggressive AI reached Age II at 19-23 minutes and its oil town's edge then waited for
+      -- Electrification's engines 3 of every 5 minutes; three cities linked by 35:00 in 1 of 5 seeds)
       if E and planner.engine_focus(C) and E.A.state ~= "open" then
         local el = E.A.line and storage.rails and storage.rails.lines[E.A.line]
-        if not (el and el.builder) then hold = true end
+        local joins = joined_n < 3 and joined[E.from] and not joined[E.to]
+        if not (el and (el.builder or el.state == "lost")) and not joins then hold = true end
       end
       if E then E.held = hold or nil end -- (0.1.1: rail_wants skips a held edge)
       if E and not hold then
