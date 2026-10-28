@@ -211,3 +211,35 @@ Once the repository is public, its history is public for good, even if it is del
    - Leave the gallery as it is.
 7. **Issues.** Close #19 and #21 to #32 with the release link (#31 once its open rail items are listed in a follow-up issue), close the 0.1.2 milestone, and move #2, #15 and #20 to 0.1.3 together with the rails open items of `docs/release/0.1.2-summary.md`.
 8. **Announce (optional).** Reply in the forum thread and on the Reddit post with the "0.1.2 update" paragraph of [announce.md](announce.md) and the release link.
+
+## 10. The 0.1.3 update
+
+1. **The go.** For the release tree named in `docs/release/0.1.3-summary.md` (fill in the hash). The lead's acceptance (`tools/release-check.sh` on the merged tree against the 0.1.2 report, Skirmish identity against 0.1.1, both owner saves played 10 minutes headless, GUI pass in English and Russian, Linux Docker smoke) is recorded there.
+2. **Screenshots.** The portal gallery is the owner's own selection: do not touch it unless you choose to add shots of the rail planner path preview, the strip chooser or the factory page header (the GUI pass folders are listed in `build/rel-gui-0.1.3-report.md`).
+3. **The version.** `mods/factorio-rts/info.json` says 0.1.3, `mods/factorio-rts/changelog.txt` has the `Version: 0.1.3` section on top (check its date), and `CHANGELOG.md` and the README say 0.1.3.
+4. **Build and test the archive.** It must print no warning:
+
+   ```sh
+   git status --short && tools/package.sh      # build/release/factorio-rts_0.1.3.zip
+   tools/uninstall.sh
+   rm -f ~/Library/Application\ Support/factorio/mods/factorio-rts_*.zip
+   cp build/release/factorio-rts_0.1.3.zip ~/Library/Application\ Support/factorio/mods/
+   ```
+
+   Start Factorio and check that **Mods** shows Factorio RTS 0.1.3 with the 0.1.3 changelog. Start a new Freeplay game and see the lobby. Then load the 0.1.2 Nation save, play a minute, and check that the Rail button gives the planner (a rail end, then a click where the track goes lays ghosts), that the top strip has the gear button, that a factory page shows Pause, Auto and Endless in its header and that the unfinished Rail tool track of the save is still there as ghosts. Afterwards, remove the zip and run `tools/install.sh`.
+5. **Push, tag and release on GitHub.**
+
+   ```sh
+   git push origin main
+   git tag -a v0.1.3 -m "Factorio RTS 0.1.3"
+   git push origin v0.1.3
+   gh release create v0.1.3 build/release/factorio-rts_0.1.3.zip --repo Kealman/factorio-rts \
+     --title "Factorio RTS 0.1.3" --notes-file docs/release/github-release.md
+   ```
+
+6. **Mod Portal.** Sign in with the account that owns the mod and open https://mods.factorio.com/mod/factorio-rts:
+   - Upload `build/release/factorio-rts_0.1.3.zip` as a new version. The file name must stay `factorio-rts_0.1.3.zip`. The Changelog tab updates itself from the zip.
+   - On the edit page, replace the "What's new" block at the top of the description with the "What's new in 0.1.3" block of [mod-portal.md](mod-portal.md), refresh the Rails bullet of the long description and replace the FAQ with the FAQ block of the same file.
+   - Leave the gallery as it is.
+7. **Issues.** Close #20, #33 (once its open items are in a follow-up issue), #34, #35, #36, #37 and #38 with the release link and close the 0.1.3 milestone. #2 and #39 stay open in 0.1.4, with the rails open items of `docs/release/0.1.3-summary.md`; #15 (Windows) stays a tester item.
+8. **Announce (optional).** Reply in the forum thread and on the Reddit post with the "0.1.3 update" paragraph of [announce.md](announce.md) and the release link.

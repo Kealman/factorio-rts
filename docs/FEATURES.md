@@ -1,6 +1,6 @@
 # Factorio RTS: complete feature list
 
-Every feature of version 0.1.2, by area. Each line starts with the milestone that introduced it:
+Every feature of version 0.1.3, by area. Each line starts with the milestone that introduced it:
 
 | Tag | Milestone | Tag | Milestone |
 |---|---|---|---|
@@ -9,7 +9,7 @@ Every feature of version 0.1.2, by area. Each line starts with the milestone tha
 | `P2` | Phase 2: economy slice | `M3` | Phase 5 M3: "A state at war" |
 | `P3` | Phase 3: AI opponent and match flow | `2.1` | The port to Factorio 2.1 |
 | `P4` | Phase 4: a real RTS with a Factorio economy | `0.1.1` | The first update after the public release |
-| | | `0.1.2` | The update after the first real game: building, help and railways |
+| `0.1.3` | The rail planner, the configurable top strip and AI pace work | `0.1.2` | The update after the first real game: building, help and railways |
 
 Phases 1 to 4 built the Skirmish game; M1 to M3 built Nation mode on top of it. The player guide is the [README](../README.md); the design is in [DESIGN.md](DESIGN.md) and [SCALE-VISION.md](SCALE-VISION.md).
 
@@ -81,6 +81,11 @@ Phases 1 to 4 built the Skirmish game; M1 to M3 built Nation mode on top of it. 
 - `0.1.2` The refinery, chemical plant and pumpjack panels, their tooltips, F11 and the R message say that oil travels as items; a pumpjack outside every network shows "no network" and raises an alert.
 - `0.1.2` Every recipe has an explicit English and Russian name; the refinery and factory pages no longer show "Unknown key: recipe-name".
 - `0.1.2` The objectives of the other mode no longer log "step done" in a match.
+- `0.1.3` The top strip is configurable: a gear button opens a chooser (any item with stock, power, robots, treasury, supply, army counters, timer; order, remove, reset; up to 12 entries), with defaults per mode.
+- `0.1.3` Hovering a strip item shows the total, the split per logistic network and the last minute's change; rations and grain show the minutes left per city and in total.
+- `0.1.3` The factory page keeps Pause, Auto and Endless in its header, and the panel grows taller when a tab needs more rows, so the status line always shows.
+- `0.1.3` Help cards for a selected unit type (the ? on the unit page) and for the five abilities (the ? on the ability bar).
+- `0.1.3` The train and depot panels stop above the Build menu; player text names no release numbers.
 
 ## Units and abilities
 
@@ -220,11 +225,15 @@ Phases 1 to 4 built the Skirmish game; M1 to M3 built Nation mode on top of it. 
 - `0.1.2` Trains run stop lists: right-click depots, stations and (for troop and artillery trains) rails to add stops; each stop has unload, load, troop and bombard orders and the engine's wait conditions, and the list loops as a native schedule.
 - `0.1.2` The train builder composes trains carriage by carriage from presets or up to 5 saved templates, with mixed cargo, troop and artillery wagons, and shows what is missing.
 - `0.1.2` Depot platforms of 40, 60 or 80 tiles hold 5, 8 or 11 carriages, and a standing train couples or drops a carriage at its depot.
-- `0.1.2` The Rail tool lays your own track from waypoints with curves, branches, a bill per segment and undo; robots and construction trains build it.
+- `0.1.2` The Rail tool laid your own track from waypoints with curves, branches, a bill per segment and undo; robots and construction trains built it. The 0.1.3 rail planner replaced it.
 - `0.1.2` Player track is signalled with chain signals only, so two trains never meet head-on on single track; rail signals and chain signals are in the build menu.
 - `0.1.2` Rail stations are small depots without a platform that put two stops on your track.
 - `0.1.2` Auto lines run along your own track where it helps, and a depot takes any number of lines.
 - `0.1.2` 0.1.1 saves load: a train's pickup and drop-off become a two-stop list, and the Station and the signals are unlocked.
+- `0.1.3` The Rail button puts the vanilla rail planner in your hand: click a rail end, then where the track goes; the path with curves and diagonals follows the pointer, a click on a rail end in the middle starts a branch, and track laid onto track joins it. R turns the first rail, Q stops the path, Q again or a right click ends laying. It replaced the 0.1.2 Rail tool.
+- `0.1.3` Planner track is built by robots and construction trains like the Rail tool's, and every junction gets chain signals; unbuilt Rail tool track of a 0.1.2 save is kept and built. Ground track only: bridges stay with the auto lines.
+- `0.1.3` The train panel marks a stop that no track reaches from the stop before it, and a second train between the same stops brings the passing-loop hint.
+- `0.1.3` Planner track no longer comes back after its ghosts are cancelled, and track refused on foreign land shows one message per path.
 
 ## Nation: ages, districts and goods
 
@@ -327,6 +336,9 @@ Phases 1 to 4 built the Skirmish game; M1 to M3 built Nation mode on top of it. 
 - `M3` An intelligence layer knows only what the AI's units see.
 - `M3` In Nation mode difficulty changes the freshness of intelligence, the number of operations, the build pace and the division handling, and never resources.
 - `0.1.1` Hard plans more housing and goes for a second city-state, which makes it beat normal by skill.
+- `0.1.3` The aggressive AI researches Industrialisation, then Railways, before its army technologies (Age II at about 20 minutes instead of 26 to 32).
+- `0.1.3` AI capitals build one more coal extractor when coal runs short, and an AI freight train that loses a locomotive or its path is scrapped and rebuilt.
+- `0.1.3` Siege railways get their artillery kits from plan time, from any own city; a lost line's depot rebuild is not held by the engine focus.
 - `M3` All AI work runs on a deterministic work-unit scheduler with resumable jobs, at about 0.07 ms per nation per tick.
 
 ## Multiplayer, determinism and performance

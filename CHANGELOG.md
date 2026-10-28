@@ -2,6 +2,53 @@
 
 The mod's version stayed 0.1.0 through development, so everything up to the public release is in the 0.1.0 section. Development ran in milestones; each milestone's contract is in `docs/PHASE*.md`, and its acceptance results and open issues are in `docs/qa/`. Git tags mark the milestone ends.
 
+## 0.1.3
+
+Factorio 2.1, Space Age optional. The update after the owner's second real game: the vanilla rail planner comes back in place of the Rail tool, the factory page stops overflowing, the top strip is yours to configure, and the Nation AI gets its pace work. Skirmish plays as in 0.1.1: all ten scenarios of the Skirmish test matrix log the same lines as 0.1.1. Old saves: 0.1.2 and 0.1.1 saves load, with the changes named under Saves. Issue numbers refer to [the issue tracker](https://github.com/Kealman/factorio-rts/issues).
+
+### Railways: the rail planner (#37)
+
+- **The vanilla planner lays your track.** The Rail button (build menu, Economy tab, Railways) puts the vanilla rail planner in your hand. Click the end of a rail (a depot platform, your own track, the rail a first click on bare ground places, a ghost's end), then click where the track goes: the path with its curves and diagonals follows the pointer and the click lays it as ghosts; it goes on from the new end until you stop. A click on a rail end in the middle of a track starts a branch, and track laid onto other track joins it. **R** turns the first rail, **Q** stops the path (the rail stays in hand), **Q** again or a right click ends laying. The 2.x planner builds on the click, not while dragging: a drag only moves its preview.
+- **Why it did not run in 0.1.2.** The planner starts from the rail end under the pointer, and the RTS view had hover selection switched off. It is now on while a rail is in your hand and off again when the RTS cursor comes back.
+- **Built as before.** Robots build the ghosts their networks cover and a construction train from your nearest connected depot lays the rest, one crew at a time. Junctions get chain signals (every piece end at a junction carries them, and a pair every 80 tiles on straights). Track nothing reaches raises "Track not built: ..." after a minute.
+- **Ground only.** Bridges over water stay with the auto lines (Bridges, Space Age). Track on another nation's land is refused with the usual message, now one message per path instead of one per piece.
+- **The Rail tool is gone** (waypoint clicks, Backspace undo, its panel). Rail tool track of a 0.1.2 save that is not built yet is kept and goes on being built.
+
+### Railways: follow-ups (#33)
+
+- The train panel marks a stop that no track reaches from the stop before it ("No track leads here from stop N: a junction turns one way, or the track is not built yet"), and a second train that runs between the same stops brings the hint "lay a passing loop or a second track". Rail stops of troop and artillery trains are not checked.
+- Player track no longer comes back after its ghosts are cancelled: the planner line is dissolved and nothing is laid again.
+
+### Interface
+
+- **Factory page (#35).** Pause, Auto and Endless moved from the recipe grid to the page header. A tab that needs more rows makes the panel taller (and moves it up), so the status line, the counts and the queue always show.
+- **Top strip (#38).** A gear button at the end of the resource row opens a chooser: any item with stock in your networks, power, robots, treasury, supply, army counters and the timer; order with `<` `>`, remove with `x`, reset to the default, at most 12 entries. Defaults: Nation shows the timer, iron, copper, stone, coal, grain, rations, power and treasury; Skirmish shows the timer, army counters, supply, iron, copper, stone, coal, magazines and power. Hover an entry for the total, the split per logistic network (named by its Command Center or City Center) and the last minute's change. Rations and grain show the minutes left per city and in total ("700 (35 min)", yellow under 10 minutes, red under 3); grain counts as the rations the bakery makes from it.
+- **No release numbers (#36).** The Endless tooltip named a release; no player text does now, and the locale check fails on release numbers, issue numbers and phase names.
+- **Cosmetics (#34).** The train and depot panels stop above the Build menu. A "?" on the unit page opens a help card for the unit type, and a "?" on the ability bar opens one pinned card for the five abilities. The long-handed inserter stays Nation only (the Skirmish factory page would grow a third row).
+
+### Nation AI (#20, #2)
+
+- The aggressive AI researches Industrialisation, then Railways, before its army technologies (Age II at about 20 minutes instead of 26 to 32).
+- AI capitals build one more coal extractor below 100 coal, so crews no longer wait for coal (over 60 minutes the crews' coal waits fell from 308 to 9 line-minutes in the test seeds).
+- An AI freight train that loses a locomotive or has no path for 3 minutes is scrapped (half its kits back) and rebuilt.
+- Siege railways get their artillery kits from plan time, from any own city, moved to the line's depot (#20 item 1). A lost line's depot rebuild is no longer held by the engine focus (#20 item 3). The engine focus does not hold the edge that joins a third city while fewer than three are joined.
+- **Test seeds (4 normal AIs, seeds 801 to 805, 60 minutes):** Age III by minute 40 in 5 of 5 (0.1.2: 2 of 5). Nations with three cities linked by 35:00: 12 of 20 (0.1.2: 9; target 16, not met). The aggressive AI's first line before 32:00: 3 of 5 (0.1.2: 4 of 5). Lines opened by 60:00: 74 (52). **M1 (1v1, seed 501):** 53/53 checks (51/53) and 25,678 train items (19,101). No capital starved or fell in any run; the armies are smaller at 35:00 and the capitals are attacked more (the aggressive AI declares war the minute it reaches Age II).
+
+### Saves
+
+- 0.1.2 saves load: segments of the Rail tool that were still being built become planner track (one line from the first built piece onwards), built pieces stay track. The owner's 0.1.2 save loaded 130 s headless with 0 Lua errors; its 456 ghosts form one planner line. Its track waits for locomotive kits, a construction wagon kit, coal and rails in the depot network, as before. New storage is created lazily and nothing else is reset. The strip's choice is stored per player and mode on the first change.
+
+### Tested
+
+- The Skirmish smoke test passes 65/65 with 0 errors on every agent branch. The Skirmish matrix (seed 777, 10 scenarios) logs 0 differing lines against 0.1.1 on the rails, HUD and AI branches. M1 seed 501 on the rails and HUD branches is line-identical to 0.1.2 apart from the event bus's stagger listing. GUI pass in English and Russian on the release candidate: 21 runs (planner with real input, factory page, strip and chooser, cards, build menu, orders, rails, objectives, 28 real inputs), all pass; 0 Lua errors.
+
+### Not done, moved to 0.1.4
+
+- **AI copper (#39).** Nations linked by 35:00 are 12 of 20 against a target of 16; the limit is Age I copper (one copper slot) and, after a lost battle, steel. #2 stays open.
+- **Rails (#33).** Two auto lines surveyed at the same time can plan over the same ground; a busy platform makes a depot deploy rarely; a crew that cannot reach its frontier goes home after 120 s; built track has no "remove" action. The planner lays ground track only.
+- **Cosmetics (#34).** The strip chooser and the unit and ability help cards open over the top banner. A clear order for whole divisions and a Clear button in the build menu are open.
+- #20 item 4 (the army's pool passes on the scheduler) is not needed for the perf limit. Windows (#15) is a tester item.
+
 ## 0.1.2
 
 Factorio 2.1, Space Age optional. The update that follows the first real 0.1.1 game: it makes your own building, demolition and logistics understandable and controllable, and gives railways back to the player. Skirmish plays as in 0.1.1: all ten scenarios of the Skirmish test matrix log the same lines as 0.1.1 on every agent branch. Old saves: 0.1.1 saves load, with the changes named under Saves. The AI pace items (#2, #20) and Windows (#15) follow in 0.1.3. Issue numbers refer to [the issue tracker](https://github.com/Kealman/factorio-rts/issues).
