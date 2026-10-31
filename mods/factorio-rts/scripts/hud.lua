@@ -145,6 +145,7 @@ local P4 = {
 }
 P4.CARDS_WIDTH = P4.CARD_MAX * P4.CARD_SIZE + (P4.CARD_MAX - 1) * P4.CARD_SPACING -- 190
 P4.stripgui = require("scripts.stripgui") -- 0.1.3 (#38): the top strip's entry list, chooser and hover texts
+P4.stripgui.P4 = P4 -- 0.1.4 (#43): the chooser asks which items are Nation only (no require at run time)
 -- Phase 5 M1 (scripts/cities.lua, scripts/territory.lua): build items and factory recipes shown in Nation mode only;
 -- the strip shows the territory share and a Cities button (scripts/citygui.lua city list) in Nation mode.
 P4.NATION_ONLY = {["rts-city-charter"] = true, ["rts-fort"] = true}
@@ -170,15 +171,15 @@ for _, name in ipairs({"rts-supply-crate", "rts-supply-crate-ii", "rts-field-dep
 for _, name in ipairs({"rts-airfield", "rts-aa-turret", "rts-scout-plane-kit", "rts-bomber-kit", "rts-interceptor-kit"}) do
   P4.NATION_ONLY[name] = true end
 table.insert(P4.HELP_NATION, #P4.HELP_NATION, "rts-ux.help-nation-oil") -- #28
+table.insert(P4.HELP_NATION, #P4.HELP_NATION, "rts-signals.help-nation-signals") -- 0.1.4 (#42)
 table.insert(P4.HELP_NATION, #P4.HELP_NATION, "rts-air.help-nation-air") -- Phase 5 M3 integration: before the keys
 -- Phase 5 M3 war2: the gate, the artillery wagon, armoured stock and rail shells
 for _, name in ipairs({"rts-gate", "rts-artillery-wagon-kit", "rts-armoured-locomotive-kit", "rts-armoured-wagon-kit",
                        "rts-rail-shell"}) do
   P4.NATION_ONLY[name] = true end
--- Release 0.1.2 (#25): the long-handed inserter (recipe and build item) is Nation only: the Skirmish factory page holds
--- 28 recipes (two rows of 14; since 0.1.3 Pause / Auto / Endless sit in the header) and is full without it; a 29th
--- would make the Skirmish panel grow a row, which #34 leaves out on purpose.
-for _, name in ipairs({"rts-long-inserter", "long-handed-inserter"}) do P4.NATION_ONLY[name] = true end
+-- Release 0.1.2 (#25) kept the long-handed inserter (recipe and build item) Nation only because the Skirmish factory
+-- page held 29 recipes with it. 0.1.4 (#40): Skirmish shows 27, so with it the two rows of 14 hold exactly 28; the
+-- #35 growth rule adds a row (and moves the panel up) should another recipe ever join.
 P4.crafter = function(kind) return kind == "factory" or kind == "district" end -- Phase 5 E1: districts are producers
 P4.place_name = require("scripts.world").place_name -- Phase 5 M2 world: region names in alerts (alert_text)
 -- Phase 5 E1: recipes an age locks (research.AGE_LOCKS: Age II goods, buildings, the Armoured car kit) exist in Nation
@@ -201,7 +202,8 @@ P4.LOGISTICS_PRODUCTS = {["transport-belt"] = true, ["fast-inserter"] = true, ["
   ["rts-cargo-wagon-kit"] = true, ["rts-construction-wagon-kit"] = true,
   ["rts-supply-crate"] = true, ["rts-troop-wagon-kit"] = true, -- Phase 5 M2 war
   ["rts-artillery-wagon-kit"] = true, ["rts-armoured-locomotive-kit"] = true, ["rts-armoured-wagon-kit"] = true,
-  ["rts-rail-shell"] = true} -- Phase 5 M3 war2
+  ["rts-rail-shell"] = true, -- Phase 5 M3 war2
+  ["rts-station"] = true, ["rail-signal"] = true, ["rail-chain-signal"] = true} -- 0.1.4 (#42): next to the rail
 P4.recipe_tab = function(r)
   local cat = util.recipe_category(r) -- 2.1: LuaRecipePrototype::category -> categories
   if cat == "rts-science" then return "science" end
@@ -665,7 +667,9 @@ end
 -- so in its build and recipe tooltips: {"", tooltip, "\n", "Builds a [entity] City Center."}.
 local OIL_NOTES = {["rail"] = "rts.railplan-note", -- 0.1.3 (#37): the Rail button is the vanilla rail planner
                    ["rts-pumpjack"] = "rts-ux.note-pumpjack", ["rts-refinery"] = "rts-ux.note-refinery",
-                    ["rts-chemical-plant"] = "rts-ux.note-chemical-plant"} -- #28: no pipes
+                    ["rts-chemical-plant"] = "rts-ux.note-chemical-plant", -- #28: no pipes
+                   ["rts-station"] = "rts-signals.note-made", ["rail-signal"] = "rts-signals.note-made", -- 0.1.4 (#42)
+                   ["rail-chain-signal"] = "rts-signals.note-made"}
 local function with_places_note(tooltip, item)
   if OIL_NOTES[item] then tooltip = {"", tooltip, "\n", {OIL_NOTES[item]}} end
   local proto = item and prototypes.item[item]

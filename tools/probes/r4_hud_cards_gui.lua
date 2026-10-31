@@ -42,6 +42,16 @@ local function take_shot(player, tag)
                         force_render = true, resolution = {1280, 800}})
 end
 
+
+-- 0.1.4 (#40): three notification lines under the strip, so the shots show whether popups cover them
+local function fake_alerts(force)
+  storage.alerts = storage.alerts or {}
+  for i = 1, 3 do
+    storage.alerts[#storage.alerts + 1] = {force = force, tick = game.tick, kind = "probe", text = "rts.alert-generic",
+                                           params = {"probe notification " .. i}}
+  end
+end
+
 local S = {step = 0}
 local STEPS = {}
 local function step(fn) STEPS[#STEPS + 1] = fn end
@@ -56,6 +66,7 @@ step(function(s, player)
   ai.stop_force(player.force.name)
   ai.stop_force(util.ENEMY_FORCE)
   storage.match.waves_off, storage.match.enemy_next_wave = true, nil
+  fake_alerts(player.force.name)
   local walkers = player.surface.find_entities_filtered({name = "rts-walker", force = player.force, limit = 8})
   selection.set(player.index, walkers)
   s.wait = 60

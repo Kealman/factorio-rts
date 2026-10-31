@@ -122,7 +122,12 @@ local function place(player, frame, at)
     x, y = at.x + math.floor(24 * s), at.y + math.floor(24 * s)
     if x + w > res.width - 4 then x = at.x - w - math.floor(12 * s) end
   else
-    x, y = math.floor((res.width - w) / 2), math.floor(70 * s)
+    -- 0.1.4 (#40): below the strip (its status line stays readable) and left of the notification lines
+    x, y = math.floor((res.width - w) / 2), math.floor(106 * s)
+    local alerts = player.gui.screen["rts_hud_alerts"]
+    if alerts and alerts.valid and alerts.location.x - w - math.floor(8 * s) >= 4 then
+      x = alerts.location.x - w - math.floor(8 * s)
+    end
   end
   frame.location = {math.max(4, x), math.max(4, math.min(y, res.height - math.floor(300 * s)))}
 end
@@ -201,9 +206,9 @@ function helpgui.open_abilities(player)
   for _, a in ipairs(abilitygui.card_lines()) do
     local block = frame.add({type = "flow", direction = "vertical"})
     block.style.vertical_spacing = 0
-    text(block, {"", "[font=default-bold]", a.title, "[/font]  ",
-                 a.key and {"rts.ability-tooltip-hotkey", a.key} or {"rts.ability-tooltip-button-only"}, ", ",
-                 {"rts.ability-tooltip-cooldown-total", a.cooldown}})
+    text(block, {"", "[font=default-bold]", a.title, "[/font]"}) -- 0.1.4 (#40): the RU headings wrapped on one line
+    text(block, {"", a.key and {"rts.ability-tooltip-hotkey", a.key} or {"rts.ability-tooltip-button-only"}, ", ",
+                 {"rts.ability-tooltip-cooldown-total", a.cooldown}}, "rts_hud_dim_label")
     text(block, a.description)
     if a.tech then text(block, {"rts.ability-tooltip-needs", {"technology-name." .. a.tech}}, "rts_hud_dim_label") end
   end
