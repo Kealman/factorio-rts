@@ -38,7 +38,10 @@
 -- junction, one chain-signal pair per branch), remove_junction (the spur's first rail removed through
 -- rails.remove_track: the junction's signals go with it), remove_track (the rails of segments 4 to 6 removed: rails
 -- refunded, their lines gone, segments 3 and 7 still lines, nothing comes back; a platform rail is refused), crews_home
--- (a crew cut off by the removal is recalled after 30 s). A crew without a path dumps its track ("r3 manual: diag: ..."). Summary "[rts] r3 manual summary <passed>/<total>".
+-- (a crew cut off by the removal is recalled after 30 s), surveys_apart (#33 item 3: the auto lines A - C, A - B and
+-- A - D surveyed together: no piece laid twice, none blocked or surveyed again), adopt (#44: a work train assembled
+-- with the builder's Construction preset stands idle on A's platform; a segment laid from A's free west end takes it
+-- as its crew within a minute) and adopt_built (the segment gets built). A crew without a path dumps its track ("r3 manual: diag: ..."). Summary "[rts] r3 manual summary <passed>/<total>".
 local events = require("scripts.events")
 local util = require("scripts.util")
 local logistics = require("scripts.logistics")
@@ -378,6 +381,23 @@ local function auto(T)
   if not (l1.state == "open" and l2.state == "open" and l3.state == "open") and game.tick - T.t2 < 10 * 3600 then
     return
   end
+  -- 0.1.4 (#33 item 3): the three lines surveyed together over the same ground: no piece laid twice, and none of them
+  -- blocked or surveyed again (0.1.3: a junction pair of A - C stood on a planned piece of A - D, which would not
+  -- revive, and A - D took a detour after two minutes)
+  local seen, dup, new, detours = {}, 0, 0, 0
+  for _, l in ipairs({l1, l2, l3}) do
+    detours = detours + (l.detours or 0) + (l.blocked and 1 or 0)
+    for _, p in ipairs(l.pieces or {}) do
+      if not p.reused then
+        new = new + 1
+        local k = string.format("%s|%.1f|%.1f|%d", p.name, p.x, p.y, p.d)
+        if seen[k] and seen[k] ~= l.id then dup = dup + 1 end
+        seen[k] = l.id
+      end
+    end
+  end
+  check(T, "surveys_apart", dup == 0 and detours == 0, "A-C, A-B, A-D surveyed together: %d new pieces, %d laid "
+    .. "twice, %d blocked pieces or detours", new, dup, detours)
   local function share(l) return l.pieces and #l.pieces > 0 and (l.reused or 0) / #l.pieces or 0 end
   check(T, "reuse", share(l1) >= 0.9 and share(l2) >= 0.9 and l1.state == "open" and l2.state == "open",
     "A-C: %s, %d pieces, %d reused (%.0f %%), bill %d rails; A-B: %s, %d pieces, %d reused (%.0f %%), bill %d rails",
@@ -791,7 +811,69 @@ local function removed(T)
   end
   check(T, "crews_home", stuck == 0, "%d crews were out when the track went; after 40 s %d of them stand without a path "
     .. "(a crew cut off is recalled after 30 s)", #M.crews, stuck)
-  finish(T)
+  T.stage, T.t9 = "adopt", game.tick
+end
+
+-- 0.1.4 (#44): a work train assembled at A (Construction preset), idle on its platform, is taken as the crew of a
+-- segment laid from A's free (west) platform end
+local function adopt(T)
+  if not T.wt then
+    fill(T.A, {{rails.LOCO_KIT, 2}, {rails.CWAGON_KIT, 1}, {"coal", 100}, {rails.RAIL, 200}})
+    local cars
+    for _, pr in ipairs(rails.PRESETS) do
+      if pr.key == "construction" then cars = pr.cars end
+    end
+    local t, why = rails.create_composed(T.A, cars, {preset = "construction"})
+    if not t then
+      if game.tick - T.t9 > 3 * 3600 then
+        check(T, "adopt", false, "no work train assembled at A: %s", tostring(why))
+        finish(T)
+      end
+      return
+    end
+    T.wt = t.id
+    local b = platform_rail(T.A, 1)
+    local x0 = b.position.x
+    lay(T, "adopt", {starts = ends_of(b), goals = goals_of_point({x = x0 - 40, y = b.position.y}), start_rail = b,
+      own_land = true})
+    log("work train %d assembled on A's platform (%s), a segment laid from A's west end", t.id,
+      tostring(rails.train_record(t) and rails.train_record(t).kind))
+    T.t10 = game.tick
+    return
+  end
+  -- (the segment's crew is the first one sent: by the survey's own line while it stands as a segment, or by the planner
+  -- line it is handed over to)
+  local rec = storage.rails.trains[T.wt]
+  if not T.adopted and rec and rec.kind == "construction" and rec.adopted and rec.line then
+    T.adopted, T.adopted_line = game.tick, rec.line
+    check(T, "adopt", true, "the work train %d on A's platform is the crew of the segment (line #%d) %.0f s after it "
+      .. "was laid", T.wt, rec.line, (game.tick - T.t10) / 60)
+  end
+  local P = handed(T, "adopt")
+  if P == nil then return end
+  if P == false then
+    check(T, "adopt", false, "the segment from A's west end: survey failed")
+    finish(T)
+    return
+  end
+  if not T.adopted then
+    if game.tick - T.t10 > 60 * 60 then
+      check(T, "adopt", false, "after 60 s: work train %d kind %s, line %s; the segment's lines %s, waits %s", T.wt,
+        rec and rec.kind or "gone", rec and tostring(rec.line) or "-", table.concat(P.lines, ", "),
+        tostring(rails.lines[P.lines[1] or 0] and rails.lines[P.lines[1]].wait))
+      finish(T)
+    end
+    return
+  end
+  local built = built_of(P)
+  if built >= #P.pieces then
+    check(T, "adopt_built", true, "the segment (%d pieces) built %.0f s after its crew left", #P.pieces,
+      (game.tick - T.adopted) / 60)
+    finish(T)
+  elseif game.tick - T.adopted > 5 * 3600 then
+    check(T, "adopt_built", false, "%d of %d pieces built after 5 min", built, #P.pieces)
+    finish(T)
+  end
 end
 
 events.on(defines.events.on_train_changed_state, function(e)
@@ -823,5 +905,6 @@ events.on_nth_tick(60, function(e)
   elseif T.stage == "short" then short(T)
   elseif T.stage == "short_built" then short_built(T)
   elseif T.stage == "spur" then spur(T)
-  elseif T.stage == "removed" then removed(T) end
+  elseif T.stage == "removed" then removed(T)
+  elseif T.stage == "adopt" then adopt(T) end
 end)

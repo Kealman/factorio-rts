@@ -170,6 +170,9 @@ rails.CREW_COAL = 50                -- coal a construction wagon takes along for
 -- Crews of crossing lines jammed into each other at the crossing and stood for the rest of the match (M2 803 on 2.1:
 -- lines #7 and #9 never opened); a crew waiting at a signal of a block such a crew held stood as long.
 rails.CREW_STUCK_TICKS = 2 * 60 * 60
+-- 0.1.4 (#33 item 4): a crew that stands "on the path" at speed 0 with another train's stock against its own (a crossing
+-- next to its platform: both trains stopped nose to nose for good, M3 801) goes home after CREW_JAM_TICKS, not 120 s
+rails.CREW_JAM_TICKS = 15 * 60
 -- 0.1.4 (#41): a player's crew on its way home without a path tries another way at once (back past the junction it came
 -- in through, another own depot); after HOME_NOPATH_TICKS without one it is recalled and the log says why
 rails.HOME_NOPATH_TICKS = 30 * 60
@@ -955,14 +958,37 @@ buildings.on_removed(function(un, rec)
   if rails.routes then rails.routes.refresh(un) end -- 0.1.2 (#31 part B): stop lists skip the gone depot
 end)
 
+-- 0.1.4 (#33 item 4): rolling stock in a platform's area makes it busy only when its train is in the platform's rail
+-- block: a train on a track beside the platform (another depot's platform of the same capital, a line along it) made a
+-- depot "busy" for minutes (M3 803, 805; 801: rts-ai-2's line #12). A platform with a rail gone counts all of it.
+function J.platform_busy(surface, p)
+  local stock = surface.find_entities_filtered({area = p.area, type = {"locomotive", "cargo-wagon", "fluid-wagon",
+                                                                       "artillery-wagon"}})
+  if #stock == 0 then return false end
+  local probe
+  for _, r in ipairs(p.rails or {}) do
+    if not r.valid then return true end
+    probe = probe or r
+  end
+  if not probe then return true end
+  for _, st in ipairs(stock) do
+    local t = st.train
+    if not t then return true end
+    for _, re in ipairs({t.front_end, t.back_end}) do
+      if re and re.rail.valid and re.rail.is_rail_in_same_rail_block_as(probe) then return true end
+    end
+    for _, r in ipairs(t.get_rails()) do
+      if r.is_rail_in_same_rail_block_as(probe) then return true end
+    end
+  end
+  return false
+end
+
 local function platform_free(d)
   local p = d.platform
   if not p then return false end
   local surface = d.entity.surface
-  if surface.count_entities_filtered({area = p.area, type = {"locomotive", "cargo-wagon", "fluid-wagon",
-                                                             "artillery-wagon"}}) > 0 then
-    return false
-  end
+  if J.platform_busy(surface, p) then return false end
   -- 0.1.2 (#31 part A): a player's track is single and chain-signalled: a train already on its way in has the track to
   -- the platform reserved, and one spawned there would meet it nose to nose. The platform is busy until it arrives.
   if rails.human(d.force) then
@@ -3559,8 +3585,44 @@ local function track_waits(line, why, lo)
   end
 end
 
+-- 0.1.4 (#44): a manual line's wait reason, logged once per change (the depot panel lists the waiting track lines)
+function J.track_wait(line, why, detail)
+  if line.wait ~= why or line.wait_detail ~= detail then
+    line.wait, line.wait_detail = why, detail
+    util.log("rails: track segment #%d (%s) waits: %s%s", line.id, line.force, tostring(why),
+      detail and (" " .. tostring(detail)) or "")
+  end
+end
+
+-- 0.1.4 (#44): an idle work train of the force on depot d's platform: assembled with the builder (two locomotives and a
+-- construction wagon, the Construction preset), in manual mode, standing, no stop list. A dispatch takes it as the
+-- crew instead of deploying another one (it keeps the platform busy while it stands there). Returns rec, train.
+function J.idle_crew(d, force_name)
+  local R = rstate()
+  local area = d.platform and d.platform.area
+  if not area then return nil end
+  local box = {{area[1][1] - 1, area[1][2] - 1}, {area[2][1] + 1, area[2][2] + 1}}
+  for _, id in ipairs(sorted_keys(R.trains)) do
+    local rec = R.trains[id]
+    if rec.force == force_name and rec.kind ~= "construction" and not (rec.stops and #rec.stops > 0) then
+      local t = train_of(rec)
+      if t and t.valid and t.manual_mode and abs(t.speed) < 0.001 and #t.carriages == 3
+         and in_box(t.front_stock.position, box) and in_box(t.back_stock.position, box) then
+        local locos, cw = 0, 0
+        for _, c in ipairs(t.carriages) do
+          if c.name == rails.LOCO then locos = locos + 1 elseif c.name == rails.CWAGON then cw = cw + 1 end
+        end
+        if locos == 2 and cw == 1 then return rec, t end
+      end
+    end
+  end
+  return nil
+end
+
 -- A crew for a manual line from the nearest own depot whose platform reaches the line's anchor rail by track, with the
--- kits and the rails for it. Robots in range build the ghosts meanwhile (a line out of every reach waits).
+-- kits and the rails for it. Robots in range build the ghosts meanwhile (a line out of every reach waits). 0.1.4 (#44): an
+-- idle work train on the depot's platform is taken as the crew, and the line is turned round when only its far end is
+-- reached.
 local function dispatch_manual(line)
   if game.tick < (line.next_dispatch or 0) then return end
   line.next_dispatch = game.tick + rails.MANUAL_DISPATCH_TICKS
@@ -3568,18 +3630,20 @@ local function dispatch_manual(line)
   if not lo then return end
   local R = rstate()
   -- one crew at a time on a force's own track (segments' and lines' crews alike): player track is single, a second
-  -- crew only waited behind the first or blocked it
-  for _, rec in pairs(R.trains) do
-    if rec.kind == "construction" and rec.force == line.force then return end
+  -- crew only waited behind the first or blocked it. 0.1.4 (#44): a crew is a construction train on a job; the wait
+  -- says whose (an idle work train the player assembled is no crew yet: it is taken below)
+  for _, id in ipairs(sorted_keys(R.trains)) do
+    local rec = R.trains[id]
+    if rec.kind == "construction" and rec.force == line.force then
+      J.track_wait(line, "crew-out", rec.line)
+      return
+    end
   end
   local anchor = lo == 1 and rails.manual_anchor(line) or (line.pieces[lo - 1] and line.pieces[lo - 1].e)
   local via = rails.manual_via(line) -- (behind a branch: the crew reaches it through the junction from there)
   if anchor and anchor.valid and via and via.valid then anchor = via end
   if not (anchor and anchor.valid) then
-    if line.wait ~= "no-access" then
-      line.wait = "no-access"
-      util.log("rails: track segment #%d (%s) waits: no built track leads to it yet", line.id, line.force)
-    end
+    J.track_wait(line, line.after and "after" or "no-access") -- (0.1.4 #44: "after": behind other planned track)
     track_waits(line, line.after and "busy" or "no-access", lo) -- 0.1.3 (#37): behind other planned track, no alert
     return
   end
@@ -3607,7 +3671,17 @@ local function dispatch_manual(line)
       if not net or net.get_item_count(rails.RAIL) < min(need, rails.CREW_MIN_RAILS) then
         why = "no-rails"
       else
-        local train, reason = rails.create_train(d.un, "construction")
+        -- 0.1.4 (#44): an idle work train on this depot's platform is the crew
+        local idle, idle_train = J.idle_crew(d, line.force)
+        local train, reason
+        if idle then
+          train = idle_train
+          idle.kind, idle.home, idle.adopted = "construction", d.un, true
+          util.log("rails: track segment #%d: the work train %d standing on depot #%d's platform is taken as its crew",
+            line.id, train.id, d.un)
+        else
+          train, reason = rails.create_train(d.un, "construction")
+        end
         if train then
           local rec = rails.train_record(train)
           rec.line, rec.dir, rec.state = line.id, 1, "to_head"
@@ -3619,7 +3693,7 @@ local function dispatch_manual(line)
           line.loaded = line.loaded + loaded_n
           if inv then logistics.transfer(net, inv, rails.FUEL, rails.CREW_COAL) end
           line.builder = train.id
-          line.wait = nil
+          line.wait, line.wait_detail = nil, nil
           util.log("rails: track segment #%d: construction train %d from depot #%d, %d rails loaded of %d needed",
             line.id, train.id, d.un, loaded_n, need)
           return
@@ -3630,10 +3704,12 @@ local function dispatch_manual(line)
       why = "no-access"
     end
   end
-  if line.wait ~= why then
-    line.wait = why
-    util.log("rails: track segment #%d (%s) waits for a construction train: %s", line.id, line.force, tostring(why))
+  -- 0.1.4 (#44): no depot reaches its start, one reaches built track at its far end: the line is built from there
+  if why == "no-access" and line.planner and J.turn_for_access(line, cands) then
+    line.next_dispatch = 0
+    return
   end
+  J.track_wait(line, why)
   track_waits(line, why, lo)
 end
 
@@ -4215,6 +4291,55 @@ function rails.fix_track_signals()
   return removed
 end
 
+-- 0.1.4 (#44): a planner line whose start no depot reaches by track while one reaches built track at its far end (the
+-- owner's save: line #38's first piece met a short piece of track that only #38 itself would connect, its far end met
+-- the main line) is turned round, so its crew comes from the far end. `cands` = dispatch_manual's depots {un}. Returns
+-- true when it was turned.
+function J.turn_for_access(line, cands)
+  local n = #line.pieces
+  local _, hi = missing_range(line)
+  local s = game.surfaces[line.surface]
+  if not (hi and s) then return false end
+  local far
+  if hi == n then
+    local pn = line.pieces[n]
+    far = rail_into(s, line.force, pn.gx, pn.gy, (pn.gd + 8) % 16)
+  else
+    far = line.pieces[hi + 1].e
+  end
+  if not (far and far.valid) then return false end
+  local R = rstate()
+  local reached = false
+  for k = 1, min(#cands, 4) do
+    local d = R.depots[cands[k].un]
+    local rail = d and d.platform and d.platform.rails[floor(#d.platform.rails / 2)]
+    if rail and rail.valid then
+      local ok, res = pcall(game.train_manager.request_train_path, {starts = {{rail = rail, direction = RD.front},
+        {rail = rail, direction = RD.back}}, goals = {{rail = far, direction = RD.front},
+        {rail = far, direction = RD.back}}, type = "any-goal-accessible"})
+      if ok and res and res.found_path then
+        reached = true
+        break
+      end
+    end
+  end
+  if not reached then return false end
+  local rev = {}
+  for i = n, 1, -1 do
+    local p = line.pieces[i]
+    p.sx, p.sy, p.sd, p.gx, p.gy, p.gd = p.gx, p.gy, (p.gd + 8) % 16, p.sx, p.sy, (p.sd + 8) % 16
+    p.jpos, p.jpos2 = p.jpos2, p.jpos
+    rev[#rev + 1] = p
+  end
+  line.pieces = rev
+  line.start_rail, line.end_rail, line.prev = hi == n and far or nil, line.start_rail, nil
+  local idx = index_of(line.surface)
+  for i, p in ipairs(rev) do idx[pkey(p.name, p.x, p.y, p.d)] = line.id * 100000 + i end
+  util.log("rails: planner track #%d of %s turned round: no depot reaches its start, one reaches its far end at %s",
+    line.id, line.force, util.pos_str(far.position))
+  return true
+end
+
 local function check_lines()
   local R = rstate()
   if (R.signals_v or 0) < 2 then rails.fix_track_signals() end -- 0.1.4 (#41): a save from before (see there)
@@ -4528,8 +4653,25 @@ local function finish_build(rec, train, line)
   go_home(rec, train, "done")
 end
 
+-- 0.1.4 (#33 item 4): true when the crew stands "on the path" at speed 0 with the stock of another standing train within
+-- 5 tiles of one of its carriages (two trains that ran into each other: spark explosions stand between them).
+function J.jammed(train)
+  if train.state ~= TS.on_the_path or abs(train.speed) > 0.001 then return false end
+  local s = train.front_stock.surface
+  for _, c in ipairs(train.carriages) do
+    for _, st in ipairs(s.find_entities_filtered({position = c.position, radius = 5, type = {"locomotive", "cargo-wagon",
+                                                                                         "fluid-wagon", "artillery-wagon"}})) do
+      local t = st.train
+      if t and t.id ~= train.id and abs(t.speed) < 0.001 and util.distance(st.position, c.position) < 5 then
+        return true
+      end
+    end
+  end
+  return false
+end
+
 -- True when the crew has neither moved a tile nor laid a piece for CREW_STUCK_TICKS (a crew at a piece that will not
--- revive is the blocked-line detour's, not this rule's).
+-- revive is the blocked-line detour's, not this rule's), or for CREW_JAM_TICKS against another train (J.jammed).
 local function crew_stuck(rec, train, line)
   local fs = train.front_stock
   if not (fs and fs.valid) then return false end
@@ -4539,7 +4681,15 @@ local function crew_stuck(rec, train, line)
     return false
   end
   if rec.state ~= "returning" and line and line.blocked then return false end
-  return game.tick - m.tick >= rails.CREW_STUCK_TICKS
+  local still = game.tick - m.tick
+  if still >= rails.CREW_JAM_TICKS and still < rails.CREW_STUCK_TICKS and J.jammed(train) then
+    if not rec.jam_logged then
+      rec.jam_logged = true
+      util.log("rails: construction train %d stands against another train at %s", train.id, util.pos_str(p))
+    end
+    return true
+  end
+  return still >= rails.CREW_STUCK_TICKS
 end
 
 local H = {} -- 0.1.4 (#41): the way-home helpers below (one local, see J)
@@ -5019,6 +5169,22 @@ function rails.track_of(force_name)
       out.pieces = out.pieces + #line.pieces
       out.missing = out.missing + (line.missing or 0)
       if line.state == "open" then out.open = out.open + 1 end
+    end
+  end
+  return out
+end
+
+--- 0.1.4 (#44): the force's track lines still to be built (planner lines and Rail tool segments), for the depot panel:
+--- list of {id, missing, pieces, wait, detail}, by id.
+function rails.track_lines_of(force_name)
+  local out = {}
+  local R = storage.rails
+  for _, id in ipairs(sorted_keys(R and R.lines or {})) do
+    local line = R.lines[id]
+    if line.force == force_name and line.kind == "manual" and line.pieces and (line.missing or 0) > 0
+       and line.state ~= "surveying" then
+      out[#out + 1] = {id = id, missing = line.missing, pieces = #line.pieces, wait = line.builder and "building" or line.wait,
+                       detail = line.wait_detail}
     end
   end
   return out

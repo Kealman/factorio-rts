@@ -110,6 +110,10 @@ local function items_text(items)
   return table.concat(parts, "  ")
 end
 
+-- 0.1.4 (#44): the waits of track lines that have a text of their own (rts.track-why-*); others read rts.rails-why-*
+local TRACK_WHY = {["no-access"] = true, after = true, ["crew-out"] = true, ["no-depot"] = true, ["no-kits"] = true,
+                   ["no-rails"] = true}
+
 local function depot_name(un)
   return (un and rails.depot(un)) and logistics.hub_name(un) or {"rts.railgui-none"}
 end
@@ -772,6 +776,20 @@ local function refresh_depot(player, g)
   for i = 1, math.min(#lines, 6) do
     local l = label(el.lines, "rts_hud_label", line_caption(lines[i]))
     l.style.font_color = LINE_COLOR[lines[i].state] or COLOR.white
+  end
+  -- 0.1.4 (#44): the force's track still to be built, each with what it waits for
+  local track = rails.track_lines_of(d.force)
+  for i = 1, math.min(#track, 4) do
+    local t = track[i]
+    local why = ""
+    if t.wait == "building" then
+      why = {"rts.railgui-track-building"}
+    elseif t.wait then
+      why = {"rts.railgui-track-wait", TRACK_WHY[t.wait] and {"rts.track-why-" .. t.wait, t.detail or "?"}
+             or {"rts.rails-why-" .. t.wait}}
+    end
+    local l = label(el.lines, "rts_hud_dim_label", {"rts.railgui-track", t.id, t.missing, t.pieces, why})
+    l.style.font_color = t.wait and t.wait ~= "building" and COLOR.yellow or COLOR.white
   end
   return true
 end
