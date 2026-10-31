@@ -11,6 +11,7 @@ Plan: `docs/qa/release-0-1-4-plan.md` (rules of the 0.1.2 and 0.1.3 plans).
 | #41 (signals at real junctions, old saves repaired, the way home, own track and signals removable) | 31b9446 | The owner's save: 48 -> 14 signals (one pair per branch of 3 real junctions), its 2 signal ghosts kept, train 76 home in 28 s; the cause was a second signal pair at one joint making the main line one-way, not pairs at every join (joins never got signals). Fixtures 19/19 (r3_rails_manual) and 17/17 EN/RU (planner GUI probe with removal), smoke 65/65, the 3 owner saves 0 errors, M1 501 line-identical to 0.1.3 |
 | #33 item 6 (remove built track) | 31b9446 | with #41 item 3 |
 | #33 item 3 (overlapping surveys) | 4f6b69c | no overlap of surveys (the scheduler runs them in order); the 0.1.3 detour was a junction pair on a planned ghost, fixed by #41; fixture check `surveys_apart` |
+| #44 (an idle work train blocks the crews; waits without a reason) | 49604d8 | On `owner-0114-now.zip` the builder's work train 97 on Depot #1722's platform is taken as the crew 11 s after load and builds the planner loop's line #38 by 47 s (it was turned round first: only its far end was reachable); fixture 22/22 (`adopt`, `adopt_built`), smoke 65/65, M1 501 line-identical to 0.1.3 |
 | #33 item 4 (busy platforms, AI crews standing still) | 84464c8 | crews jammed against a crossing train go home after 15 s (801), trains on another block no longer make a platform busy; the AI's acceptance numbers unchanged (M1 53/53 and 25,678 train items, Age III 5/5, linked 12/20, aggressive first line 3/5); fixture 20/20, smoke 65/65 |
 
 ## 1. #41: what happened on the owner's save
@@ -113,7 +114,9 @@ The owner's two rail-signal ghosts are unbuilt plain rail signals, one beside th
 |---|---|---|
 | Manual track fixture (`tools/probes/r3_rails_manual.lua`), with the new checks `short_signals`, `spur`, `remove_junction`, `remove_track`, `crews_home` | `SEED=501 SPEED=6 EXTRA_LUA=tools/probes/r3_rails_manual.lua STOP_ON='r3 manual summary' tools/autotest-run.sh r5-manual '{opponents = 1, difficulty = "normal", mode = "nation", world_size = 2048, enemy_brain = "ai"}' 2400` | **19/19** (0.1.3: 14/14 + the new checks). Track 1: 280 pieces built by a crew in 199 s; track 2 (a branch that leaves track 1 heading west) in 174 s (0.1.3: 185 s), its junction 6 chain signals: pairs at (270, 7) and (282, 7) on the main track (the first joints the branch's curve leaves free, walked 5 and 1 rails), and at (271, 11) on the branch once its second piece stood (`jpend`; the first run, without the rail ghost rule, put the west pair onto the ghost of piece 2 and the crew stood at it for 10 minutes); track 3 in 78 s, 6 chain signals at its junction (168, 7) (0.1.3: 58 s; the check now finds the junction from the line's mark, the survey runs along track 1 for 19 tiles first); auto lines A - C 99 % and A - B 100 % reused, A - D open after 59 s (95 % reused; 0.1.3: 221 s, 89 %); trains 1 and 2 10 and 11 loops in 20 minutes, longest stand at a signal 39 s (0.1.3: 49 s); warnings, platform_held, own_land, track_waits, cancel as in 0.1.3. New: **short_signals** ten short segments laid one after another from B's free platform end, each surveyed and handed over on its own (54 pieces in 10 planner lines, crews from B built them in 300 s): **0 signals, 0 signal ghosts** on them; **spur** a branch off segment 8: 6 chain signals at its junction (715, 23); **remove_junction** its first rail removed: 1 rail, the junction's 6 signals went, 0 left, the spur's line goes on without its first piece; **remove_track** the 16 rails of segments 4 to 6 removed, 24 rails refunded (their pieces' 24), their 3 lines gone, segments 3 and 7 still lines, a platform rail of A refused, after 40 s nothing back; **crews_home** the crew of the spur was out beyond the removed stretch: "construction train 153 has had no path home for 30 s at (735.5, 31.2): no path to depot #417 (2 of its stops on track): from its front at (732, 31) none, from its back at (751, 42) none; 0 signals within 40 tiles; recalled to depot #417" |
 | Planner GUI probe, real input, EN and RU (`tools/probes/r4_rails_planner_gui.lua`, with `remove_select`, `remove_rail`, `remove_signal`, `remove_box`) | `scratchpad/r5-rails/mktree.sh mods/factorio-rts build/r5p-<l> - tools/probes/r4_rails_planner_gui.lua`; `tools/gui-drive.sh build/r5p-<l>-gui.log build/shots-r5p-<l>-window RTS_R4P_DONE &`; `RTS_LOCALE=<l> tools/gui-run.sh build/r5p-<l> 1100 RTS_R4P_DONE` | **17/17 in both**. The 0.1.3 checks as before (track 1 18 ghosts, built in 12 s; the branch junction 6 chain signals; the freight train at Station 2 after 9 s; the stop list warnings); a click on a rail of the diagonal selects it ("Straight rail / Your track (track line 2) / Delete (twice) removes it ..." on the HUD page, window capture `remove-select.png`), Backspace twice removes it (refund 1 rail, its planner line split in two: 4 -> 5 lines); a click on a junction chain signal selects it with its partner (2 boxes, "2 x Rail chain signal"), Backspace twice removes both (6 -> 4 chain signals at the junction); a box over the diagonal's last 3 pieces selects 3 rails, Backspace twice removes them (refund 3 rails). Screenshots `build/shots-r5p-en/`, `build/shots-r5p-ru/`, window captures `build/shots-r5p-<l>-window/` |
-| Skirmish smoke | `tools/autotest-run.sh r5-smoke '{opponents = 1, difficulty = "normal", size = "small", enemy_brain = "waves"}' 240` | 65/65, 0 errors |
+| Schedule fixture (`tools/probes/r3_rails_schedule.lua`), on the branch head 39e20e9's mod | `SPEED=8 DURATION_MIN=40 EXTRA_LUA=tools/probes/r3_rails_schedule.lua STOP_ON='r3 schedule summary' tools/autotest-run.sh r5-sched '{opponents = 1, difficulty = "normal", size = "small", enemy_brain = "ai"}' 900` | **8/8**, 0.1.3's numbers (7 loops, 59,762 copper, the junction crossed 15 and 29 times, 0 s at a signal, 22 artillery loops) |
+| Train builder fixture (`tools/probes/r3_rails_builder.lua`), same | `SEED=501 SPEED=4 EXTRA_LUA=tools/probes/r3_rails_builder.lua STOP_ON='r3 builder summary' tools/autotest-run.sh r5-build '{opponents = 1, difficulty = "normal", mode = "nation", world_size = 2048, enemy_brain = "ai"}' 900` | **8/8** |
+| Skirmish smoke | `tools/autotest-run.sh r5-smoke '{opponents = 1, difficulty = "normal", size = "small", enemy_brain = "waves"}' 240` | 65/65, 0 errors (before each commit) |
 
 ## 4. #41: the owner's saves and identity
 
@@ -123,7 +126,8 @@ The owner's two rail-signal ghosts are unbuilt plain rail signals, one beside th
 | `owner-0112.zip`, same | `... r5-own0112 owner-0112.zip` | **0 errors**, 743 `[rts]` lines; the 13 Rail tool segments become planner track as in 0.1.3 (456 ghosts, 1 track line); the signal repair found nothing to do (`0 before, 0 after`) |
 | `owner-0111-age2.zip`, same | `... r5-own0111 owner-0111-age2.zip` | **0 errors**, 807 `[rts]` lines; "the Station and the signals unlocked" as before; no player track, no signal line |
 | AI identity, M1 seed 501 (Nation 1v1 2048, 60 min) against the frozen 0.1.3 tree 61d6f05 | `KEEP_TREE=build/trees/61d6f05/mods/factorio-rts TREE_B=build/trees/r5-31b9446/mods/factorio-rts WHAT=all tools/determinism-compare.sh r5r-m1 '{opponents = 1, difficulty = "normal", mode = "nation", world_size = 2048, enemy_brain = "ai"}' 60 501` | **line-identical**: 68,801 `[rts]` lines on each side, 0 differing (31b9446's mod; the stagger listing does not differ either: no new periodic handler). Headless runs have no players, so no force is human: junction signals, the way home and the signal repair never run for the AI |
-| Skirmish identity matrix (10 runs, seed 777) against base0111 | MATRIX_COMMAND | MATRIX_RESULT |
+| Skirmish identity matrix (10 runs, seed 777) against base0111, #41 | the lead's run on `main` 5d71b92 (= da0ec26 + 31b9446), 2.1.24 | **0 differing lines** in all 10 scenarios; smoke 65/65; the three owner saves 0 errors (48 -> 14 signals, train 76 back in depot #1722) |
+| Skirmish identity matrix (10 runs, seed 777) against base0111, 84464c8 (#41 + #33 items 3 and 4), 2.1.24 | `scratchpad/r5-rails/matrix.sh r5i4 build/trees/r5-84464c8/mods/factorio-rts` (= `KEEP_TREE=<frozen tree> SEED=777 JOBS=1 tools/autotest-matrix.sh r5i4; tools/matrix-compare.sh base0111 r5i4`) | **0 differing lines** in all 10 scenarios (1v3 stress 36/38 as base0111, the rest all passed; 0 Lua errors) |
 
 ## 5. #33 item 6: remove built track
 
@@ -197,7 +201,7 @@ of the logs; 0.1.3 = the acceptance logs `build/rc-2026-10-28-0145-*`):
 | Seed | Lines open (0.1.3 / 84464c8) | Crews stuck, of them "on_the_path" | Busy waits | Freight trains run |
 |---|---|---|---|---|
 | 801 | 11 / 11 | 2, 2 / 1, 1: crew 153 "stands against another train", home after **15 s** (was 120 s); crew 328's jam no longer happens | 3 / 3 | 16 / 15 |
-| 802 | 10 / 10 | 7, 0 / 7, 0 (line #15's crews at a signal, unchanged: section 9) | 0 / 0 | 15 / 15 |
+| 802 | 10 / 10 | 7, 0 / 7, 0 (line #15's crews at a signal, the line never opens, unchanged: section 9) | 0 / 0 | 15 / 15 |
 | 803 | 10 / 10 | 1, 1 / 1, 1 (crew 207 recalled by the stuck rule after its detour wait, unchanged: section 9) | 1 / 0 | 11 / 11 |
 | 804 | 10 / 10 | 0 / 0 | 24 / 24 | 11 / 11 |
 | 805 | 12 / 12 | 1, 0 / 1, 0 | 18 / 18 | 15 / 15 |
@@ -226,6 +230,46 @@ Every number is kept; 0 Lua errors. (The report's AI autotest column reads "-" f
 fort-belt counts are 2, 5, 0, 13, 34 against 11, 6, 0, 15, 35: 801's war goes differently after the shortened jam; a
 benchmark and a server run of one tree were not compared for 802 to 805.)
 
+## 8a. #44: an idle work train and a planner loop that never got a crew
+
+**What the save shows** (`build/saves/owner-0114-now.zip`, the 0.1.4 development build, loaded on the branch with a
+read-only module `scratchpad/r5-rails/diag44.lua`): train 97 (the builder's Construction preset: two locomotives and a
+construction wagon) stood in manual mode on Depot #1722's platform; its record's kind was "cargo" (the builder's
+`dominant` kind ignores construction wagons), so the one-crew guard of `dispatch_manual` did not see it, but it kept the
+platform busy (`deploy_check`: busy), the panel's "the platform is occupied ...". The planner loop near the capital was
+lines #38 (18 pieces, 6 to build) and #39 (26, 22 to build), both waiting "no-access": #38's first piece met #37, a
+one-piece track that only #38 itself would connect to the network, and its far end met the main line's last piece
+(#36) at (161, -211); `planner_orient` took the built rail at the start and never turned it round, #39 hangs behind
+#38. The issue's reading (the guard returns for the idle train) does not hold for this save, the effect is the same.
+
+**Change** (scripts/rails.lua `dispatch_manual`, `J.idle_crew`, `J.turn_for_access`, `J.track_wait`,
+`rails.track_lines_of`; scripts/railgui.lua; locale EN/RU):
+- an idle work train of the force on the platform of the depot a crew would come from (two locomotives and a
+  construction wagon, manual mode, no stop list, standing still) is taken as the crew instead of deploying one: it gets
+  its rails and coal from the network and goes; at the end it goes home into kits like every crew (log "the work train
+  N standing on depot #D's platform is taken as its crew");
+- a planner line that no depot reaches at its start while one reaches the built rail at its far end is turned round;
+- the one-crew rule stays (a crew is a construction train on a job); its wait names the crew's line; every wait of a
+  track line is logged once per change ("track segment #N (<force>) waits: <reason> [detail]");
+- the depot panel lists the force's track still to be built under its lines, up to 4 rows: "Your track N: M of K pieces
+  to build, waiting: no built track from one of your depots leads to it yet / it waits for the planned track before it /
+  a construction train is out on track line N / you have no depot on this map / no construction train kits ... / fewer
+  than 40 rails ..." or ", a construction train is on it";
+- the builder's preset drop-down tooltip: crews leave the nearest depot by themselves, an assembled work train is taken.
+- Not done: a second idle work train for a line on separate track while one crew is out (issue item 2's second half);
+  one crew at a time stays.
+
+**Tests.** `owner-0114-now.zip` (a copy, 0.1.4 test tree, 100 s): `planner track #38 of rts-player turned round: no
+depot reaches its start, one reaches its far end at (161.0, -211.0)` at 10.2 s, `the work train 97 standing on depot
+#1722's platform is taken as its crew` and `construction train 97 from depot #1722, 15 rails loaded of 15 needed` at
+11.2 s, `track segment #39 waits: crew-out 38`, `track segment #38 of rts-player built: 18 pieces (12 robots, 15 crews)`
+at 47.2 s; 0 errors. Fixture `r3_rails_manual.lua` **22/22** with `adopt` (a Construction train assembled at A, idle on
+its platform, is the crew of a segment laid from A's free west end 1 s after it was laid) and `adopt_built` (built 15 s
+after the crew left); smoke 65/65; M1 501 against 61d6f05: 68,801 lines each, 0 differing (the working tree with #44,
+`KEEP_TREE=build/trees/61d6f05/... TREE_B=build/trees/r5-44/mods/factorio-rts WHAT=all tools/determinism-compare.sh
+r5r44-m1 ... 60 501`). The Skirmish matrix was not run again for #44: its code runs only for a player's track lines and
+in the depot panel (Nation mode); 84464c8's matrix is 0-diff.
+
 ## 9. Open items
 
 - **Lines between depots** are not removed with Delete: their own pieces, depot platforms and the player track such a
@@ -249,8 +293,10 @@ benchmark and a server run of one tree were not compared for 802 to 805.)
 - The detour bookkeeping of the AI's crews: a crew that waited at a blocked piece and is then sent home for the detour
   survey is recalled at once by the stuck rule, its timer having run while it waited (0.1.3 803, crew 207). Harmless
   (the detour starts at once), left as it is.
-- 802's line #15: its crews stood at a signal at (597, -167) seven times for 120 s each (0.1.3 and 84464c8 alike, "stuck
-  ... (wait_signal)"), the line still opened. Not looked into.
+- 802's line #15 (rts-player, played by the AI in the 4-nation runs): every crew from depot #11288 stops at a signal at
+  (597, -167) a few tiles out of its platform and is sent home after 120 s ("stuck ... (wait_signal)", seven or eight
+  crews, 0.1.3 and 84464c8 alike); pieces 16 to 83 are never laid and the line never opens. A block beyond that signal
+  stays occupied; not looked into (it is the same in 0.1.3, and a fix changes the AI).
 - Depot platforms joined end to end by unsignalled track (an AI capital's depots side by side) share a rail block, so
   one's freight train keeps the other busy (804: 24, 805: 18 busy waits). A signal pair between adjacent platforms would
   separate them; not done (it changes the AI's lines).
@@ -271,10 +317,15 @@ Changes:
     gets its junction pairs placed again when it loads; your own signals and signal ghosts stay. (#41)
   - Railways: a construction train that finds no way home goes back past the junction it came in through, or to
     another depot it can reach; after 30 seconds without a path it is recalled and the log says why. (#41)
+  - Railways: a work train you assemble with the builder (Construction) and leave on a depot's platform is taken as
+    the construction crew for your track; the depot panel lists your track still to be built and what each piece
+    waits for. (#44)
 
 Bugfixes:
   - Railways: a second signal pair placed at a joint that had one made the track one-way, and construction trains
     stood with no path home (the owner's save: the main line south-east of a passing loop). (#41)
+  - Railways: track you laid onto a short piece of track that only it would connect was never built (no crew could
+    reach its start); it is now built from its other end. (#44)
   - Railways: a junction's signals no longer stand on track still to be built, which kept a piece of another line from
     being built and sent that line round a detour. (#33)
   - Railways: a construction train that ran into another train (a line crossing next to its platform) stood for two
