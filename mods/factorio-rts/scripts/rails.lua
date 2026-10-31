@@ -170,6 +170,9 @@ rails.CREW_COAL = 50                -- coal a construction wagon takes along for
 -- Crews of crossing lines jammed into each other at the crossing and stood for the rest of the match (M2 803 on 2.1:
 -- lines #7 and #9 never opened); a crew waiting at a signal of a block such a crew held stood as long.
 rails.CREW_STUCK_TICKS = 2 * 60 * 60
+-- 0.1.4 (#33 item 4): a crew that stands "on the path" at speed 0 with another train's stock against its own (a crossing
+-- next to its platform: both trains stopped nose to nose for good, M3 801) goes home after CREW_JAM_TICKS, not 120 s
+rails.CREW_JAM_TICKS = 15 * 60
 -- 0.1.4 (#41): a player's crew on its way home without a path tries another way at once (back past the junction it came
 -- in through, another own depot); after HOME_NOPATH_TICKS without one it is recalled and the log says why
 rails.HOME_NOPATH_TICKS = 30 * 60
@@ -955,14 +958,37 @@ buildings.on_removed(function(un, rec)
   if rails.routes then rails.routes.refresh(un) end -- 0.1.2 (#31 part B): stop lists skip the gone depot
 end)
 
+-- 0.1.4 (#33 item 4): rolling stock in a platform's area makes it busy only when its train is in the platform's rail
+-- block: a train on a track beside the platform (another depot's platform of the same capital, a line along it) made a
+-- depot "busy" for minutes (M3 803, 805; 801: rts-ai-2's line #12). A platform with a rail gone counts all of it.
+function J.platform_busy(surface, p)
+  local stock = surface.find_entities_filtered({area = p.area, type = {"locomotive", "cargo-wagon", "fluid-wagon",
+                                                                       "artillery-wagon"}})
+  if #stock == 0 then return false end
+  local probe
+  for _, r in ipairs(p.rails or {}) do
+    if not r.valid then return true end
+    probe = probe or r
+  end
+  if not probe then return true end
+  for _, st in ipairs(stock) do
+    local t = st.train
+    if not t then return true end
+    for _, re in ipairs({t.front_end, t.back_end}) do
+      if re and re.rail.valid and re.rail.is_rail_in_same_rail_block_as(probe) then return true end
+    end
+    for _, r in ipairs(t.get_rails()) do
+      if r.is_rail_in_same_rail_block_as(probe) then return true end
+    end
+  end
+  return false
+end
+
 local function platform_free(d)
   local p = d.platform
   if not p then return false end
   local surface = d.entity.surface
-  if surface.count_entities_filtered({area = p.area, type = {"locomotive", "cargo-wagon", "fluid-wagon",
-                                                             "artillery-wagon"}}) > 0 then
-    return false
-  end
+  if J.platform_busy(surface, p) then return false end
   -- 0.1.2 (#31 part A): a player's track is single and chain-signalled: a train already on its way in has the track to
   -- the platform reserved, and one spawned there would meet it nose to nose. The platform is busy until it arrives.
   if rails.human(d.force) then
@@ -4528,8 +4554,25 @@ local function finish_build(rec, train, line)
   go_home(rec, train, "done")
 end
 
+-- 0.1.4 (#33 item 4): true when the crew stands "on the path" at speed 0 with the stock of another standing train within
+-- 5 tiles of one of its carriages (two trains that ran into each other: spark explosions stand between them).
+function J.jammed(train)
+  if train.state ~= TS.on_the_path or abs(train.speed) > 0.001 then return false end
+  local s = train.front_stock.surface
+  for _, c in ipairs(train.carriages) do
+    for _, st in ipairs(s.find_entities_filtered({position = c.position, radius = 5, type = {"locomotive", "cargo-wagon",
+                                                                                         "fluid-wagon", "artillery-wagon"}})) do
+      local t = st.train
+      if t and t.id ~= train.id and abs(t.speed) < 0.001 and util.distance(st.position, c.position) < 5 then
+        return true
+      end
+    end
+  end
+  return false
+end
+
 -- True when the crew has neither moved a tile nor laid a piece for CREW_STUCK_TICKS (a crew at a piece that will not
--- revive is the blocked-line detour's, not this rule's).
+-- revive is the blocked-line detour's, not this rule's), or for CREW_JAM_TICKS against another train (J.jammed).
 local function crew_stuck(rec, train, line)
   local fs = train.front_stock
   if not (fs and fs.valid) then return false end
@@ -4539,7 +4582,15 @@ local function crew_stuck(rec, train, line)
     return false
   end
   if rec.state ~= "returning" and line and line.blocked then return false end
-  return game.tick - m.tick >= rails.CREW_STUCK_TICKS
+  local still = game.tick - m.tick
+  if still >= rails.CREW_JAM_TICKS and still < rails.CREW_STUCK_TICKS and J.jammed(train) then
+    if not rec.jam_logged then
+      rec.jam_logged = true
+      util.log("rails: construction train %d stands against another train at %s", train.id, util.pos_str(p))
+    end
+    return true
+  end
+  return still >= rails.CREW_STUCK_TICKS
 end
 
 local H = {} -- 0.1.4 (#41): the way-home helpers below (one local, see J)

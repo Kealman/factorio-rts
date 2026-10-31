@@ -575,10 +575,9 @@ The lists below come from the 0.1.3 notes (`docs/qa/release-0-1-3-*-notes.md`), 
 
 - On single track two trains that each want the platform the other holds wait for each other. The train panel warns when another train runs between the same stops and says so after a minute of waiting; a passing loop or a second track solves it.
 - A junction turns one way, as in vanilla: a branch that leaves the main track heading east cannot be entered by a train heading west. The train panel marks a stop that no track reaches from the stop before it.
-- Two auto lines surveyed at the same time can plan over the same ground, and the second one takes a detour after two minutes. A crew that cannot reach its frontier goes home after 120 s and another tries later.
-- A platform counts as busy while a train of yours has a path ending on it, so a depot with many trains through it deploys rarely.
+- A crew that cannot reach its frontier goes home after 120 s and another tries later; one that ran into another train (a line crossing next to its platform) goes home after 15 s.
+- A platform counts as busy while a train of yours has a path ending on it, so a depot with many trains through it deploys rarely: plain track has no signals, so a train deployed into the stretch another one has reserved would meet it. A passing loop or a second track at the depot helps.
 - The rail planner lays ground track only, by clicks (a drag moves its preview). Bridges over water come with auto lines (Space Age). Lines between depots cannot be removed with Delete (their track stays).
-- The AI's construction crews sometimes stand "on the path" for 120 s on single seeds, and depot platforms next to another depot of the same capital can flip busy for minutes. Both are open.
 
 **Out of scope for now**: naval units, vassals, tariffs and embargoes, razing cities (cities are always captured), Space Age planets and content beyond the graphics swap, and player-versus-player.
 
