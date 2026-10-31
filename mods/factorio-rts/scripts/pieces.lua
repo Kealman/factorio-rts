@@ -9,6 +9,11 @@
 -- fractions are carried across one batch (10 belts refund 5 iron plates; one lone belt refunds nothing, which the
 -- HUD message says). Items on a belt or in an inserter's hand go the way a stockpile's contents do (the network, else
 -- spilled). A ghost has nothing to refund.
+--
+-- 0.1.4 (#41 item 3, #33 item 6): own ground rails and rail / chain signals are pieces too (kind "track"). rails.lua
+-- fills pieces.track = {describe, remove, partners} at load time: what the HUD says about them, their removal as one
+-- batch (rails.remove_track: lines split, refunds, rails under trains kept) and a signal's partner on the other side
+-- of the track, which a click or a box selects with it (pieces.expand).
 local util = require("scripts.util")
 local buildings = require("scripts.buildings")
 
@@ -24,7 +29,13 @@ pieces.RECIPE = {
   ["long-handed-inserter"] = "rts-long-inserter",
   ["medium-electric-pole"] = "rts-pole",
 }
-pieces.TYPES = {"transport-belt", "underground-belt", "splitter", "inserter", "electric-pole", "entity-ghost"}
+pieces.TYPES = {"transport-belt", "underground-belt", "splitter", "inserter", "electric-pole", "entity-ghost",
+                "straight-rail", "half-diagonal-rail", "curved-rail-a", "curved-rail-b", "rail-signal",
+                "rail-chain-signal"}
+-- 0.1.4 (#41): own ground rails and signals (the hooks come from rails.lua; without them, nothing of this kind counts)
+pieces.TRACK = {["straight-rail"] = true, ["half-diagonal-rail"] = true, ["curved-rail-a"] = true,
+                ["curved-rail-b"] = true, ["rail-signal"] = true, ["rail-chain-signal"] = true}
+pieces.track = nil
 
 local PICK_RADIUS = 0.35 -- tiles outside a piece's selection box that a click still picks (belts are thin)
 
@@ -34,6 +45,7 @@ function pieces.kind(entity)
   if not (entity and entity.valid) then return nil end
   if entity.type == "entity-ghost" then return "ghost" end
   if pieces.RECIPE[entity.name] then return "piece" end
+  if pieces.TRACK[entity.name] and pieces.track then return "track" end
   return nil
 end
 
@@ -79,6 +91,29 @@ function pieces.in_area(force_name, surface, area)
   return out
 end
 
+--- 0.1.4 (#41): `list` with the partner of every signal in it (the signal on the other side of the track at the same
+--- joint), in the order given, each entity once.
+function pieces.expand(list)
+  if not pieces.track then return list end
+  local out, seen = {}, {}
+  local function take(e)
+    local k = e.unit_number or 0
+    if k == 0 or not seen[k] then
+      seen[k] = true
+      out[#out + 1] = e
+    end
+  end
+  for _, e in ipairs(list) do
+    if e.valid then
+      take(e)
+      if e.type == "rail-signal" or e.type == "rail-chain-signal" then
+        for _, o in ipairs(pieces.track.partners(e)) do take(o) end
+      end
+    end
+  end
+  return out
+end
+
 --- Stable identity of a list of entities for the two-press confirmation: "name@x,y" sorted.
 function pieces.key(list)
   local keys = {}
@@ -110,6 +145,9 @@ function pieces.describe(entity)
   local lines = {}
   local dir = util.define_name(defines.direction, entity.direction)
   if not DIRECTIONS[dir] then dir = nil end
+  if not ghost and pieces.TRACK[name] and pieces.track then -- 0.1.4 (#41): own rail or signal
+    return {title = title, lines = pieces.track.describe(entity), ghost = false, rotatable = false, name = name}
+  end
   if ghost then
     lines[1] = {"rts.piece-ghost-line"}
     lines[2] = {"rts.piece-ghost-hint"}
@@ -189,6 +227,7 @@ function pieces.remove(entity, opts)
   if opts.force and entity.force.name ~= opts.force then return false, "foreign" end
   local kind = pieces.kind(entity)
   if not kind then return false, "not-piece" end
+  if kind == "track" then return false, "track" end -- (rails and signals: pieces.track.remove, as one batch)
   local name, pos, surface = pieces.name(entity), entity.position, entity.surface
   local force_name = entity.force.name
   local info = {name = name, ghost = kind == "ghost", position = {x = pos.x, y = pos.y}, refund = {},

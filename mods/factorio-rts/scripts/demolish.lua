@@ -10,6 +10,9 @@
 -- ghosts (selection.get_pieces, scripts/pieces.lua). Ghosts are cancelled at once on the first press (nothing to
 -- confirm, nothing to refund); the pieces follow the two-press rule with the recipe-based refund (10 belts per craft:
 -- the refund rounds down per batch, so one lone belt returns nothing and the message says so).
+-- 0.1.4 (#41 item 3, #33 item 6): own rails and signals (pieces of kind "track") follow the same two presses and go
+-- as one batch through pieces.track.remove (rails.remove_track): their rails come back whole; rails under a train,
+-- platforms and the pieces of depot lines stay, with a message.
 --
 -- Owns storage.players[i].demolish = {key = "un,un,...", tick = tick it was armed}.
 local util = require("scripts.util")
@@ -169,32 +172,53 @@ local function request_pieces(player_index)
   end
   p.demolish = nil
   local carry, refund, infos, spilled = {}, {}, {}, 0
+  local track = {}
   for _, e in ipairs(real) do
-    local ok, info = pieces.remove(e, {force = force, carry = carry})
-    if ok then
-      infos[#infos + 1] = info
-      spilled = spilled + info.spilled
-      for item, c in pairs(info.refund) do refund[item] = (refund[item] or 0) + c end
+    if pieces.kind(e) == "track" then
+      track[#track + 1] = e
+    else
+      local ok, info = pieces.remove(e, {force = force, carry = carry})
+      if ok then
+        infos[#infos + 1] = info
+        spilled = spilled + info.spilled
+        for item, c in pairs(info.refund) do refund[item] = (refund[item] or 0) + c end
+      end
+    end
+  end
+  -- 0.1.4 (#41): own rails and signals as one batch
+  local at_surface, at = nil, nil
+  local tracked = 0
+  if #track > 0 and pieces.track then
+    at_surface = track[1].surface
+    local res = pieces.track.remove(track, force, player_index)
+    tracked = res.rails + res.signals
+    at = res.at
+    for item, c in pairs(res.refund) do refund[item] = (refund[item] or 0) + c end
+    if res.kept.train > 0 then say(player_index, {"rts.track-kept-train", res.kept.train}) end
+    if res.kept.platform + res.kept.line > 0 then
+      say(player_index, {"rts.track-kept-line", res.kept.platform + res.kept.line})
     end
   end
   local stacks, spilled_refund = {}, 0
   for item, c in pairs(refund) do stacks[#stacks + 1] = {name = item, count = c} end
   table.sort(stacks, function(a, b) return a.name < b.name end)
-  if #infos > 0 and #stacks > 0 then
+  if (#infos > 0 or at) and #stacks > 0 then
     local first = infos[1]
-    local _, lost = buildings.deliver_items(first.surface, force, first.position, stacks)
+    local _, lost = buildings.deliver_items(first and first.surface or at_surface, force, first and first.position or at,
+                                            stacks)
     spilled_refund = lost
   end
+  local done = #infos + tracked
   local shown = {}
   for item, c in pairs(refund) do shown[#shown + 1] = c .. " " .. item end
   table.sort(shown)
-  util.log("demolish: done player=%d pieces=%d refund [%s]%s", player_index, #infos, table.concat(shown, ", "),
+  util.log("demolish: done player=%d pieces=%d refund [%s]%s", player_index, done, table.concat(shown, ", "),
     spilled_refund > 0 and string.format(" (%d spilled)", spilled_refund) or "")
   local text = refund_text(refund)
-  say(player_index, text and {"rts.pieces-done", #infos, text} or {"rts.pieces-done-none", #infos})
+  if done > 0 then say(player_index, text and {"rts.pieces-done", done, text} or {"rts.pieces-done-none", done}) end
   if spilled_refund > 0 then say(player_index, {"rts.alert-demolish-refund-spilled", spilled_refund}) end
   selection.clear(player_index)
-  return "done", #infos + cancelled
+  return "done", done + cancelled
 end
 
 --- Press of a Demolish button or of the key. `list` = unit numbers (default: the selected building(s)).

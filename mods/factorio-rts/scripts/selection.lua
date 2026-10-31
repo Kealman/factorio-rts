@@ -22,7 +22,8 @@
 -- Phase 2: a plain click that finds no own unit selects the own registered building under the cursor
 -- (any kind in buildings.KIND_BY_NAME). Box selection still takes units only.
 -- Release 0.1.2: a click (or a box with no unit inside) can also select own logistics pieces and ghosts, see
--- selection.select_pieces; a piece wins over a building only when the click is nearer to it.
+-- selection.select_pieces; a piece wins over a building only when the click is nearer to it. 0.1.4 (#41): own rails
+-- and signals are pieces too (a signal comes with its partner on the other side of the track: pieces.expand).
 --
 -- The player index does not have to belong to a real player: the headless autotest drives index 0, whose
 -- force is rts-player, whose boxes are created invisible and whose changes never reach the HUD.
@@ -793,7 +794,7 @@ function selection.handle_area(player_index, entities, area, add, surface)
     -- Release 0.1.2: an own belt, inserter, pole or ghost wins when the click is nearer to it than to the building
     local piece, d_piece = pieces.at(selection.force_name(player_index), surface or util.surface(), center)
     if piece and (not un or d_piece < d_building) then
-      selection.select_pieces(player_index, {piece}, false)
+      selection.select_pieces(player_index, pieces.expand({piece}), false) -- (0.1.4 #41: a signal with its partner)
       return 0
     end
     if un and selection.select_building(player_index, un) then return 0 end
@@ -801,7 +802,7 @@ function selection.handle_area(player_index, entities, area, add, surface)
     -- a box with no unit inside: the own pieces and ghosts in it as a group (a misplaced belt line); Shift adds
     local found = pieces.in_area(selection.force_name(player_index), surface or util.surface(), area)
     if #found > 0 then
-      selection.select_pieces(player_index, found, add)
+      selection.select_pieces(player_index, pieces.expand(found), add)
       return 0
     end
   end
