@@ -51,8 +51,10 @@
 -- scripts/railtool.lua) between rail end states of the caller's choice; crews from a depot connected by track build it
 -- in order (or robots in range), and a segment that starts on or joins existing track gets a pair of chain signals on
 -- every track that meets at the junction; player track is signalled with chain signals only (single track both ways:
--- a train enters a stretch only when its path to the next stop is free). Surveys of human forces (job.reuse) run along
--- own track at REUSE_COST per tile of it instead of laying a parallel one, with junction signals where they leave it;
+-- a train enters a stretch only when its path to the next stop is free). 0.1.4 (#41): only real junctions get them
+-- (one pair per branch, never a second pair at a joint), plain player track none (rails.junction_signals). Surveys of
+-- human forces (job.reuse) run along own track at REUSE_COST per tile of it instead of laying a parallel one, with
+-- junction signals where they leave it;
 -- a human force's depot may have any number of lines (depot.lines). The AI's surveys and its one line per depot are
 -- unchanged.
 -- 0.1.3 (#37): the Rail tool is gone; players lay track with the vanilla rail planner and rails.adopt_ghosts makes its
@@ -168,6 +170,9 @@ rails.CREW_COAL = 50                -- coal a construction wagon takes along for
 -- Crews of crossing lines jammed into each other at the crossing and stood for the rest of the match (M2 803 on 2.1:
 -- lines #7 and #9 never opened); a crew waiting at a signal of a block such a crew held stood as long.
 rails.CREW_STUCK_TICKS = 2 * 60 * 60
+-- 0.1.4 (#41): a player's crew on its way home without a path tries another way at once (back past the junction it came
+-- in through, another own depot); after HOME_NOPATH_TICKS without one it is recalled and the log says why
+rails.HOME_NOPATH_TICKS = 30 * 60
 -- a crew leaves only with rails for at least min(the line's need, CREW_MIN_RAILS): crews with 1-3 rails left a depot
 -- every game second while the rails trickled in (M2 803: 18 crews in 14 s)
 rails.CREW_MIN_RAILS = 40
@@ -281,6 +286,8 @@ local WALL_TYPES = {"wall", "gate"} -- Phase 5 M3 integration: own ones are cros
 local MANUAL_GHOST, SCRIPT, MANUAL = defines.build_check_type.manual_ghost, defines.build_check_type.script,
   defines.build_check_type.manual
 local CHAIN = "rail-chain-signal" -- 0.1.2 (#31 part A)
+-- 0.1.4 (#41, #33): the helpers of this release live in one table (rails.lua is near Lua's limit of 200 locals)
+local J = {}
 
 ---------------------------------------------------------------------------
 -- State
@@ -1557,14 +1564,14 @@ local function survey_extract(job)
       end
     end
   end
-  -- signal pairs at rail ends of ground track: both station entries and every signal_spacing tiles (a Rail tool
-  -- segment: every signal_spacing tiles only; its junctions get their own signals)
+  -- signal pairs at rail ends of ground track: both station entries and every signal_spacing tiles (0.1.4, #41: a
+  -- player's segment none: plain player track has no signals, its junctions get their own)
   local acc, signals = 0, 0
   for i, p in ipairs(path) do
     acc = acc + p.len
     local nxt = path[i + 1]
-    if nxt and not (p.elev or p.ramp or nxt.elev or nxt.ramp) and not (p.reused or nxt.reused) then
-      if (not job.manual and (i == 1 or i == #path - 1)) or acc >= CFG.signal_spacing then
+    if nxt and not job.manual and not (p.elev or p.ramp or nxt.elev or nxt.ramp) and not (p.reused or nxt.reused) then
+      if i == 1 or i == #path - 1 or acc >= CFG.signal_spacing then
         p.sig = true
         acc = 0
         signals = signals + 2
@@ -1847,38 +1854,237 @@ function rails.plan_segment(force_name, opts)
   return id
 end
 
---- 0.1.2 (#31 part A): a pair of chain signals on every own ground rail with an end at junction `pos`, at that rail's
---- far end (out: trains leaving the junction, in: trains coming to it). Player-built track is single and runs both ways:
---- with chain signals only, a train enters a stretch only when its path is free up to its next stop, so two trains
---- never meet head-on between signals (a rail signal out of the junction let a train wait inside it, nose to nose
---- with one coming the other way). Returns the number of signals placed.
-function rails.junction_signals(surface, force_name, pos)
-  local n = 0
-  local meet = {}
-  for _, r in ipairs(surface.find_entities_filtered({position = pos, radius = 6, name = RAIL_NAMES, force = force_name})) do
-    if r.valid then
+---------------------------------------------------------------------------
+-- 0.1.4 (#41): signals of player track. A joint is where two rail ends meet; a signal stands at one of the in / out
+-- signal locations of a rail end there (each of the two rails offers its own pair of locations). The engine attaches
+-- one signal per side of a joint: a second pair at a joint that has one (a junction pair next to a spacing pair of
+-- 0.1.3, the owner's save) leaves one signal of the four attached, which makes the track one-way (construction train
+-- 76 had no path home through it), and a pair at a joint that a curve covers attaches to nothing. So a pair goes only
+-- where none stands yet and where the vanilla build rules accept both signals (build_check_type manual).
+---------------------------------------------------------------------------
+J.SIGNAL_TYPES = {"rail-signal", "rail-chain-signal"}
+J.SIGNAL_SET = {["rail-signal"] = true, ["rail-chain-signal"] = true}
+rails.SIGNAL_TYPES, rails.SIGNAL_SET = J.SIGNAL_TYPES, J.SIGNAL_SET
+rails.JUNCTION_WALK = 6 -- rails a junction's pair may move along a branch to find a joint where signals can stand
+J.CONN_DIRS = {defines.rail_connection_direction.left, defines.rail_connection_direction.straight,
+                   defines.rail_connection_direction.right}
+
+function J.at_xy(p, x, y) return abs(p.x - x) < 0.2 and abs(p.y - y) < 0.2 end
+
+-- Own ground rails with an end at (x, y): list of {rail, rd = the rail_direction of that end, dir = its direction}, one
+-- per rail, by unit number.
+function J.node_rails(s, force_name, x, y)
+  local out, seen = {}, {}
+  for _, r in ipairs(s.find_entities_filtered({position = {x, y}, radius = 6, name = RAIL_NAMES, force = force_name})) do
+    if r.valid and not seen[r.unit_number] then
       for _, rd in ipairs({RD.front, RD.back}) do
         local loc = r.get_rail_end(rd).location
-        if loc.rail_layer == 0 and abs(loc.position.x - pos.x) < 0.2 and abs(loc.position.y - pos.y) < 0.2 then
-          meet[#meet + 1] = {r, rd}
+        if loc.rail_layer == 0 and J.at_xy(loc.position, x, y) then
+          seen[r.unit_number] = true
+          out[#out + 1] = {rail = r, rd = rd, dir = loc.direction}
+          break
         end
       end
     end
   end
-  -- two rails meeting are a plain continuation (a platform end, a segment's start on a track end): no junction
-  if #meet < 3 then return 0 end
-  for _, m in ipairs(meet) do
-    local away = m[1].get_rail_end(m[2] == RD.front and RD.back or RD.front)
-    for _, l in ipairs({away.out_signal_location, away.in_signal_location}) do
-      if l and l.rail_layer == 0 then
-        local sig = surface.create_entity({name = CHAIN, position = l.position, direction = l.direction,
-                                           force = force_name, rail_layer = l.rail_layer})
-        if sig then n = n + 1 end
+  table.sort(out, function(a, b) return a.rail.unit_number < b.rail.unit_number end)
+  return out
+end
+rails.node_rails = J.node_rails
+
+-- A real junction: two or more rails leave the node to one side and at least one to the other (a switch). One rail on
+-- each side (a join of two pieces of track, straight or through a curve) is a continuation, two rails to the same side
+-- and none to the other a fork no train can turn at.
+function J.is_junction(list)
+  local by = {}
+  for _, m in ipairs(list) do by[m.dir] = (by[m.dir] or 0) + 1 end
+  for d, n in pairs(by) do
+    if n >= 2 and (by[(d + 8) % 16] or 0) >= 1 then return true end
+  end
+  return false
+end
+rails.is_junction = J.is_junction
+
+-- The signal locations of the joint at rail end `re`: its own and those of every rail connected there.
+function J.joint_locations(re)
+  local locs = {}
+  local function add(e)
+    for _, k in ipairs({"in_signal_location", "out_signal_location", "alternative_in_signal_location",
+                        "alternative_out_signal_location"}) do
+      local l = e[k]
+      if l then locs[#locs + 1] = l end
+    end
+  end
+  add(re)
+  local r, rd, pos = re.rail, re.direction, re.location.position
+  for _, cd in ipairs(J.CONN_DIRS) do
+    local c = r.get_connected_rail({rail_direction = rd, rail_connection_direction = cd})
+    if c then
+      for _, crd in ipairs({RD.front, RD.back}) do
+        local ce = c.get_rail_end(crd)
+        if J.at_xy(ce.location.position, pos.x, pos.y) then add(ce) end
       end
     end
   end
-  util.log("rails: junction at %s of %s: %d signals", util.pos_str(pos), force_name, n)
+  return locs
+end
+
+-- The rail end whose joint signal `e` stands at (one of its in / out locations is the signal's place and direction), or
+-- nil.
+function J.joint_of_signal(s, e)
+  local p, d = e.position, e.direction
+  for _, r in ipairs(s.find_entities_filtered({position = p, radius = 4, name = RAIL_NAMES, force = e.force})) do
+    for _, rd in ipairs({RD.front, RD.back}) do
+      local re = r.get_rail_end(rd)
+      for _, k in ipairs({"in_signal_location", "out_signal_location", "alternative_in_signal_location",
+                          "alternative_out_signal_location"}) do
+        local l = re[k]
+        if l and l.direction == d and abs(l.position.x - p.x) < 0.1 and abs(l.position.y - p.y) < 0.1 then return re end
+      end
+    end
+  end
+  return nil
+end
+
+-- Signals and signal ghosts (any force) standing at the joint of rail end `re`.
+function J.joint_signals(s, re)
+  local out, seen = {}, {}
+  for _, l in ipairs(J.joint_locations(re)) do
+    for _, e in ipairs(s.find_entities_filtered({position = l.position, radius = 0.25, type = J.SIGNAL_TYPES})) do
+      if not seen[e.unit_number] then
+        seen[e.unit_number] = true
+        out[#out + 1] = e
+      end
+    end
+    for _, g in ipairs(s.find_entities_filtered({position = l.position, radius = 0.25, ghost_type = J.SIGNAL_TYPES})) do
+      if not seen[g.unit_number] then
+        seen[g.unit_number] = true
+        out[#out + 1] = g
+      end
+    end
+  end
+  return out
+end
+rails.joint_signals = J.joint_signals
+
+J.RAIL_GHOST_TYPES = {"straight-rail", "half-diagonal-rail", "curved-rail-a", "curved-rail-b"}
+
+-- A signal fits at location `l`: the vanilla build rules accept it there, and no rail ghost (planned track of any line)
+-- covers the spot (a signal there would keep the ghost from being built).
+function J.signal_fits(s, force_name, l)
+  if not (l ~= nil and l.rail_layer == 0 and s.can_place_entity({name = CHAIN, position = l.position,
+    direction = l.direction, force = force_name, build_check_type = MANUAL})) then
+    return false
+  end
+  local x, y = l.position.x, l.position.y
+  return s.count_entities_filtered({area = {{x - 0.6, y - 0.6}, {x + 0.6, y + 0.6}}, ghost_type = J.RAIL_GHOST_TYPES})
+    == 0
+end
+
+-- True when a pair of signals may go at rail end `re`: no signal at its joint yet and both locations accepted.
+function J.joint_free(s, force_name, re)
+  return #J.joint_signals(s, re) == 0 and J.signal_fits(s, force_name, re.in_signal_location)
+    and J.signal_fits(s, force_name, re.out_signal_location)
+end
+
+-- The joint along a branch (rail `rail`, leaving the junction through its end `far_rd`) where the junction's pair goes:
+-- the rail's far end, or one up to JUNCTION_WALK rails further on when signals cannot stand there (a curve covering the
+-- joint). Returns the rail end, or nil and why: "signalled" (a signal or a signal ghost stands at a joint on the way:
+-- that splits the branch already), "junction" (the next junction comes first), "none".
+function J.branch_joint(s, force_name, rail, far_rd)
+  local re = rail.get_rail_end(far_rd)
+  for _ = 1, rails.JUNCTION_WALK do
+    local loc = re.location
+    if loc.rail_layer ~= 0 then return nil, "none" end
+    if #J.joint_signals(s, re) > 0 then return nil, "signalled" end
+    if #J.node_rails(s, force_name, loc.position.x, loc.position.y) > 2 then return nil, "junction" end
+    if J.signal_fits(s, force_name, re.in_signal_location) and J.signal_fits(s, force_name, re.out_signal_location) then
+      return re
+    end
+    local nxt = re.make_copy()
+    if not nxt.move_natural() then return nil, "none" end
+    re = nxt
+  end
+  return nil, "none"
+end
+
+--- 0.1.2 (#31 part A), 0.1.4 (#41): chain signals at a junction of player track. At a real junction (J.is_junction:
+--- three or more rails, two or more of them to one side) every branch gets one pair of chain signals at the first joint
+--- along it where signals can stand (the branch rail's far end as a rule); a branch already split by a signal (the
+--- player's own, or a pair there) gets none; a join of two pieces of track gets none at all. Player-built track is
+--- single and runs both ways: with chain signals only, a train enters a junction only when its way to the next stop
+--- is free, so two trains never meet head-on in it. The pairs are recorded in storage.rails.jsig[unit number] =
+--- {e, x, y, s} (the junction they belong to). Returns the number of signals placed.
+function rails.junction_signals(surface, force_name, pos, retry)
+  local R = rstate()
+  local key = string.format("%s|%d|%.1f|%.1f", force_name, surface.index, pos.x, pos.y)
+  local list = J.node_rails(surface, force_name, pos.x, pos.y)
+  if not J.is_junction(list) then
+    if R.jpend then R.jpend[key] = nil end
+    if #list >= 3 and not retry then
+      util.log("rails: %d rails meet at %s of %s, not a junction (no switch): no signals", #list, util.pos_str(pos),
+        force_name)
+    end
+    return 0
+  end
+  R.jsig = R.jsig or {}
+  -- the branches (rails at the node) that have the game's pair already
+  local have = {}
+  for _, un in ipairs(sorted_keys(R.jsig)) do
+    local js = R.jsig[un]
+    if not js.e.valid then
+      R.jsig[un] = nil
+    elseif js.rail and js.s == surface.index and abs(js.x - pos.x) < 0.2 and abs(js.y - pos.y) < 0.2 then
+      have[js.rail] = true
+    end
+  end
+  local n, signalled, none, at = 0, 0, 0, {}
+  for _, m in ipairs(list) do
+    local re, why
+    if have[m.rail.unit_number] then
+      why = "signalled"
+    else
+      re, why = J.branch_joint(surface, force_name, m.rail, m.rd == RD.front and RD.back or RD.front)
+    end
+    if re then
+      at[#at + 1] = util.pos_str(re.location.position)
+      for _, l in ipairs({re.out_signal_location, re.in_signal_location}) do
+        local sig = surface.create_entity({name = CHAIN, position = l.position, direction = l.direction,
+                                           force = force_name, rail_layer = l.rail_layer})
+        if sig then
+          n = n + 1
+          R.jsig[sig.unit_number] = {e = sig, x = pos.x, y = pos.y, s = surface.index, rail = m.rail.unit_number}
+        end
+      end
+    elseif why == "signalled" then
+      signalled = signalled + 1
+    else
+      none = none + 1
+    end
+  end
+  -- a branch without a joint yet (its next rails still ghosts): tried again when track is built near the junction
+  R.jpend = R.jpend or {}
+  R.jpend[key] = none > 0 and {s = surface.index, x = pos.x, y = pos.y, force = force_name} or nil
+  if not retry or n > 0 then
+    util.log("rails: junction at %s of %s: %d branches, %d signals%s%s%s", util.pos_str(pos), force_name, #list, n,
+      #at > 0 and (" (pairs at " .. table.concat(at, ", ") .. ")") or "",
+      signalled > 0 and string.format(", %d branches signalled already", signalled) or "",
+      none > 0 and string.format(", %d branches without a joint for signals yet", none) or "")
+  end
   return n
+end
+
+-- 0.1.4 (#41): a piece of a player's line was built at (x, y): junctions within 24 tiles that still miss a branch's
+-- pair try again (rails.junction_signals keeps them in storage.rails.jpend until every branch has one).
+function J.junction_retry(s, force_name, x, y)
+  local R = storage.rails
+  if not (R and R.jpend and next(R.jpend)) then return end
+  for _, k in ipairs(sorted_keys(R.jpend)) do
+    local P = R.jpend[k]
+    if P and P.force == force_name and P.s == s.index and abs(P.x - x) <= 24 and abs(P.y - y) <= 24 then
+      rails.junction_signals(s, force_name, {x = P.x, y = P.y}, true)
+    end
+  end
 end
 
 --- Plan a line between two own depots. Returns the line id (= survey job id), or nil and a reason.
@@ -3436,8 +3642,8 @@ end
 -- rail ghosts over). rails.adopt_ghosts turns them into "manual" lines with line.planner = true, one per chain of ghosts
 -- in track order, from where the chain meets built track (or, for ghosts on free ground, from the track end nearest to
 -- an own depot); a chain that branches off another one is a line of its own starting at the branch point. Robots in
--- range and one crew at a time build them exactly as the 0.1.2 Rail tool segments (dispatch_manual, chain signals every
--- signal_spacing tiles and around junctions, the "track not built" alert). A planner line whose ghost goes away unbuilt
+-- range and one crew at a time build them exactly as the 0.1.2 Rail tool segments (dispatch_manual, chain signals at
+-- real junctions only since 0.1.4 (#41), the "track not built" alert). A planner line whose ghost goes away unbuilt
 -- (cancelled, undone, mined) is dissolved and its other ghosts are adopted again, so lines always match what stands.
 ---------------------------------------------------------------------------
 local GROUND_RAILS = {"straight-rail", "half-diagonal-rail", "curved-rail-a", "curved-rail-b"}
@@ -3698,13 +3904,7 @@ function rails.adopt_ghosts(force_name, s, ghosts)
       track = track + t.rails
       idx[pkey(p.name, p.x, p.y, p.d)] = id * 100000 + i
     end
-    local acc, signals = 0, 0
-    for i, q in ipairs(pieces) do
-      acc = acc + q.len
-      if pieces[i + 1] and acc >= CFG.signal_spacing then
-        q.sig, acc, signals = true, 0, signals + 2
-      end
-    end
+    local signals = 0 -- 0.1.4 (#41): plain player track has no signals (0.1.3: a pair every signal_spacing tiles)
     local first, last = pieces[1], pieces[#pieces]
     local bill = track + signals * CFG.signal_rails
     R.lines[id] = {id = id, force = force_name, kind = "manual", planner = true, state = "building", created = game.tick,
@@ -3844,8 +4044,180 @@ local function planner_orient(line)
     util.pos_str({rev[1].sx, rev[1].sy}))
 end
 
+-- 0.1.4 (#41): the signals of player track in a save from 0.1.2 - 0.1.3, once. Removed: the chain signal pairs every
+-- signal_spacing tiles of planner track and Rail tool segments (line.signals; plain player track has none now), and
+-- every chain signal that the old rails.junction_signals put at a junction mark (piece.jpos / jpos2 of a player's
+-- line: the in / out locations at the far end of each own rail with an end there). Then rails.junction_signals places
+-- the pairs again at the marks that are real junctions, one per branch where signals can stand. The player's own
+-- signals elsewhere, rail signals and every signal ghost stay. Trains of the force without a path try again.
+-- Returns the number of signals removed.
+function rails.fix_track_signals()
+  local R = rstate()
+  if (R.signals_v or 0) >= 2 then return 0 end
+  R.signals_v = 2
+  local per, nodes, nkeys, surfaces = {}, {}, {}, {}
+  local function count(force_name)
+    local c, g = 0, 0
+    for si in pairs(surfaces) do
+      local s = game.surfaces[si]
+      if s then
+        c = c + s.count_entities_filtered({force = force_name, type = J.SIGNAL_TYPES})
+        g = g + s.count_entities_filtered({force = force_name, ghost_type = J.SIGNAL_TYPES})
+      end
+    end
+    return c, g
+  end
+  for _, id in ipairs(sorted_keys(R.lines)) do
+    local line = R.lines[id]
+    if line.chain and line.pieces and game.surfaces[line.surface] then surfaces[line.surface] = true end
+  end
+  for _, id in ipairs(sorted_keys(R.lines)) do
+    local line = R.lines[id]
+    local s = game.surfaces[line.surface]
+    if line.chain and line.pieces and s then
+      local F = per[line.force]
+      if not F then
+        F = {spacing = 0, old = 0, marks = 0, junctions = 0, placed = 0}
+        F.before, F.ghosts = count(line.force)
+        per[line.force] = F
+      end
+      if line.kind == "manual" then
+        for _, sig in ipairs(line.signals or {}) do
+          if sig.valid then
+            sig.destroy()
+            F.spacing = F.spacing + 1
+          end
+        end
+        line.signals = {}
+        for _, p in ipairs(line.pieces) do p.sig = nil end
+        if line.bill and (line.bill.signals or 0) > 0 then
+          line.bill.rails = line.bill.rails - line.bill.signals * CFG.signal_rails
+          line.bill.signals = 0
+          line.rails = line.bill.rails
+        end
+      end
+      for _, p in ipairs(line.pieces) do
+        for _, jp in ipairs({p.jpos or false, p.jpos2 or false}) do
+          if jp then
+            local k = string.format("%s|%d|%d", line.force, line.surface, poskey(jp.x, jp.y))
+            if not nodes[k] then
+              nodes[k] = {s = s, force = line.force, x = jp.x, y = jp.y}
+              nkeys[#nkeys + 1] = k
+            end
+          end
+        end
+      end
+    end
+  end
+  table.sort(nkeys)
+  for _, k in ipairs(nkeys) do
+    local N = nodes[k]
+    local F = per[N.force]
+    F.marks = F.marks + 1
+    for _, m in ipairs(J.node_rails(N.s, N.force, N.x, N.y)) do
+      local away = m.rail.get_rail_end(m.rd == RD.front and RD.back or RD.front)
+      for _, l in ipairs({away.out_signal_location, away.in_signal_location}) do
+        for _, e in ipairs(l and l.rail_layer == 0 and N.s.find_entities_filtered({position = l.position, radius = 0.2,
+                                                                                   name = CHAIN, force = N.force}) or {}) do
+          if e.direction == l.direction then
+            e.destroy()
+            F.old = F.old + 1
+          end
+        end
+      end
+    end
+  end
+  for _, k in ipairs(nkeys) do
+    local N = nodes[k]
+    local F = per[N.force]
+    if J.is_junction(J.node_rails(N.s, N.force, N.x, N.y)) then
+      F.junctions = F.junctions + 1
+      F.placed = F.placed + rails.junction_signals(N.s, N.force, {x = N.x, y = N.y})
+    end
+  end
+  -- a signal attached to no rail does nothing, and a partner attached alone makes the track one-way (a signal does not
+  -- attach again when the pair that took its place goes: diag76f on the owner's save). The signals of such a joint are
+  -- taken up and set again, those attached before first; when they do not attach as a pair (both directions), they go.
+  for _, force_name in ipairs(sorted_keys(per)) do
+    local F = per[force_name]
+    F.remade, F.loose = 0, 0
+    for _, si in ipairs(sorted_keys(surfaces)) do
+      local s = game.surfaces[si]
+      for _, e in ipairs(s and s.find_entities_filtered({force = force_name, type = J.SIGNAL_TYPES}) or {}) do
+        if e.valid and #e.get_connected_rails() == 0 then
+          local re = J.joint_of_signal(s, e)
+          local group = {}
+          for _, g in ipairs(re and J.joint_signals(s, re) or {e}) do
+            if g.valid and g.type ~= "entity-ghost" and g.force.name == force_name then group[#group + 1] = g end
+          end
+          local specs = {}
+          for _, g in ipairs(group) do
+            local js = R.jsig and R.jsig[g.unit_number]
+            specs[#specs + 1] = {name = g.name, position = g.position, direction = g.direction, rail_layer = g.rail_layer,
+                                 js = js, was = #g.get_connected_rails() > 0 and 0 or 1}
+            if js then R.jsig[g.unit_number] = nil end
+          end
+          table.sort(specs, function(a, b) return a.was < b.was end) -- (stable enough: at most four per joint)
+          local at = util.pos_str(e.position)
+          for _, g in ipairs(group) do g.destroy() end
+          local made, dirs = {}, {}
+          for _, sp in ipairs(specs) do
+            local n = s.create_entity({name = sp.name, position = sp.position, direction = sp.direction,
+                                       force = force_name, rail_layer = sp.rail_layer})
+            if n and #n.get_connected_rails() > 0 then
+              made[#made + 1] = {e = n, js = sp.js}
+              dirs[n.direction] = true
+            elseif n then
+              n.destroy()
+            end
+          end
+          local pair = false
+          for d in pairs(dirs) do
+            if dirs[(d + 8) % 16] then pair = true end
+          end
+          for _, m in ipairs(made) do
+            if pair then
+              if m.js then R.jsig[m.e.unit_number] = {e = m.e, x = m.js.x, y = m.js.y, s = m.js.s, rail = m.js.rail} end
+            else
+              m.e.destroy()
+            end
+          end
+          local kept = pair and #made or 0
+          F.remade, F.loose = F.remade + kept, F.loose + #specs - kept
+          util.log("rails: signals of %s at %s: one attached to no rail, %d at its joint: %d set again, %d removed",
+            force_name, at, #specs, kept, #specs - kept)
+        end
+      end
+    end
+  end
+  -- (a junction branch that counted such a joint as signalled gets its pair now)
+  for _, k in ipairs(nkeys) do
+    local N = nodes[k]
+    local F = per[N.force]
+    if F.loose > 0 and J.is_junction(J.node_rails(N.s, N.force, N.x, N.y)) then
+      F.placed = F.placed + rails.junction_signals(N.s, N.force, {x = N.x, y = N.y}, true)
+    end
+  end
+  local removed = 0
+  for _, force_name in ipairs(sorted_keys(per)) do
+    local F = per[force_name]
+    local after, ghosts = count(force_name)
+    removed = removed + F.spacing + F.old - F.placed + F.loose
+    util.log("rails: signals of %s (0.1.4, #41): %d before, %d after: %d spacing signals of player track and %d old "
+      .. "junction signals at %d junction marks removed, %d signals placed again at %d real junctions, %d loose signals "
+      .. "removed; %d signal ghosts kept (%d before)", force_name, F.before, after, F.spacing, F.old, F.marks, F.placed,
+      F.junctions, F.loose, ghosts, F.ghosts)
+    for _, rec in pairs(R.trains) do
+      local train = rec.force == force_name and train_of(rec)
+      if train and (train.state == TS.no_path or train.state == TS.path_lost) then pcall(train.recalculate_path) end
+    end
+  end
+  return removed
+end
+
 local function check_lines()
   local R = rstate()
+  if (R.signals_v or 0) < 2 then rails.fix_track_signals() end -- 0.1.4 (#41): a save from before (see there)
   for _, id in ipairs(sorted_keys(R.lines)) do
     local line = R.lines[id] or {} -- (0.1.3: a planner line dissolved during this check is gone)
     local st = line.state
@@ -4013,6 +4385,9 @@ local function place_signals(line, p, rec, s)
     if abs(pos.x - p.gx) < 0.2 and abs(pos.y - p.gy) < 0.2 then re = x end
   end
   if not re then return end
+  -- 0.1.4 (#41): a player's line (chain signals) puts no second pair at a joint that has signals, nor a pair the build
+  -- rules refuse (see J.joint_free); the AI's lines as before
+  if line.chain and not J.joint_free(s, line.force, re) then return end
   -- Phase 5 M1 integration: both signals of a pair or none: a crew short of rails placed one signal of a pair, which
   -- made the line one-way (no path from depot A to B; seed 405 never opened its line)
   local n = 0
@@ -4115,6 +4490,7 @@ local function lay_piece(line, i, rec, s)
   -- 0.1.2 (#31 part A): the piece next to existing track: signals around the junction
   if p.jpos then rails.junction_signals(s, line.force, p.jpos) end
   if p.jpos2 then rails.junction_signals(s, line.force, p.jpos2) end
+  if line.chain then J.junction_retry(s, line.force, p.x, p.y) end -- 0.1.4 (#41)
   return true
 end
 
@@ -4166,6 +4542,113 @@ local function crew_stuck(rec, train, line)
   return game.tick - m.tick >= rails.CREW_STUCK_TICKS
 end
 
+local H = {} -- 0.1.4 (#41): the way-home helpers below (one local, see J)
+-- 0.1.4 (#41): the way home of a player's crew. The train stops of its home depot as path goals.
+function H.home_goals(rec)
+  local d = rails.depot(rec.home)
+  local goals = {}
+  for _, st in pairs(d and d.platform and d.platform.stops or {}) do
+    if st.valid and st.connected_rail then goals[#goals + 1] = {train_stop = st} end
+  end
+  return goals, d
+end
+
+-- True when a path leads from `starts` (or from either end of `train` that has a locomotive) to one of `goals`.
+function H.path_to(train, starts, goals)
+  if #goals == 0 then return false end
+  local ok, res = pcall(game.train_manager.request_train_path, {train = train, starts = starts, goals = goals,
+                                                                type = "any-goal-accessible"})
+  return ok and res ~= nil and res.found_path == true
+end
+
+function H.rail_starts(rail)
+  return {{rail = rail, direction = RD.front}, {rail = rail, direction = RD.back}}
+end
+
+-- Why a crew has no path home, for the log: each end of the train, the signals around it (a signal with no partner
+-- facing the other way within 3.3 tiles makes the track one-way; one attached to no rail does nothing), the depot.
+function H.no_path_reason(rec, train)
+  local goals = H.home_goals(rec)
+  local parts = {}
+  for _, k in ipairs({"front_end", "back_end"}) do
+    local re = train[k]
+    if re then
+      local found = H.path_to(train, {{rail = re.rail, direction = re.direction, is_front = k == "front_end"}}, goals)
+      parts[#parts + 1] = string.format("from its %s at %s %s", k == "front_end" and "front" or "back",
+        util.pos_str(re.location.position), found and "a path" or "none")
+    end
+  end
+  local s, here = train.front_stock.surface, train.front_stock.position
+  local sigs = s.find_entities_filtered({position = here, radius = 40, type = J.SIGNAL_TYPES})
+  local odd = {}
+  for _, e in ipairs(sigs) do
+    local partner = false
+    for _, o in ipairs(sigs) do
+      if o ~= e and o.direction == (e.direction + 8) % 16 and util.distance(o.position, e.position) < 3.3 then
+        partner = true
+      end
+    end
+    local loose = #e.get_connected_rails() == 0
+    if (not partner or loose) and #odd < 6 then
+      odd[#odd + 1] = util.pos_str(e.position) .. (loose and " (attached to no rail)" or " (no partner: one-way)")
+    end
+  end
+  return string.format("no path to depot #%s (%d of its stops on track): %s; %d signals within 40 tiles%s",
+    tostring(rec.home), #goals, table.concat(parts, ", "), #sigs,
+    #odd > 0 and (", odd ones at " .. table.concat(odd, ", ")) or "")
+end
+
+-- Another way home for a player's crew without a path: (1) the engine's own path from either end, (2) back to the rail
+-- it parked on before it turned into its line (rails.manual_via / manual_approach: a branch that leaves backwards is
+-- entered by a reversal, so the way home starts with one), when both legs have a path, (3) the nearest own depot it can
+-- reach (a branch built towards a depot further on). Returns true when the crew got a way.
+function H.way_home(rec, train)
+  local R = rstate()
+  local goals = H.home_goals(rec)
+  if H.path_to(train, nil, goals) then
+    pcall(train.recalculate_path)
+    return true
+  end
+  local line = rec.line and R.lines[rec.line]
+  if line and line.kind == "manual" and line.pieces then
+    local seen = {}
+    for _, via in ipairs({rails.manual_via(line) or false, rails.manual_approach(line) or false}) do
+      if via and via.valid and not seen[via.unit_number] then
+        seen[via.unit_number] = true
+        if H.path_to(train, nil, H.rail_starts(via)) and H.path_to(nil, H.rail_starts(via), goals) then
+          rec.home_via = via
+          goto_rail(train, via)
+          util.log("rails: construction train %d goes home to depot #%s by way of %s (back past the junction it came in "
+            .. "through)", train.id, tostring(rec.home), util.pos_str(via.position))
+          return true
+        end
+      end
+    end
+  end
+  local here = train.front_stock.position
+  local cands = {}
+  for _, un in ipairs(sorted_keys(R.depots)) do
+    local d = R.depots[un]
+    if un ~= rec.home and d.force == rec.force and not d.station and d.platform and d.entity.valid then
+      cands[#cands + 1] = {un = un, d = util.distance(d.entity.position, here)}
+    end
+  end
+  table.sort(cands, function(x, y) return x.d < y.d end)
+  for k = 1, min(#cands, 4) do
+    local d = R.depots[cands[k].un]
+    local dg = {}
+    for _, st in pairs(d.platform.stops) do
+      if st.valid and st.connected_rail then dg[#dg + 1] = {train_stop = st} end
+    end
+    if H.path_to(train, nil, dg) then
+      rec.home = d.un
+      go_home(rec, train, "its own depot is out of reach")
+      return true
+    end
+  end
+  return false
+end
+
 local function builder_step(rec, train)
   local R = rstate()
   local line = rec.line and R.lines[rec.line]
@@ -4203,33 +4686,33 @@ local function builder_step(rec, train)
     if rec.arrived then
       despawn(rec, train)
     elseif rails.human(rec.force) then
-      -- 0.1.2 (#31 part A): a player's junctions turn one way: a crew with no way back to its depot goes to the
-      -- nearest own depot it can reach instead (a branch built from the main track towards a depot further on)
-      if (train.state == TS.no_path or train.state == TS.path_lost) and not rec.rehomed then
-        rec.rehomed = true
-        local here = train.front_stock.position
-        local cands = {}
-        for _, un in ipairs(sorted_keys(R.depots)) do
-          local d = R.depots[un]
-          if un ~= rec.home and d.force == rec.force and not d.station and d.platform and d.entity.valid then
-            cands[#cands + 1] = {un = un, d = util.distance(d.entity.position, here)}
-          end
+      -- 0.1.4 (#41): on its way back past the junction it came in through (H.way_home): there, it heads home
+      local via = rec.home_via
+      if via and not via.valid then
+        rec.home_via = nil
+        go_home(rec, train, "the junction rail is gone")
+      elseif via and (train.state == TS.wait_station or (abs(train.speed) < 0.01
+                      and nearest_loco_distance(train, via.position) < 12)) then
+        rec.home_via = nil
+        go_home(rec, train, "back past the junction")
+      end
+      -- 0.1.2 (#31 part A), 0.1.4 (#41): a crew with no way back to its depot tries another one at once (H.way_home);
+      -- after HOME_NOPATH_TICKS still without a path it is recalled, and the log says why
+      if train.state == TS.no_path or train.state == TS.path_lost then
+        rec.nopath = rec.nopath or game.tick
+        if not rec.rehomed then
+          rec.rehomed = true
+          H.way_home(rec, train)
         end
-        table.sort(cands, function(x, y) return x.d < y.d end)
-        for k = 1, min(#cands, 4) do
-          local d = R.depots[cands[k].un]
-          local goals = {}
-          for _, st in pairs(d.platform.stops) do
-            if st.valid and st.connected_rail then goals[#goals + 1] = {train_stop = st} end
-          end
-          local ok, res = pcall(game.train_manager.request_train_path, {train = train, goals = goals,
-                                                                        type = "any-goal-accessible"})
-          if #goals > 0 and ok and res and res.found_path then
-            rec.home = d.un
-            go_home(rec, train, "its own depot is out of reach")
-            break
-          end
+        if game.tick - rec.nopath >= rails.HOME_NOPATH_TICKS then
+          util.log("rails: construction train %d has had no path home for %.0f s at %s: %s; recalled to depot #%s",
+            train.id, (game.tick - rec.nopath) / 60, util.pos_str(train.front_stock.position),
+            H.no_path_reason(rec, train), tostring(rec.home))
+          despawn(rec, train)
+          return
         end
+      else
+        rec.nopath = nil
       end
       -- ... and tops up on its way home (fixture runs: crews stood still on the way back from a long stretch of own
       -- track until the stuck rule recalled them); the AI's crews as before
@@ -4568,6 +5051,305 @@ function rails.remove_manual_line(id)
   util.log("rails: track segment #%d of %s taken back: %d ghosts removed", id, line.force, n)
   return true, n
 end
+
+---------------------------------------------------------------------------
+-- 0.1.4 (#41 item 3, #33 item 6): own track and signals in the piece selection (scripts/pieces.lua: kind "track",
+-- selection.lua, demolish.lua: Delete). A click selects one rail or signal (a signal with its partner on the other side
+-- of the track), a box the own track and signals in it; Delete (twice) removes them through rails.remove_track.
+---------------------------------------------------------------------------
+J.pieces = require("scripts.pieces")
+J.STOCK_TYPES = {"locomotive", "cargo-wagon", "fluid-wagon", "artillery-wagon"}
+
+--- What an own rail is: "track" (player track: a planner line's or a Rail tool segment's piece, or a rail of no line),
+--- "line" (a piece an auto line laid between two depots), "platform" (a depot's platform). Second result: the line,
+--- or the depot record of a platform.
+-- The pieces of player track that a force's auto lines run along (job.reuse): {[piece key] = line}, kept for a tick.
+function J.reused_by(force_name)
+  local C = J.reused_cache
+  if C and C.tick == game.tick and C.force == force_name then return C.set end
+  local set = {}
+  local R = storage.rails
+  for _, id in ipairs(sorted_keys(R and R.lines or {})) do
+    local l = R.lines[id]
+    if l.kind ~= "manual" and l.force == force_name and l.reused then
+      for _, p in ipairs(l.pieces or {}) do
+        if p.reused then set[pkey(p.name, p.x, p.y, p.d)] = l end
+      end
+    end
+  end
+  J.reused_cache = {tick = game.tick, force = force_name, set = set}
+  return set
+end
+
+function rails.rail_owner(e)
+  local R = storage.rails
+  local key = pkey(e.name, e.position.x, e.position.y, e.direction)
+  local idx = R and R.index[e.surface.index]
+  local v = idx and idx[key]
+  if v and v < 0 then return "platform", R.depots[-v] end
+  local line = v and R.lines[floor(v / 100000)]
+  if line and (line.kind ~= "manual" or #(line.supports or {}) > 0) then return "line", line end
+  local auto = J.reused_by(e.force.name)[key] -- (player track an auto line runs along)
+  if auto then return "line", auto end
+  return "track", line
+end
+
+--- What an own signal is: "junction" (the game put it at a junction), "line" (a spacing pair of a line), "own".
+function rails.signal_owner(e)
+  local R = storage.rails
+  if R and R.jsig and R.jsig[e.unit_number] then return "junction" end
+  for _, id in ipairs(sorted_keys(R and R.lines or {})) do
+    for _, sig in ipairs(R.lines[id].signals or {}) do
+      if sig == e then return "line", R.lines[id] end
+    end
+  end
+  return "own"
+end
+
+--- The own signals at the joint of signal `e` (it and its partner on the other side of the track), by unit number.
+function rails.signal_partners(e)
+  local out, seen = {}, {}
+  local function take(x)
+    if x.valid and x.type ~= "entity-ghost" and x.force == e.force and not seen[x.unit_number] then
+      seen[x.unit_number] = true
+      out[#out + 1] = x
+    end
+  end
+  for _, r in ipairs(e.get_connected_rails()) do
+    for _, rd in ipairs({RD.front, RD.back}) do
+      local re = r.get_rail_end(rd)
+      for _, l in ipairs(J.joint_locations(re)) do
+        if J.at_xy(l.position, e.position.x, e.position.y) then
+          for _, x in ipairs(J.joint_signals(e.surface, re)) do take(x) end
+          break
+        end
+      end
+    end
+  end
+  if not seen[e.unit_number] then -- (attached to no rail: the signal facing the other way next to it)
+    take(e)
+    for _, o in ipairs(e.surface.find_entities_filtered({position = e.position, radius = 3.3, type = J.SIGNAL_TYPES,
+                                                          force = e.force})) do
+      if o.direction == (e.direction + 8) % 16 then take(o) end
+    end
+  end
+  table.sort(out, function(a, b) return a.unit_number < b.unit_number end)
+  return out
+end
+
+-- Rails of the item an entity is built from: {name, count} list (its prototype's items_to_place_this).
+function J.items_of(e)
+  local out = {}
+  for _, it in ipairs(e.prototype.items_to_place_this or {}) do
+    local name = type(it) == "table" and it.name or it
+    out[#out + 1] = {name = name, count = type(it) == "table" and it.count or 1}
+  end
+  return out
+end
+
+-- The pieces of a player's line that are gone (`gone`[piece index] = true): the line splits into the runs of pieces
+-- left, each a line of its own (open when built, else building: robots and crews finish it as before); a line with no
+-- piece left is gone. Returns the new line ids.
+function J.split_line(line, gone)
+  local R = rstate()
+  local idx = index_of(line.surface)
+  for _, p in ipairs(line.pieces) do
+    if not p.reused then idx[pkey(p.name, p.x, p.y, p.d)] = nil end
+  end
+  R.lines[line.id] = nil
+  local runs, cur = {}, nil
+  for i, p in ipairs(line.pieces) do
+    if gone[i] then
+      cur = nil
+    else
+      if not cur then
+        cur = {first = i}
+        runs[#runs + 1] = cur
+      end
+      cur[#cur + 1] = p
+    end
+  end
+  local made = {}
+  for k, run in ipairs(runs) do
+    local id = R.next_id
+    R.next_id = id + 1
+    local nl = {}
+    for key, v in pairs(line) do nl[key] = v end
+    local missing, length, track = 0, 0, 0
+    for _, p in ipairs(run) do
+      if not (p.e and p.e.valid) then missing = missing + 1 end
+      length = length + (p.len or 0)
+      track = track + (p.rails or 0)
+    end
+    nl.id, nl.pieces, nl.signals, nl.supports = id, {}, {}, {}
+    for i, p in ipairs(run) do nl.pieces[i] = p end
+    nl.builder, nl.wait, nl.progress, nl.alerted, nl.next_dispatch, nl.after = nil, nil, nil, nil, nil, nil
+    nl.blocked, nl.blocked_at, nl.bbox = nil, nil, nil
+    nl.start_rail = run.first == 1 and line.start_rail or nil
+    nl.prev = run.first == 1 and line.prev or nil
+    nl.end_rail = (run.first + #run - 1 == #line.pieces) and line.end_rail or nil
+    nl.missing, nl.length = missing, length
+    nl.state = missing == 0 and "open" or "building"
+    if missing == 0 then nl.opened = nl.opened or game.tick end
+    nl.bill = {rails = track, track = track, pieces = #run, supports = 0, ramps = 0, signals = 0}
+    nl.rails = track
+    for i, p in ipairs(nl.pieces) do
+      if not p.reused then idx[pkey(p.name, p.x, p.y, p.d)] = id * 100000 + i end
+    end
+    R.lines[id] = nl
+    made[#made + 1] = id
+  end
+  util.log("rails: track #%d of %s lost %d pieces: %s", line.id, line.force, table_size(gone),
+    #made > 0 and ("split into #" .. table.concat(made, ", #")) or "gone")
+  return made
+end
+
+--- 0.1.4 (#41 item 3, #33 item 6): remove the own rails and signals in `list` (LuaEntity) of force `force_name` (the
+--- piece selection's Delete). Kept: rails under a train, a depot's platform, the pieces an auto line laid and the player
+--- track an auto line runs along (lines are not taken apart here). The signals at the joints of a removed rail go with it, and the game's pairs of a junction
+--- that is no junction any more. A planner line or Rail tool segment that loses pieces is split into the runs that
+--- stand (rails.lua J.split_line). Refund, returned undelivered: the rails each rail was built from, a signal's own item
+--- (one of a line's spacing pairs: signal_rails rails; a junction signal the game placed: nothing). Returns
+--- {rails = n, signals = n, refund = {[item] = n}, kept = {train = n, platform = n, line = n}, at = position}.
+--- Log line "rails: track removed by player N: ...".
+function rails.remove_track(list, force_name, player_index)
+  local R = rstate()
+  local res = {rails = 0, signals = 0, refund = {}, kept = {train = 0, platform = 0, line = 0}}
+  local function refund(name, n)
+    if n > 0 then res.refund[name] = (res.refund[name] or 0) + n end
+  end
+  local under, trains_seen = {}, {}
+  local function under_train(e)
+    for _, st in ipairs(e.surface.find_entities_filtered({position = e.position, radius = 12, type = J.STOCK_TYPES})) do
+      local t = st.train
+      if t and not trains_seen[t.id] then
+        trains_seen[t.id] = true
+        for _, r in ipairs(t.get_rails()) do under[r.unit_number] = true end
+      end
+    end
+    return under[e.unit_number] == true
+  end
+  local rails_out, sigs, sig_seen, gone, lines, nodes = {}, {}, {}, {}, {}, {}
+  local function add_sig(x)
+    if x.valid and x.type ~= "entity-ghost" and x.force.name == force_name and not sig_seen[x.unit_number] then
+      sig_seen[x.unit_number] = true
+      sigs[#sigs + 1] = x
+    end
+  end
+  for _, e in ipairs(list) do
+    if e.valid and e.force.name == force_name then
+      if J.SIGNAL_SET[e.name] then
+        add_sig(e)
+      elseif GROUND_SET[e.name] then
+        local kind, owner = rails.rail_owner(e)
+        if kind == "platform" then
+          res.kept.platform = res.kept.platform + 1
+        elseif kind == "line" then
+          res.kept.line = res.kept.line + 1
+        elseif under_train(e) then
+          res.kept.train = res.kept.train + 1
+        else
+          rails_out[#rails_out + 1] = e
+          if owner then
+            local v = index_of(e.surface.index)[pkey(e.name, e.position.x, e.position.y, e.direction)]
+            gone[owner.id] = gone[owner.id] or {}
+            gone[owner.id][v % 100000] = true
+            lines[owner.id] = owner
+          end
+          for _, rd in ipairs({RD.front, RD.back}) do
+            local re = e.get_rail_end(rd)
+            for _, x in ipairs(J.joint_signals(e.surface, re)) do add_sig(x) end
+            local loc = re.location.position
+            nodes[string.format("%d|%d", e.surface.index, poskey(loc.x, loc.y))] = {s = e.surface, x = loc.x, y = loc.y}
+          end
+        end
+      end
+    end
+  end
+  -- signals first (those at the joints of the rails), then the rails, then the game's pairs of junctions that are none
+  -- any more
+  local dropped = 0
+  local function drop_signals()
+    while dropped < #sigs do
+      dropped = dropped + 1
+      local e = sigs[dropped]
+      if e.valid then
+        res.at = res.at or {x = e.position.x, y = e.position.y}
+        local owner, line = rails.signal_owner(e)
+        if owner == "line" then
+          refund(rails.RAIL, CFG.signal_rails)
+          for i, sig in ipairs(line.signals) do
+            if sig == e then
+              table.remove(line.signals, i)
+              break
+            end
+          end
+        elseif owner == "own" then
+          for _, it in ipairs(J.items_of(e)) do refund(it.name, it.count) end
+        end
+        if R.jsig then R.jsig[e.unit_number] = nil end
+        e.destroy({raise_destroy = true})
+        res.signals = res.signals + 1
+      end
+    end
+  end
+  drop_signals()
+  for _, e in ipairs(rails_out) do
+    res.at = res.at or {x = e.position.x, y = e.position.y}
+    local _, owner = rails.rail_owner(e)
+    local p = owner and owner.pieces and owner.pieces[index_of(e.surface.index)[pkey(e.name, e.position.x, e.position.y,
+      e.direction)] % 100000]
+    if p and p.rails then
+      refund(rails.RAIL, p.rails)
+    else
+      for _, it in ipairs(J.items_of(e)) do refund(it.name, it.count) end
+    end
+    e.destroy({raise_destroy = true})
+    res.rails = res.rails + 1
+  end
+  -- the game's junction pairs at nodes that are no junction any more
+  for _, k in ipairs(sorted_keys(nodes)) do
+    local N = nodes[k]
+    if not J.is_junction(J.node_rails(N.s, force_name, N.x, N.y)) then
+      for _, un in ipairs(sorted_keys(R.jsig or {})) do
+        local js = R.jsig[un]
+        if js.s == N.s.index and abs(js.x - N.x) < 0.2 and abs(js.y - N.y) < 0.2 and js.e.valid then add_sig(js.e) end
+      end
+    end
+  end
+  drop_signals()
+  local split = {}
+  for _, id in ipairs(sorted_keys(lines)) do
+    for _, nid in ipairs(J.split_line(lines[id], gone[id])) do split[#split + 1] = nid end
+  end
+  local shown = {}
+  for _, item in ipairs(sorted_keys(res.refund)) do shown[#shown + 1] = res.refund[item] .. " " .. item end
+  util.log("rails: track removed by player %d (%s): %d rails, %d signals, refund [%s]; kept %d under trains, %d of "
+    .. "platforms, %d of depot lines; lines %s", player_index or 0, force_name, res.rails, res.signals,
+    table.concat(shown, ", "), res.kept.train, res.kept.platform, res.kept.line,
+    #split > 0 and ("#" .. table.concat(split, ", #")) or "-")
+  return res
+end
+
+--- The HUD lines of an own rail or signal (scripts/pieces.lua describe): {line1, line2}.
+function rails.describe_track(e)
+  if J.SIGNAL_SET[e.name] then
+    local owner = rails.signal_owner(e)
+    return {{"rts.track-signal-" .. owner}, {"rts.track-signal-hint"}}
+  end
+  local kind, owner = rails.rail_owner(e)
+  if kind == "platform" then
+    return {{"rts.track-rail-platform", owner and owner.index or "?"}, {"rts.track-rail-stays"}}
+  elseif kind == "line" then
+    local A, B = owner and rails.depot(owner.a), owner and rails.depot(owner.b)
+    return {{"rts.track-rail-line", A and A.index or "?", B and B.index or "?"}, {"rts.track-rail-stays"}}
+  end
+  local n = 0
+  for _, it in ipairs(J.items_of(e)) do n = n + it.count end
+  return {owner and {"rts.track-rail-planned", owner.id} or {"rts.track-rail-own"}, {"rts.track-rail-hint", n}}
+end
+
+J.pieces.track = {describe = rails.describe_track, remove = rails.remove_track, partners = rails.signal_partners}
 
 --- Trains of a force: list of records.
 function rails.trains_of(force_name)
@@ -5548,6 +6330,7 @@ local function on_built_rail(e)
     -- 0.1.2 (#31 part A): a junction piece built by robots
     if p.jpos then rails.junction_signals(entity.surface, line.force, p.jpos) end
     if p.jpos2 then rails.junction_signals(entity.surface, line.force, p.jpos2) end
+    if line.chain then J.junction_retry(entity.surface, line.force, p.x, p.y) end -- 0.1.4 (#41)
   end
 end
 events.on(defines.events.on_robot_built_entity, on_built_rail)
@@ -5571,6 +6354,7 @@ function rails.init()
   rstate()
   learn_geometry()
   bind()
+  rails.fix_track_signals() -- 0.1.4 (#41): once per save (storage.rails.signals_v)
   -- 0.1.2 (#31 part A): a save from before the Station and the signals: a force with Railways gets them now (research
   -- only recomputes its unlocks when a technology finishes)
   local rr = storage.research

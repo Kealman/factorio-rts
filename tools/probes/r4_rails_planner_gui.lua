@@ -21,6 +21,12 @@
 --   rotate     R before the first click turns the first rail (vanilla rotate of the planner's cursor)
 --   q_ends     the first Q stops the planner's path (the rail stays in hand, as in vanilla), the second one ends laying:
 --              the RTS cursor comes back and hover selection goes off again
+--   0.1.4 (#41 item 3, #33 item 6), removal with the RTS cursor and Backspace (the Delete input), real input:
+--   remove_select  a click on a built rail of the diagonal selects that one rail (the HUD's piece page)
+--   remove_rail    Backspace twice removes it: its rails come back (rails.remove_track's refund), its line splits
+--   remove_signal  a click on a chain signal of the branch junction selects it with its partner; Backspace twice
+--                  removes both
+--   remove_box     a box over the far end of the diagonal selects its rails; Backspace twice removes them
 -- Checks "[rts] r4p check <name>: PASS|FAIL ...", summary "[rts] r4p summary <passed>/<total>", marker RTS_R4P_DONE.
 -- Screenshots build/shots-<copy>/rts-r4p-*.png (take_screenshot), window captures (path previews, the engine's own
 -- overlays) build/shots-<copy>-window/. Test copy (self-test off), RTS_LOCALE=en or ru:
@@ -42,8 +48,9 @@ local rails = require("scripts.rails")
 local railroutes = require("scripts.railroutes")
 local hud = require("scripts.hud")
 local selection = require("scripts.selection")
+local pieces = require("scripts.pieces")
 
-local KEY = {Q = 12, R = 15}
+local KEY = {Q = 12, R = 15, BACKSPACE = 51}
 local RAILS = {"straight-rail", "half-diagonal-rail", "curved-rail-a", "curved-rail-b"}
 local RD = defines.rail_direction
 local TS = defines.train_state
@@ -679,6 +686,178 @@ step(function(player, P)
   check(P, "rotate", g ~= nil and g.direction ~= defines.direction.north,
     "after R a click placed %s with direction %s (an unturned first rail is north, 0)",
     g and g.ghost_name or "nothing", g and tostring(g.direction) or "-")
+  if g and g.valid then g.destroy() end
+  shot(player, "rotate-end")
+  return 60
+end)
+
+-- 0.1.4 (#41 item 3, #33 item 6): own track and signals removed with the RTS cursor and Backspace
+local function hook_removal(P)
+  if P.hooked or not pieces.track then return end
+  P.hooked = true
+  local orig = pieces.track.remove
+  pieces.track.remove = function(list, force_name, player_index)
+    local res = orig(list, force_name, player_index)
+    local R = storage.r4p_probe
+    if R then R.last_rm = {rails = res.rails, signals = res.signals, refund = res.refund.rail or 0, kept = res.kept.train} end
+    return res
+  end
+end
+
+step(function(player, P)
+  hook_removal(P)
+  selection.clear(player.index)
+  camera.jump_to(player, P.view)
+  player.zoom = ZOOM
+  local s = player.surface
+  local mid = P.diag and P.diag[math.max(1, math.floor(#P.diag / 2))]
+  local e = mid and s.find_entity(mid.name, {mid.x, mid.y})
+  P.rm = e and {name = e.name, x = e.position.x, y = e.position.y, d = e.direction, un = e.unit_number}
+  if e then
+    local x, y = spx(player, e.position)
+    note("remove: a click on %s at %s", e.name, util.pos_str(e.position))
+    drive("move %d %d", x, y)
+    drive("sleep 400")
+    drive("click %d %d", x, y)
+    drive("sleep 400")
+  end
+  return 150
+end)
+
+step(function(player, P)
+  local list = selection.get_pieces(player.index)
+  local one = #list == 1 and list[1] or nil
+  check(P, "remove_select", P.rm ~= nil and one ~= nil and one.unit_number == P.rm.un and pieces.kind(one) == "track",
+    "a click on the rail %s at %s selects %d piece(s): %s", P.rm and P.rm.name or "-", P.rm and util.pos_str(P.rm) or "-",
+    #list, one and (one.name .. " " .. tostring(pieces.kind(one))) or "-")
+  shot(player, "remove-select")
+  drive("capture remove-select")
+  P.lines_before_rm = #planner_lines(player)
+  P.last_rm = nil
+  drive("key %d", KEY.BACKSPACE)
+  drive("sleep 400")
+  drive("key %d", KEY.BACKSPACE)
+  drive("sleep 300")
+  return 150
+end)
+
+step(function(player, P)
+  local e = P.rm and player.surface.find_entity(P.rm.name, {P.rm.x, P.rm.y})
+  local gone = P.rm ~= nil and not (e and e.valid and e.direction == P.rm.d)
+  local R = P.last_rm
+  local lines_after = #planner_lines(player)
+  check(P, "remove_rail", gone and R ~= nil and R.rails == 1 and R.refund > 0 and #selection.get_pieces(player.index) == 0
+    and lines_after == (P.lines_before_rm or 0) + 1,
+    "Backspace twice: the rail gone %s, removed %s rails, %s signals, refund %s rails; planner lines %d -> %d (its line "
+    .. "split in two)",
+    tostring(gone), R and tostring(R.rails) or "-", R and tostring(R.signals) or "-", R and tostring(R.refund) or "-",
+    P.lines_before_rm or -1, lines_after)
+  -- a chain signal of the branch junction
+  local s = player.surface
+  local sig = s.find_entities_filtered({position = P.jpos, radius = 24, name = "rail-chain-signal",
+                                        force = player.force})[1]
+  P.sig_before = s.count_entities_filtered({position = P.jpos, radius = 24, name = "rail-chain-signal",
+                                            force = player.force})
+  P.sig = sig and {x = sig.position.x, y = sig.position.y, un = sig.unit_number}
+  if sig then
+    camera.jump_to(player, sig.position)
+    player.zoom = 0.6
+  end
+  return 30
+end)
+
+step(function(player, P)
+  if P.sig then
+    local x, y = spx(player, P.sig)
+    drive("move %d %d", x, y)
+    drive("sleep 400")
+    drive("click %d %d", x, y)
+    drive("sleep 400")
+  end
+  return 150
+end)
+
+step(function(player, P)
+  local list = selection.get_pieces(player.index)
+  local signals = 0
+  for _, e in ipairs(list) do
+    if e.type == "rail-chain-signal" then signals = signals + 1 end
+  end
+  P.sel_signals = signals
+  shot(player, "remove-signal-select")
+  drive("capture remove-signal-select")
+  P.last_rm = nil
+  drive("key %d", KEY.BACKSPACE)
+  drive("sleep 400")
+  drive("key %d", KEY.BACKSPACE)
+  drive("sleep 300")
+  return 150
+end)
+
+step(function(player, P)
+  local after = player.surface.count_entities_filtered({position = P.jpos, radius = 24, name = "rail-chain-signal",
+                                                        force = player.force})
+  local R = P.last_rm
+  check(P, "remove_signal", P.sig ~= nil and P.sel_signals == 2 and R ~= nil and R.signals == 2
+    and after == (P.sig_before or 0) - 2, "a click on the chain signal at %s selected %d signals (with its partner); "
+    .. "Backspace twice removed %s; chain signals around the junction %d -> %d", P.sig and util.pos_str(P.sig) or "-",
+    P.sel_signals or -1, R and tostring(R.signals) or "-", P.sig_before or -1, after)
+  -- a box over the last pieces of the diagonal
+  camera.jump_to(player, P.view)
+  player.zoom = ZOOM
+  local n = P.diag and #P.diag or 0
+  local x0, y0, x1, y1 = math.huge, math.huge, -math.huge, -math.huge
+  P.boxed = {}
+  for i = math.max(1, n - 2), n do
+    local q = P.diag[i]
+    P.boxed[#P.boxed + 1] = q
+    x0, y0, x1, y1 = math.min(x0, q.x), math.min(y0, q.y), math.max(x1, q.x), math.max(y1, q.y)
+  end
+  P.box_rm = n > 0 and {{x0 - 1, y0 - 1}, {x1 + 1, y1 + 1}} or nil
+  return 30
+end)
+
+step(function(player, P)
+  if P.box_rm then
+    local ax, ay = spx(player, {x = P.box_rm[1][1], y = P.box_rm[1][2]})
+    local bx, by = spx(player, {x = P.box_rm[2][1], y = P.box_rm[2][2]})
+    note("remove: a box %s-%s", util.pos_str(P.box_rm[1]), util.pos_str(P.box_rm[2]))
+    drive("drag %d %d %d %d left none 20 20", ax, ay, bx, by)
+    drive("sleep 400")
+  end
+  return 150
+end)
+
+step(function(player, P)
+  local list = selection.get_pieces(player.index)
+  local rails_sel = 0
+  for _, e in ipairs(list) do
+    if e.valid and e.type ~= "entity-ghost" and pieces.kind(e) == "track" and not e.type:find("signal") then
+      rails_sel = rails_sel + 1
+    end
+  end
+  P.box_sel = rails_sel
+  shot(player, "remove-box-select")
+  drive("capture remove-box-select")
+  P.last_rm = nil
+  drive("key %d", KEY.BACKSPACE)
+  drive("sleep 400")
+  drive("key %d", KEY.BACKSPACE)
+  drive("sleep 300")
+  return 150
+end)
+
+step(function(player, P)
+  local left = 0
+  for _, q in ipairs(P.boxed or {}) do
+    local e = player.surface.find_entity(q.name, {q.x, q.y})
+    if e and e.valid and e.direction == q.d then left = left + 1 end
+  end
+  local R = P.last_rm
+  check(P, "remove_box", (P.box_sel or 0) >= #(P.boxed or {}) and #(P.boxed or {}) > 0 and left == 0 and R ~= nil
+    and R.rails == P.box_sel, "a box over the last %d pieces of the diagonal selected %d rails; Backspace twice removed "
+    .. "%s (refund %s rails); of the boxed pieces %d stand", #(P.boxed or {}), P.box_sel or -1,
+    R and tostring(R.rails) or "-", R and tostring(R.refund) or "-", left)
   shot(player, "end")
   util.log("r4p summary %d/%d", P.pass or 0, P.total or 0)
   util.log("RTS_R4P_DONE player %d", player.index)

@@ -32,8 +32,13 @@
 -- (each train >= MIN_LOOPS loops in RUN_MINUTES, the stop order kept, no stand at a signal over STUCK_S), own_land,
 -- station, track_waits (the alert of track 4), cancel (track 4 after the cancelled ghost), warnings (#33: a stop no
 -- track leads to, two trains between the same stops), platform_held (train 2 kept
--- on C's platform: train 1, bound for C, shows the single-track hint after a minute at a signal). A crew without a path
--- dumps its track ("r3 manual: diag: ..."). Summary "[rts] r3 manual summary <passed>/<total>".
+-- on C's platform: train 1, bound for C, shows the single-track hint after a minute at a signal), and 0.1.4 (#41):
+-- short_signals (ten short pieces of track laid one after another from B's free platform end, each handed over on its
+-- own as a player's planner segment: built by a crew, 0 signals on them), spur (a branch off the eighth: a real
+-- junction, one chain-signal pair per branch), remove_junction (the spur's first rail removed through
+-- rails.remove_track: the junction's signals go with it), remove_track (the rails of segments 4 to 6 removed: rails
+-- refunded, their lines gone, segments 3 and 7 still lines, nothing comes back; a platform rail is refused), crews_home
+-- (a crew cut off by the removal is recalled after 30 s). A crew without a path dumps its track ("r3 manual: diag: ..."). Summary "[rts] r3 manual summary <passed>/<total>".
 local events = require("scripts.events")
 local util = require("scripts.util")
 local logistics = require("scripts.logistics")
@@ -344,9 +349,16 @@ end
 local function seg3(T)
   local P = track_done(T, "track3", "seg3", T.t15)
   if not P then return end
+  -- (0.1.4: the junction is where track 3 leaves track 1, its first piece's mark; the survey may run along track 1 first)
+  for _, id in ipairs(P.lines) do
+    local l = rails.lines[id]
+    for _, p in ipairs(l and l.pieces or {}) do
+      if p.jpos and not T.j3found then T.j3, T.j3found = p.jpos, true end
+    end
+  end
   local chains = surface().count_entities_filtered({position = T.j3, radius = 24, name = "rail-chain-signal", force = F})
   check(T, "seg3", chains >= 4, "free-point branch: %d pieces in %d planner lines, built in %.0f s, %d chain signals at "
-    .. "its junction", #P.pieces, #P.lines, (game.tick - T.t15) / 60, chains)
+    .. "its junction %s", #P.pieces, #P.lines, (game.tick - T.t15) / 60, chains, util.pos_str(T.j3))
   -- the auto lines A - C and A - B along the player track
   T.lac = rails.plan_line(F, T.A, T.C)
   T.lab = rails.plan_line(F, T.A, T.B)
@@ -457,7 +469,7 @@ local function diag(T)
   T.diag = T.diag or {}
   for _, rec in pairs(storage.rails.trains or {}) do
     local train = rec.kind == "construction" and rec.force == F and rails.train_of(rec)
-    if train and train.state == TS.no_path and rec.line and not T.diag[rec.line] then
+    if train and train.state == TS.no_path and rec.line and rails.lines[rec.line] and not T.diag[rec.line] then
       T.diag[rec.line] = true
       local line = rails.lines[rec.line]
       local i = rec.scan or 0
@@ -592,12 +604,194 @@ local function hold(T)
   if r1 and r1.reason == "platform-held" then
     check(T, "platform_held", true, "train 1 waits %.0f s at a signal for C's platform, state line reason %s",
       (game.tick - (r1.held_since or game.tick)) / 60, r1.reason)
-    finish(T)
+    if t2 then t2.manual_mode = false end -- (train 2 goes on: the crews of the short segments pass C's platform side)
+    T.stage, T.short_k = "short", 0
   elseif game.tick - T.held_at > 10 * 3600 then
     check(T, "platform_held", false, "train 1 reason %s, state %s, held since %s", tostring(r1 and r1.reason),
       tostring(r1 and r1.state), tostring(r1 and r1.held_since))
-    finish(T)
+    if t2 then t2.manual_mode = false end
+    T.stage, T.short_k = "short", 0
   end
+end
+
+-- 0.1.4 (#41): the end state of a planner track's last piece (where the next short segment starts)
+local function end_state(P)
+  local id = P.lines[#P.lines]
+  local l = id and rails.lines[id]
+  local q = l and l.pieces[#l.pieces]
+  return q and {x = q.gx, y = q.gy, d = q.gd, l = 0}
+end
+
+-- signals (and their ghosts) of F in the box around a list of pieces, `pad` tiles wider
+local function signals_around(list, pad)
+  local x0, y0, x1, y1 = math.huge, math.huge, -math.huge, -math.huge
+  for _, q in ipairs(list) do
+    x0, y0, x1, y1 = math.min(x0, q.x), math.min(y0, q.y), math.max(x1, q.x), math.max(y1, q.y)
+  end
+  local area = {{x0 - pad, y0 - pad}, {x1 + pad, y1 + pad}}
+  local s = surface()
+  return s.count_entities_filtered({area = area, force = F, type = {"rail-signal", "rail-chain-signal"}}),
+    s.count_entities_filtered({area = area, force = F, ghost_type = {"rail-signal", "rail-chain-signal"}})
+end
+
+-- ten short segments in a row from B's free (east) platform end: each surveyed and handed over before the next one
+local function short(T)
+  if T.short_k > 0 then
+    local P = handed(T, "short" .. T.short_k)
+    if P == nil then return end
+    if P == false then
+      check(T, "short_signals", false, "short segment %d: survey failed", T.short_k)
+      finish(T)
+      return
+    end
+  end
+  if T.short_k == 10 then
+    T.stage, T.t7 = "short_built", game.tick
+    return
+  end
+  local k = T.short_k + 1
+  local b = platform_rail(T.B, 2)
+  if k == 1 then -- (crews from B, next to the segments)
+    fill(T.B, {{rails.LOCO_KIT, 4}, {rails.CWAGON_KIT, 2}, {"coal", 300}, {rails.RAIL, 800}})
+  end
+  local x0, y0 = b.position.x, b.position.y
+  local goal = {x = x0 + 14 * k, y = y0 + (k > 4 and 6 * (k - 4) or 0)}
+  if k == 1 then
+    lay(T, "short1", {starts = ends_of(b), goals = goals_of_point(goal), start_rail = b, own_land = true})
+  else
+    local st = end_state(T.plan["short" .. (k - 1)])
+    lay(T, "short" .. k, {starts = {st}, goals = goals_of_point(goal), own_land = true})
+  end
+  T.short_k = k
+end
+
+local function short_built(T)
+  local all, built = {}, 0
+  for k = 1, 10 do
+    for _, q in ipairs(T.plan["short" .. k].pieces) do all[#all + 1] = q end
+    built = built + built_of(T.plan["short" .. k])
+  end
+  if built < #all then
+    if game.tick - T.t7 > 15 * 3600 then
+      check(T, "short_signals", false, "%d of %d pieces of the ten short segments built after 15 min", built, #all)
+      finish(T)
+    end
+    return
+  end
+  local sig, ghosts = signals_around(all, 4)
+  local lines = 0
+  for k = 1, 10 do lines = lines + #T.plan["short" .. k].lines end
+  check(T, "short_signals", sig == 0 and ghosts == 0, "ten short segments in a row (%d pieces in %d planner lines) "
+    .. "built in %.0f s: %d signals, %d signal ghosts on them", #all, lines, (game.tick - T.t7) / 60, sig, ghosts)
+  -- a spur off a straight rail of segment 8: a real junction
+  local P8 = T.plan.short8
+  local from
+  for _, q in ipairs(P8.pieces) do
+    if q.name == "straight-rail" and not from then
+      local e = surface().find_entity(q.name, {q.x, q.y})
+      if e and e.valid then from = e end
+    end
+  end
+  if not from then
+    check(T, "spur", false, "no straight rail in segment 8")
+    finish(T)
+    return
+  end
+  lay(T, "spur", {starts = starts_of_rail(from), goals = goals_of_point({x = from.position.x + 6,
+    y = from.position.y - 34}), start_rail = from, own_land = true})
+  T.stage, T.t8 = "spur", game.tick
+end
+
+local function spur(T)
+  local P = track_done(T, "spur", "spur", T.t8)
+  if not P then return end
+  local first
+  for _, id in ipairs(P.lines) do
+    local l = rails.lines[id]
+    for _, p in ipairs(l and l.pieces or {}) do
+      if p.jpos and not T.spur_j then T.spur_j, first = p.jpos, p.e end
+    end
+  end
+  local chains = T.spur_j and surface().count_entities_filtered({position = T.spur_j, radius = 30,
+    name = "rail-chain-signal", force = F}) or -1
+  check(T, "spur", T.spur_j ~= nil and chains >= 4 and chains % 2 == 0 and chains <= 6,
+    "spur off segment 8 (%d pieces) built in %.0f s: junction at %s, %d chain signals within 30 tiles",
+    #P.pieces, (game.tick - T.t8) / 60, T.spur_j and util.pos_str(T.spur_j) or "-", chains)
+  if not (first and first.valid) then
+    check(T, "remove_junction", false, "the spur's first rail is not built")
+    finish(T)
+    return
+  end
+  local before = 0
+  for _ in pairs(storage.rails.lines) do before = before + 1 end
+  local res = rails.remove_track({first}, F, 0)
+  local after = 0
+  for _ in pairs(storage.rails.lines) do after = after + 1 end
+  local left = surface().count_entities_filtered({position = T.spur_j, radius = 30, name = "rail-chain-signal",
+    force = F})
+  check(T, "remove_junction", res.rails == 1 and left == 0 and not first.valid and after == before,
+    "the spur's first rail removed: %d rails, %d signals went, %d chain signals left within 30 tiles of the junction; "
+    .. "lines %d -> %d (the spur's line goes on without its first piece)", res.rails, res.signals, left, before, after)
+  -- the rails of segments 4 to 6, and a platform rail of A
+  local list, want, keys = {}, 0, {}
+  for k = 4, 6 do
+    for _, id in ipairs(T.plan["short" .. k].lines) do
+      local l = rails.lines[id]
+      for _, p in ipairs(l and l.pieces or {}) do
+        if p.e and p.e.valid then
+          list[#list + 1] = p.e
+          want = want + p.rails
+          keys[#keys + 1] = {name = p.name, x = p.x, y = p.y, d = p.d}
+        end
+      end
+    end
+  end
+  local pr = platform_rail(T.A, 1)
+  list[#list + 1] = pr
+  local res2 = rails.remove_track(list, F, 0)
+  local gone_lines = true
+  for k = 4, 6 do
+    for _, id in ipairs(T.plan["short" .. k].lines) do if rails.lines[id] then gone_lines = false end end
+  end
+  local kept = 0
+  for _, k in ipairs({3, 7}) do
+    for _, id in ipairs(T.plan["short" .. k].lines) do if rails.lines[id] then kept = kept + 1 end end
+  end
+  T.removed = {keys = keys, at = game.tick, ok = res2.rails == #list - 1 and (res2.refund.rail or 0) == want
+    and res2.kept.platform == 1 and pr.valid and gone_lines and kept >= 2, n = res2.rails, want = #list - 1,
+    refund = res2.refund.rail or 0, rails_want = want, platform = res2.kept.platform, gone_lines = gone_lines,
+    kept = kept, crews = {}}
+  -- crews out beyond the removed stretch have no way home: recalled after 30 s (#41, the log says why)
+  for id, rec in pairs(storage.rails.trains) do
+    if rec.kind == "construction" and rec.force == F then T.removed.crews[#T.removed.crews + 1] = id end
+  end
+  T.stage = "removed"
+end
+
+local function removed(T)
+  local M = T.removed
+  if game.tick - M.at < 40 * 60 then return end
+  local s, back = surface(), 0
+  for _, q in ipairs(M.keys) do
+    for _, e in ipairs(s.find_entities_filtered({position = {q.x, q.y}, radius = 0.5})) do
+      if (e.name == q.name or (e.type == "entity-ghost" and e.ghost_name == q.name)) and e.direction == q.d then
+        back = back + 1
+      end
+    end
+  end
+  check(T, "remove_track", M.ok and back == 0, "segments 4 to 6: %d of %d rails removed, refund %d rails (their pieces "
+    .. "%d), their lines gone %s, segments 3 and 7 still lines %d, a platform rail kept %d; after 40 s %d rails or "
+    .. "ghosts back on their places", M.n, M.want, M.refund, M.rails_want, tostring(M.gone_lines), M.kept, M.platform,
+    back)
+  local stuck = 0
+  for _, id in ipairs(M.crews) do
+    local rec = storage.rails.trains[id]
+    local t = rec and rails.train_of(rec)
+    if t and (t.state == TS.no_path or t.state == TS.path_lost) then stuck = stuck + 1 end
+  end
+  check(T, "crews_home", stuck == 0, "%d crews were out when the track went; after 40 s %d of them stand without a path "
+    .. "(a crew cut off is recalled after 30 s)", #M.crews, stuck)
+  finish(T)
 end
 
 events.on(defines.events.on_train_changed_state, function(e)
@@ -625,5 +819,9 @@ events.on_nth_tick(60, function(e)
     train2(T)
     if T.stage == "run" then own_land(T) end
   elseif T.stage == "run" then run(T)
-  elseif T.stage == "hold" then hold(T) end
+  elseif T.stage == "hold" then hold(T)
+  elseif T.stage == "short" then short(T)
+  elseif T.stage == "short_built" then short_built(T)
+  elseif T.stage == "spur" then spur(T)
+  elseif T.stage == "removed" then removed(T) end
 end)
