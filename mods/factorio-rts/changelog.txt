@@ -17,8 +17,15 @@ Date: 2026-10-31
       their build tooltips say so. (#42)
     - The top-strip chooser and the pinned help cards no longer cover the notification lines or the strip's status
       line; the ability card headings fit in Russian. (#40)
+    - Crews for your track: an idle work train you assembled and left on a depot platform is taken as the crew; a
+      planner line that no depot reaches from its start is built from its far end; the depot panel lists your unbuilt
+      track with the reason it waits (no built track from a depot, no kits, too few rails, crew busy). (#44)
+    - A crew jammed against another standing train goes home after 15 s instead of 120 s, and rolling stock beside a
+      platform counts as busy only inside the platform's own rail block. (#33)
   Bugfixes:
     - A clear order given to whole divisions works: the members detach and fell the trees. (#40)
+    - Two auto lines surveyed one after another no longer plan pieces over the same ground (a junction pair had stood
+      on the other line's ghost). (#33)
   Gui:
     - Help cards for both signals and a "Rail signals" paragraph in F11 explain how track is signalled. (#42)
 ---------------------------------------------------------------------------------------------------
