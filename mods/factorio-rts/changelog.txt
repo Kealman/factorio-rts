@@ -1,4 +1,27 @@
 ---------------------------------------------------------------------------------------------------
+Version: 0.1.4
+Date: 2026-10-31
+  Features:
+    - Own rails and signals can be selected and removed with Delete (two presses): the rails go back to the
+      stockpile, a planner line splits, and rails under trains, platforms and depot lines stay. (#41, #33)
+    - The top strip's chooser offers every item: stock in any own network, what the cities need and make, every
+      recipe the factories can make, and the pieces, in four groups, with zero stock allowed; the hover shows the
+      household goods' minutes left; the strip counts City Center, hub and depot networks too. (#43)
+    - The long-handed inserter is available in Skirmish. (#40)
+  Changes:
+    - Player track gets signals only at real junctions (switches), one chain-signal pair per branch; plain track has
+      none. Saves from 0.1.3 are repaired once on load (surplus signals removed, own signals and signal ghosts kept),
+      and a construction train with no way home tries the other end, then another depot, and says why before it is
+      recalled. (#41)
+    - The Rail signal, Chain signal and Rail station recipes sit on the factory's Logistics tab next to the rail;
+      their build tooltips say so. (#42)
+    - The top-strip chooser and the pinned help cards no longer cover the notification lines or the strip's status
+      line; the ability card headings fit in Russian. (#40)
+  Bugfixes:
+    - A clear order given to whole divisions works: the members detach and fell the trees. (#40)
+  Gui:
+    - Help cards for both signals and a "Rail signals" paragraph in F11 explain how track is signalled. (#42)
+---------------------------------------------------------------------------------------------------
 Version: 0.1.3
 Date: 2026-10-28
   Features:
