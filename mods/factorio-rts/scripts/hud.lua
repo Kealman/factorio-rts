@@ -170,6 +170,7 @@ for _, name in ipairs({"rts-supply-crate", "rts-supply-crate-ii", "rts-field-dep
 for _, name in ipairs({"rts-airfield", "rts-aa-turret", "rts-scout-plane-kit", "rts-bomber-kit", "rts-interceptor-kit"}) do
   P4.NATION_ONLY[name] = true end
 table.insert(P4.HELP_NATION, #P4.HELP_NATION, "rts-ux.help-nation-oil") -- #28
+table.insert(P4.HELP_NATION, #P4.HELP_NATION, "rts-signals.help-nation-signals") -- 0.1.4 (#42)
 table.insert(P4.HELP_NATION, #P4.HELP_NATION, "rts-air.help-nation-air") -- Phase 5 M3 integration: before the keys
 -- Phase 5 M3 war2: the gate, the artillery wagon, armoured stock and rail shells
 for _, name in ipairs({"rts-gate", "rts-artillery-wagon-kit", "rts-armoured-locomotive-kit", "rts-armoured-wagon-kit",
@@ -201,7 +202,8 @@ P4.LOGISTICS_PRODUCTS = {["transport-belt"] = true, ["fast-inserter"] = true, ["
   ["rts-cargo-wagon-kit"] = true, ["rts-construction-wagon-kit"] = true,
   ["rts-supply-crate"] = true, ["rts-troop-wagon-kit"] = true, -- Phase 5 M2 war
   ["rts-artillery-wagon-kit"] = true, ["rts-armoured-locomotive-kit"] = true, ["rts-armoured-wagon-kit"] = true,
-  ["rts-rail-shell"] = true} -- Phase 5 M3 war2
+  ["rts-rail-shell"] = true, -- Phase 5 M3 war2
+  ["rts-station"] = true, ["rail-signal"] = true, ["rail-chain-signal"] = true} -- 0.1.4 (#42): next to the rail
 P4.recipe_tab = function(r)
   local cat = util.recipe_category(r) -- 2.1: LuaRecipePrototype::category -> categories
   if cat == "rts-science" then return "science" end
@@ -665,7 +667,9 @@ end
 -- so in its build and recipe tooltips: {"", tooltip, "\n", "Builds a [entity] City Center."}.
 local OIL_NOTES = {["rail"] = "rts.railplan-note", -- 0.1.3 (#37): the Rail button is the vanilla rail planner
                    ["rts-pumpjack"] = "rts-ux.note-pumpjack", ["rts-refinery"] = "rts-ux.note-refinery",
-                    ["rts-chemical-plant"] = "rts-ux.note-chemical-plant"} -- #28: no pipes
+                    ["rts-chemical-plant"] = "rts-ux.note-chemical-plant", -- #28: no pipes
+                   ["rts-station"] = "rts-signals.note-made", ["rail-signal"] = "rts-signals.note-made", -- 0.1.4 (#42)
+                   ["rail-chain-signal"] = "rts-signals.note-made"}
 local function with_places_note(tooltip, item)
   if OIL_NOTES[item] then tooltip = {"", tooltip, "\n", {OIL_NOTES[item]}} end
   local proto = item and prototypes.item[item]
