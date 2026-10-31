@@ -145,6 +145,7 @@ local P4 = {
 }
 P4.CARDS_WIDTH = P4.CARD_MAX * P4.CARD_SIZE + (P4.CARD_MAX - 1) * P4.CARD_SPACING -- 190
 P4.stripgui = require("scripts.stripgui") -- 0.1.3 (#38): the top strip's entry list, chooser and hover texts
+P4.stripgui.P4 = P4 -- 0.1.4 (#43): the chooser asks which items are Nation only (no require at run time)
 -- Phase 5 M1 (scripts/cities.lua, scripts/territory.lua): build items and factory recipes shown in Nation mode only;
 -- the strip shows the territory share and a Cities button (scripts/citygui.lua city list) in Nation mode.
 P4.NATION_ONLY = {["rts-city-charter"] = true, ["rts-fort"] = true}

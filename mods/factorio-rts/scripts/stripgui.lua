@@ -101,12 +101,22 @@ end
 ---------------------------------------------------------------------------
 -- Numbers: stock per network, consumption, history
 ---------------------------------------------------------------------------
-local function net_count(net, item)
-  local n = 0
-  for _, c in pairs(net.get_contents()) do
-    if c.name == item then n = n + c.count end
+-- Contents of every network read once per tick (the strip asks for a dozen items on every refresh).
+local contents_cache = {tick = -1, nets = {}}
+local function net_contents(net)
+  if contents_cache.tick ~= game.tick then contents_cache = {tick = game.tick, nets = {}} end
+  local id = net.network_id
+  local map = contents_cache.nets[id]
+  if not map then
+    map = {}
+    for _, c in pairs(net.get_contents()) do map[c.name] = (map[c.name] or 0) + c.count end
+    contents_cache.nets[id] = map
   end
-  return n
+  return map
+end
+
+local function net_count(net, item)
+  return net_contents(net)[item] or 0
 end
 
 --- The networks the strip counts for `force`: {name (localised), net, city (record or nil)}, one per distinct
@@ -140,29 +150,41 @@ function stripgui.networks(force_name, with_cities)
       end
     end
   end
+  if with_cities then -- 0.1.4 (#43): hubs and depots hold goods too
+    for un, rec in buildings.for_force(force_name, "hub") do
+      local net = rec.entity.valid and rec.entity.logistic_network
+      if net and net.valid and not seen[net.network_id] then
+        seen[net.network_id] = #list + 1
+        list[#list + 1] = {name = logistics.hub_name(un), net = net}
+      end
+    end
+  end
   return list
 end
 
---- Rations the force's cities eat per minute, in total and per network row (stripgui.networks(..., true)).
-local function ration_use(rows)
+--- What the cities use of `item` per minute, in total and per network row (stripgui.networks(..., true)); grain counts as
+--- the rations it bakes into. Items the people do not need give 0.
+local function need_use(rows, item)
+  local need = item == GRAIN and RATIONS or item
   local total = 0
   for _, row in ipairs(rows) do
     row.use = 0
     for _, c in ipairs(row.cities or {}) do
-      row.use = row.use + (population.needs(c.id)[RATIONS] or 0)
+      row.use = row.use + (population.needs(c.id)[need] or 0)
     end
     total = total + row.use
   end
   return total
 end
 
---- {total, rows = {{name, stock, use, minutes}}, minutes} of rations or grain across the force's cities' networks.
---- minutes = stock / use (grain: counted as the rations it bakes into), nil without any use.
-function stripgui.food_detail(force_name, item)
+--- {total, rows = {{name, stock, use, minutes}}, minutes, use} of `item` across all the force's networks (Command
+--- Centers, City Centers, hubs, depots). minutes = stock / use (grain: counted as the rations it bakes into), nil
+--- without any use: rations, grain and household goods are the items the cities consume.
+function stripgui.item_detail(force_name, item)
   local rows = stripgui.networks(force_name, true)
-  local use = ration_use(rows)
+  local use = need_use(rows, item)
   local bakery = balance.nation.people.bakery
-  local k = item == GRAIN and (bakery.rations / bakery.grain) or 1 -- rations per unit of the item
+  local k = item == GRAIN and (bakery.rations / bakery.grain) or 1 -- needed units per unit of the item
   local total = 0
   for _, row in ipairs(rows) do
     row.stock = net_count(row.net, item)
@@ -171,11 +193,12 @@ function stripgui.food_detail(force_name, item)
   end
   return {total = total, rows = rows, minutes = use > 0 and total * k / use or nil, use = use}
 end
+stripgui.food_detail = stripgui.item_detail -- the 0.1.3 name
 
 --- The stock of `item` for the strip: the Command Center networks (the snapshot) or, for food, every network that
 --- feeds a city too.
 function stripgui.food_stock(force_name, item)
-  return stripgui.food_detail(force_name, item).total
+  return stripgui.item_detail(force_name, item).total
 end
 
 local function history(player_index)
@@ -225,12 +248,9 @@ stripgui.minutes_text = minutes_text
 function stripgui.item_tooltip(player, item, snap_count)
   local proto = prototypes.item[item]
   local force = player.force.name
-  local out = {"", {"rts-strip.tip-head", proto.localised_name, snap_count}}
-  local food = item == RATIONS or item == GRAIN
-  local detail
-  if food then
-    detail = stripgui.food_detail(force, item)
-    out[2] = {"rts-strip.tip-head", proto.localised_name, detail.total}
+  local detail = stripgui.item_detail(force, item)
+  local out = {"", {"rts-strip.tip-head", proto.localised_name, detail.total}}
+  if #detail.rows > 1 or detail.minutes then
     for _, row in ipairs(detail.rows) do
       out[#out + 1] = "\n"
       if row.minutes then
@@ -239,26 +259,18 @@ function stripgui.item_tooltip(player, item, snap_count)
         out[#out + 1] = {"rts-strip.tip-row", row.name, row.stock}
       end
     end
-    if detail.minutes then
-      out[#out + 1] = "\n"
-      out[#out + 1] = {item == GRAIN and "rts-strip.tip-left-grain" or "rts-strip.tip-left", minutes_text(detail.minutes),
-                       string.format("%.1f", detail.use)}
-    end
-  else
-    local rows = stripgui.networks(force, false)
-    if #rows > 1 then
-      for _, row in ipairs(rows) do
-        out[#out + 1] = "\n"
-        out[#out + 1] = {"rts-strip.tip-row", row.name, net_count(row.net, item)}
-      end
-    end
   end
-  local d = stripgui.delta(player.index, item, detail and detail.total or snap_count)
+  if detail.minutes then
+    out[#out + 1] = "\n"
+    out[#out + 1] = {item == GRAIN and "rts-strip.tip-left-grain" or (item == RATIONS and "rts-strip.tip-left"
+      or "rts-strip.tip-left-item"), minutes_text(detail.minutes), string.format("%.1f", detail.use)}
+  end
+  local d = stripgui.delta(player.index, item, detail.total)
   if d then
     out[#out + 1] = "\n"
     out[#out + 1] = {"rts-strip.tip-delta", signed(d)}
   end
-  return out, detail and detail.minutes or nil, detail and detail.total or snap_count
+  return out, detail.minutes, detail.total
 end
 
 ---------------------------------------------------------------------------
@@ -404,30 +416,98 @@ function stripgui.toggle(player)
   util.log("strip: chooser opened player=%d mode=%s", player.index, mode_key(nation))
 end
 
---- Items the picker offers: everything with stock in the force's networks that the strip does not show yet.
-local function pickable(player, nation)
-  local snap = economy.snapshot(player.force.name)
+-- 0.1.4 (#43): the vanilla pieces the mod lets the player build (belts, inserters, poles, rail, signals, the Station)
+local PIECE_ITEMS = {"transport-belt", "underground-belt", "splitter", "fast-inserter", "long-handed-inserter",
+                     "medium-electric-pole", "rail", "rail-signal", "rail-chain-signal", "rts-station"}
+-- Military goods that are not kits
+local MILITARY = {["firearm-magazine"] = true, ["rts-supply-crate"] = true, ["rts-supply-crate-ii"] = true,
+                  ["rts-rail-shell"] = true, ["rts-explosives"] = true}
+stripgui.GROUPS = {"food", "plates", "pieces", "kits"} -- picker sections, in order (locale rts-strip.group-<key>)
+
+--- The picker section of an item: food and household goods, plates and intermediates, buildings and pieces (anything
+--- that places an entity), kits and military goods.
+function stripgui.group_of(item)
+  local proto = prototypes.item[item]
+  if item == RATIONS or item == GRAIN or item == "rts-goods" then return "food" end
+  for _, need in ipairs(balance.nation.people.needs or {}) do
+    if need.item == item then return "food" end
+  end
+  if MILITARY[item] or string.find(item, "%-kit$") then return "kits" end
+  if proto and proto.place_result then return "pieces" end
+  return "plates"
+end
+
+local function order_key(item)
+  local p = prototypes.item[item]
+  local g, sg = p.group, p.subgroup
+  return (g and g.order or "") .. "|" .. (sg and sg.order or "") .. "|" .. (p.order or "") .. "|" .. item
+end
+
+--- Every item the strip can show for the player: stock in any own network, what the cities need and make, the
+--- products of every recipe the force has enabled, the vanilla pieces. Zero stock is fine. Not the entries already on
+--- the strip. Returns sections {{key = group, items = {...}}} in GROUPS order, empty groups left out.
+function stripgui.pickable_sections(player, nation)
+  local force = player.force
+  local P4 = stripgui.P4 -- set by scripts/hud.lua
   local shown = {}
   for _, key in ipairs((stripgui.keys(player.index, nation))) do shown[key] = true end
-  local out = {}
-  for item, count in pairs(snap and snap.items or {}) do
+  local found = {}
+  local function add(item)
     local proto = prototypes.item[item]
-    if count > 0 and proto and not proto.hidden and item ~= util.CURSOR_ITEM and not shown["item:" .. item] then
-      out[#out + 1] = item
+    if found[item] or not proto or proto.hidden or item == util.CURSOR_ITEM or shown["item:" .. item] then return end
+    if not nation and P4 and P4.NATION_ONLY[item] then return end
+    local ok, cursor_only = pcall(function() return proto.has_flag("only-in-cursor") end)
+    if ok and cursor_only then return end
+    found[item] = true
+  end
+  for _, row in ipairs(stripgui.networks(force.name, true)) do
+    for item in pairs(net_contents(row.net)) do add(item) end
+  end
+  local snap = economy.snapshot(force.name)
+  for item, count in pairs(snap and snap.items or {}) do
+    if count > 0 then add(item) end
+  end
+  if nation then
+    for _, need in ipairs(balance.nation.people.needs or {}) do add(need.item) end
+    add(GRAIN)
+    for _, c in ipairs(cities.for_force(force.name)) do
+      for item in pairs(cities.make_targets(c.id)) do add(item) end
     end
   end
-  local function order(item)
-    local p = prototypes.item[item]
-    local g, sg = p.group, p.subgroup
-    return (g and g.order or "") .. "|" .. (sg and sg.order or "") .. "|" .. (p.order or "") .. "|" .. item
+  for name, recipe in pairs(force.recipes) do
+    if recipe.enabled and not recipe.hidden and (not P4 or P4.visible_recipe(name)) then
+      for _, product in ipairs(recipe.products) do
+        if product.type == "item" then add(product.name) end
+      end
+    end
   end
-  table.sort(out, function(a, b) return order(a) < order(b) end)
-  -- the food chain is always on offer (an empty stock still shows the entry)
-  for _, item in ipairs({RATIONS, GRAIN}) do
-    local have = false
-    for _, name in ipairs(out) do if name == item then have = true end end
-    if not have and nation and not shown["item:" .. item] and prototypes.item[item] then out[#out + 1] = item end
+  for _, item in ipairs(PIECE_ITEMS) do
+    add(item)
   end
+  local by_group = {}
+  for item in pairs(found) do
+    local g = stripgui.group_of(item)
+    by_group[g] = by_group[g] or {}
+    table.insert(by_group[g], item)
+  end
+  local out, n = {}, 0
+  for _, g in ipairs(stripgui.GROUPS) do
+    local list = by_group[g]
+    if list then
+      table.sort(list, function(a, b)
+        local ka, kb = order_key(a), order_key(b)
+        if ka ~= kb then return ka < kb end
+        return a < b
+      end)
+      out[#out + 1] = {caption = {"rts-strip.group-" .. g}, items = list}
+      n = n + #list
+    end
+  end
+  util.log("strip: picker offers %d items player=%d mode=%s (%s)", n, player.index, mode_key(nation), (function()
+    local parts = {}
+    for _, sec in ipairs(out) do parts[#parts + 1] = #sec.items end
+    return table.concat(parts, "/")
+  end)())
   return out
 end
 
@@ -477,7 +557,7 @@ events.on(defines.events.on_gui_click, function(e)
     if loc and alerts and alerts.valid and f.location.x < alerts.location.x then -- 0.1.4 (#40): past the alert lines
       loc = {alerts.location.x, alerts.location.y + math.floor(76 * s)} -- under the three alert lines
     end
-    itempicker.open(player, "strip", {}, loc, {items = pickable(player, nation), title = {"rts-strip.picker-title"}})
+    itempicker.open(player, "strip", {}, loc, {sections = stripgui.pickable_sections(player, nation), title = {"rts-strip.picker-title"}})
   end
 end)
 

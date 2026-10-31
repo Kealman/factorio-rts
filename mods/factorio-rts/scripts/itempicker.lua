@@ -167,7 +167,20 @@ function itempicker.open(player, owner, ctx, location, opts)
            tooltip = {"rts.itempicker-close"}, tags = {rts_itempicker = "close"}})
   local scroll
   local now, later = {}, {}
-  if opts and opts.items then
+  if opts and opts.sections then -- 0.1.4 (#43): several captioned sections, each in its own order
+    scroll = frame.add({type = "scroll-pane", vertical_scroll_policy = "auto", horizontal_scroll_policy = "never"})
+    scroll.style.maximal_height = MAX_ROWS_HEIGHT + 60
+    for _, section in ipairs(opts.sections) do
+      local list = {}
+      for _, item in ipairs(section.items) do
+        if prototypes.item[item] then
+          list[#list + 1] = item
+          now[#now + 1] = item
+        end
+      end
+      add_section(scroll, player, section.caption, list, true)
+    end
+  elseif opts and opts.items then
     scroll = frame.add({type = "scroll-pane", vertical_scroll_policy = "auto", horizontal_scroll_policy = "never"})
     scroll.style.maximal_height = MAX_ROWS_HEIGHT + 60
     for _, item in ipairs(opts.items) do
@@ -189,7 +202,7 @@ function itempicker.open(player, owner, ctx, location, opts)
   if location then frame.location = location else frame.auto_center = true end
   s.owner, s.ctx = owner, ctx or {}
   s.list = nil
-  if opts and opts.items then -- the items of a custom list are valid picks for this owner
+  if opts and (opts.items or opts.sections) then -- the items of a custom list are valid picks for this owner
     s.list = {}
     for _, item in ipairs(now) do s.list[item] = true end
   end
