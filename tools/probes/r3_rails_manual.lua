@@ -38,7 +38,8 @@
 -- junction, one chain-signal pair per branch), remove_junction (the spur's first rail removed through
 -- rails.remove_track: the junction's signals go with it), remove_track (the rails of segments 4 to 6 removed: rails
 -- refunded, their lines gone, segments 3 and 7 still lines, nothing comes back; a platform rail is refused), crews_home
--- (a crew cut off by the removal is recalled after 30 s). A crew without a path dumps its track ("r3 manual: diag: ..."). Summary "[rts] r3 manual summary <passed>/<total>".
+-- (a crew cut off by the removal is recalled after 30 s), surveys_apart (#33 item 3: the auto lines A - C, A - B and
+-- A - D surveyed together: no piece laid twice, none blocked or surveyed again). A crew without a path dumps its track ("r3 manual: diag: ..."). Summary "[rts] r3 manual summary <passed>/<total>".
 local events = require("scripts.events")
 local util = require("scripts.util")
 local logistics = require("scripts.logistics")
@@ -378,6 +379,23 @@ local function auto(T)
   if not (l1.state == "open" and l2.state == "open" and l3.state == "open") and game.tick - T.t2 < 10 * 3600 then
     return
   end
+  -- 0.1.4 (#33 item 3): the three lines surveyed together over the same ground: no piece laid twice, and none of them
+  -- blocked or surveyed again (0.1.3: a junction pair of A - C stood on a planned piece of A - D, which would not
+  -- revive, and A - D took a detour after two minutes)
+  local seen, dup, new, detours = {}, 0, 0, 0
+  for _, l in ipairs({l1, l2, l3}) do
+    detours = detours + (l.detours or 0) + (l.blocked and 1 or 0)
+    for _, p in ipairs(l.pieces or {}) do
+      if not p.reused then
+        new = new + 1
+        local k = string.format("%s|%.1f|%.1f|%d", p.name, p.x, p.y, p.d)
+        if seen[k] and seen[k] ~= l.id then dup = dup + 1 end
+        seen[k] = l.id
+      end
+    end
+  end
+  check(T, "surveys_apart", dup == 0 and detours == 0, "A-C, A-B, A-D surveyed together: %d new pieces, %d laid "
+    .. "twice, %d blocked pieces or detours", new, dup, detours)
   local function share(l) return l.pieces and #l.pieces > 0 and (l.reused or 0) / #l.pieces or 0 end
   check(T, "reuse", share(l1) >= 0.9 and share(l2) >= 0.9 and l1.state == "open" and l2.state == "open",
     "A-C: %s, %d pieces, %d reused (%.0f %%), bill %d rails; A-B: %s, %d pieces, %d reused (%.0f %%), bill %d rails",
