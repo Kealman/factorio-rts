@@ -371,7 +371,14 @@ build_chooser = function(player, nation)
     frame.location = location
   else
     local res, s = player.display_resolution, player.display_scale
-    frame.location = {math.max(0, math.floor((res.width - 340 * s) / 2)), math.floor(110 * s)}
+    -- 0.1.4 (#40): beside the notification lines under the strip, never over them: left of them when that fits
+    local alerts = player.gui.screen["rts_hud_alerts"]
+    local x = math.floor((res.width - 340 * s) / 2)
+    if alerts and alerts.valid then
+      local left = alerts.location.x - math.floor(348 * s)
+      x = left >= 0 and left or alerts.location.x + math.floor(528 * s)
+    end
+    frame.location = {math.max(0, x), math.floor(110 * s)}
   end
 end
 
@@ -466,6 +473,10 @@ events.on(defines.events.on_gui_click, function(e)
     local f = player.gui.screen[stripgui.FRAME]
     local s = player.display_scale
     local loc = f and f.valid and {f.location.x + math.floor(350 * s), f.location.y} or nil
+    local alerts = player.gui.screen["rts_hud_alerts"]
+    if loc and alerts and alerts.valid and f.location.x < alerts.location.x then -- 0.1.4 (#40): past the alert lines
+      loc = {alerts.location.x, alerts.location.y + math.floor(76 * s)} -- under the three alert lines
+    end
     itempicker.open(player, "strip", {}, loc, {items = pickable(player, nation), title = {"rts-strip.picker-title"}})
   end
 end)

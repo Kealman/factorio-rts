@@ -77,8 +77,8 @@ end)
 step(function(s, player)
   local names = count_recipes(player)
   local has = false
-  for _, n in ipairs(names) do if n == "long-handed-inserter" then has = true end end
-  check("factory_rows", #names <= 28, "%d recipes (two rows of 14 hold 28), long-handed inserter present=%s (Nation only, #25)",
+  for _, n in ipairs(names) do if n == "rts-long-inserter" then has = true end end
+  check("factory_rows", #names <= 28 and has, "%d recipes (two rows of 14 hold 28), long-handed inserter present=%s (0.1.4 #40)",
     #names, tostring(has))
   shot("s1-skirmish-factory")
   s.wait = 60

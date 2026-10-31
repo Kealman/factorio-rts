@@ -84,6 +84,16 @@ local function panel_state(player, tag)
   return f1
 end
 
+
+-- 0.1.4 (#40): three notification lines under the strip, so the shots show whether popups cover them
+local function fake_alerts(force)
+  storage.alerts = storage.alerts or {}
+  for i = 1, 3 do
+    storage.alerts[#storage.alerts + 1] = {force = force, tick = game.tick, kind = "probe", text = "rts.alert-generic",
+                                           params = {"probe notification " .. i}}
+  end
+end
+
 local S = {step = 0}
 local STEPS = {}
 local function step(fn) STEPS[#STEPS + 1] = fn end
@@ -128,8 +138,22 @@ end)
 
 step(function(s, player)
   panel_state(player, "nation_logistics")
+  local have = {}
+  for _, n in ipairs({"rts-rail-signal", "rts-rail-chain-signal", "rts-station"}) do
+    have[#have + 1] = n .. "=" .. tostring(find(player.gui.screen, "rts_hud_recipe_" .. n) ~= nil)
+  end
+  check("logistics_signals", find(player.gui.screen, "rts_hud_recipe_rts-rail-signal") ~= nil
+    and find(player.gui.screen, "rts_hud_recipe_rts-rail-chain-signal") ~= nil
+    and find(player.gui.screen, "rts_hud_recipe_rts-station") ~= nil, "on the Logistics tab: %s", table.concat(have, " "))
   shot("02-nation-logistics")
+  s.wait = 90
+  return true
+end)
+
+step(function(s, player)
   click(player, "rts_hud_factory_tab_buildings")
+  check("buildings_no_signals", find(player.gui.screen, "rts_hud_recipe_rts-rail-signal") == nil,
+    "signals left the Buildings tab")
   s.wait = 60
   return true
 end)
@@ -182,6 +206,7 @@ step(function(s, player)
 end)
 
 step(function(s, player)
+  fake_alerts(player.force.name)
   click(player, "rts_hud_strip_gear")
   s.wait = 40
   return true
@@ -211,6 +236,11 @@ end)
 step(function(s, player)
   shot("06-picker")
   check("picker_open", find(player.gui.screen, "rts_itempicker") ~= nil, "item picker present")
+  s.wait = 90
+  return true
+end)
+
+step(function(s, player)
   click(player, "rts_itempicker_pick_steel-plate")
   s.wait = 40
   return true

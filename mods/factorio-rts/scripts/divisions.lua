@@ -1177,7 +1177,7 @@ orders.set_division_router(function(entities, kind, target)
     local D = l[id]
     local ordered = by_div[id]
     local live = live_members(D)
-    if #ordered >= #live then
+    if #ordered >= #live and kind ~= "clear" then -- 0.1.4 (#40): a clear order takes members loose, whole or not
       if divisions.order(id, kind, target) then
         handled = handled + #live
         surface = surface or (live[1] and live[1].entity.surface)

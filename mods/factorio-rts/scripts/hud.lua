@@ -176,10 +176,9 @@ table.insert(P4.HELP_NATION, #P4.HELP_NATION, "rts-air.help-nation-air") -- Phas
 for _, name in ipairs({"rts-gate", "rts-artillery-wagon-kit", "rts-armoured-locomotive-kit", "rts-armoured-wagon-kit",
                        "rts-rail-shell"}) do
   P4.NATION_ONLY[name] = true end
--- Release 0.1.2 (#25): the long-handed inserter (recipe and build item) is Nation only: the Skirmish factory page holds
--- 28 recipes (two rows of 14; since 0.1.3 Pause / Auto / Endless sit in the header) and is full without it; a 29th
--- would make the Skirmish panel grow a row, which #34 leaves out on purpose.
-for _, name in ipairs({"rts-long-inserter", "long-handed-inserter"}) do P4.NATION_ONLY[name] = true end
+-- Release 0.1.2 (#25) kept the long-handed inserter (recipe and build item) Nation only because the Skirmish factory
+-- page held 29 recipes with it. 0.1.4 (#40): Skirmish shows 27, so with it the two rows of 14 hold exactly 28; the
+-- #35 growth rule adds a row (and moves the panel up) should another recipe ever join.
 P4.crafter = function(kind) return kind == "factory" or kind == "district" end -- Phase 5 E1: districts are producers
 P4.place_name = require("scripts.world").place_name -- Phase 5 M2 world: region names in alerts (alert_text)
 -- Phase 5 E1: recipes an age locks (research.AGE_LOCKS: Age II goods, buildings, the Armoured car kit) exist in Nation

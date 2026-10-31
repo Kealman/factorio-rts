@@ -346,7 +346,7 @@ end)
 ---------------------------------------------------------------------------
 -- Division router (Phase 5; set by scripts/divisions.lua at load time)
 ---------------------------------------------------------------------------
--- fn(entities, kind, target) -> rest, handled, surface: kind is "move" | "attack" | "attack_move" | "stop" | "hold",
+-- fn(entities, kind, target) -> rest, handled, surface: kind is "move" | "attack" | "attack_move" | "stop" | "hold" | "clear" (0.1.4: always detaches),
 -- target a MapPosition (move, attack_move), a LuaEntity (attack) or nil. Orders whole divisions among `entities`,
 -- detaches partly ordered members, and returns the entities left for the loose-unit path, the number of units ordered
 -- as divisions and the surface of one of them.
@@ -912,7 +912,7 @@ end
 -- Units that may clear: spiders and ground units that no other module drives (haulers are spider-vehicles).
 local function clearers(who)
   local out = {}
-  for _, rec in ipairs((resolve(who, nil))) do
+  for _, rec in ipairs((resolve(who, "clear"))) do -- 0.1.4 (#40): members of divisions detach and clear loose
     local t = rec.entity.type
     if t == "spider-unit" or t == "unit" then out[#out + 1] = rec end
   end
