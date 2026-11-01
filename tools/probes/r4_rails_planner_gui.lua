@@ -904,27 +904,26 @@ step(function(player, P)
     #list, type(l1) == "table" and tostring(l1[1]) or tostring(l1))
   shot(player, "platform-select")
   drive("capture platform-select")
-  -- every train of the player stops; one stands on the depot's platform (a new freight train if none does)
+  -- every train of the player stops (and is disbanded below: a train beside the platform keeps it busy); then a new
+  -- freight train stands on the depot's platform
   for _, t in ipairs(game.train_manager.get_trains({force = player.force})) do t.manual_mode = true end
-  selection.clear(player.index)
-  return 60
+  return 120
 end)
 
 step(function(player, P)
-  local d = rails.depot(P.depot)
-  local on = nil
-  local set = {}
-  for _, r in ipairs(d and d.platform and d.platform.rails or {}) do if r.valid then set[r.unit_number] = true end end
+  selection.clear(player.index) -- (here: the screenshot and the window capture above show the platform rail's page)
   for _, t in ipairs(game.train_manager.get_trains({force = player.force})) do
-    for _, r in ipairs(t.get_rails()) do
-      if set[r.unit_number] and not on then on = t end
-    end
+    local id = t.id
+    local ok, why = rails.disband_train(t)
+    note("demolish: train %d disbanded first: %s %s", id, tostring(ok), tostring(why))
   end
-  if not on then
-    local t, why = rails.create_train(P.depot, "cargo")
-    note("demolish: a freight train for the platform: %s (%s)", t and tostring(t.id) or "none", tostring(why))
-    on = t
+  local net = logistics.hub_network(P.depot) -- (kits for it: a disbanded train returns half of them, maybe elsewhere)
+  for _, it in ipairs({{rails.LOCO_KIT, 2}, {rails.WAGON_KIT, 2}, {"coal", 40}}) do
+    if net then net.insert({name = it[1], count = it[2]}) end
   end
+  local t, why = rails.create_train(P.depot, "cargo")
+  note("demolish: a freight train for the platform: %s (%s)", t and tostring(t.id) or "none", tostring(why))
+  local on = t
   P.on_train = on and on.id
   if P.dpos then
     local x, y = spx(player, P.dpos)
