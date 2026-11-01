@@ -22,8 +22,27 @@ Date: 2026-10-31
       track with the reason it waits (no built track from a depot, no kits, too few rails, crew busy). (#44)
     - A crew jammed against another standing train goes home after 15 s instead of 120 s, and rolling stock beside a
       platform counts as busy only inside the platform's own rail block. (#33)
+    - Stockpile rules: an "Add item" button puts any item on the hub or City Center policy list (any item of your
+      networks, what the cities need and make, every recipe your factories can make, the pieces), with zero stock;
+      Nation lists rations, grain and goods by default and crude oil, petroleum, plastic and sulfur from Age II; a
+      header line says what Keep and Export above mean. (#46)
+    - Hauler routes carry a chosen list: "Carry" items with a count per trip and "Unload: to Keep / everything", so a
+      route works without a Keep at the drop-off; "nothing to carry" names its reason. (#46)
+    - A Clear button in the build menu header: arm it, then right-click or drag over trees and rocks for the selected
+      walkers and drones to fell them. (#40)
+    - A demolished depot takes its platform with it (rails, stops and their signals; half the rails come back); its
+      lines to other depots stay as plain track that Delete removes; a depot with a train on its platform refuses to
+      be demolished and names the train; old saves repair orphan platforms once. (#45, #33)
+    - A second work train standing idle on a depot platform goes out while a crew is on another track that shares no
+      rail with it; otherwise the depot panel says "crew out on shared track". (#44)
+    - Nation AI: a copper hub slot for every copper extractor; a rail program short of an item for two minutes pays on
+      above a one-kit minimum while its city is calm; the Age I circuit hold on trunk edges ends once the capital's own
+      line is open. Against 0.1.3 on the five test seeds: freight by train +12 %, the aggressive AI's first line before
+      32:00 in 5 of 5, no capital lost. (#39, #2)
   Bugfixes:
     - A clear order given to whole divisions works: the members detach and fell the trees. (#40)
+    - An AI freight train of a line the AI gave up no longer stands forever on a depot platform blocking other lines:
+      it is scrapped after three minutes without a path. (#33)
     - Two auto lines surveyed one after another no longer plan pieces over the same ground (a junction pair had stood
       on the other line's ghost). (#33)
   Gui:
