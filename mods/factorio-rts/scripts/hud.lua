@@ -1904,7 +1904,11 @@ local function update_pieces(player, h, list)
     el.b_demolish.tooltip = {"rts.piece-cancel-tooltip"}
   else
     el.b_demolish.caption = armed and {"rts.demolish-confirm"} or {"rts.demolish"}
-    el.b_demolish.tooltip = {"rts.piece-demolish-tooltip"}
+    local track = false -- 0.1.4 (#33): own rails and signals come back whole (rails.remove_track)
+    for _, e in ipairs(list) do
+      if pieces.kind(e) == "track" then track = true end
+    end
+    el.b_demolish.tooltip = track and {"rts.track-demolish-tooltip"} or {"rts.piece-demolish-tooltip"}
   end
 end
 
