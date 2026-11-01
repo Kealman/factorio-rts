@@ -110,6 +110,7 @@ local function ostate()
     storage.orders = o
   end
   o.armed = o.armed or {}
+  o.clear_armed = o.clear_armed or {} -- 0.1.4 (#40): the build menu's Clear button: the next right drag clears
   o.rclick = o.rclick or {}
   o.area_tick = o.area_tick or {}
   o.cancel_tick = o.cancel_tick or {}
@@ -1024,6 +1025,22 @@ function orders.arm_attack_move(player_index, on)
   return on
 end
 
+--- 0.1.4 (#40): arm (true), disarm (false) or toggle (nil) the Clear tool of the build menu: the next right click or
+--- right drag fells the trees and rocks in its box with the selected units (no Shift, any size). Returns the new state.
+function orders.arm_clear(player_index, on)
+  local armed = ostate().clear_armed
+  if on == nil then on = armed[player_index] == nil end
+  if on and refuse_locked(player_index, "clear") then on = false end
+  armed[player_index] = on and game.tick or nil
+  util.log("clear tool %s player=%d", on and "armed" or "disarmed", player_index)
+  selection.notify_hud(player_index)
+  return on
+end
+
+function orders.clear_is_armed(player_index)
+  return ostate().clear_armed[player_index] ~= nil
+end
+
 --- True while the player's next right click is an attack-move.
 function orders.is_armed(player_index)
   return ostate().armed[player_index] ~= nil
@@ -1167,6 +1184,19 @@ function orders.handle_reverse_area(player_index, entities, area, alt)
   end
   o.stats.area_orders = o.stats.area_orders + 1
   if refuse_locked(player_index, "right click") then return "none", 0 end
+  if o.clear_armed[player_index] then -- 0.1.4 (#40): the Clear tool takes the box, even a click (padded to 3 x 3)
+    o.clear_armed[player_index] = nil
+    selection.notify_hud(player_index)
+    local box = {left_top = {x = math.min(lt.x, center.x - 1.5), y = math.min(lt.y, center.y - 1.5)},
+                 right_bottom = {x = math.max(rb.x, center.x + 1.5), y = math.max(rb.y, center.y + 1.5)}}
+    local n = orders.clear_area(player_index, box)
+    local player = game.get_player(player_index)
+    if player and n == 0 then
+      player.create_local_flying_text({text = {"rts-ux.clear-none"}, position = center})
+    end
+    util.log("clear tool: box %s -> %d units player=%d", util.pos_str(center), n, player_index)
+    return "clear", n
+  end
   if alt then
     local hooked, hooked_n = run_right_click_hooks(player_index, center, entities, true, area)
     if hooked then return hooked, hooked_n end
@@ -1343,6 +1373,7 @@ end
 function orders.reset()
   local o = ostate()
   for index in pairs(o.armed) do disarm(index, "reset") end
+  o.clear_armed = {}
   o.rclick = {}
   o.queue = nil -- Phase 5: queued commands of the old units go with them
 end
