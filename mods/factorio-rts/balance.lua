@@ -637,6 +637,9 @@ balance.nation.people = {
     stone_low = 100, stone_gap = 2 * 60 * 60,
     -- Phase 5 M3 ai: and one more copper extractor (and slot) below copper_low copper plates (was a code default)
     copper_low = 30,
+    -- (0.1.4, issue #39) with it one more copper hub slot while the line has fewer slots than its extractors divided by
+    -- copper_drills_per_slot (a smelter slot makes 37.5 plates a minute, an extractor mines 60 ore; stone and coal: 2)
+    copper_drills_per_slot = 1,
     -- (0.1.3, issue #2) and one more coal extractor below coal_low coal (haulers, trains and rail crews burn it; a
     -- crew leaves with 40 in its locomotives and 50 in its wagon)
     coal_low = 100,

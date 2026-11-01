@@ -878,8 +878,13 @@ local function city_pass(C, G, surface, c, capital, list, age)
       -- 37 plates a minute until minute 18, Industrialisation at 19:02)
       -- (0.1.3, issue #2: and coal below coal_low: haulers, trains and the rail crews burn it, the build order stops at
       -- one coal extractor, 60 coal a minute; crews stood "no-fuel" at the capital from 39:00 to the end, M1 seed 501)
+      -- (0.1.4, issue #39: a copper smelter slot makes 37.5 plates a minute and an extractor mines 60 ore, so the
+      -- copper line wants a slot per extractor, AI.copper_drills_per_slot; with two per slot the second slot came only
+      -- with the third extractor or the opening's last step, and 8 of 20 capitals of 801-805 smelted 37-38 copper a
+      -- minute until minutes 16-33 while their rail depots and crew kits waited for copper)
       for _, R in ipairs({{line = "stone", item = "stone", low = AI.stone_low or 100, steel = true},
-                          {line = "copper", item = "copper-plate", low = AI.copper_low},
+                          {line = "copper", item = "copper-plate", low = AI.copper_low,
+                           per_slot = AI.copper_drills_per_slot},
                           {line = "coal", item = "coal", low = AI.coal_low}}) do -- Phase 5 M3 ai: a balance key
         local RL = C.lines and C.lines[R.line]
         local key = R.line .. "_at"
@@ -888,7 +893,9 @@ local function city_pass(C, G, surface, c, capital, list, age)
           local drills, slots = build_order.line_drills_built(C, RL), build_order.line_slots_built(C, RL)
           if drills < #RL.drills then
             build_order.want_drills(C, RL, drills + 1)
-            if slots < #RL.slots and drills + 1 > 2 * slots then build_order.want_slots(C, RL, slots + 1) end
+            if slots < #RL.slots and drills + 1 > (R.per_slot or 2) * slots then
+              build_order.want_slots(C, RL, slots + 1)
+            end
             G[key] = game.tick + (AI.stone_gap or 2 * 3600)
             util.log("ai %s: governor: %s runs short (%d): %s extractor %d of %d", C.force, R.item,
               construction.have(C, R.item), R.line, drills + 1, #RL.drills)
