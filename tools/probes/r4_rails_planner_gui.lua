@@ -27,6 +27,12 @@
 --   remove_signal  a click on a chain signal of the branch junction selects it with its partner; Backspace twice
 --                  removes both
 --   remove_box     a box over the far end of the diagonal selects its rails; Backspace twice removes them
+--   0.1.4 (#45), the depot demolish flow, real input:
+--   platform_page  a click on a platform rail selects it; the HUD page says it goes when the depot is demolished
+--   demolish_refused  every train of the player stops, a freight train stands on the depot's platform: a click on the
+--                  depot and Backspace twice leave it standing ("cannot be demolished: train N stands on its platform")
+--   demolish_depot the train disbanded, Backspace twice demolishes the depot: its platform rails and stops are gone,
+--                  half of the rails come back, the planner track that starts at the platform stays
 -- Checks "[rts] r4p check <name>: PASS|FAIL ...", summary "[rts] r4p summary <passed>/<total>", marker RTS_R4P_DONE.
 -- Screenshots build/shots-<copy>/rts-r4p-*.png (take_screenshot), window captures (path previews, the engine's own
 -- overlays) build/shots-<copy>-window/. Test copy (self-test off), RTS_LOCALE=en or ru:
@@ -858,6 +864,125 @@ step(function(player, P)
     and R.rails == P.box_sel, "a box over the last %d pieces of the diagonal selected %d rails; Backspace twice removed "
     .. "%s (refund %s rails); of the boxed pieces %d stand", #(P.boxed or {}), P.box_sel or -1,
     R and tostring(R.rails) or "-", R and tostring(R.refund) or "-", left)
+  -- 0.1.4 (#45): the depot demolish flow; first a click on a rail of its platform
+  local d = rails.depot(P.depot)
+  local pr = d and d.platform and d.platform.rails[6]
+  P.dpos = d and {x = d.entity.position.x, y = d.entity.position.y}
+  P.pr6 = pr and pr.valid and {x = pr.position.x, y = pr.position.y, un = pr.unit_number}
+  P.plat = {}
+  for _, r in ipairs(d and d.platform and d.platform.rails or {}) do
+    if r.valid then P.plat[#P.plat + 1] = {x = r.position.x, y = r.position.y} end
+  end
+  P.stops = {}
+  for _, st in pairs(d and d.platform and d.platform.stops or {}) do P.stops[#P.stops + 1] = st end
+  selection.clear(player.index)
+  if P.dpos then
+    camera.jump_to(player, {x = P.dpos.x + 4, y = P.dpos.y + 4})
+    player.zoom = 0.6
+  end
+  return 30
+end)
+
+step(function(player, P)
+  if P.pr6 then
+    local x, y = spx(player, P.pr6)
+    drive("move %d %d", x, y)
+    drive("sleep 400")
+    drive("click %d %d", x, y)
+    drive("sleep 400")
+  end
+  return 120
+end)
+
+step(function(player, P)
+  local list = selection.get_pieces(player.index)
+  local one = #list == 1 and list[1] or nil
+  local desc = one and pieces.describe(one)
+  local l1 = desc and desc.lines[1]
+  check(P, "platform_page", one ~= nil and one.unit_number == (P.pr6 and P.pr6.un) and type(l1) == "table"
+    and l1[1] == "rts.track-rail-platform", "a click on a platform rail selects %d piece(s), page line %s",
+    #list, type(l1) == "table" and tostring(l1[1]) or tostring(l1))
+  shot(player, "platform-select")
+  drive("capture platform-select")
+  -- every train of the player stops (and is disbanded below: a train beside the platform keeps it busy); then a new
+  -- freight train stands on the depot's platform
+  for _, t in ipairs(game.train_manager.get_trains({force = player.force})) do t.manual_mode = true end
+  return 120
+end)
+
+step(function(player, P)
+  selection.clear(player.index) -- (here: the screenshot and the window capture above show the platform rail's page)
+  for _, t in ipairs(game.train_manager.get_trains({force = player.force})) do
+    local id = t.id
+    local ok, why = rails.disband_train(t)
+    note("demolish: train %d disbanded first: %s %s", id, tostring(ok), tostring(why))
+  end
+  local net = logistics.hub_network(P.depot) -- (kits for it: a disbanded train returns half of them, maybe elsewhere)
+  for _, it in ipairs({{rails.LOCO_KIT, 2}, {rails.WAGON_KIT, 2}, {"coal", 40}}) do
+    if net then net.insert({name = it[1], count = it[2]}) end
+  end
+  local t, why = rails.create_train(P.depot, "cargo")
+  note("demolish: a freight train for the platform: %s (%s)", t and tostring(t.id) or "none", tostring(why))
+  local on = t
+  P.on_train = on and on.id
+  if P.dpos then
+    local x, y = spx(player, P.dpos)
+    drive("move %d %d", x, y)
+    drive("sleep 400")
+    drive("click %d %d", x, y)
+    drive("sleep 400")
+    drive("key %d", KEY.BACKSPACE)
+    drive("sleep 400")
+    drive("key %d", KEY.BACKSPACE)
+    drive("sleep 300")
+    drive("capture demolish-refused")
+  end
+  return 180
+end)
+
+step(function(player, P)
+  local d = rails.depot(P.depot)
+  local sel = selection.get_building(player.index)
+  check(P, "demolish_refused", P.on_train ~= nil and d ~= nil and sel == P.depot, "train %s on the platform; a click on "
+    .. "the depot selects %s, Backspace twice: the depot %s", tostring(P.on_train), tostring(sel),
+    d and "still stands" or "is gone")
+  shot(player, "demolish-refused")
+  -- the train goes (disbanded into the depot's kits), the depot stays selected
+  local t = P.on_train and game.train_manager.get_train_by_id(P.on_train)
+  local ok, why = false, "gone"
+  if t and t.valid then ok, why = rails.disband_train(t) end
+  note("demolish: train %s disbanded: %s %s", tostring(P.on_train), tostring(ok), tostring(why))
+  P.track_before = 0
+  for _, q in ipairs(P.track1 or {}) do
+    if player.surface.find_entity(q.name, {q.x, q.y}) then P.track_before = P.track_before + 1 end
+  end
+  if not sel then
+    local x, y = spx(player, P.dpos)
+    drive("click %d %d", x, y)
+    drive("sleep 400")
+  end
+  drive("key %d", KEY.BACKSPACE)
+  drive("sleep 400")
+  drive("key %d", KEY.BACKSPACE)
+  drive("sleep 400")
+  drive("capture demolish-done")
+  return 180
+end)
+
+step(function(player, P)
+  local s = player.surface
+  local left, stops_left, track_after = 0, 0, 0
+  for _, q in ipairs(P.plat or {}) do
+    if s.find_entity("straight-rail", {q.x, q.y}) then left = left + 1 end
+  end
+  for _, st in ipairs(P.stops or {}) do if st.valid then stops_left = stops_left + 1 end end
+  for _, q in ipairs(P.track1 or {}) do
+    if s.find_entity(q.name, {q.x, q.y}) then track_after = track_after + 1 end
+  end
+  check(P, "demolish_depot", rails.depot(P.depot) == nil and #(P.plat or {}) == 20 and left == 0 and #(P.stops or {}) == 2
+    and stops_left == 0 and track_after == P.track_before and track_after > 0, "the depot %s; its %d platform rails: %d "
+    .. "left, %d stops: %d left; track 1: %d of its pieces stood before, %d after", rails.depot(P.depot) and "stands"
+    or "is demolished", #(P.plat or {}), left, #(P.stops or {}), stops_left, P.track_before or -1, track_after)
   shot(player, "end")
   util.log("r4p summary %d/%d", P.pass or 0, P.total or 0)
   util.log("RTS_R4P_DONE player %d", player.index)

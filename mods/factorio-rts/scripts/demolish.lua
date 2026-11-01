@@ -11,8 +11,10 @@
 -- confirm, nothing to refund); the pieces follow the two-press rule with the recipe-based refund (10 belts per craft:
 -- the refund rounds down per batch, so one lone belt returns nothing and the message says so).
 -- 0.1.4 (#41 item 3, #33 item 6): own rails and signals (pieces of kind "track") follow the same two presses and go
--- as one batch through pieces.track.remove (rails.remove_track): their rails come back whole; rails under a train,
--- platforms and the pieces of depot lines stay, with a message.
+-- as one batch through pieces.track.remove (rails.remove_track): their rails come back whole; rails under a train and
+-- platforms stay, with a message; a line between depots that loses a piece becomes plain track (a message per line).
+-- 0.1.4 (#45): a depot or station with a train on its platform or at its stop is refused with a message naming the train
+-- (buildings.demolish_refused); a demolished depot takes its platform with it (scripts/rails.lua).
 --
 -- Owns storage.players[i].demolish = {key = "un,un,...", tick = tick it was armed}.
 local util = require("scripts.util")
@@ -45,15 +47,17 @@ local function selected(player_index)
 end
 
 -- Own live records among `list` (default: the selection), unit numbers ascending. Second result: those that may
--- not be demolished, as {rec, reason}.
+-- not be demolished, as {rec, reason, message}. 0.1.4 (#45): also those that may not be demolished right now
+-- (buildings.demolish_refused: a train on a depot's platform), with the message that says why.
 local function resolve(player_index, list)
   local force = selection.force_name(player_index)
   local ok, blocked = {}, {}
   for _, un in ipairs(list or selected(player_index)) do
     local rec = buildings.get(un)
     if rec and rec.force == force then
-      local why = buildings.demolish_blocked(rec)
-      if why then blocked[#blocked + 1] = {rec = rec, reason = why} else ok[#ok + 1] = un end
+      local why, message = buildings.demolish_blocked(rec), nil
+      if not why and buildings.demolish_refused then why, message = buildings.demolish_refused(rec) end
+      if why then blocked[#blocked + 1] = {rec = rec, reason = why, message = message} else ok[#ok + 1] = un end
     end
   end
   table.sort(ok)
@@ -198,6 +202,10 @@ local function request_pieces(player_index)
     if res.kept.platform + res.kept.line > 0 then
       say(player_index, {"rts.track-kept-line", res.kept.platform + res.kept.line})
     end
+    -- 0.1.4 (#33): a line between depots that lost a piece is plain track now
+    for i, o in ipairs(res.dissolved or {}) do
+      if i <= 3 then say(player_index, {"rts.track-line-dissolved", o.a or "?", o.b or "?"}) end
+    end
   end
   local stacks, spilled_refund = {}, 0
   for item, c in pairs(refund) do stacks[#stacks + 1] = {name = item, count = c} end
@@ -229,7 +237,7 @@ function demolish.request(player_index, list)
   local ok, blocked = resolve(player_index, list)
   if #ok == 0 then
     if #blocked > 0 then
-      say(player_index, {"rts.demolish-blocked", {"entity-name." .. blocked[1].rec.entity.name}})
+      say(player_index, blocked[1].message or {"rts.demolish-blocked", {"entity-name." .. blocked[1].rec.entity.name}})
       util.log("demolish: blocked player=%d %s #%d (%s)", player_index, blocked[1].rec.kind,
         blocked[1].rec.entity.unit_number, blocked[1].reason)
       return "blocked", 0
@@ -248,7 +256,7 @@ function demolish.request(player_index, list)
   end
   p.demolish = nil
   local n, infos = execute(player_index, ok)
-  if #blocked > 0 then say(player_index, {"rts.demolish-skipped", #blocked}) end
+  if #blocked > 0 then say(player_index, blocked[1].message or {"rts.demolish-skipped", #blocked}) end
   local refund = {}
   for _, info in ipairs(infos) do
     for item, c in pairs(info.refund) do refund[item] = (refund[item] or 0) + c end

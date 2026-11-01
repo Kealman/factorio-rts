@@ -77,7 +77,7 @@ local function place(player, frame, kind)
   -- 0.1.3 (#34): the panel stops above the Build menu (the right column below it), not over it
   local build = player.gui.screen["rts_hud_build"]
   if build and build.valid and build.visible then
-    frame.style.maximal_height = math.max(200, math.floor((build.location.y - frame.location.y) / s) - MARGIN)
+    frame.style.maximal_height = math.max(200, math.floor((build.location.y - frame.location.y) / s) - 2 * MARGIN)
   end
 end
 
@@ -112,7 +112,7 @@ end
 
 -- 0.1.4 (#44): the waits of track lines that have a text of their own (rts.track-why-*); others read rts.rails-why-*
 local TRACK_WHY = {["no-access"] = true, after = true, ["crew-out"] = true, ["no-depot"] = true, ["no-kits"] = true,
-                   ["no-rails"] = true}
+                   ["no-rails"] = true, ["crew-out-shared"] = true} -- (0.1.4 #44 item 2)
 
 local function depot_name(un)
   return (un and rails.depot(un)) and logistics.hub_name(un) or {"rts.railgui-none"}
