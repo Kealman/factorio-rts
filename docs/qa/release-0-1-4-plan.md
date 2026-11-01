@@ -48,3 +48,18 @@ this wave:
    and writes the changelog from your notes.
 5. **The owner's save must come out better, not only loadable:** on `owner-0113-now.zip` after #41, the surplus
    signals are gone, train 76 paths home or the log says why, and the owner's unbuilt rail-signal ghosts stay.
+
+## 5. Wave 2 (2026-11-01, base main a23332c = dev build 2 + the r5-ai notes)
+
+| Agent | Model | Issues | Main files |
+|---|---|---|---|
+| `r6-rails` | Opus, screen owner | #45 (depot platform rails go with a demolished depot or become removable; stations too; orphan platforms on load), #33 leftovers (lines between depots removable with Delete; 802 line #15 crews waiting at a signal at (597, -167); adjacent AI depot platforms in one block; the HUD Demolish tooltip for track), #44 item 2 (a second idle work train while one crew is out, on separate track) | `scripts/rails.lua`, `scripts/railplan.lua`, `scripts/pieces.lua`, `scripts/demolish.lua`, `scripts/railgui.lua` |
+| `r6-hud` | Sonnet | #46 (hub / city policy panel: Add item picker, Nation default rows, hauler route Carry list and "unload everything", "nothing to load" reason), #40 remainder (Clear button in the build menu, RU depot panel margin: coordinate the `railgui.place` hunk with r6-rails) | `scripts/hubgui.lua`, `scripts/logistics.lua` (policy rows, hauler route items), `scripts/itempicker.lua`, `scripts/hud.lua`, locale |
+| `r6-ai` | Opus | #39 / #2: retest L1 (1f4b525 on the r5-ai branch) and L2s / L3 (patches `scratchpad/r5-ai/l2s+l3-on-1f4b525.patch`, `l1b-build_order.patch`) on this base, which holds the crew fix of #33 (84464c8) that broke M1 in the 0.1.4 wave 1 measurement; ship per the lead's criteria | `scripts/ai/*`, `balance.lua`, `scripts/rails.lua` AI program |
+
+Ship criteria for the AI (unchanged): no capital lost, starving minutes 0, capital iron/copper-low minutes and the army
+at 35:00 within about 10 % of 0.1.3, M1 501 at least 53/53 and 25,000 train items, Age III at least 4 of 5, M3 train
+items not below 0.1.3 by more than about 10 %; targets: linked 16 of 20, aggressive first line 4 of 5. The r5-ai notes
+are `docs/qa/release-0-1-4-r5-ai-notes.md` (L1 alone was mixed: linked +1, M3 freight -10 %, Age III 4/5, 802 peace
+fail; L2s lost a capital on 801 and hit the crew bug). Fixtures as in section 3 plus `owner-0114-now.zip` (minute ~95
+of the owner's 0.1.3 game on the dev build). Rules as in section 3; r6-ai at most 3 servers.
