@@ -157,8 +157,14 @@ end
 local NATION_ROWS = {"rts-rations", "rts-grain", "rts-goods"}
 local NATION_ROWS_AGE2 = {"rts-crude-oil", "rts-petroleum", "plastic-bar", "sulfur"}
 
+-- A module looked up at call time (not required at load: control.lua loads this file before ages and stripgui).
+local function loaded(name)
+  local l = package.loaded
+  return l["__" .. script.mod_name .. "__/" .. string.gsub(name, "%.", "/") .. ".lua"] or l[name]
+end
+
 local function age_of(force_name)
-  local ages = package.loaded["scripts.ages"] -- looked up at call time, not required (load order)
+  local ages = loaded("scripts.ages")
   return ages and ages.of and ages.of(force_name) or 1
 end
 
@@ -270,7 +276,9 @@ local function build_hub(player, g, un)
     field(tbl, un, item, "keep", p.keep[item])
     field(tbl, un, item, "export", p.export_above[item])
     -- the small x: only while both fields are empty and the network holds none (refresh_hub shows it)
-    local rm = tbl.add({type = "sprite-button", name = PREFIX .. "row_remove_" .. item, sprite = "utility/close",
+    local slot = tbl.add({type = "flow", direction = "horizontal"}) -- keeps the cell when the x is hidden
+    slot.style.width = 24
+    local rm = slot.add({type = "sprite-button", name = PREFIX .. "row_remove_" .. item, sprite = "utility/close",
       style = "frame_action_button", tooltip = {"rts.hubgui-row-remove-tooltip"}, visible = false,
       tags = {rts_hubgui = "row_remove", hub = un, item = item}})
     rm.style.size = 24
@@ -609,7 +617,7 @@ events.on(defines.events.on_gui_click, function(e)
       if g.frame and g.frame.valid then
         loc = {math.max(0, g.frame.location.x - math.floor((itempicker.WIDTH + MARGIN) * s + 0.5)), g.frame.location.y}
       end
-      local stripgui = package.loaded["scripts.stripgui"]
+      local stripgui = loaded("scripts.stripgui")
       itempicker.open(player, "hubgui", {hub = element.tags.hub}, loc,
         {sections = stripgui.pickable_sections(player, logistics.is_nation(rec.force), true), title = {"rts.hubgui-picker-title"}})
     end
@@ -630,7 +638,7 @@ events.on(defines.events.on_gui_click, function(e)
       if g.frame and g.frame.valid then
         loc = {math.max(0, g.frame.location.x - math.floor((itempicker.WIDTH + MARGIN) * s + 0.5)), g.frame.location.y}
       end
-      local stripgui = package.loaded["scripts.stripgui"]
+      local stripgui = loaded("scripts.stripgui")
       itempicker.open(player, "haulercarry", {}, loc,
         {sections = stripgui.pickable_sections(player, logistics.is_nation(h.force), true), title = {"rts.hauler-carry-picker"}})
     end

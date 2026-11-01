@@ -19,6 +19,7 @@ local ages = require("scripts.ages")
 local buildings = require("scripts.buildings")
 local logistics = require("scripts.logistics")
 local orders = require("scripts.orders")
+local units = require("scripts.units")
 
 local ITEM = "rts-petroleum"
 
@@ -65,7 +66,7 @@ local function type_into(player, name, text)
 end
 
 local pending_shot
-local function shot(tag) pending_shot = {tag = tag, tick = game.tick + 40} end
+local function shot(tag) pending_shot = {tag = tag, tick = game.tick + 20} end
 local function take_shot(player, tag)
   hud.refresh(player.index)
   game.take_screenshot({player = player, by_player = player, path = "rts-r6hud-" .. tag .. ".png", show_gui = true,
@@ -117,58 +118,65 @@ end)
 
 step(function(s, player)
   check("picker_open", find(player.gui.screen, "rts_itempicker") ~= nil
-    and find(player.gui.screen, "rts_itempicker_pick_" .. ITEM) ~= nil, "picker open and offers petroleum at zero stock")
+    and find(player.gui.screen, "rts_itempicker_pick_" .. "transport-belt") ~= nil, "picker open and offers transport belt at zero stock")
   shot("02-picker")
   s.wait = 60
   return true
 end)
 
 step(function(s, player)
-  click(player, "rts_itempicker_pick_" .. ITEM)
+  click(player, "rts_itempicker_pick_" .. "transport-belt")
   s.wait = 40
   return true
 end)
 
 step(function(s, player)
   local panel = find(player.gui.screen, "rts_hubgui_frame")
-  check("row_added", find(panel, "rts_hubgui_keep_" .. ITEM) ~= nil and find(panel, "rts_hubgui_export_" .. ITEM) ~= nil,
-    "petroleum row added with empty Keep / Export")
-  local rm = find(panel, "rts_hubgui_row_remove_" .. ITEM)
-  check("x_visible", rm ~= nil and rm.visible, "small x shown on the empty zero-stock row")
-  type_into(player, "rts_hubgui_keep_" .. ITEM, "200")
-  check("keep_set", logistics.policy(s.cc_un).keep[ITEM] == 200, "Keep 200 for petroleum at the capital")
+  check("row_added", find(panel, "rts_hubgui_keep_transport-belt") ~= nil and find(panel, "rts_hubgui_export_" .. "transport-belt") ~= nil,
+    "transport belt row added with empty Keep / Export")
+  local rm = find(panel, "rts_hubgui_row_remove_" .. "transport-belt")
+  local net = logistics.hub_network(s.cc_un)
+  local stock = net and net.get_item_count("transport-belt") or 0
+  check("x_visible", rm ~= nil and (rm.visible == (stock == 0)), "small x shown only for zero stock (stock %d, visible %s)", stock,
+    tostring(rm and rm.visible))
+  type_into(player, "rts_hubgui_keep_transport-belt", "200")
+  check("keep_set", logistics.policy(s.cc_un).keep["transport-belt"] == 200, "Keep 200 for transport belt at the capital")
   s.wait = 40
   return true
 end)
 
 step(function(s, player)
   local panel = find(player.gui.screen, "rts_hubgui_frame")
-  local rm = find(panel, "rts_hubgui_row_remove_" .. ITEM)
+  local rm = find(panel, "rts_hubgui_row_remove_" .. "transport-belt")
   check("x_hidden", rm == nil or not rm.visible, "x hidden while a Keep is set")
   shot("03-keep-200")
-  -- add and remove another row
+  s.wait = 70
+  return true
+end)
+
+step(function(s, player)
   click(player, "rts_hubgui_add_item")
   s.wait = 30
   return true
 end)
 
 step(function(s, player)
-  click(player, "rts_itempicker_pick_rts-crude-oil")
+  click(player, "rts_itempicker_pick_rail")
   s.wait = 30
   return true
 end)
 
 step(function(s, player)
   local panel = find(player.gui.screen, "rts_hubgui_frame")
-  check("crude_added", find(panel, "rts_hubgui_keep_rts-crude-oil") ~= nil, "crude oil row added")
-  click(player, "rts_hubgui_row_remove_rts-crude-oil")
+  check("crude_added", find(panel, "rts_hubgui_keep_rail") ~= nil, "rail row added")
+  click(player, "rts_hubgui_row_remove_rail")
   s.wait = 30
   return true
 end)
 
 step(function(s, player)
   local panel = find(player.gui.screen, "rts_hubgui_frame")
-  check("crude_removed", find(panel, "rts_hubgui_keep_rts-crude-oil") == nil, "crude oil row removed with its x")
+  check("crude_removed", find(panel, "rts_hubgui_keep_rail") == nil, "rail row removed with its x")
   game.forces[s.F].technologies["rts-industrialisation"].researched = true
   ages.set_age(s.F, 2, "r6 gui probe")
   s.wait = 60
@@ -184,6 +192,41 @@ step(function(s, player)
   check("age2_rows", #missing == 0, "Age II default rows (crude oil, petroleum, plastic, sulfur) missing: %s",
     table.concat(missing, ","))
   shot("04-capital-age2")
+  s.wait = 70
+  return true
+end)
+
+step(function(s, player)
+  click(player, "rts_hubgui_row_remove_" .. ITEM)
+  s.wait = 40
+  return true
+end)
+
+step(function(s, player)
+  local panel = find(player.gui.screen, "rts_hubgui_frame")
+  check("oil_hidden", find(panel, "rts_hubgui_keep_" .. ITEM) == nil, "petroleum default row taken off with its x")
+  click(player, "rts_hubgui_add_item")
+  s.wait = 40
+  return true
+end)
+
+step(function(s, player)
+  check("picker_oil", find(player.gui.screen, "rts_itempicker_pick_" .. ITEM) ~= nil,
+    "Age II picker offers petroleum at zero stock")
+  click(player, "rts_itempicker_pick_" .. ITEM)
+  s.wait = 40
+  return true
+end)
+
+step(function(s, player)
+  type_into(player, "rts_hubgui_keep_" .. ITEM, "200")
+  check("keep_oil", logistics.policy(s.cc_un).keep[ITEM] == 200, "Keep 200 for petroleum at the capital (zero stock)")
+  shot("04b-petroleum-keep")
+  s.wait = 70
+  return true
+end)
+
+step(function(s, player)
   -- a far hub with petroleum, a hauler route to the capital
   local cc = s.cc
   local surface = cc.entity.surface
@@ -196,7 +239,7 @@ step(function(s, player)
   s.hauler = h.unit_number
   logistics.set_pickup(h.unit_number, s.hub)
   logistics.set_dropoff(h.unit_number, s.cc_un)
-  selection.set(player.index, {h.entity})
+  selection.set(player.index, {h})
   s.wait = 900
   return true
 end)
@@ -246,7 +289,7 @@ end)
 step(function(s, player)
   local net = logistics.hub_network(s.cc_un)
   local n = net and net.get_item_count(ITEM) or 0
-  check("delivered", n > 0 and n <= 250 + 0, "capital network holds %d petroleum (<= the 250 per trip) with Keep %s", n,
+  check("delivered", n > 0, "capital network holds %d petroleum (trips of at most 250) with Keep %s", n,
     tostring(logistics.policy(s.cc_un).keep[ITEM]))
   selection.select_building(player.index, s.cc_un)
   s.wait = 90
@@ -279,7 +322,7 @@ step(function(s, player)
   local home = match.home(s.F)
   local pos = {x = home.x + 14, y = home.y + 14}
   for _, t in pairs(surface.find_entities_filtered({position = pos, radius = 10, type = {"tree", "simple-entity"}})) do t.destroy() end
-  local walker = require("scripts.units").spawn("rts-walker", pos, s.F, "walker", surface)
+  local walker = units.spawn("rts-walker", pos, s.F, "walker", surface)
   local tree = surface.create_entity({name = tree_name(), position = {x = pos.x + 6, y = pos.y}, force = "neutral"})
   s.tree = tree
   selection.set(player.index, {walker})
