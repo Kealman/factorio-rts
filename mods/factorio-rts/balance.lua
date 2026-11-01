@@ -477,6 +477,15 @@ balance.nation.rails = {
   cargo_wagons = 2,        -- a cargo train is locomotive + 2 wagons + locomotive (double-headed, single track)
   signal_spacing = 80,     -- tiles of ground track between bidirectional signal pairs
   ai_min_distance = 150,   -- AI: a hub or city this far from the capital gets a line (lead, 2026-10-16)
+  -- 0.1.4 (#2, #39): an AI rail program whose depots, crew kits or freight kits have been short this long pays on
+  -- above ai_escrow_min instead of the capital's reserve plus the escrow floor (100 iron, 80 copper, 20 circuits, 50
+  -- steel), never while the paying city was attacked within ai_escrow_calm ticks (scripts/rails.lua escrow.waived).
+  -- The minimum keeps one unit kit of each kind for the barracks (a walker's 10 iron and 2 copper, a raider's 2
+  -- circuits, a heavy's 5 steel); 0.1.3's 40/20/10/10 kept the escrow as blocked as before (the capitals hold 0-35
+  -- iron and 0-29 copper between factory crafts)
+  ai_escrow_patience = 2 * 60 * 60,
+  ai_escrow_min = {["iron-plate"] = 10, ["copper-plate"] = 2, ["electronic-circuit"] = 2, ["steel-plate"] = 5},
+  ai_escrow_calm = 60 * 60,
 }
 -- The depot is a hub subtype (kind "hub"), so scripts/supply.lua already counts it like a hub (+10). Listed here so the
 -- on_entity_damaged filter (scripts/research.lua) covers it: the AI defends its depots like its hubs.
