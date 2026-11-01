@@ -22,7 +22,10 @@
 -- Depot. rts-depot is a hub subtype (logistics.lua: kind "hub", default keep 50 coal). When one is registered this
 -- module lays a 40-tile platform of straight rails 7 tiles off its centre (south, north, east or west, the first that
 -- fits) and two rts-depot-stop with the same name, one at each end facing inward: a train reaches whichever stop
--- matches the end the line joins, so a dead-end platform works from either side.
+-- matches the end the line joins, so a dead-end platform works from either side. 0.1.4 (#45): a demolished depot takes its
+-- platform with it (rails, stops and the signals at their joints; half of the rails come back with the depot's refund)
+-- and its lines between depots become plain own track (J.dissolve_line); a train on the platform refuses the demolish.
+-- A player's depot destroyed otherwise leaves its platform as plain track (the AI keeps it for the depot it rebuilds).
 --
 -- Survey (rails.plan_line). A job runs on on_tick within a per-tick budget, so no tick spends more than a few ms:
 --   score     16x16-tile cells of the box around both depots: water, void, cliffs, trees, buildings, foreign land
@@ -924,7 +927,14 @@ buildings.on_removed(function(un, rec)
       st.destroy()
     end
   end
-  util.log("rails: depot #%d of %s removed (platform rails stay)", un, d.force)
+  if d.demolished then -- 0.1.4 (#45): demolished: J.take_up_platform took its platform and its lines (logged there)
+    util.log("rails: %s #%d of %s demolished: its stops removed", d.station and "station" or "depot", un, d.force)
+  else
+    util.log("rails: depot #%d of %s removed (platform rails stay)", un, d.force)
+    -- 0.1.4 (#45): a player's depot lost otherwise (destroyed): its platform stays as plain track and its lines are
+    -- dissolved (their track stays); the AI keeps its lost lines and platforms for the depot it rebuilds (below)
+    if rails.human(d.force) then J.free_platform(d, string.format("depot #%d is gone", un)) end
+  end
   if R.stations then R.stations[un] = nil end -- 0.1.2 (#31 part A)
   -- 0.1.2 (#31 part A): a human force's further lines of the depot are lost too
   for lid in pairs(d.lines or {}) do
@@ -957,6 +967,252 @@ buildings.on_removed(function(un, rec)
   end
   if rails.routes then rails.routes.refresh(un) end -- 0.1.2 (#31 part B): stop lists skip the gone depot
 end)
+
+---------------------------------------------------------------------------
+-- 0.1.4 (#45): a demolished depot takes its platform with it. The demolish is refused while a train stands on the
+-- platform (at a station's stop); otherwise the depot's lines are dissolved (their track stays as plain own track that
+-- Delete removes, the other depot's line slot frees), the platform rails and the signals at their joints are taken up
+-- (rails.remove_track) and half of the rails come back with the depot's refund (buildings.on_demolish_extra: the
+-- platform came free with the depot), the stops go in on_removed above. A station has no rails of its own: its stops
+-- go. A player's depot destroyed in a war leaves its platform as plain track and its lines dissolved (J.free_platform);
+-- saves from before get the same for platforms whose depot is gone (rails.fix_orphans).
+---------------------------------------------------------------------------
+-- Trains standing on depot d's platform rails or at its stops, by id.
+function J.trains_on_platform(d)
+  local out, seen = {}, {}
+  local p = d.platform
+  if not (p and d.entity.valid) then return out end
+  local function take(t)
+    if t and t.valid and not seen[t.id] then
+      seen[t.id] = true
+      out[#out + 1] = t
+    end
+  end
+  for _, st in pairs(p.stops or {}) do
+    if st.valid then take(st.get_stopped_train()) end
+  end
+  local set = {}
+  for _, r in ipairs(p.rails or {}) do
+    if r.valid then set[r.unit_number] = true end
+  end
+  if next(set) and p.area then
+    local a = p.area
+    for _, c in ipairs(d.entity.surface.find_entities_filtered({area = {{a[1][1] - 1, a[1][2] - 1},
+        {a[2][1] + 1, a[2][2] + 1}}, type = J.STOCK_TYPES})) do
+      local t = c.train
+      if t and not seen[t.id] then
+        for _, r in ipairs(t.get_rails()) do
+          if set[r.unit_number] then
+            take(t)
+            break
+          end
+        end
+      end
+    end
+  end
+  table.sort(out, function(x, y) return x.id < y.id end)
+  return out
+end
+
+buildings.on_demolish_refuse(function(rec)
+  local R = storage.rails
+  local d = R and rec.entity.valid and R.depots[rec.entity.unit_number]
+  if not (d and d.platform) then return nil end
+  local list = J.trains_on_platform(d)
+  if #list == 0 then return nil end
+  return "train-on-platform", {d.station and "rts.demolish-blocked-train-station" or "rts.demolish-blocked-train",
+    {d.station and "rts.station-name" or "rts.depot-name", d.index or d.un}, list[1].id}
+end)
+
+-- Piece key -> name, x, y, direction (pkey's inverse).
+function J.pdecode(k)
+  local dir = k % 16
+  local name = RAIL_NAMES[floor((k % 256) / 16)]
+  local pos = (k - k % 256) / 256
+  local y2 = pos % SPAN
+  local x2 = (pos - y2) / SPAN
+  return name, (x2 - OFF) / 2, (y2 - OFF) / 2, dir
+end
+
+-- The platform rails of depot `un` on surface index `si` become plain track: their index entries go. Returns how many.
+function J.unindex_platform(si, un)
+  local idx = index_of(si)
+  local keys = {}
+  for k, v in pairs(idx) do
+    if v == -un then keys[#keys + 1] = k end
+  end
+  for _, k in ipairs(keys) do idx[k] = nil end
+  return #keys
+end
+
+--- 0.1.4 (#45, #33): take a line between depots apart: its survey stops, the ghosts of its unbuilt pieces and supports
+--- go, its built pieces stay as plain own track (no index entries: Delete removes them, no crew repairs them), its
+--- signals stay as the player's own, a crew on it goes home ("no line"), its depots' line slots free. `why` for the log.
+--- Returns {id, a, b} with the depots' numbers (for the player's message), or nil.
+function J.dissolve_line(line, why)
+  local R = rstate()
+  if not (line and R.lines[line.id] == line) then return nil end
+  for _, jid in ipairs(sorted_keys(R.jobs)) do
+    local job = R.jobs[jid]
+    if job.line == line.id then
+      R.jobs[jid] = nil
+      if job.sched then pcall(sched.cancel, job.sched) end
+    end
+  end
+  local idx = index_of(line.surface)
+  local built, ghosts = 0, 0
+  for _, p in ipairs(line.pieces or {}) do
+    if p.e and p.e.valid then
+      if not p.reused then built = built + 1 end
+    elseif p.g and p.g.valid then
+      p.g.destroy()
+      ghosts = ghosts + 1
+    end
+    if not p.reused then
+      local k = pkey(p.name, p.x, p.y, p.d)
+      local v = idx[k]
+      if v and v > 0 and floor(v / 100000) == line.id then idx[k] = nil end
+    end
+  end
+  for _, sp in ipairs(line.supports or {}) do
+    if sp.g and sp.g.valid then sp.g.destroy() end
+  end
+  R.lines[line.id] = nil
+  J.reused_cache = nil -- (J.reused_by: the line no longer runs along player track)
+  local out = {id = line.id}
+  for _, side in ipairs({"a", "b"}) do
+    local d = R.depots[line[side]]
+    out[side] = d and d.index or line[side]
+    if d then
+      if d.lines then d.lines[line.id] = nil end
+      if d.line == line.id then
+        d.line = nil
+        local nxt = d.lines and sorted_keys(d.lines)[1]
+        if nxt then d.line, d.lines[nxt] = nxt, nil end
+      end
+    end
+  end
+  util.log("rails: line #%d of %s (depot #%s - depot #%s, %s) dissolved (%s): %d built pieces stay as plain track, %d "
+    .. "ghosts removed, %d signals stay", line.id, line.force, tostring(line.a), tostring(line.b), tostring(line.state),
+    why, built, ghosts, #(line.signals or {}))
+  return out
+end
+
+-- Every line between depots that has depot d at one end: dissolved. Returns their ids.
+function J.dissolve_depot_lines(d, why)
+  local R = rstate()
+  local ids = {}
+  for _, id in ipairs(sorted_keys(R.lines)) do
+    local l = R.lines[id]
+    if l.kind ~= "manual" and (l.a == d.un or l.b == d.un) then ids[#ids + 1] = id end
+  end
+  for _, id in ipairs(ids) do J.dissolve_line(R.lines[id], why) end
+  return ids
+end
+
+-- A player's depot gone without a demolish: its platform stays as plain track, its lines are dissolved.
+function J.free_platform(d, why)
+  local ids = J.dissolve_depot_lines(d, why)
+  local n = J.unindex_platform(d.surface, d.un)
+  if n > 0 or #ids > 0 then
+    util.log("rails: the platform of depot #%d of %s stays as plain track (%d rails)%s", d.un, d.force, n,
+      #ids > 0 and (", lines #" .. table.concat(ids, ", #") .. " dissolved") or "")
+  end
+end
+
+-- buildings.on_demolish_extra: the platform of a demolished depot. Returns the refund that comes back with the depot's.
+function J.take_up_platform(d)
+  d.demolished = true
+  local ids = J.dissolve_depot_lines(d, string.format("depot #%d demolished", d.un))
+  local p = d.platform
+  local s = d.entity.surface
+  J.unindex_platform(d.surface, d.un)
+  local list = {}
+  for _, r in ipairs(p and p.rails or {}) do
+    if r.valid then list[#list + 1] = r end
+  end
+  -- (the ghosts on_rail_gone left for the robots where a platform rail was destroyed)
+  local ghosts = 0
+  for _, q in ipairs(p and p.spec and p.spec.rails or {}) do
+    for _, g in ipairs(s.find_entities_filtered({position = {q.x, q.y}, radius = 0.5, ghost_type = rails.GROUND_RAILS,
+                                                  force = d.force})) do
+      g.destroy()
+      ghosts = ghosts + 1
+    end
+  end
+  local res = #list > 0 and rails.remove_track(list, d.force, nil, {quiet = true}) or nil
+  local refund = {}
+  for item, n in pairs(res and res.refund or {}) do
+    if item == rails.RAIL then n = floor(n * buildings.REFUND_RATIO + 1e-9) end
+    if n > 0 then refund[item] = n end
+  end
+  if p then p.rails = {} end
+  util.log("rails: %s #%d of %s demolished: platform of %d rails taken up (%d left standing under a train), %d rails "
+    .. "back, %d signals, %d rail ghosts removed; %s", d.station and "station" or "depot", d.un, d.force,
+    res and res.rails or 0, #list - (res and res.rails or 0), refund[rails.RAIL] or 0, res and res.signals or 0, ghosts,
+    #ids > 0 and ("lines #" .. table.concat(ids, ", #") .. " dissolved") or "no lines")
+  return refund
+end
+
+buildings.on_demolish_extra(function(rec)
+  local R = storage.rails
+  local d = R and rec.entity.valid and R.depots[rec.entity.unit_number]
+  if not d then return nil end
+  return J.take_up_platform(d)
+end)
+
+--- 0.1.4 (#45): saves from before: platform rails of a player's depot that is gone (destroyed, or demolished on the
+--- 0.1.4 development builds) stay indexed as a platform, which Delete refuses; they become plain track, and the player's
+--- lines that lost a depot are dissolved. Platforms of AI forces stay (the AI rebuilds a lost depot on its old site and
+--- takes the old platform). Once per save (storage.rails.orphans_v), from rails.init and the line check. Returns the
+--- number of index entries freed.
+function rails.fix_orphans()
+  local R = rstate()
+  if (R.orphans_v or 0) >= 1 then return 0 end
+  R.orphans_v = 1
+  local per, freed = {}, 0
+  local function F(force_name)
+    per[force_name] = per[force_name] or {rails = 0, depots = {}, lines = {}}
+    return per[force_name]
+  end
+  for _, si in ipairs(sorted_keys(R.index)) do
+    local idx, s = R.index[si], game.surfaces[si]
+    local keys = {}
+    for k, v in pairs(idx) do
+      if v < 0 and not rails.depot(-v) then keys[#keys + 1] = k end
+    end
+    table.sort(keys)
+    for _, k in ipairs(keys) do
+      local name, x, y = J.pdecode(k)
+      local e = s and name and s.find_entity(name, {x, y})
+      local g = not e and s and name and s.find_entities_filtered({position = {x, y}, radius = 0.5, ghost_name = name,
+                                                                    limit = 1})[1]
+      local owner = (e and e.force.name) or (g and g.force.name) or nil
+      if not owner or rails.human(owner) then
+        local f = F(owner or "(no rail left)")
+        f.rails = f.rails + 1
+        f.depots[-idx[k]] = true
+        idx[k] = nil
+        freed = freed + 1
+      end
+    end
+  end
+  for _, id in ipairs(sorted_keys(R.lines)) do
+    local l = R.lines[id]
+    if l.kind ~= "manual" and rails.human(l.force) and not (rails.depot(l.a) and rails.depot(l.b)) then
+      if J.dissolve_line(l, "a depot of it is gone, a save from before 0.1.4") then
+        table.insert(F(l.force).lines, id)
+      end
+    end
+  end
+  for _, force_name in ipairs(sorted_keys(per)) do
+    local f = per[force_name]
+    util.log("rails: orphan platforms of %s (0.1.4, #45): %d rails of %d gone depots (#%s) are plain track now%s",
+      force_name, f.rails, table_size(f.depots), table.concat(sorted_keys(f.depots), ", #"),
+      #f.lines > 0 and (", lines #" .. table.concat(f.lines, ", #") .. " dissolved") or "")
+  end
+  return freed
+end
 
 -- 0.1.4 (#33 item 4): rolling stock in a platform's area makes it busy only when its train is in the platform's rail
 -- block: a train on a track beside the platform (another depot's platform of the same capital, a line along it) made a
@@ -4343,6 +4599,7 @@ end
 local function check_lines()
   local R = rstate()
   if (R.signals_v or 0) < 2 then rails.fix_track_signals() end -- 0.1.4 (#41): a save from before (see there)
+  if (R.orphans_v or 0) < 1 then rails.fix_orphans() end -- 0.1.4 (#45): the same
   for _, id in ipairs(sorted_keys(R.lines)) do
     local line = R.lines[id] or {} -- (0.1.3: a planner line dissolved during this check is gone)
     local st = line.state
@@ -5229,7 +5486,8 @@ J.STOCK_TYPES = {"locomotive", "cargo-wagon", "fluid-wagon", "artillery-wagon"}
 --- What an own rail is: "track" (player track: a planner line's or a Rail tool segment's piece, or a rail of no line),
 --- "line" (a piece an auto line laid between two depots), "platform" (a depot's platform). Second result: the line,
 --- or the depot record of a platform.
--- The pieces of player track that a force's auto lines run along (job.reuse): {[piece key] = line}, kept for a tick.
+-- The pieces of player track that a force's auto lines run along (job.reuse): {[piece key] = {line, ...}} (0.1.4 #33:
+-- every line that runs along it, by id), kept for a tick.
 function J.reused_by(force_name)
   local C = J.reused_cache
   if C and C.tick == game.tick and C.force == force_name then return C.set end
@@ -5239,7 +5497,11 @@ function J.reused_by(force_name)
     local l = R.lines[id]
     if l.kind ~= "manual" and l.force == force_name and l.reused then
       for _, p in ipairs(l.pieces or {}) do
-        if p.reused then set[pkey(p.name, p.x, p.y, p.d)] = l end
+        if p.reused then
+          local k = pkey(p.name, p.x, p.y, p.d)
+          set[k] = set[k] or {}
+          set[k][#set[k] + 1] = l
+        end
       end
     end
   end
@@ -5256,7 +5518,7 @@ function rails.rail_owner(e)
   local line = v and R.lines[floor(v / 100000)]
   if line and (line.kind ~= "manual" or #(line.supports or {}) > 0) then return "line", line end
   local auto = J.reused_by(e.force.name)[key] -- (player track an auto line runs along)
-  if auto then return "line", auto end
+  if auto then return "line", auto[1] end
   return "track", line
 end
 
@@ -5371,16 +5633,20 @@ function J.split_line(line, gone)
 end
 
 --- 0.1.4 (#41 item 3, #33 item 6): remove the own rails and signals in `list` (LuaEntity) of force `force_name` (the
---- piece selection's Delete). Kept: rails under a train, a depot's platform, the pieces an auto line laid and the player
---- track an auto line runs along (lines are not taken apart here). The signals at the joints of a removed rail go with it, and the game's pairs of a junction
---- that is no junction any more. A planner line or Rail tool segment that loses pieces is split into the runs that
---- stand (rails.lua J.split_line). Refund, returned undelivered: the rails each rail was built from, a signal's own item
---- (one of a line's spacing pairs: signal_rails rails; a junction signal the game placed: nothing). Returns
---- {rails = n, signals = n, refund = {[item] = n}, kept = {train = n, platform = n, line = n}, at = position}.
---- Log line "rails: track removed by player N: ...".
-function rails.remove_track(list, force_name, player_index)
+--- piece selection's Delete). Kept: rails under a train, a depot's platform (it goes with its depot: #45), the pieces of
+--- a Rail tool segment with bridges. The signals at the joints of a removed rail go with it, and the game's pairs of a
+--- junction that is no junction any more. A planner line or Rail tool segment that loses pieces is split into the runs
+--- that stand (rails.lua J.split_line); 0.1.4 (#33): a line between depots that loses a piece (its own, or player track
+--- it runs along) is dissolved, the rest of its track stays as plain track (J.dissolve_line). Refund, returned
+--- undelivered: the rails each rail was built from, a signal's own item (one of a line's spacing pairs: signal_rails
+--- rails; a junction signal the game placed: nothing). Returns {rails = n, signals = n, refund = {[item] = n},
+--- kept = {train = n, platform = n, line = n}, dissolved = {{id, a, b}}, at = position}. Log line "rails: track removed
+--- by player N: ..." (not with opts.quiet).
+function rails.remove_track(list, force_name, player_index, opts)
+  opts = opts or {}
   local R = rstate()
-  local res = {rails = 0, signals = 0, refund = {}, kept = {train = 0, platform = 0, line = 0}}
+  local res = {rails = 0, signals = 0, refund = {}, kept = {train = 0, platform = 0, line = 0}, dissolved = {}}
+  local dissolve = {}
   local function refund(name, n)
     if n > 0 then res.refund[name] = (res.refund[name] or 0) + n end
   end
@@ -5410,17 +5676,25 @@ function rails.remove_track(list, force_name, player_index)
         local kind, owner = rails.rail_owner(e)
         if kind == "platform" then
           res.kept.platform = res.kept.platform + 1
-        elseif kind == "line" then
+        elseif kind == "line" and owner.kind == "manual" then -- (a Rail tool segment with bridges)
           res.kept.line = res.kept.line + 1
         elseif under_train(e) then
           res.kept.train = res.kept.train + 1
         else
           rails_out[#rails_out + 1] = e
-          if owner then
-            local v = index_of(e.surface.index)[pkey(e.name, e.position.x, e.position.y, e.direction)]
-            gone[owner.id] = gone[owner.id] or {}
-            gone[owner.id][v % 100000] = true
-            lines[owner.id] = owner
+          if kind == "line" then -- 0.1.4 (#33): the lines between depots on it are taken apart
+            if owner.kind ~= "manual" then dissolve[owner.id] = owner end
+            for _, l in ipairs(J.reused_by(force_name)[pkey(e.name, e.position.x, e.position.y, e.direction)] or {}) do
+              dissolve[l.id] = l
+            end
+          end
+          -- (the piece's own player line, by the index: split below)
+          local v = index_of(e.surface.index)[pkey(e.name, e.position.x, e.position.y, e.direction)]
+          local pl = v and v > 0 and R.lines[floor(v / 100000)]
+          if pl and pl.kind == "manual" then
+            gone[pl.id] = gone[pl.id] or {}
+            gone[pl.id][v % 100000] = true
+            lines[pl.id] = pl
           end
           for _, rd in ipairs({RD.front, RD.back}) do
             local re = e.get_rail_end(rd)
@@ -5462,9 +5736,9 @@ function rails.remove_track(list, force_name, player_index)
   drop_signals()
   for _, e in ipairs(rails_out) do
     res.at = res.at or {x = e.position.x, y = e.position.y}
-    local _, owner = rails.rail_owner(e)
-    local p = owner and owner.pieces and owner.pieces[index_of(e.surface.index)[pkey(e.name, e.position.x, e.position.y,
-      e.direction)] % 100000]
+    local v = index_of(e.surface.index)[pkey(e.name, e.position.x, e.position.y, e.direction)]
+    local owner = v and v > 0 and R.lines[floor(v / 100000)]
+    local p = owner and owner.pieces and owner.pieces[v % 100000]
     if p and p.rails then
       refund(rails.RAIL, p.rails)
     else
@@ -5484,16 +5758,24 @@ function rails.remove_track(list, force_name, player_index)
     end
   end
   drop_signals()
+  for _, id in ipairs(sorted_keys(dissolve)) do
+    local out = J.dissolve_line(dissolve[id], string.format("track removed by player %d", player_index or 0))
+    if out then res.dissolved[#res.dissolved + 1] = out end
+  end
   local split = {}
   for _, id in ipairs(sorted_keys(lines)) do
     for _, nid in ipairs(J.split_line(lines[id], gone[id])) do split[#split + 1] = nid end
   end
   local shown = {}
   for _, item in ipairs(sorted_keys(res.refund)) do shown[#shown + 1] = res.refund[item] .. " " .. item end
-  util.log("rails: track removed by player %d (%s): %d rails, %d signals, refund [%s]; kept %d under trains, %d of "
-    .. "platforms, %d of depot lines; lines %s", player_index or 0, force_name, res.rails, res.signals,
-    table.concat(shown, ", "), res.kept.train, res.kept.platform, res.kept.line,
-    #split > 0 and ("#" .. table.concat(split, ", #")) or "-")
+  if not opts.quiet then
+    local ds = {}
+    for _, o in ipairs(res.dissolved) do ds[#ds + 1] = "#" .. o.id end
+    util.log("rails: track removed by player %d (%s): %d rails, %d signals, refund [%s]; kept %d under trains, %d of "
+      .. "platforms, %d of bridged segments; lines %s; depot lines dissolved %s", player_index or 0, force_name,
+      res.rails, res.signals, table.concat(shown, ", "), res.kept.train, res.kept.platform, res.kept.line,
+      #split > 0 and ("#" .. table.concat(split, ", #")) or "-", #ds > 0 and table.concat(ds, ", ") or "-")
+  end
   return res
 end
 
@@ -5504,14 +5786,16 @@ function rails.describe_track(e)
     return {{"rts.track-signal-" .. owner}, {"rts.track-signal-hint"}}
   end
   local kind, owner = rails.rail_owner(e)
-  if kind == "platform" then
-    return {{"rts.track-rail-platform", owner and owner.index or "?"}, {"rts.track-rail-stays"}}
-  elseif kind == "line" then
-    local A, B = owner and rails.depot(owner.a), owner and rails.depot(owner.b)
-    return {{"rts.track-rail-line", A and A.index or "?", B and B.index or "?"}, {"rts.track-rail-stays"}}
-  end
   local n = 0
   for _, it in ipairs(J.items_of(e)) do n = n + it.count end
+  if kind == "platform" then -- 0.1.4 (#45): it goes when the depot is demolished
+    return {{"rts.track-rail-platform", owner and owner.index or "?"}, {"rts.track-rail-platform-hint"}}
+  elseif kind == "line" and owner and owner.kind == "manual" then
+    return {{"rts.track-rail-planned", owner.id}, {"rts.track-rail-stays"}}
+  elseif kind == "line" then -- 0.1.4 (#33): Delete takes the line apart
+    local A, B = owner and rails.depot(owner.a), owner and rails.depot(owner.b)
+    return {{"rts.track-rail-line", A and A.index or "?", B and B.index or "?"}, {"rts.track-rail-line-hint", n}}
+  end
   return {owner and {"rts.track-rail-planned", owner.id} or {"rts.track-rail-own"}, {"rts.track-rail-hint", n}}
 end
 
@@ -6521,6 +6805,7 @@ function rails.init()
   learn_geometry()
   bind()
   rails.fix_track_signals() -- 0.1.4 (#41): once per save (storage.rails.signals_v)
+  rails.fix_orphans() -- 0.1.4 (#45): once per save (storage.rails.orphans_v)
   -- 0.1.2 (#31 part A): a save from before the Station and the signals: a force with Railways gets them now (research
   -- only recomputes its unlocks when a technology finishes)
   local rr = storage.research

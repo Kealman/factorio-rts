@@ -337,7 +337,7 @@ buildings.REFUND_RANGE = 64   -- tiles: other own stockpiles a refund may go to 
 -- assembler slots, fuel, lab inputs); roboport robots go down with the building.
 buildings.CONTENT_INVENTORIES = {"chest", "turret_ammo", "fuel", "furnace_source", "furnace_result",
                                  "furnace_modules", "crafter_input", "crafter_output", "lab_input"}
-local demolish_checks, demolish_parts = {}, {}
+local demolish_checks, demolish_parts, demolish_extras, demolish_refusals = {}, {}, {}, {}
 
 --- fn(rec) -> reason string when the building must not be demolished, else nil. Load time only.
 function buildings.on_demolish_check(fn) demolish_checks[#demolish_checks + 1] = fn end
@@ -345,6 +345,25 @@ function buildings.on_demolish_check(fn) demolish_checks[#demolish_checks + 1] =
 --- fn(rec) -> array of LuaEntity that are part of this building (hub stockpiles): they go with it, free of refund,
 --- and their contents are recovered. Load time only (scripts/logistics.lua).
 function buildings.on_demolish_parts(fn) demolish_parts[#demolish_parts + 1] = fn end
+
+--- 0.1.4 (#45): fn(rec) -> {[item] = n} or nil: what else goes with the building and comes back with its refund, whole
+--- (the hook applies its own share: scripts/rails.lua takes up a depot's platform and returns half of its rails). Called
+--- once the demolish is allowed, while the building is still registered. Load time only.
+function buildings.on_demolish_extra(fn) demolish_extras[#demolish_extras + 1] = fn end
+
+--- 0.1.4 (#45): fn(rec) -> reason, LocalisedString message, or nil: the building cannot be demolished right now (a train
+--- stands on a depot's platform: scripts/rails.lua). Unlike on_demolish_check, the Demolish buttons stay enabled and the
+--- press says why (scripts/demolish.lua). Load time only.
+function buildings.on_demolish_refuse(fn) demolish_refusals[#demolish_refusals + 1] = fn end
+
+--- Why a building cannot be demolished right now (on_demolish_refuse): reason and message, or nil.
+function buildings.demolish_refused(rec)
+  for i = 1, #demolish_refusals do
+    local why, message = demolish_refusals[i](rec)
+    if why then return why, message end
+  end
+  return nil
+end
 
 --- Why a building cannot be demolished: "protected" for a Command Center or a capital City Center, a hook's reason,
 --- or nil when it can.
@@ -474,7 +493,7 @@ function buildings.demolish(entity, opts)
   local un = entity.unit_number
   local rec = un and storage.buildings[un]
   if not rec then return false, "not-building" end
-  local why = buildings.demolish_blocked(rec)
+  local why = buildings.demolish_blocked(rec) or buildings.demolish_refused(rec)
   if why then return false, why end
 
   local surface, force_name, pos, name = entity.surface, rec.force, entity.position, entity.name
@@ -487,6 +506,13 @@ function buildings.demolish(entity, opts)
         part_entities[#part_entities + 1] = part
         exclude[part.unit_number] = true
       end
+    end
+  end
+
+  local extra = {} -- 0.1.4 (#45)
+  for i = 1, #demolish_extras do
+    for item, n in pairs(demolish_extras[i](rec) or {}) do
+      if n > 0 then extra[item] = (extra[item] or 0) + n end
     end
   end
 
@@ -520,6 +546,7 @@ function buildings.demolish(entity, opts)
       if carry then carry[item] = exact - whole end
       if whole > 0 then refund[item] = whole end
     end
+    for item, n in pairs(extra) do refund[item] = (refund[item] or 0) + n end
   end
   local stacks = {}
   for item, n in pairs(refund) do stacks[#stacks + 1] = {name = item, count = n} end

@@ -41,7 +41,15 @@
 -- (a crew cut off by the removal is recalled after 30 s), surveys_apart (#33 item 3: the auto lines A - C, A - B and
 -- A - D surveyed together: no piece laid twice, none blocked or surveyed again), adopt (#44: a work train assembled
 -- with the builder's Construction preset stands idle on A's platform; a segment laid from A's free west end takes it
--- as its crew within a minute) and adopt_built (the segment gets built). A crew without a path dumps its track ("r3 manual: diag: ..."). Summary "[rts] r3 manual summary <passed>/<total>".
+-- as its crew within a minute) and adopt_built (the segment gets built), and 0.1.4 (#45, #33): demolish_refused (a depot
+-- G with a freight train on its platform is not demolished, the message names the train), demolish_depot (G demolished
+-- once the train is gone: its 20 platform rails and 2 stops go, 10 rails come back with its refund), depot_line (D
+-- demolished: the line A - D is dissolved, A keeps two lines, its track left behind is plain track and a box over it near
+-- D removes it), station_demolish (the Station's stops go, the track under them stays), orphan_platform (a depot H whose
+-- record went the 0.1.3 way, platform still indexed: rails.fix_orphans makes it plain track, Delete removes it),
+-- depot_lost (C destroyed: its platform stays as plain track, the line A - C is dissolved) and line_delete (#33: a rail of
+-- track 1 that the line A - B runs along removed with Delete: A - B is dissolved, the rest stands).
+-- A crew without a path dumps its track ("r3 manual: diag: ..."). Summary "[rts] r3 manual summary <passed>/<total>".
 local events = require("scripts.events")
 local util = require("scripts.util")
 local logistics = require("scripts.logistics")
@@ -49,6 +57,7 @@ local buildings = require("scripts.buildings")
 local rails = require("scripts.rails")
 local railroutes = require("scripts.railroutes")
 local territory = require("scripts.territory")
+local pieces = require("scripts.pieces")
 
 local F = "rts-ai-2"
 local SURFACE = "r3-manual"
@@ -869,11 +878,232 @@ local function adopt(T)
   if built >= #P.pieces then
     check(T, "adopt_built", true, "the segment (%d pieces) built %.0f s after its crew left", #P.pieces,
       (game.tick - T.adopted) / 60)
-    finish(T)
+    T.stage, T.t11 = "g_depot", game.tick
   elseif game.tick - T.adopted > 5 * 3600 then
     check(T, "adopt_built", false, "%d of %d pieces built after 5 min", built, #P.pieces)
-    finish(T)
+    T.stage, T.t11 = "g_depot", game.tick
   end
+end
+
+-- 0.1.4 (#45): a depot G north of A with a freight train on its platform refuses the demolish; without it, G goes with
+-- its platform. The loop trains stop first (manual mode): nothing runs into the track the later checks remove.
+local function g_depot(T)
+  local s = surface()
+  if not T.G then
+    for _, rec in ipairs({T.r1, T.r2}) do
+      local t = rec and rails.train_of(rec)
+      if t then t.manual_mode = true end
+    end
+    T.G = depot(s, {x = 100, y = -60})
+    fill(T.G, {{rails.LOCO_KIT, 2}, {rails.WAGON_KIT, 2}, {"coal", 100}})
+    return
+  end
+  if not T.gtrain then
+    local t, why = rails.create_train(T.G, "cargo")
+    if t then
+      T.gtrain = t
+    elseif game.tick - T.t11 > 2 * 3600 then
+      check(T, "demolish_refused", false, "no freight train on G's platform: %s", tostring(why))
+      finish(T)
+    end
+    return
+  end
+  if not T.grefused then
+    local rec = buildings.get(T.G)
+    local why, msg = buildings.demolish_refused(rec)
+    local ok, info = buildings.demolish(rec.entity, {force = F})
+    T.grefused = true
+    check(T, "demolish_refused", not ok and info == "train-on-platform" and why == "train-on-platform" and msg ~= nil
+      and msg[3] == T.gtrain.id and rails.depot(T.G) ~= nil, "depot G with freight train %d on its platform: demolish %s "
+      .. "(%s), message %s naming train %s", T.gtrain.id, tostring(ok), tostring(info), msg and tostring(msg[1]) or "-",
+      msg and tostring(msg[3]) or "-")
+    local back, w = rails.disband_train(T.gtrain)
+    log("freight train on G disbanded: %s %s", tostring(back), tostring(w))
+    return
+  end
+  local d = rails.depot(T.G)
+  local spec = d and d.platform and d.platform.spec
+  local stops = {}
+  for _, st in pairs(d and d.platform and d.platform.stops or {}) do stops[#stops + 1] = st end
+  local ok, info = buildings.demolish(d.entity, {force = F})
+  local left, st_left = 0, 0
+  for _, q in ipairs(spec and spec.rails or {}) do
+    if s.find_entity("straight-rail", {q.x, q.y}) then left = left + 1 end
+  end
+  for _, st in ipairs(stops) do if st.valid then st_left = st_left + 1 end end
+  local refund = type(info) == "table" and info.refund and info.refund.rail or 0
+  check(T, "demolish_depot", ok == true and spec ~= nil and #spec.rails == 20 and left == 0 and #stops == 2 and st_left == 0
+    and refund == 10 and storage.rails.depots[T.G] == nil, "depot G demolished %s: %d platform rails, %d left; %d stops, "
+    .. "%d left; refund %s (rails %d)", tostring(ok), spec and #spec.rails or -1, left, #stops, st_left,
+    type(info) == "table" and serpent.line(info.refund) or tostring(info), refund)
+  T.stage = "d_depot"
+end
+
+local function lines_of_depot(un)
+  local d = rails.depot(un)
+  if not d then return 0 end
+  local n = d.line and 1 or 0
+  for _ in pairs(d.lines or {}) do n = n + 1 end
+  return n
+end
+
+-- D demolished: the line A - D is dissolved and its track left behind near D goes with a box (pieces.in_area)
+local function d_depot(T)
+  local s = surface()
+  local lad = rails.lines[T.lad]
+  local own = {}
+  local dpos = rails.depot(T.D).entity.position
+  for _, p in ipairs(lad and lad.pieces or {}) do
+    if not p.reused and p.e and p.e.valid then own[#own + 1] = p.e end
+  end
+  local a_before = lines_of_depot(T.A)
+  local ok = buildings.demolish(rails.depot(T.D).entity, {force = F})
+  local plain = 0
+  for _, e in ipairs(own) do
+    if e.valid and rails.rail_owner(e) == "track" then plain = plain + 1 end
+  end
+  -- (the box: around A - D's own pieces nearest D, grown piece by piece while it holds no other rail: track 2, which A - C
+  -- runs along, passes close by)
+  local by = {}
+  for _, e in ipairs(own) do if e.valid then by[#by + 1] = e end end
+  table.sort(by, function(a, b) return util.distance(a.position, dpos) < util.distance(b.position, dpos) end)
+  local mine, near, box = {}, {}, nil
+  for _, e in ipairs(by) do mine[e.unit_number] = true end
+  for _, e in ipairs(by) do
+    local q = e.position
+    local b = box and {{math.min(box[1][1], q.x - 0.5), math.min(box[1][2], q.y - 0.5)},
+                       {math.max(box[2][1], q.x + 0.5), math.max(box[2][2], q.y + 0.5)}}
+      or {{q.x - 0.5, q.y - 0.5}, {q.x + 0.5, q.y + 0.5}}
+    local clean = true
+    for _, o in ipairs(pieces.in_area(F, s, b)) do
+      if o.type ~= "entity-ghost" and not o.type:find("signal") and not mine[o.unit_number] then clean = false end
+    end
+    if not clean then break end
+    box = b
+    near[#near + 1] = e
+  end
+  local list = {}
+  for _, e in ipairs(box and pieces.in_area(F, s, box) or {}) do
+    if e.type ~= "entity-ghost" then list[#list + 1] = e end
+  end
+  local res = rails.remove_track(list, F, 0)
+  local near_left = 0
+  for _, e in ipairs(near) do if e.valid then near_left = near_left + 1 end end
+  check(T, "depot_line", ok == true and lad ~= nil and rails.lines[T.lad] == nil and a_before == 3
+    and lines_of_depot(T.A) == 2 and plain == #own and #own > 0 and #near > 0 and near_left == 0
+    and res.kept.platform + res.kept.line + res.kept.train == 0, "D demolished %s: line A-D %s -> %s, A's lines %d -> %d; "
+    .. "%d built pieces of its own, %d plain track; a box near D: %d pieces of it among %d rails and signals, %d rails "
+    .. "and %d signals removed, %d of them left, kept %s", tostring(ok), tostring(T.lad), rails.lines[T.lad] and "kept"
+    or "gone", a_before, lines_of_depot(T.A), #own, plain, #near, #list, res.rails, res.signals, near_left,
+    serpent.line(res.kept))
+  T.stage = "station_demolish"
+end
+
+-- the Station's stops go with it, the track under them stays
+local function station_demolish(T)
+  local R = storage.rails
+  local sun
+  for _, un in ipairs((function() local k = {} for i in pairs(R.stations or {}) do k[#k + 1] = i end table.sort(k)
+                                  return k end)()) do
+    local d = rails.depot(un)
+    if d and d.force == F then sun = sun or un end
+  end
+  local d = sun and rails.depot(sun)
+  local stops, under = {}, {}
+  for _, st in pairs(d and d.platform and d.platform.stops or {}) do
+    stops[#stops + 1] = st
+    under[#under + 1] = st.connected_rail
+  end
+  local ok = d and buildings.demolish(d.entity, {force = F})
+  local st_left, rails_left = 0, 0
+  for _, st in ipairs(stops) do if st.valid then st_left = st_left + 1 end end
+  for _, r in ipairs(under) do if r and r.valid then rails_left = rails_left + 1 end end
+  check(T, "station_demolish", ok == true and #stops == 2 and st_left == 0 and rails_left == #under
+    and not (R.stations or {})[sun] and R.depots[sun] == nil, "station %s demolished %s: %d stops, %d left; %d rails "
+    .. "under them, %d still stand", tostring(sun), tostring(ok), #stops, st_left, #under, rails_left)
+  T.stage, T.t12 = "orphan", game.tick
+end
+
+-- a depot H whose record goes the way of 0.1.3 and the 0.1.4 development builds (stops removed, record gone, the platform
+-- still indexed as a platform): the repair of a loaded save makes it plain track, Delete removes it
+local function orphan(T)
+  local s = surface()
+  if not T.H then
+    T.H = depot(s, {x = 200, y = -60})
+    return
+  end
+  local R = storage.rails
+  local d = rails.depot(T.H)
+  local list = {}
+  for _, r in ipairs(d and d.platform and d.platform.rails or {}) do if r.valid then list[#list + 1] = r end end
+  for _, st in pairs(d and d.platform and d.platform.stops or {}) do
+    if st.valid then
+      R.stops[st.unit_number] = nil
+      st.destroy()
+    end
+  end
+  R.depots[T.H] = nil
+  if d then d.entity.destroy({raise_destroy = true}) end
+  local before = list[1] and rails.rail_owner(list[1])
+  R.orphans_v = nil
+  local freed = rails.fix_orphans()
+  local after = list[1] and rails.rail_owner(list[1])
+  local res = rails.remove_track(list, F, 0)
+  check(T, "orphan_platform", #list == 20 and before == "platform" and freed >= #list and after == "track"
+    and res.rails == #list, "depot H's record gone, its platform of %d rails %s: the repair freed %d index entries, "
+    .. "now %s; Delete removed %d rails (refund %s)", #list, tostring(before), freed, tostring(after), res.rails,
+    serpent.line(res.refund))
+  T.stage = "c_lost"
+end
+
+-- C destroyed (a war): its platform stays as plain track, the line A - C is dissolved
+local function c_lost(T)
+  local dC = rails.depot(T.C)
+  local list = {}
+  for _, r in ipairs(dC and dC.platform and dC.platform.rails or {}) do if r.valid then list[#list + 1] = r end end
+  local had = rails.lines[T.lac] ~= nil
+  if dC then dC.entity.die() end
+  local standing, plain = 0, 0
+  for _, r in ipairs(list) do
+    if r.valid then
+      standing = standing + 1
+      if rails.rail_owner(r) == "track" then plain = plain + 1 end
+    end
+  end
+  check(T, "depot_lost", had and rails.lines[T.lac] == nil and #list == 20 and standing == 20 and plain == 20
+    and storage.rails.depots[T.C] == nil, "C destroyed: line A-C %s -> %s, its platform %d rails: %d stand, %d plain "
+    .. "track", tostring(had), rails.lines[T.lac] and "kept" or "gone", #list, standing, plain)
+  T.stage = "line_delete"
+end
+
+-- #33: a rail of track 1 that the line A - B runs along, removed with Delete: A - B is dissolved, the rest stands
+local function line_delete(T)
+  local s = surface()
+  local pick
+  for x = 521, 561, 4 do
+    local r = rail_near_x(T.plan.track1, x, 2)
+    if r and not pick and s.count_entities_filtered({position = r.position, radius = 14,
+         type = {"locomotive", "cargo-wagon"}}) == 0 then
+      pick = r
+    end
+  end
+  local kind, owner = nil, nil
+  local at = pick and util.pos_str(pick.position) or "-"
+  if pick then kind, owner = rails.rail_owner(pick) end
+  local had = rails.lines[T.lab] ~= nil
+  local res = pick and rails.remove_track({pick}, F, 0) or {rails = 0, dissolved = {}, refund = {}}
+  local ids = {}
+  for _, o in ipairs(res.dissolved or {}) do ids[#ids + 1] = o.id end
+  local pieces_left = 0
+  for _, q in ipairs(T.plan.track1.pieces) do
+    if s.find_entity(q.name, {q.x, q.y}) then pieces_left = pieces_left + 1 end
+  end
+  check(T, "line_delete", pick ~= nil and kind == "line" and owner ~= nil and owner.id == T.lab and had
+    and rails.lines[T.lab] == nil and res.rails == 1 and (res.refund.rail or 0) >= 1
+    and pieces_left == #T.plan.track1.pieces - 1, "a rail of track 1 at %s (%s of line #%s) removed: %d rails, refund "
+    .. "%s, lines dissolved %s, line A-B %s; track 1 has %d of %d pieces standing", at, tostring(kind), owner and tostring(owner.id) or "-", res.rails, serpent.line(res.refund),
+    table.concat(ids, ", "), rails.lines[T.lab] and "kept" or "gone", pieces_left, #T.plan.track1.pieces)
+  finish(T)
 end
 
 events.on(defines.events.on_train_changed_state, function(e)
@@ -906,5 +1136,11 @@ events.on_nth_tick(60, function(e)
   elseif T.stage == "short_built" then short_built(T)
   elseif T.stage == "spur" then spur(T)
   elseif T.stage == "removed" then removed(T)
-  elseif T.stage == "adopt" then adopt(T) end
+  elseif T.stage == "adopt" then adopt(T)
+  elseif T.stage == "g_depot" then g_depot(T)
+  elseif T.stage == "d_depot" then d_depot(T)
+  elseif T.stage == "station_demolish" then station_demolish(T)
+  elseif T.stage == "orphan" then orphan(T)
+  elseif T.stage == "c_lost" then c_lost(T)
+  elseif T.stage == "line_delete" then line_delete(T) end
 end)
