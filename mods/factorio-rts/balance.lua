@@ -1407,7 +1407,9 @@ do
     weights = {ore = 1.0, oil = 1.6, rare = 0.8, choke = 0.5, port = 0.4, rail = 1.0, exposure = 0.8, need = 1.0},
     role_order = {"oil", "mining", "rare", "fortress", "trade"},
     oil = {reach = 14, pumpjacks = 3, export = {"rts-crude-oil", "plastic-bar", "sulfur"}, keep_crude = 400},
-    trunk = {period = 600, lines = 3, rival_factor = 3, max_surveys = 2, max_edge = 480, age1_circuits = 40},
+    trunk = {period = 600, lines = 3, rival_factor = 3, max_surveys = 2, max_edge = 480, age1_circuits = 40,
+             -- (0.1.4, issue #2) the Age I circuit hold ends once the capital's line to its mining town is open
+             age1_after_main = true},
     -- (0.1.1, issue #2) while a rail line anchored at the capital waits for its crew's kits, no new district is queued,
     -- at most `max` ticks at a stretch, then `rest` ticks without (ai/planner.lua planner.rail_hold)
     rail_hold = {max = 3 * 60 * 60, rest = 2 * 60 * 60},
