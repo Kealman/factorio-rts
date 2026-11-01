@@ -5281,6 +5281,17 @@ local function refuel_stranded(rec, train)
   end
 end
 
+-- 0.1.4 (#33): true when a live AI rail program of the train's force holds the train's line (R.ai, R.ai_more)
+function J.program_line(rec)
+  local R = rstate()
+  local A = R.ai and R.ai[rec.force]
+  if A and A.line == rec.ai_line then return true end
+  for _, P in ipairs(R.ai_more and R.ai_more[rec.force] or {}) do
+    if P.line == rec.ai_line then return true end
+  end
+  return false
+end
+
 local function train_step(id, rec)
   local R = rstate()
   local train = train_of(rec)
@@ -5309,10 +5320,29 @@ local function train_step(id, rec)
   end
   if rec.dwell then return end
   local st = train.state
+  if rec.stranded and st ~= TS.no_path and st ~= TS.path_lost then rec.stranded = nil end -- (0.1.4 #33, below)
   if st == TS.no_path or st == TS.path_lost then
     if rec.state ~= "no_path" then
       rec.state = "no_path"
       util.log("rails: train %d (%s) has no path", train.id, rec.force)
+    end
+    -- 0.1.4 (#33): an AI freight train whose pickup or drop-off depot is gone stands without a path for good when its
+    -- rail program was given up (its far city lost: R.ai_lost), and the rail block it holds stays closed: M3 seed 802,
+    -- train 62 of rts-player's lost line #1 stood on depot #4249's platform, which the new line #15 crosses, and every
+    -- crew of #15 waited at the signal before it for the rest of the match. After AI_FREIGHT_STUCK it is scrapped into
+    -- the depot it stands at (rails.disband_train: half its kits, its cargo and coal back), as a program scraps its own
+    -- (a program that still holds the line rebuilds the depot and routes the train again: unchanged).
+    if rec.ai_line and not (rails.depot(rec.pickup) and rails.depot(rec.dropoff)) and not J.program_line(rec) then
+      rec.stranded = rec.stranded or game.tick
+      if game.tick - rec.stranded >= rails.AI_FREIGHT_STUCK and abs(train.speed) < 0.001 then
+        local tid, gone = train.id, not rails.depot(rec.pickup) and rec.pickup or rec.dropoff
+        local ok, why = rails.disband_train(train, rec.home)
+        util.log("rails: AI %s scraps freight train %d of line #%s stranded without a path for %.0f s (depot #%s is "
+          .. "gone): %s", rec.force, tid, tostring(rec.ai_line), (game.tick - rec.stranded) / 60, tostring(gone),
+          ok and "kits back" or tostring(why))
+        if ok then return end
+        rec.stranded = game.tick -- (no depot to take it: again later)
+      end
     end
   elseif train.manual_mode then
     rec.state = rec.pickup and "stopped" or "idle"
