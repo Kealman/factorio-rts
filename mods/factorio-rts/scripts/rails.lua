@@ -5336,12 +5336,24 @@ local function train_step(id, rec)
       rec.stranded = rec.stranded or game.tick
       if game.tick - rec.stranded >= rails.AI_FREIGHT_STUCK and abs(train.speed) < 0.001 then
         local tid, gone = train.id, not rails.depot(rec.pickup) and rec.pickup or rec.dropoff
-        local ok, why = rails.disband_train(train, rec.home)
-        util.log("rails: AI %s scraps freight train %d of line #%s stranded without a path for %.0f s (depot #%s is "
-          .. "gone): %s", rec.force, tid, tostring(rec.ai_line), (game.tick - rec.stranded) / 60, tostring(gone),
-          ok and "kits back" or tostring(why))
+        -- (into the depot it stands at, else its home, else the force's nearest depot)
+        local near, nd = nil, nil
+        local here = train.front_stock.position
+        for _, un in ipairs(sorted_keys(rstate().depots)) do
+          local d = rails.depot(un)
+          if d and d.force == rec.force and not d.station then
+            local dd = util.distance(d.entity.position, here)
+            if not nd or dd < nd then near, nd = un, dd end
+          end
+        end
+        local ok, why = rails.disband_train(train, near)
+        if ok or not rec.stranded_logged then
+          util.log("rails: AI %s scraps freight train %d of line #%s stranded without a path for %.0f s (depot #%s is "
+            .. "gone): %s", rec.force, tid, tostring(rec.ai_line), (game.tick - rec.stranded) / 60, tostring(gone),
+            ok and "kits back" or tostring(why))
+        end
         if ok then return end
-        rec.stranded = game.tick -- (no depot to take it: again later)
+        rec.stranded, rec.stranded_logged = game.tick, true -- (no depot to take it: again later, logged once)
       end
     end
   elseif train.manual_mode then
