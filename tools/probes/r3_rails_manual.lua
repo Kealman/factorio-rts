@@ -41,7 +41,11 @@
 -- (a crew cut off by the removal is recalled after 30 s), surveys_apart (#33 item 3: the auto lines A - C, A - B and
 -- A - D surveyed together: no piece laid twice, none blocked or surveyed again), adopt (#44: a work train assembled
 -- with the builder's Construction preset stands idle on A's platform; a segment laid from A's free west end takes it
--- as its crew within a minute) and adopt_built (the segment gets built), and 0.1.4 (#45, #33): demolish_refused (a depot
+-- as its crew within a minute) and adopt_built (the segment gets built); #44 item 2: second_crew (depots K and M north of
+-- track 1 on separate track: while K's crew builds a segment west of K, a work train assembled at M is taken as the crew
+-- of planner track from M's east end), second_shared (with a work train assembled at K, whose way would share K's
+-- platform with the crew out, planner track from K's east end waits "crew-out-shared") and second_built (both get built,
+-- the one at K by K's next crew once K's is home); and 0.1.4 (#45, #33): demolish_refused (a depot
 -- G with a freight train on its platform is not demolished, the message names the train), demolish_depot (G demolished
 -- once the train is gone: its 20 platform rails and 2 stops go, 10 rails come back with its refund), depot_line (D
 -- demolished: the line A - D is dissolved, A keeps two lines, its track left behind is plain track and a box over it near
@@ -878,9 +882,135 @@ local function adopt(T)
   if built >= #P.pieces then
     check(T, "adopt_built", true, "the segment (%d pieces) built %.0f s after its crew left", #P.pieces,
       (game.tick - T.adopted) / 60)
-    T.stage, T.t11 = "g_depot", game.tick
+    T.stage, T.t13 = "second", game.tick
   elseif game.tick - T.adopted > 5 * 3600 then
     check(T, "adopt_built", false, "%d of %d pieces built after 5 min", built, #P.pieces)
+    T.stage, T.t13 = "second", game.tick
+  end
+end
+
+-- 0.1.4 (#44 item 2): depots K and M north of track 1, on separate track. K's crew builds a long segment west of K;
+-- meanwhile segments from K's and M's east ends are laid and handed over as planner track (they wait: a crew is out),
+-- then a work train is assembled at M and one at K. M's is taken as a second crew (its way shares no rail with K's crew);
+-- K's segment waits "crew-out-shared" (K's work train and K's crew both use K's platform), K's work train is then
+-- disbanded (K's crew comes home onto that platform) and K's next crew builds the segment.
+local function crew_of(id)
+  for tid, rec in pairs(storage.rails.trains) do
+    if rec.kind == "construction" and rec.force == F and rec.line == id then return tid, rec end
+  end
+  return nil
+end
+
+local function construction_cars()
+  for _, pr in ipairs(rails.PRESETS) do
+    if pr.key == "construction" then return pr.cars end
+  end
+end
+
+local function second(T)
+  local s = surface()
+  if not T.K then
+    -- (80 tiles north of track 1, a segment of 100 tiles: a survey along track 1 would cost more, so K's crew comes
+    -- from K and goes home to K's platform)
+    T.K = depot(s, {x = 400, y = -80})
+    T.M = depot(s, {x = 640, y = -80})
+    fill(T.K, {{rails.LOCO_KIT, 4}, {rails.CWAGON_KIT, 2}, {"coal", 300}, {rails.RAIL, 600}})
+    fill(T.M, {{rails.LOCO_KIT, 2}, {rails.CWAGON_KIT, 1}, {"coal", 200}, {rails.RAIL, 300}})
+    local w = platform_rail(T.K, 1)
+    lay(T, "sk", {starts = ends_of(w), goals = goals_of_point({x = w.position.x - 100, y = w.position.y}), start_rail = w,
+      own_land = true})
+    return
+  end
+  local Pk = handed(T, "sk")
+  if Pk == nil then return end
+  if Pk == false then
+    check(T, "second_crew", false, "the segment west of K: survey failed")
+    T.stage, T.t11 = "g_depot", game.tick
+    return
+  end
+  -- K's crew out and off K's platform: the segments from K's and M's east ends
+  if not T.sm_laid then
+    local cid, crec
+    for _, id in ipairs(Pk.lines) do
+      cid, crec = crew_of(id)
+      if cid then break end
+    end
+    local t = cid and rails.train_of(crec)
+    local a = rails.depot(T.K).platform.area
+    local function inside(q) return q.x >= a[1][1] and q.x <= a[2][1] and q.y >= a[1][2] and q.y <= a[2][2] end
+    local off = t ~= nil and not inside(t.front_stock.position) and not inside(t.back_stock.position)
+    if not off then
+      if game.tick - T.t13 > 5 * 3600 then
+        check(T, "second_crew", false, "K's crew never left K's platform")
+        T.stage, T.t11 = "g_depot", game.tick
+      end
+      return
+    end
+    T.kcrew = cid
+    T.khome = crec.home
+    local ek, em = platform_rail(T.K, 2), platform_rail(T.M, 2)
+    lay(T, "sk2", {starts = ends_of(ek), goals = goals_of_point({x = ek.position.x + 40, y = ek.position.y}),
+      start_rail = ek, own_land = true})
+    lay(T, "sm", {starts = ends_of(em), goals = goals_of_point({x = em.position.x + 40, y = em.position.y}),
+      start_rail = em, own_land = true})
+    T.sm_laid = game.tick
+    log("second: K's crew %d out; segments from K's and M's east ends laid", cid)
+    return
+  end
+  local Pm, Pk2 = handed(T, "sm"), handed(T, "sk2")
+  if Pm == nil or Pk2 == nil then return end
+  local R = storage.rails
+  -- once both are planner track: a work train at M, and one at K as soon as K's platform is free
+  if not T.wm then
+    local tm, wm = rails.create_composed(T.M, construction_cars(), {preset = "construction"})
+    T.wm = tm and tm.id or false
+    T.t14 = game.tick
+    log("second: work train at M: %s (%s); K's crew %d out: %s", tostring(T.wm), tostring(wm), T.kcrew,
+      tostring(R.trains[T.kcrew] ~= nil))
+  end
+  if not T.wk and R.trains[T.kcrew] then
+    local tk = rails.create_composed(T.K, construction_cars(), {preset = "construction"})
+    if tk then
+      T.wk = tk.id
+      log("second: work train %d at K while K's crew %d is out", tk.id, T.kcrew)
+    end
+  end
+  -- the wait of K's second segment while K's crew is out and K's work train stands there
+  for _, id in ipairs(Pk2 and Pk2.lines or {}) do
+    local l = rails.lines[id]
+    if l and l.wait == "crew-out-shared" and R.trains[T.kcrew] and T.wk and not T.shared_at then
+      T.shared_at = game.tick
+      T.shared_detail = l.wait_detail
+      -- (K's work train goes, so K's crew finds its platform free when it comes home; K's next crew builds the segment)
+      local wk = game.train_manager.get_train_by_id(T.wk)
+      local ok, why = false, "gone"
+      if wk and wk.valid then ok, why = rails.disband_train(wk) end
+      log("second: K's segment waits crew-out-shared; K's work train %s disbanded: %s %s", tostring(T.wk), tostring(ok),
+        tostring(why))
+    end
+  end
+  local mrec = T.wm and R.trains[T.wm]
+  if not T.second_done and mrec and mrec.kind == "construction" and mrec.adopted and mrec.line then
+    T.second_done = true
+    check(T, "second_crew", R.trains[T.kcrew] ~= nil, "the work train %d at M is the crew of planner track #%d %.0f s "
+      .. "after it was assembled; K's crew %d still out: %s", T.wm, mrec.line, (game.tick - T.t14) / 60, T.kcrew,
+      tostring(R.trains[T.kcrew] ~= nil))
+  end
+  local bm = Pm and built_of(Pm) or 0
+  local bk = Pk2 and built_of(Pk2) or 0
+  local all = Pm and Pk2 and bm >= #Pm.pieces and bk >= #Pk2.pieces
+  if all or game.tick - T.sm_laid > 8 * 3600 then
+    if not T.second_done then
+      check(T, "second_crew", false, "the work train at M %s: %s", tostring(T.wm), mrec and string.format("kind %s line %s",
+        tostring(mrec.kind), tostring(mrec.line)) or "gone or never assembled")
+    end
+    check(T, "second_shared", T.shared_at ~= nil, "K's segment from its east end waited crew-out-shared %s (detail %s) "
+      .. "while K's crew %d was out and K's work train %s stood on K's platform", T.shared_at and
+      string.format("%.0f s after the segments were laid", (T.shared_at - T.sm_laid) / 60) or "never",
+      tostring(T.shared_detail), T.kcrew or -1, tostring(T.wk))
+    log("second: K's crew %s came from depot #%s (K is #%s)", tostring(T.kcrew), tostring(T.khome), tostring(T.K))
+    check(T, "second_built", all == true, "segment at M %d of %d pieces built, at K %d of %d, %.0f s after they were laid",
+      bm, Pm and #Pm.pieces or -1, bk, Pk2 and #Pk2.pieces or -1, (game.tick - T.sm_laid) / 60)
     T.stage, T.t11 = "g_depot", game.tick
   end
 end
@@ -1029,7 +1159,7 @@ end
 local function orphan(T)
   local s = surface()
   if not T.H then
-    T.H = depot(s, {x = 200, y = -60})
+    T.H = depot(s, {x = 40, y = -60})
     return
   end
   local R = storage.rails
@@ -1137,6 +1267,7 @@ events.on_nth_tick(60, function(e)
   elseif T.stage == "spur" then spur(T)
   elseif T.stage == "removed" then removed(T)
   elseif T.stage == "adopt" then adopt(T)
+  elseif T.stage == "second" then second(T)
   elseif T.stage == "g_depot" then g_depot(T)
   elseif T.stage == "d_depot" then d_depot(T)
   elseif T.stage == "station_demolish" then station_demolish(T)

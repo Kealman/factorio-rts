@@ -112,7 +112,7 @@ end
 
 -- 0.1.4 (#44): the waits of track lines that have a text of their own (rts.track-why-*); others read rts.rails-why-*
 local TRACK_WHY = {["no-access"] = true, after = true, ["crew-out"] = true, ["no-depot"] = true, ["no-kits"] = true,
-                   ["no-rails"] = true}
+                   ["no-rails"] = true, ["crew-out-shared"] = true} -- (0.1.4 #44 item 2)
 
 local function depot_name(un)
   return (un and rails.depot(un)) and logistics.hub_name(un) or {"rts.railgui-none"}

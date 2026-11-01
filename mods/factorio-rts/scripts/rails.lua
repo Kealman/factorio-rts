@@ -3875,10 +3875,74 @@ function J.idle_crew(d, force_name)
   return nil
 end
 
+-- 0.1.4 (#44 item 2): true when a work train's way to `anchor` (its path from where it stands) and the line it would
+-- build share no rail and no planned piece with the crews out (`out`: their trains, the paths they drive, the ways home
+-- to their depots and their lines' pieces). Plain player track has no signals: two crews on separate track never meet.
+function J.apart(line, train, anchor, out)
+  local R = rstate()
+  local mine, keys = {}, {}
+  local function add(set, r)
+    if r and r.valid then set[r.unit_number] = true end
+  end
+  local function path_of(t, goals)
+    local ok, res = pcall(game.train_manager.request_train_path, {train = t, goals = goals, type = "path",
+                                                                    return_path = true})
+    return ok and res and res.found_path and res.path or nil
+  end
+  for _, r in ipairs(train.get_rails()) do add(mine, r) end
+  local way = path_of(train, {{rail = anchor, direction = RD.front}, {rail = anchor, direction = RD.back}})
+  if not way then return false end
+  for _, r in ipairs(way) do add(mine, r) end
+  for _, p in ipairs(line.pieces) do
+    if p.e and p.e.valid then add(mine, p.e) else keys[pkey(p.name, p.x, p.y, p.d)] = true end
+  end
+  for _, rec in ipairs(out) do
+    local theirs = {}
+    local t = train_of(rec)
+    if t and t.valid then
+      for _, r in ipairs(t.get_rails()) do add(theirs, r) end
+      local path = t.has_path and t.path
+      local pr = path and path.valid and path.rails -- (a LuaCustomTable)
+      for i = 1, pr and #pr or 0 do add(theirs, pr[i]) end
+      local hd = rails.depot(rec.home)
+      local goals = {}
+      for _, st in pairs(hd and hd.platform and hd.platform.stops or {}) do
+        if st.valid and st.connected_rail then goals[#goals + 1] = {train_stop = st} end
+      end
+      for _, r in ipairs(#goals > 0 and path_of(t, goals) or {}) do add(theirs, r) end
+    end
+    local l = rec.line and R.lines[rec.line]
+    for _, p in ipairs(l and l.pieces or {}) do
+      if p.e and p.e.valid then
+        add(theirs, p.e)
+      elseif keys[pkey(p.name, p.x, p.y, p.d)] then
+        return false
+      end
+    end
+    for k in pairs(theirs) do
+      if mine[k] then return false end
+    end
+  end
+  return true
+end
+
+-- 0.1.4 (#44 item 2): true when an idle work train of the force stands on one of its depots' platforms (J.idle_crew)
+function J.any_idle_crew(force_name)
+  local R = rstate()
+  for _, un in ipairs(sorted_keys(R.depots)) do
+    local d = R.depots[un]
+    if d.force == force_name and d.platform and d.platform.area and d.entity.valid and J.idle_crew(d, force_name) then
+      return true
+    end
+  end
+  return false
+end
+
 -- A crew for a manual line from the nearest own depot whose platform reaches the line's anchor rail by track, with the
 -- kits and the rails for it. Robots in range build the ghosts meanwhile (a line out of every reach waits). 0.1.4 (#44): an
 -- idle work train on the depot's platform is taken as the crew, and the line is turned round when only its far end is
--- reached.
+-- reached; (#44 item 2) while a crew is out, an idle work train goes as a second crew when its way and its line share
+-- no track with the crews out (J.apart), else the line waits ("crew-out", "crew-out-shared").
 local function dispatch_manual(line)
   if game.tick < (line.next_dispatch or 0) then return end
   line.next_dispatch = game.tick + rails.MANUAL_DISPATCH_TICKS
@@ -3888,12 +3952,14 @@ local function dispatch_manual(line)
   -- one crew at a time on a force's own track (segments' and lines' crews alike): player track is single, a second
   -- crew only waited behind the first or blocked it. 0.1.4 (#44): a crew is a construction train on a job; the wait
   -- says whose (an idle work train the player assembled is no crew yet: it is taken below)
+  local out = {}
   for _, id in ipairs(sorted_keys(R.trains)) do
     local rec = R.trains[id]
-    if rec.kind == "construction" and rec.force == line.force then
-      J.track_wait(line, "crew-out", rec.line)
-      return
-    end
+    if rec.kind == "construction" and rec.force == line.force then out[#out + 1] = rec end
+  end
+  if #out > 0 and not J.any_idle_crew(line.force) then
+    J.track_wait(line, "crew-out", out[1].line)
+    return
   end
   local anchor = lo == 1 and rails.manual_anchor(line) or (line.pieces[lo - 1] and line.pieces[lo - 1].e)
   local via = rails.manual_via(line) -- (behind a branch: the crew reaches it through the junction from there)
@@ -3911,7 +3977,7 @@ local function dispatch_manual(line)
     end
   end
   table.sort(cands, function(x, y) return x.d < y.d end)
-  local why = "no-depot"
+  local why, detail = #out > 0 and "crew-out" or "no-depot", #out > 0 and out[1].line or nil
   for k = 1, min(#cands, 4) do
     local d = R.depots[cands[k].un]
     local rail = d.platform.rails[floor(#d.platform.rails / 2)]
@@ -3930,11 +3996,17 @@ local function dispatch_manual(line)
         -- 0.1.4 (#44): an idle work train on this depot's platform is the crew
         local idle, idle_train = J.idle_crew(d, line.force)
         local train, reason
-        if idle then
+        local second = #out > 0 -- (#44 item 2: only an idle work train apart from the crews out)
+        if second and not idle then
+          reason, detail = "crew-out", out[1].line
+        elseif second and not J.apart(line, idle_train, anchor, out) then
+          reason, detail = "crew-out-shared", out[1].line
+        elseif idle then
           train = idle_train
           idle.kind, idle.home, idle.adopted = "construction", d.un, true
-          util.log("rails: track segment #%d: the work train %d standing on depot #%d's platform is taken as its crew",
-            line.id, train.id, d.un)
+          util.log("rails: track segment #%d: the work train %d standing on depot #%d's platform is taken as its crew%s",
+            line.id, train.id, d.un, second and string.format(" (a second crew: its way shares no track with construction "
+            .. "train %d on track line #%s)", out[1].id or 0, tostring(out[1].line)) or "")
         else
           train, reason = rails.create_train(d.un, "construction")
         end
@@ -3956,13 +4028,17 @@ local function dispatch_manual(line)
         end
         why = reason
       end
-    else
+    elseif #out == 0 then
       why = "no-access"
     end
   end
   -- 0.1.4 (#44): no depot reaches its start, one reaches built track at its far end: the line is built from there
   if why == "no-access" and line.planner and J.turn_for_access(line, cands) then
     line.next_dispatch = 0
+    return
+  end
+  if why == "crew-out" or why == "crew-out-shared" then -- (no alert: a crew is out, as before #44 item 2)
+    J.track_wait(line, why, detail)
     return
   end
   J.track_wait(line, why)
