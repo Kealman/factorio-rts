@@ -922,7 +922,12 @@ local function trunk_step(C, P, own, capital)
       end
       -- (Age I: the edge's kits and depots wait while the capital holds fewer than age1_circuits circuits: they took
       -- the aggressive AI's raider circuits in the M1 acceptance)
-      local hold = age_of(C.force) < 2 and construction.have(C, "electronic-circuit") < (PB.trunk.age1_circuits or 0)
+      -- (0.1.4, issue #2: not once rails.lua's own line is open, PB.trunk.age1_after_main: with its escrow paying on
+      -- after a wait, the aggressive AI opened that line at 16-23 minutes and then held its edges for the 6-13 minutes
+      -- to Age II with 0-16 circuits at the capital; its third city joined at 36:00 or never, seeds 801 and 802)
+      local main_open = PB.trunk.age1_after_main and main and main.state == "open"
+      local hold = age_of(C.force) < 2 and not main_open
+        and construction.have(C, "electronic-circuit") < (PB.trunk.age1_circuits or 0)
       -- (and while rails.lua's own line waits for its depots, their plates come first: an edge crafting depots from the
       -- same capital network kept the aggressive AI's town line at one depot for 53 minutes, M1 seed 501)
       if main and main.state == "depots" and not (E and E.A.depot_a and E.A.depot_b) then hold = true end

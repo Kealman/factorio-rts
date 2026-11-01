@@ -5831,6 +5831,33 @@ rails.AI_ESCROW_FLOOR = {["iron-plate"] = 60, ["copper-plate"] = 60, ["electroni
 -- linked by 35:00: 12 and 9 of 20). A steel keep too (100 steel, 150 stone) gave 4 of 5 but cost lines (7 and 8 of 20).
 -- Five seeds do not resolve this; carried to 0.1.2 with #1 and #2. A kept item is never paid with its inputs (ai_bill).
 rails.AI_RAIL_KEEP = {["stone"] = 100}
+-- 0.1.4 (#2, #39, r5-ai): a program whose part payments have come back short for CFG.ai_escrow_patience ticks in one
+-- phase (its depots, its crew's kits, its freight train's kits) pays on above CFG.ai_escrow_min only (instead of the
+-- reserve plus the floor) until that phase is paid; the paying city never goes below that minimum for it, and none of
+-- this while that city was attacked within CFG.ai_escrow_calm ticks (then reserve and floor as before). The 0.1.3
+-- capitals held 0-35 iron or 0-29 copper while every factory took plates as they came, so an escrow that only takes
+-- iron above 100 waited 14-18 minutes for a depot's 40 iron (802 and 805 rts-ai-1) and 18 minutes for its 10 copper
+-- (803 rts-player) while the barracks saved for it; with 0.1.3's minimum (40/20/10/10) it still did (seeds 801-803:
+-- linked by 35:00 5 of 12, the aggressive AI's first line at 28:37, never and 41:15). escrow.waived returns the
+-- minimum, or false; escrow.short and escrow.paid keep the program's wait (A.wait_phase, A.wait_since). (One table:
+-- this file's main chunk stands at 198 of Lua's 200 locals.)
+local escrow = {}
+function escrow.waived(A, phase)
+  local patience = CFG.ai_escrow_patience
+  if not (patience and A.wait_phase == phase and A.wait_since and game.tick - A.wait_since >= patience) then
+    return false
+  end
+  local cities = loaded("scripts.cities")
+  local city = type(cities) == "table" and cities.of_center and cities.of_center(A.pay or A.anchor)
+  if city and cities.under_attack and cities.under_attack(city.id, CFG.ai_escrow_calm) then return false end
+  return CFG.ai_escrow_min or {}
+end
+function escrow.short(A, phase)
+  if A.wait_phase ~= phase then A.wait_phase, A.wait_since = phase, game.tick end
+end
+function escrow.paid(A, phase)
+  if A.wait_phase == phase then A.wait_phase, A.wait_since = nil, nil end
+end
 
 -- Raw goods to take from `pay` for `count` of `item` (an intermediate it lacks is paid with its inputs, 3 levels deep;
 -- `taken` holds what earlier parts of the same payment already take). Returns false when the network cannot pay.
@@ -5857,6 +5884,8 @@ end
 -- Phase 5 M3 integration: with `escrow` (a table kept by the caller) the craft is paid over several calls: what the
 -- network can spare of each ingredient goes into the escrow until the bill is complete (40 iron, 10 steel and 10 copper
 -- at one check starved the aggressive AI's depot kit while its capital held no copper for 7 minutes).
+-- `no_floor`: true = a part payment takes what the network holds (a lost line's depot); a table {[item] = n} = it takes
+-- what is above n of each item (0.1.4: CFG.ai_escrow_min under patience); nil = above the reserve plus the floor.
 local function ai_pay(pay, put, recipe_name, n, escrow, no_floor, keep)
   local proto = prototypes.recipe[recipe_name]
   if not (proto and pay and pay.valid and put and put.valid) then return false end
@@ -5879,7 +5908,8 @@ local function ai_pay(pay, put, recipe_name, n, escrow, no_floor, keep)
         -- (no_floor, Economy 0.1.1: a lost line's depot takes what the network holds, reserve and floor included: the
         -- player's capital held 2-51 iron from 30:00 to 50:00 in M1 501, and with the 40-iron reserve kept the kit had
         -- 20 of its 40 iron after 20 minutes)
-        local reserve = no_floor and 0 or ((rails.AI_RESERVE[ing.name] or 0) + (rails.AI_ESCROW_FLOOR[ing.name] or 0))
+        local reserve = (no_floor == true and 0) or (type(no_floor) == "table" and (no_floor[ing.name] or 0))
+          or ((rails.AI_RESERVE[ing.name] or 0) + (rails.AI_ESCROW_FLOOR[ing.name] or 0))
         local have = pay.get_item_count(ing.name) - (taken[ing.name] or 0) - reserve
         local use = math.min(math.max(0, have), need)
         if use > 0 then
@@ -5970,8 +6000,9 @@ local function ai_depot(force_name, anchor_un, field, A)
     -- (a lost line's depot reopens the whole line: its kit takes the network's spare goods first, ahead of the barracks'
     -- floor and reserve; the player's capital held 3-45 iron from 30:00 to 50:00 in M1 501 and the kit waited 21
     -- minutes for a peak)
-    if not ai_pay(net, net, "rts-depot", 1, A.escrow, site ~= nil) then
+    if not ai_pay(net, net, "rts-depot", 1, A.escrow, site ~= nil or escrow.waived(A, "depots") or nil) then
       A.next_craft = game.tick + rails.AI_CRAFT_TICKS
+      escrow.short(A, "depots")
       return nil
     end
     A.next_craft = game.tick + rails.AI_CRAFT_TICKS
@@ -6035,18 +6066,24 @@ local function ai_depot(force_name, anchor_un, field, A)
 end
 
 -- Make sure a depot network holds the kits of `kind`, paid from the anchor's network. True when they are there.
-local function ai_kits(depot_un, anchor_un, kind, A)
+-- (patient: the kits hold the line or its freight: CFG.ai_escrow_patience applies; not for an open line's spare crew)
+local function ai_kits(depot_un, anchor_un, kind, A, patient)
   local net = logistics.hub_network(depot_un)
   if not net then return false end
   for _, k in ipairs(kit_list(kind)) do
     if net.get_item_count(k[1]) < k[2] then
       if game.tick < (A.next_craft or 0) then return false end
       A.escrow = A.escrow or {}
-      ai_pay(anchor_net(anchor_un), net, k[1], 1, A.escrow) -- (paid over several calls: the escrow)
+      -- (paid over several calls: the escrow)
+      if not ai_pay(anchor_net(anchor_un), net, k[1], 1, A.escrow, patient and escrow.waived(A, kind) or nil)
+         and patient then
+        escrow.short(A, kind)
+      end
       A.next_craft = game.tick + rails.AI_CRAFT_TICKS
       return false
     end
   end
+  if patient then escrow.paid(A, kind) end
   return true
 end
 
@@ -6081,6 +6118,7 @@ function rails.ai_program(force_name, A)
     A.state = "depots"
     return
   end
+  escrow.paid(A, "depots")
   local line = A.line and R.lines[A.line]
   -- Phase 5 M2 integration: a lost line whose missing depot stood where this program's depot stands now (rebuilt on the
   -- same site) is bound to it again; any other lost line is re-planned
@@ -6158,10 +6196,11 @@ function rails.ai_program(force_name, A)
   if line.state == "building" or line.state == "cut" then
     A.state = line.state
     -- a crew at the capital end (and one at the far end once the line has opened once) with rails for the work
-    ai_kits(da, A.pay or A.anchor, "construction", A)
+    -- (0.1.4: patient while no crew is out: the kits hold the line then)
+    ai_kits(da, A.pay or A.anchor, "construction", A, not line.builder)
     ai_supplies(da, A.pay or A.anchor, line.state == "building" and (line.bill.rails + 20) or rails.AI_REPAIR_RAILS)
     if line.opened then
-      ai_kits(db, A.pay or A.anchor, "construction", A)
+      ai_kits(db, A.pay or A.anchor, "construction", A, not line.builder)
       ai_supplies(db, A.pay or A.anchor, rails.AI_REPAIR_RAILS)
     end
     return
@@ -6208,7 +6247,7 @@ function rails.ai_program(force_name, A)
       end
     end
     if not have then
-      if ai_kits(db, A.pay or A.anchor, "cargo", A) then
+      if ai_kits(db, A.pay or A.anchor, "cargo", A, true) then
         local train = rails.create_train(db, "cargo")
         if train then
           local rec = rails.train_record(train)

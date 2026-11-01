@@ -477,6 +477,15 @@ balance.nation.rails = {
   cargo_wagons = 2,        -- a cargo train is locomotive + 2 wagons + locomotive (double-headed, single track)
   signal_spacing = 80,     -- tiles of ground track between bidirectional signal pairs
   ai_min_distance = 150,   -- AI: a hub or city this far from the capital gets a line (lead, 2026-10-16)
+  -- 0.1.4 (#2, #39): an AI rail program whose depots, crew kits or freight kits have been short this long pays on
+  -- above ai_escrow_min instead of the capital's reserve plus the escrow floor (100 iron, 80 copper, 20 circuits, 50
+  -- steel), never while the paying city was attacked within ai_escrow_calm ticks (scripts/rails.lua escrow.waived).
+  -- The minimum keeps one unit kit of each kind for the barracks (a walker's 10 iron and 2 copper, a raider's 2
+  -- circuits, a heavy's 5 steel); 0.1.3's 40/20/10/10 kept the escrow as blocked as before (the capitals hold 0-35
+  -- iron and 0-29 copper between factory crafts)
+  ai_escrow_patience = 2 * 60 * 60,
+  ai_escrow_min = {["iron-plate"] = 10, ["copper-plate"] = 2, ["electronic-circuit"] = 2, ["steel-plate"] = 5},
+  ai_escrow_calm = 60 * 60,
 }
 -- The depot is a hub subtype (kind "hub"), so scripts/supply.lua already counts it like a hub (+10). Listed here so the
 -- on_entity_damaged filter (scripts/research.lua) covers it: the AI defends its depots like its hubs.
@@ -637,6 +646,9 @@ balance.nation.people = {
     stone_low = 100, stone_gap = 2 * 60 * 60,
     -- Phase 5 M3 ai: and one more copper extractor (and slot) below copper_low copper plates (was a code default)
     copper_low = 30,
+    -- (0.1.4, issue #39) with it one more copper hub slot while the line has fewer slots than its extractors divided by
+    -- copper_drills_per_slot (a smelter slot makes 37.5 plates a minute, an extractor mines 60 ore; stone and coal: 2)
+    copper_drills_per_slot = 1,
     -- (0.1.3, issue #2) and one more coal extractor below coal_low coal (haulers, trains and rail crews burn it; a
     -- crew leaves with 40 in its locomotives and 50 in its wagon)
     coal_low = 100,
@@ -1395,7 +1407,9 @@ do
     weights = {ore = 1.0, oil = 1.6, rare = 0.8, choke = 0.5, port = 0.4, rail = 1.0, exposure = 0.8, need = 1.0},
     role_order = {"oil", "mining", "rare", "fortress", "trade"},
     oil = {reach = 14, pumpjacks = 3, export = {"rts-crude-oil", "plastic-bar", "sulfur"}, keep_crude = 400},
-    trunk = {period = 600, lines = 3, rival_factor = 3, max_surveys = 2, max_edge = 480, age1_circuits = 40},
+    trunk = {period = 600, lines = 3, rival_factor = 3, max_surveys = 2, max_edge = 480, age1_circuits = 40,
+             -- (0.1.4, issue #2) the Age I circuit hold ends once the capital's line to its mining town is open
+             age1_after_main = true},
     -- (0.1.1, issue #2) while a rail line anchored at the capital waits for its crew's kits, no new district is queued,
     -- at most `max` ticks at a stretch, then `rest` ticks without (ai/planner.lua planner.rail_hold)
     rail_hold = {max = 3 * 60 * 60, rest = 2 * 60 * 60},
