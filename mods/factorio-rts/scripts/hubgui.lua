@@ -21,6 +21,7 @@ local camera = require("scripts.camera")
 local logistics = require("scripts.logistics")
 local demolish = require("scripts.demolish")
 local netwait = require("scripts.netwaitline")
+local itempicker = require("scripts.itempicker")
 
 local hubgui = {}
 
@@ -114,12 +115,18 @@ local function destroy(g)
   if g.frame and g.frame.valid then g.frame.destroy() end
   clear_routes(g)
   g.frame, g.el, g.rows, g.key, g.kind, g.un, g.haulers = nil, nil, nil, nil, nil, nil, nil
+  g.rm, g.sig, g.carry_sig = nil, nil, nil
 end
 
 local function place(player, frame)
   local s = player.display_scale
   local res = player.display_resolution
   frame.location = {res.width - math.floor((WIDTH + MARGIN) * s + 0.5), math.floor(TOP * s + 0.5)}
+  -- 0.1.4 (#46): the header hints and the Add item row made the panel taller: it stops above the Build menu
+  local build = player.gui.screen["rts_hud_build"]
+  if build and build.valid and build.visible then
+    frame.style.maximal_height = math.max(200, math.floor((build.location.y - frame.location.y) / s) - 2 * MARGIN)
+  end
 end
 
 local function header(frame, caption, tooltip, help_name)
@@ -146,17 +153,39 @@ end
 ---------------------------------------------------------------------------
 -- Hub panel
 ---------------------------------------------------------------------------
+-- 0.1.4 (#46): Nation default rows beyond the Age I staples: the people chain at once, the oil chain from Age II.
+local NATION_ROWS = {"rts-rations", "rts-grain", "rts-goods"}
+local NATION_ROWS_AGE2 = {"rts-crude-oil", "rts-petroleum", "plastic-bar", "sulfur"}
+
+local function age_of(force_name)
+  local ages = package.loaded["scripts.ages"] -- looked up at call time, not required (load order)
+  return ages and ages.of and ages.of(force_name) or 1
+end
+
+-- The items of a hub's panel, in order: the default rows (minus those the player hid), the rows the player added,
+-- then anything the network holds or a policy names.
 local function item_list(un)
   local p = logistics.policy(un) or {keep = {}, export_above = {}}
+  local rec = logistics.hub_rec(un)
   local entry = logistics.entry_for_hub(un)
   local seen, list = {}, {}
-  local function add(name)
+  local function add(name, default)
     if not seen[name] and prototypes.item[name] then
+      if default and p.hidden and p.hidden[name] and p.keep[name] == nil and p.export_above[name] == nil
+         and ((entry and entry.contents or {})[name] or 0) == 0 then
+        return
+      end
       seen[name] = true
       list[#list + 1] = name
     end
   end
-  for _, name in ipairs(logistics.POLICY_ITEMS) do add(name) end
+  for _, name in ipairs(logistics.POLICY_ITEMS) do add(name, true) end
+  if rec and logistics.is_nation(rec.force) then
+    for _, name in ipairs(NATION_ROWS) do add(name, true) end
+    if age_of(rec.force) >= 2 then
+      for _, name in ipairs(NATION_ROWS_AGE2) do add(name, true) end
+    end
+  end
   for _, group in ipairs(logistics.POLICY_SUBGROUPS) do
     local items = {}
     for name, proto in pairs(prototypes.item) do
@@ -166,8 +195,12 @@ local function item_list(un)
       if a.order ~= b.order then return a.order < b.order end
       return a.name < b.name
     end)
-    for _, proto in ipairs(items) do add(proto.name) end
+    for _, proto in ipairs(items) do add(proto.name, true) end
   end
+  local added = {}
+  for name in pairs(p.rows or {}) do added[#added + 1] = name end
+  table.sort(added)
+  for _, name in ipairs(added) do add(name) end
   local rest = {}
   for name in pairs(entry and entry.contents or {}) do rest[#rest + 1] = name end
   for name in pairs(p.keep) do rest[#rest + 1] = name end
@@ -201,15 +234,19 @@ local function build_hub(player, g, un)
   g.el.waiting.style.font_color = COLOR.red
   g.el.waiting.visible = false
   label(frame, "rts_hud_dim_label", {"rts.hubgui-hint"})
+  label(frame, "rts_hud_dim_label", {"rts.hubgui-hint-meaning"}) -- 0.1.4 (#46): what Keep and Export above mean
+  local buttons = frame.add({type = "flow", direction = "horizontal", style = "rts_hud_row"})
+  buttons.add({type = "button", name = PREFIX .. "add_item", style = "rts_hud_button", caption = {"rts.hubgui-add"},
+               tooltip = {"rts.hubgui-add-tooltip"}, tags = {rts_hubgui = "add_item", hub = un}})
   if rec.kind == "hub" then
     -- Demolish (two presses, scripts/demolish.lua); never for the Command Center
-    g.el.demolish = frame.add({type = "button", name = PREFIX .. "demolish", style = "rts_hud_button",
-                               caption = {"rts.demolish"}, tags = {rts_hubgui = "demolish"}})
+    g.el.demolish = buttons.add({type = "button", name = PREFIX .. "demolish", style = "rts_hud_button",
+                                 caption = {"rts.demolish"}, tags = {rts_hubgui = "demolish"}})
   end
   local scroll = frame.add({type = "scroll-pane", horizontal_scroll_policy = "never", vertical_scroll_policy = "auto"})
   scroll.style.maximal_height = LIST_HEIGHT
   scroll.style.horizontally_stretchable = true
-  local tbl = scroll.add({type = "table", column_count = 4})
+  local tbl = scroll.add({type = "table", column_count = 5})
   tbl.style.horizontal_spacing = 8
   tbl.style.vertical_spacing = 2
   tbl.add({type = "label", caption = "", style = "rts_hud_dim_label"})
@@ -219,7 +256,11 @@ local function build_hub(player, g, un)
            tooltip = {"rts.hubgui-keep-tooltip"}})
   tbl.add({type = "label", caption = {"rts.hubgui-col-export"}, style = "rts_hud_dim_label",
            tooltip = {"rts.hubgui-export-tooltip"}})
-  for _, item in ipairs(item_list(un)) do
+  tbl.add({type = "label", caption = "", style = "rts_hud_dim_label"})
+  g.rm = {}
+  local items = item_list(un)
+  g.sig = table.concat(items, ",")
+  for _, item in ipairs(items) do
     local proto = prototypes.item[item]
     tbl.add({type = "sprite", sprite = "item/" .. item, tooltip = proto.localised_name})
     local count = tbl.add({type = "label", caption = "0", style = "rts_hud_mono_label"})
@@ -228,6 +269,12 @@ local function build_hub(player, g, un)
     g.rows[item] = count
     field(tbl, un, item, "keep", p.keep[item])
     field(tbl, un, item, "export", p.export_above[item])
+    -- the small x: only while both fields are empty and the network holds none (refresh_hub shows it)
+    local rm = tbl.add({type = "sprite-button", name = PREFIX .. "row_remove_" .. item, sprite = "utility/close",
+      style = "frame_action_button", tooltip = {"rts.hubgui-row-remove-tooltip"}, visible = false,
+      tags = {rts_hubgui = "row_remove", hub = un, item = item}})
+    rm.style.size = 24
+    g.rm[item] = rm
   end
   place(player, frame)
 end
@@ -283,9 +330,18 @@ local function refresh_hub(player, g)
   end
   local net = entry and entry.network
   local own = logistics.policy(un)
+  -- 0.1.4 (#46): a row appears when the network starts to hold the item (or a row was added / removed elsewhere)
+  if g.sig ~= table.concat(item_list(un), ",") then
+    hubgui.refresh(player.index, true)
+    return true
+  end
   for item, count in pairs(g.rows) do
     if count.valid then
       local n = (net and net.valid) and net.get_item_count(item) or 0
+      local rm = g.rm and g.rm[item]
+      if rm and rm.valid then
+        rm.visible = n == 0 and own ~= nil and own.keep[item] == nil and own.export_above[item] == nil
+      end
       count.caption = tostring(n)
       local colour, tooltip = hubgui.count_colour(entry, own, item, n)
       count.style.font_color = COLOR[colour]
@@ -357,7 +413,21 @@ local function build_hauler(player, g, un, haulers)
   mode.add({type = "empty-widget", style = "rts_hud_filler"})
   g.el.hp = mode.add({type = "label", caption = "", style = "rts_hud_mono_label"})
   g.el.route = label(frame, "rts_hud_label")
+  -- 0.1.4 (#46): a route's explicit item list (like a train stop's "load items") and what the drop-off does with it
+  g.el.carry = frame.add({type = "flow", direction = "vertical"})
+  g.el.carry.style.vertical_spacing = 2
+  g.el.unload = frame.add({type = "flow", direction = "horizontal", style = "rts_hud_row"})
+  g.el.unload.add({type = "label", caption = {"rts.hauler-unload"}, style = "rts_hud_label"})
+  g.el.unload_keep = g.el.unload.add({type = "button", name = PREFIX .. "unload_keep", style = "rts_hud_button",
+    caption = {"rts.hauler-unload-keep"}, tooltip = {"rts.hauler-unload-keep-tooltip"},
+    tags = {rts_hubgui = "unload", unload = "keep"}})
+  g.el.unload_all = g.el.unload.add({type = "button", name = PREFIX .. "unload_all", style = "rts_hud_button",
+    caption = {"rts.hauler-unload-all"}, tooltip = {"rts.hauler-unload-all-tooltip"},
+    tags = {rts_hubgui = "unload", unload = "all"}})
   g.el.state = label(frame, "rts_hud_label")
+  g.el.why = label(frame, "rts_hud_dim_label") -- 0.1.4 (#46): the reason behind "nothing to carry"
+  g.el.why.style.font_color = COLOR.yellow
+  g.el.why.visible = false
   g.el.cargo = label(frame, "rts_hud_label")
   g.el.delivered = label(frame, "rts_hud_dim_label")
   local buttons = frame.add({type = "flow", direction = "horizontal", style = "rts_hud_row"})
@@ -369,12 +439,60 @@ local function build_hauler(player, g, un, haulers)
   place(player, frame)
 end
 
+-- The Carry rows of the first selected hauler: "Carry:" with a "+" (opens the picker), then one row per item with its
+-- per-trip count (empty / 0 = as much as fits) and an x. Rebuilt when the item list changes.
+local function fill_carry(g, h)
+  local flow = g.el.carry
+  flow.clear()
+  local head = flow.add({type = "flow", direction = "horizontal", style = "rts_hud_row"})
+  head.add({type = "label", caption = {"rts.hauler-carry"}, style = "rts_hud_label", tooltip = {"rts.hauler-carry-tooltip"}})
+  head.add({type = "button", name = PREFIX .. "carry_add", style = "rts_hud_button", caption = {"rts.hauler-carry-add"},
+    tooltip = {"rts.hauler-carry-add-tooltip"}, tags = {rts_hubgui = "carry_add"}})
+  local names = {}
+  for item in pairs(h.carry or {}) do names[#names + 1] = item end
+  table.sort(names)
+  if #names == 0 then
+    local l = flow.add({type = "label", caption = {"rts.hauler-carry-none"}, style = "rts_hud_dim_label"})
+    l.style.single_line = false
+    l.style.maximal_width = WIDTH - 20
+  end
+  for _, item in ipairs(names) do
+    local row = flow.add({type = "flow", direction = "horizontal", style = "rts_hud_row"})
+    row.add({type = "sprite", sprite = "item/" .. item, tooltip = prototypes.item[item].localised_name})
+    row.add({type = "label", caption = prototypes.item[item].localised_name, style = "rts_hud_label"})
+    row.add({type = "empty-widget", style = "rts_hud_filler"})
+    local n = h.carry[item]
+    local tf = row.add({type = "textfield", name = PREFIX .. "carry_count_" .. item, text = n > 0 and tostring(n) or "",
+      numeric = true, allow_decimal = false, allow_negative = false, lose_focus_on_confirm = true,
+      style = "short_number_textfield", tooltip = {"rts.hauler-carry-count-tooltip"},
+      tags = {rts_hubgui = "carry_count", item = item}})
+    tf.style.width = FIELD_WIDTH
+    local rm = row.add({type = "sprite-button", name = PREFIX .. "carry_remove_" .. item, sprite = "utility/close",
+      style = "frame_action_button", tooltip = {"rts.hauler-carry-remove-tooltip"},
+      tags = {rts_hubgui = "carry_remove", item = item}})
+    rm.style.size = 24
+  end
+  g.carry_sig = h.mode .. "|" .. table.concat(names, ",")
+end
+
 local function refresh_hauler(player, g)
   local h = logistics.hauler(g.un)
   if not h then return false end
   local el = g.el
   el.auto.toggled = h.mode == "auto"
   el.manual.toggled = h.mode == "manual"
+  -- 0.1.4 (#46): Carry and Unload belong to a manual route
+  el.carry.visible = h.mode == "manual"
+  el.unload.visible = h.mode == "manual"
+  if h.mode == "manual" then
+    local names = {}
+    for item in pairs(h.carry or {}) do names[#names + 1] = item end
+    table.sort(names)
+    if g.carry_sig ~= "manual|" .. table.concat(names, ",") then fill_carry(g, h) end
+    local keep_mode = h.unload == "keep"
+    el.unload_keep.toggled = keep_mode
+    el.unload_all.toggled = not keep_mode
+  end
   local hp, max = h.entity.health or 0, h.entity.max_health or 0
   el.hp.caption = max > 0 and {"rts.hp-value", math.floor(hp + 0.5), math.floor(max + 0.5)} or ""
   if h.mode == "auto" then
@@ -397,6 +515,10 @@ local function refresh_hauler(player, g)
     el.state.caption = {"rts.hauler-state-line", state}
     el.state.style.font_color = h.state == "parked" and COLOR.yellow or COLOR.white
   end
+  local why, why_items = nil, nil
+  if h.state == "waiting" and h.reason == "nothing" then why, why_items = logistics.nothing_reason(g.un) end
+  el.why.visible = why ~= nil
+  if why then el.why.caption = {"rts.hauler-why-" .. why, why_items} end
   local cargo = items_text(h.cargo)
   el.cargo.caption = cargo and {"rts.hauler-cargo", cargo} or {"rts.hauler-cargo-empty"}
   -- Phase 5 M1 integration: Nation mode, the coal the hauler carries for its way back (logistics.lua go())
@@ -479,7 +601,42 @@ events.on(defines.events.on_gui_click, function(e)
     show(player)
     return
   end
-  if action == "policy" then
+  if action == "add_item" then
+    local rec = logistics.hub_rec(element.tags.hub)
+    if rec then
+      local s = player.display_scale
+      local loc
+      if g.frame and g.frame.valid then
+        loc = {math.max(0, g.frame.location.x - math.floor((itempicker.WIDTH + MARGIN) * s + 0.5)), g.frame.location.y}
+      end
+      local stripgui = package.loaded["scripts.stripgui"]
+      itempicker.open(player, "hubgui", {hub = element.tags.hub}, loc,
+        {sections = stripgui.pickable_sections(player, logistics.is_nation(rec.force), true), title = {"rts.hubgui-picker-title"}})
+    end
+    return
+  end
+  if action == "row_remove" then
+    local ok = logistics.remove_policy_row(element.tags.hub, element.tags.item)
+    util.log("hubgui row remove hub=#%d %s ok=%s player=%d", element.tags.hub, element.tags.item, tostring(ok),
+      e.player_index)
+    show(player, true)
+    return
+  end
+  if action == "carry_add" then
+    local h = logistics.hauler(g.un)
+    if h then
+      local s = player.display_scale
+      local loc
+      if g.frame and g.frame.valid then
+        loc = {math.max(0, g.frame.location.x - math.floor((itempicker.WIDTH + MARGIN) * s + 0.5)), g.frame.location.y}
+      end
+      local stripgui = package.loaded["scripts.stripgui"]
+      itempicker.open(player, "haulercarry", {}, loc,
+        {sections = stripgui.pickable_sections(player, logistics.is_nation(h.force), true), title = {"rts.hauler-carry-picker"}})
+    end
+    return
+  end
+  if action == "policy" or action == "carry_count" then
     element.select_all() -- Phase 5 M1 QA round 1: a click selects the number, so typing replaces it
     return
   end
@@ -490,6 +647,10 @@ events.on(defines.events.on_gui_click, function(e)
     for _, un in ipairs(list) do logistics.return_home(un) end
   elseif action == "resume" then
     for _, un in ipairs(list) do logistics.resume(un) end
+  elseif action == "unload" then
+    for _, un in ipairs(list) do logistics.set_unload(un, element.tags.unload) end
+  elseif action == "carry_remove" then
+    for _, un in ipairs(list) do logistics.set_carry(un, element.tags.item, nil) end
   else
     return
   end
@@ -500,7 +661,16 @@ end)
 
 events.on(defines.events.on_gui_text_changed, function(e)
   local element = e.element
-  if not (element and element.valid) or element.tags.rts_hubgui ~= "policy" then return end
+  if not (element and element.valid) then return end
+  if element.tags.rts_hubgui == "carry_count" then -- 0.1.4 (#46): the per-trip count of a Carry item
+    local g = pstate(e.player_index)
+    local text = element.text or ""
+    for _, un in ipairs(selected_haulers(g)) do
+      logistics.set_carry(un, element.tags.item, text ~= "" and tonumber(text) or 0)
+    end
+    return
+  end
+  if element.tags.rts_hubgui ~= "policy" then return end
   local tags = element.tags
   local text = element.text or ""
   local value = text ~= "" and tonumber(text) or nil
@@ -508,6 +678,22 @@ events.on(defines.events.on_gui_text_changed, function(e)
   local ok = logistics.set_policy(tags.hub, field, tags.item, value)
   util.log("hubgui policy hub=#%d %s %s=%s ok=%s player=%d", tags.hub, tags.item, field, tostring(value),
     tostring(ok), e.player_index)
+end)
+
+itempicker.on_pick("hubgui", function(player, item, ctx)
+  local ok = logistics.add_policy_row(ctx.hub, item)
+  util.log("hubgui add item hub=#%s %s ok=%s player=%d", tostring(ctx.hub), item, tostring(ok), player.index)
+  hubgui.refresh(player.index, true)
+end)
+
+itempicker.on_pick("haulercarry", function(player, item, ctx)
+  local g = pstate(player.index)
+  for _, un in ipairs(selected_haulers(g)) do
+    local h = logistics.hauler(un)
+    if h and not (h.carry and h.carry[item]) then logistics.set_carry(un, item, 0) end
+  end
+  util.log("hubgui carry add %s haulers=%d player=%d", item, #selected_haulers(g), player.index)
+  hubgui.refresh(player.index, true)
 end)
 
 local function reposition(e)

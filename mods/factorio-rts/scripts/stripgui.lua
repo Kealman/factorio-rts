@@ -446,11 +446,13 @@ end
 --- Every item the strip can show for the player: stock in any own network, what the cities need and make, the
 --- products of every recipe the force has enabled, the vanilla pieces. Zero stock is fine. Not the entries already on
 --- the strip. Returns sections {{key = group, items = {...}}} in GROUPS order, empty groups left out.
-function stripgui.pickable_sections(player, nation)
+function stripgui.pickable_sections(player, nation, include_shown)
   local force = player.force
   local P4 = stripgui.P4 -- set by scripts/hud.lua
   local shown = {}
-  for _, key in ipairs((stripgui.keys(player.index, nation))) do shown[key] = true end
+  if not include_shown then -- 0.1.4 (#46): the hub panel's Add item offers every item, strip entry or not
+    for _, key in ipairs((stripgui.keys(player.index, nation))) do shown[key] = true end
+  end
   local found = {}
   local function add(item)
     local proto = prototypes.item[item]
