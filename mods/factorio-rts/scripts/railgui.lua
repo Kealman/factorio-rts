@@ -77,7 +77,7 @@ local function place(player, frame, kind)
   -- 0.1.3 (#34): the panel stops above the Build menu (the right column below it), not over it
   local build = player.gui.screen["rts_hud_build"]
   if build and build.valid and build.visible then
-    frame.style.maximal_height = math.max(200, math.floor((build.location.y - frame.location.y) / s) - MARGIN)
+    frame.style.maximal_height = math.max(200, math.floor((build.location.y - frame.location.y) / s) - 2 * MARGIN)
   end
 end
 
