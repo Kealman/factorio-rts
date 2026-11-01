@@ -1353,3 +1353,57 @@ not held by the engine focus). The items of 8.12 are done except army.step's poo
 
 #2 stays open for 0.1.4: the aggressive AI's capital smelts 37-38 copper a minute in Age I, and its depots and crew
 kits wait for copper (a copper hub for the aggressive and turtle doctrines is the next lever).
+
+### 8.14 Release 0.1.4 (r5-ai): the standing numbers
+
+Agent `r5-ai`, notes `docs/qa/release-0-1-4-r5-ai-notes.md` (diagnosis probe, levers, tables, guard figures). The 0.1.3
+tree reproduced the 0.1.3 release check line for line. Shipped: 1f4b525, the governor's copper rule queues a copper hub
+slot with every copper extractor while copper runs short (`balance.nation.people.ai.copper_drills_per_slot = 1`; a slot
+smelts 37.5 a minute, an extractor mines 60 ore). Measured and not shipped: the rail escrow's patience payment (L2,
+`balance.nation.rails.ai_escrow_patience`, with `ai_escrow_min` and `ai_escrow_calm`) and the planner's Age I circuit
+hold lifted once the capital's own line is open (L3); L2 is the lever that moves #2 and waits for a retest on the merged
+tree with r5-rails' crew fix (84464c8).
+
+| Criterion (M1 501; M3 801-805, 4 normal AIs, 2048, 60 min) | 0.1.3 | 0.1.4 AI tree (1f4b525) | L1 + L2 (measured) |
+|---|---|---|---|
+| M1 501 checks; train items; rts-ai-1 Age II | 53/53; 25,678; 19:57 | 53/53; 26,841; 15:50 | 53/53; 25,503; 19:23 |
+| Age III by 40:00 | 5/5 | 4/5 (805 at 45:04) | 4/5 |
+| nations with three cities linked by 35:00 (target 16) | 12/20 | 13/20 | 15/20 |
+| the aggressive AI's first line before 32:00 (target 4) | 3/5 | 3/5 | 5/5 |
+| capitals on one copper slot after minute 15 | 9/20 | 5/20 | 6/20 |
+| capital iron / copper <= 10, minutes 10-35 | 318 / 242 | 347 / 188 | 339 / 189 |
+| army at 35:00 / 60:00; capital-attacked minutes | 724 / 1041; 43 | 891 / 1078; 42 | 876 / 1066; 15 |
+| capital starving minutes; capitals lost | 0; 0 | 0; 0 | 0; 0 (with the calm gate: one) |
+
+#2 stays open: the aggressive AI's rail escrow (it takes only plates above 100 iron, 80 copper, 20 circuits, 50 steel
+while its capital holds 0-35 iron and 0-29 copper) is the binding constraint after copper; then steel (one chain, 19 a
+minute, depleted iron extractors never replaced).
+
+### 8.15 Release 0.1.4 wave 2 (r6-ai): the standing numbers
+
+Agent `r6-ai`, notes `docs/qa/release-0-1-4-r6-ai-notes.md` (base reproduction, the levers one at a time, the
+follow-ups, checks). (8.14 above is r5-ai's section from its unmerged wave-1 branch, copied here; its shipped commit
+1f4b525 was not merged, the same code ships as 5ec35d1.) The base 3abff7b (0.1.4 dev build 2 with the #33 crew fix)
+reproduced the 0.1.3 acceptance on every AI number (802-805 line-identical; 801 from minute 39). Shipped: L1 5ec35d1
+(a copper hub slot per copper extractor while copper runs short), L2s bb95e4a (an AI rail escrow short for 2 minutes
+pays on above a one-kit minimum, not while the paying city is under attack; `balance.nation.rails.ai_escrow_patience`,
+`ai_escrow_min`, `ai_escrow_calm`), L3 d0a4737 (the planner's Age I circuit hold on trunk edges ends once the capital's
+own line is open; `balance.nation.ai3.planner.trunk.age1_after_main`). Measured and not shipped: L1b (copper bootstrap
+to two slots: M1 50/53) and the removal of dry extractors (M1 52/53, no gain).
+
+| Criterion (M1 501; M3 801-805, 4 normal AIs, 2048, 60 min) | 0.1.3 | 0.1.4 base 3abff7b | 0.1.4 AI tree (d0a4737) |
+|---|---|---|---|
+| M1 501 checks; train items; rts-ai-1 Age II | 53/53; 25,678; 19:57 | 53/53; 25,678; 19:57 | 53/53; 28,353; 19:14 |
+| Age III by 40:00 | 5/5 | 5/5 | 4/5 (801 at 40:52) |
+| nations with three cities linked by 35:00 (target 16) | 12/20 | 12/20 | 12/20 |
+| the aggressive AI's first line before 32:00 (target 4) | 3/5 | 3/5 | **5/5** |
+| items by train, 801-805 | 211,568 | 213,347 | 240,012 |
+| capital iron / copper <= 10, minutes 10-35 | 318 / 242 | 318 / 242 | 346 / 208 |
+| army at 35:00 / 60:00; capital-attacked minutes | 724 / 1041; 43 | 724 / 987; 43 | 907 / 1138; 36 |
+| capital starving minutes; capitals lost | 0; 0 | 0; 0 | 0; 0 |
+| rail programs' wait to 35:00, program-minutes: steel / iron / copper / circuits | 384 / 280 / 240 / 67 | the same | 566 / 218 / 74 / 45 |
+
+#39 is done (copper is no longer what the rail programs wait for). #2 stays open for linking: with the escrow paying
+on, the rail programs wait for steel (one Age I steel chain, about 19 plates a minute, shared with the heavies, the
+depots and the locomotive kits); a second steel chain when the rail programs wait for steel, or steel kept from the
+heavies while an edge's depot waits for it, is the next lever.
