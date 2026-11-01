@@ -259,6 +259,32 @@ function logistics.set_policy(unit_number, field, item, value)
   return true
 end
 
+--- 0.1.4 (#46): the panel rows the player added (p.rows[item] = true) or hid (p.hidden[item] = true, a default row
+--- taken off); neither changes any threshold. Returns true when the row list changed.
+function logistics.add_policy_row(unit_number, item)
+  local p = logistics.policy(unit_number)
+  if not (p and item and prototypes.item[item]) then return false end
+  p.rows = p.rows or {}
+  p.rows[item] = true
+  if p.hidden then p.hidden[item] = nil end
+  return true
+end
+
+--- Take the row of `item` off the panel; refused while a Keep / Export is set (the panel only offers it when both
+--- fields are empty and the network holds none).
+function logistics.remove_policy_row(unit_number, item)
+  local p = logistics.policy(unit_number)
+  if not (p and item) then return false end
+  if p.keep[item] ~= nil or p.export_above[item] ~= nil then return false end
+  if p.rows then p.rows[item] = nil end
+  p.hidden = p.hidden or {}
+  p.hidden[item] = true
+  return true
+end
+
+--- True for a Nation match (the panel's extra default rows).
+function logistics.is_nation(force_name) return nation_mode(force_name) end
+
 -- Phase 5 M2 treasury: a hub subtype changes hands (a captured trade post, scripts/market.lua). The caller has written
 -- the entities' force and the building records; the policy follows the new force with empty thresholds, and the
 -- network caches of both forces are rebuilt. Returns true when the hub had a policy.
@@ -1011,6 +1037,74 @@ end
 ---------------------------------------------------------------------------
 -- Haulers: planning
 ---------------------------------------------------------------------------
+--- 0.1.4 (#46): the hauler's Carry list {[item] = cap per trip, 0 = as much as fits} or nil when it is empty.
+function logistics.carry_list(h)
+  if h and h.carry and next(h.carry) ~= nil then return h.carry end
+  return nil
+end
+
+--- Add / change an item of the Carry list of a manual route (count 0 = no cap), or remove it (count nil).
+function logistics.set_carry(unit_number, item, count)
+  local h = logistics.hauler(unit_number)
+  if not (h and item and prototypes.item[item]) then return false end
+  if count == nil then
+    if h.carry then h.carry[item] = nil end
+    if h.carry and next(h.carry) == nil then h.carry = nil end
+  else
+    h.carry = h.carry or {}
+    h.carry[item] = math.max(0, math.min(logistics.MAX_THRESHOLD, math.floor(tonumber(count) or 0)))
+  end
+  util.log("logistics: hauler #%d carry %s = %s", unit_number, item, tostring(count))
+  return true
+end
+
+--- "keep" (bring only what the drop-off's Keep is short of) or "all" (everything on the Carry list).
+function logistics.set_unload(unit_number, mode)
+  local h = logistics.hauler(unit_number)
+  if not (h and (mode == "keep" or mode == "all")) then return false end
+  h.unload = mode
+  util.log("logistics: hauler #%d unload %s", unit_number, mode)
+  return true
+end
+
+--- 0.1.4 (#46): why a manual route finds nothing to load, for the panel (reads only, never changes the hauler).
+--- Returns a locale key suffix ("carry-none", "dropoff-keeps", "no-export", "nothing-above") and an item text.
+function logistics.nothing_reason(unit_number)
+  local h = logistics.hauler(unit_number)
+  if not (h and h.mode == "manual") then return nil end
+  local src, dst = logistics.entry_for_hub(h.pickup), logistics.entry_for_hub(h.dropoff)
+  if not (src and dst) or src.id == dst.id then return nil end
+  local function names(t)
+    local list = {}
+    for item in pairs(t) do list[#list + 1] = "[item=" .. item .. "]" end
+    table.sort(list)
+    return table.concat(list, " ")
+  end
+  local carry = logistics.carry_list(h)
+  if carry then
+    local held = false
+    for item in pairs(carry) do
+      if src.network.get_item_count(item) - (src.export[item] or src.keep[item] or 0) > 0 then held = true end
+    end
+    if not held then return "carry-none", names(carry) end
+    if h.unload == "keep" then return "dropoff-keeps", next(dst.keep) and names(dst.keep) or "-" end
+    return nil
+  end
+  if next(src.export) == nil then return "no-export", "" end
+  local offered = {}
+  for item, threshold in pairs(src.export) do
+    if src.network.get_item_count(item) - threshold > 0 then offered[item] = true end
+  end
+  if next(offered) == nil then return "nothing-above", names(src.export) end
+  if next(dst.keep) ~= nil then
+    for item in pairs(offered) do
+      if dst.keep[item] then return nil end
+    end
+    return "dropoff-keeps", names(dst.keep)
+  end
+  return nil
+end
+
 -- Manual: what to load at the pickup for the drop-off. Returns a plan or nil, reason.
 local function manual_plan(h)
   local src = logistics.entry_for_hub(h.pickup)
@@ -1021,6 +1115,29 @@ local function manual_plan(h)
   local out_res, in_res = outbound[src.id] or {}, inbound[dst.id] or {}
   local feeder = next(dst.keep) == nil -- a drop-off without keep thresholds takes every export
   local want = {}
+  local carry = logistics.carry_list(h)
+  if carry then
+    -- 0.1.4 (#46): an explicit item list, like a train stop's "load items": what the pickup holds above its Export
+    -- (or Keep) level, at most the listed count per trip (0 = as much as fits); "Unload: to Keep" brings only what the
+    -- drop-off's Keep is short of, "everything" ignores the drop-off's Keep.
+    for item, cap in pairs(carry) do
+      local floor = src.export[item] or src.keep[item] or 0
+      local avail = src.network.get_item_count(item) - floor - (out_res[item] or 0)
+      if avail > 0 then
+        local wanted = avail
+        if h.unload == "keep" then
+          local keep = dst.keep[item]
+          wanted = keep and (keep - dst.network.get_item_count(item) - (in_res[item] or 0)) or 0
+        end
+        if cap > 0 then wanted = math.min(wanted, cap) end
+        local n = math.min(avail, wanted)
+        if n > 0 then want[item] = n end
+      end
+    end
+    local plan = fit_plan(h, want)
+    if not plan then return nil, "nothing" end
+    return plan, nil, false
+  end
   -- live counts: the hauler stands at the pickup
   for item, threshold in pairs(src.export) do
     local avail = src.network.get_item_count(item) - threshold - (out_res[item] or 0)

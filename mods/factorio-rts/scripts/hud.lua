@@ -1136,6 +1136,13 @@ local function build_build_menu(screen, h, player_index)
   belt.style.padding = 0
   belt.visible = P4.nation()
   h.el.fort_belt = belt
+  -- 0.1.4 (#40): the Clear tool: arm it, then right-drag a box (selected units fell its trees and rocks)
+  local clear = header.add({type = "button", name = PREFIX .. "clear_tool", style = "rts_hud_tab_button",
+    caption = {"rts-ux.clear-button"}, tooltip = {"rts-ux.clear-tooltip"}, tags = {rts_hud = "clear_tool"}})
+  clear.style.padding = 0
+  clear.style.left_padding = 4
+  clear.style.right_padding = 4
+  h.el.clear_tool = clear
   local tabs = frame.add({type = "flow", direction = "horizontal"})
   tabs.style.horizontal_spacing = 2
   h.el.build_tabs = {}
@@ -2133,6 +2140,10 @@ local function update_build_menu(player, h)
   local snap = snapshot(player.force.name)
   local ghost = cursor.ghost_name(player)
   local nation = P4.nation() -- Phase 5 E1: the Age II tab follows the mode
+  if h.el.clear_tool and h.el.clear_tool.valid then
+    local is_armed = optional_fn("scripts.orders", {"clear_is_armed"})
+    h.el.clear_tool.toggled = is_armed ~= nil and is_armed(player.index) == true
+  end
   if h.build_nation ~= nation then
     h.build_nation = nation
     if h.el.fort_belt and h.el.fort_belt.valid then h.el.fort_belt.visible = nation end -- Phase 5 M3 war2
@@ -2667,6 +2678,9 @@ local function on_click(e)
     if toggle then toggle(player) end
   elseif action == "help" then
     hud.toggle_help(player, element.name == PREFIX .. "help_close" and "close button" or "? button")
+  elseif action == "clear_tool" then -- 0.1.4 (#40): Clear in the build menu header (scripts/orders.lua arm_clear)
+    local arm = optional_fn("scripts.orders", {"arm_clear"})
+    if arm then arm(player.index) end
   elseif action == "fort_belt" then -- Phase 5 M3 war2: the fort belt tool (scripts/belts.lua)
     local toggle = optional_fn("scripts.belts", {"toggle_tool"})
     if toggle then toggle(player) end
